@@ -7,6 +7,8 @@ import type {
 export type TimeCapacityViewport = { min: number; max: number };
 export type TimeCapacityCycleRange = { start: number; end: number };
 
+export const TIME_CAPACITY_REFINEMENT_TRANSITION_MS = 140;
+
 function finite(value: number | null | undefined): value is number {
   return value !== null && value !== undefined && Number.isFinite(value);
 }
@@ -77,9 +79,79 @@ export function timeCapacityRefinementRequestIsCurrent(
   return Boolean(
     currentResult &&
       response.request_generation === generation &&
+      timeCapacityRefinementResultMatchesOverview(response, currentResult),
+  );
+}
+
+/**
+ * A displayed refinement is not tied to the generation of the next request.
+ * It is valid only while it still describes the current overview identity.
+ * Request-generation matching remains the stricter rule used when accepting
+ * a newly arriving response.
+ */
+export function timeCapacityRefinementResultMatchesOverview(
+  response: TimeCapacityRefinementResult,
+  currentResult: TimeCapacityResult | undefined,
+): boolean {
+  return Boolean(
+    currentResult &&
       response.overview_data_signature === currentResult.data_signature &&
       response.data_signature === currentResult.data_signature,
   );
+}
+
+/**
+ * Return whether a displayed refinement covers the next visible viewport.
+ * Viewport bounds are client-only metadata; they never affect scientific or
+ * persisted result identity.
+ */
+export function timeCapacityViewportContains(
+  displayedViewport: TimeCapacityViewport | null,
+  nextViewport: TimeCapacityViewport | null,
+): boolean {
+  if (!displayedViewport || !nextViewport) return false;
+  const displayedMin = Math.min(displayedViewport.min, displayedViewport.max);
+  const displayedMax = Math.max(displayedViewport.min, displayedViewport.max);
+  const nextMin = Math.min(nextViewport.min, nextViewport.max);
+  const nextMax = Math.max(nextViewport.min, nextViewport.max);
+  if (![displayedMin, displayedMax, nextMin, nextMax].every(Number.isFinite)) {
+    return false;
+  }
+  const tolerance = Math.max(1e-9, Math.abs(displayedMax - displayedMin) * 1e-9);
+  return nextMin >= displayedMin - tolerance && nextMax <= displayedMax + tolerance;
+}
+
+/**
+ * Decide whether the old refinement may remain visible while a replacement
+ * request is pending. This intentionally excludes request generation: a
+ * newer request invalidates old responses, but not a still-compatible view.
+ */
+export function timeCapacityRefinementDisplayIsCompatible(
+  response: TimeCapacityRefinementResult | null,
+  currentResult: TimeCapacityResult | undefined,
+  displayedViewport: TimeCapacityViewport | null,
+  nextViewport: TimeCapacityViewport | null,
+): boolean {
+  return Boolean(
+    response &&
+      timeCapacityRefinementResultMatchesOverview(response, currentResult) &&
+      timeCapacityViewportContains(displayedViewport, nextViewport),
+  );
+}
+
+export function timeCapacityRefinementTransitionDuration(
+  prefersReducedMotion: boolean,
+): number {
+  return prefersReducedMotion ? 0 : TIME_CAPACITY_REFINEMENT_TRANSITION_MS;
+}
+
+export function timeCapacityRefinementTransitionProgress(
+  elapsedMs: number,
+  durationMs: number,
+): number {
+  if (durationMs <= 0) return 1;
+  if (!Number.isFinite(elapsedMs)) return 0;
+  return Math.min(1, Math.max(0, elapsedMs / durationMs));
 }
 
 export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {

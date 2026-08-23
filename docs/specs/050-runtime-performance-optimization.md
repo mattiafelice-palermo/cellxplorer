@@ -1,6 +1,6 @@
 # Spec 050: runtime performance optimization
 
-Status: **Active — 050.21 Steps end-to-end performance optimization**  
+Status: **Active — 050.24 runtime performance stabilization and cumulative review**
 Type: **runtime performance / analysis responsiveness**  
 Branch: `feature/runtime-performance-optimization`  
 Repository baseline / merge base: `main` at `1dc3525ec42571504ed6d9bdb9a0668d35df309b`  
@@ -141,21 +141,28 @@ Depends on: **050.19 review-clean**
 File: [`050.21-steps-end-to-end-performance-optimization.md`](050.21-steps-end-to-end-performance-optimization.md)  
 Depends on: **050.20 review-clean**
 
-**Active.** Reduce repeated block/group aggregation work, then re-profile secondary selective-read/CV/assembly costs.
+**Review-clean; completed.** Reduced repeated block/group aggregation work while preserving selective-read/CV/assembly semantics.
 
 ### 050.22 — Cycles profiling closure and end-to-end performance optimization
 
 File: [`050.22-cycles-profiling-and-end-to-end-performance-optimization.md`](050.22-cycles-profiling-and-end-to-end-performance-optimization.md)  
 Depends on: **050.21 review-clean**
 
-First decompose the current direct scientific residual into non-overlapping named stages. Only then optimize the measured meaningful Cycles costs.
+**Review-clean; completed.** Closed the direct scientific residual attribution and retained only measured Cycles optimizations.
 
 ### 050.23 — cross-family persistent-worker scaling and integration
 
 File: [`050.23-cross-family-persistent-worker-scaling-and-integration.md`](050.23-cross-family-persistent-worker-scaling-and-integration.md)  
 Depends on: **050.22 review-clean**
 
-Benchmark the final review-clean Rate Capability, DCIR, Chargeability, Steps and Cycles routes at **4, 8, 12 and 16 Cells** using the current serial implementation, four already-warm Python workers and eight already-warm Python workers. Count complete-route IPC/queue/merge costs, preserve owner-side request/protocol reuse, and integrate only family/count thresholds that show a controlled meaningful win. Time/Capacity remains out of the benchmark matrix; its existing resident pool lifecycle may be generalized only if at least one non-Time family earns production multiprocessing.
+**Review-clean; completed.** Promoted the measured four-worker route for Cycles, DCIR, Rate Capability and Steps at four or more Cells; Chargeability remains serial and P8 remains rejected. Time/Capacity was not re-optimized.
+
+### 050.24 — runtime performance stabilization and cumulative review
+
+File: [`050.24-runtime-performance-stabilization-and-cumulative-review.md`](050.24-runtime-performance-stabilization-and-cumulative-review.md)
+Depends on: **050.23 review-clean**
+
+**Active.** Close the known Time/Capacity repeated-zoom refinement flash, then reconcile the integrated branch against the Parent 050 merge base before final review.
 
 ## Common post-050.17 optimization rules
 

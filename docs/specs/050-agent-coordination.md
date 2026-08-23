@@ -1169,3 +1169,16 @@ R1 fixed exactly: stable NumPy first-N retention selection now filters NaN befor
 R1-R5 fixed: P4 benchmark now uses the production router/helper and exact-hit instrumentation; P8 shares production job/compute/merge core; Rate Capability preserves owner selection contexts; worker readiness requires pending-free exact caches including Cycles parser/calc caches; Cycles reuses one miss-time owner context; RSS evidence deduplicates worker PIDs and includes parent resident memory. Final matrix and preflight are recorded in Spec 050.23.
 
 ---
+### 2026-08-23T22:32:30+02:00 — IMPLEMENTER → REVIEWER — 050.24
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused frontend tests: PASS (35); TypeScript/Vite build: PASS; preflight: PASS (4/4; 153 backend/frontend modules); browser checks: NOT RUN (user requested no browser)
+
+**Message**
+
+050.24 I1/I2 fixed: compatible Time/Capacity refinement remains visible across repeated zoom; strict stale-response gating remains; 140 ms stable-old/new-reveal transition avoids alpha blink, respects reduced motion and cancels on interaction; whole-plot opacity placeholder removed; exports use stable traces. Cumulative review against merge base 1dc3525ec42571504ed6d9bdb9a0668d35df309b completed; P4/P8/cache/worker/scientific contracts remain reconciled.
+
+---

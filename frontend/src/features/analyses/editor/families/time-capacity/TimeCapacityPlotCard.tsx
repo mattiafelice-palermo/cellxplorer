@@ -109,7 +109,11 @@ import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
+  timeCapacityRefinementDisplayIsCompatible,
   timeCapacityRefinementRequestIsCurrent,
+  timeCapacityRefinementResultMatchesOverview,
+  timeCapacityRefinementTransitionDuration,
+  timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
   type TimeCapacityViewport,
 } from "./timeCapacityRefinementPolicy";
@@ -608,6 +612,47 @@ export function timeCapacityTracesForResult(
     }
   }
   return out;
+}
+
+type RefinementTransition = {
+  from: Plotly.Data[];
+  to: Plotly.Data[];
+};
+
+function refinementTransitionTraces(
+  result: TimeCapacityResult,
+  spec: AnalysisSpec,
+): Plotly.Data[] {
+  return interactivePlotTraces(timeCapacityTracesForResult(result, spec));
+}
+
+function transitionTraceOpacity(
+  trace: Plotly.Data,
+  factor: number,
+  hideInteraction: boolean,
+): Plotly.Data {
+  const baseOpacity = Number((trace as { opacity?: unknown }).opacity);
+  const opacity = Number.isFinite(baseOpacity) ? baseOpacity * factor : factor;
+  return {
+    ...trace,
+    opacity,
+    ...(hideInteraction ? { showlegend: false, hoverinfo: "skip" } : {}),
+  } as Plotly.Data;
+}
+
+function refinementTransitionCanReveal(from: Plotly.Data[], to: Plotly.Data[]): boolean {
+  return [...from, ...to].every((trace) => {
+    const opacity = Number((trace as { opacity?: unknown }).opacity);
+    return !Number.isFinite(opacity) || opacity >= 0.999;
+  });
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 }
 
 export function timeCapacityLayout(
@@ -1161,10 +1206,15 @@ function TimeCapacityPlotCardView({
   const [computeToken, setComputeToken] = useState<string | null>(null);
   const [dataExporting, setDataExporting] = useState(false);
   const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
+  const [refinementTransition, setRefinementTransition] = useState<RefinementTransition | null>(null);
+  const [refinementTransitionProgress, setRefinementTransitionProgress] = useState(1);
   const refinementTimerRef = useRef<number | null>(null);
   const refinementAbortRef = useRef<AbortController | null>(null);
   const refinementGenerationRef = useRef(0);
   const refinementViewportRef = useRef<TimeCapacityViewport | null>(null);
+  const displayedRefinementViewportRef = useRef<TimeCapacityViewport | null>(null);
+  const displayedRefinementCompatibilitySignatureRef = useRef<string | null>(null);
+  const refinementTransitionFrameRef = useRef<number | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -1377,7 +1427,7 @@ function TimeCapacityPlotCardView({
     : undefined;
   const currentResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   currentResultRef.current = currentResult;
-  const cancelRefinement = useCallback(() => {
+  const cancelPendingRefinement = useCallback(() => {
     refinementGenerationRef.current += 1;
     if (refinementTimerRef.current !== null) {
       window.clearTimeout(refinementTimerRef.current);
@@ -1386,15 +1436,63 @@ function TimeCapacityPlotCardView({
     refinementAbortRef.current?.abort();
     refinementAbortRef.current = null;
     refinementViewportRef.current = null;
+  }, []);
+  const cancelRefinementTransition = useCallback(() => {
+    if (refinementTransitionFrameRef.current !== null) {
+      window.cancelAnimationFrame(refinementTransitionFrameRef.current);
+      refinementTransitionFrameRef.current = null;
+    }
+    setRefinementTransition(null);
+    setRefinementTransitionProgress(1);
+  }, []);
+  const clearDisplayedRefinement = useCallback(() => {
+    displayedRefinementViewportRef.current = null;
+    displayedRefinementCompatibilitySignatureRef.current = null;
     setRefinedResult(null);
   }, []);
+  const invalidateRefinement = useCallback(() => {
+    cancelPendingRefinement();
+    cancelRefinementTransition();
+    clearDisplayedRefinement();
+  }, [cancelPendingRefinement, cancelRefinementTransition, clearDisplayedRefinement]);
   useEffect(() => {
-    cancelRefinement();
-  }, [cancelRefinement, currentResult?.data_signature, dataSignature]);
+    if (!refinementTransition) return;
+    const duration = timeCapacityRefinementTransitionDuration(prefersReducedMotion());
+    if (duration <= 0) {
+      setRefinementTransitionProgress(1);
+      setRefinementTransition(null);
+      return;
+    }
+    const startedAt = window.performance.now();
+    const tick = (now: number) => {
+      const progress = timeCapacityRefinementTransitionProgress(now - startedAt, duration);
+      setRefinementTransitionProgress(progress);
+      if (progress >= 1) {
+        refinementTransitionFrameRef.current = null;
+        setRefinementTransition(null);
+        return;
+      }
+      refinementTransitionFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    refinementTransitionFrameRef.current = window.requestAnimationFrame(tick);
+    return () => {
+      if (refinementTransitionFrameRef.current !== null) {
+        window.cancelAnimationFrame(refinementTransitionFrameRef.current);
+        refinementTransitionFrameRef.current = null;
+      }
+    };
+  }, [refinementTransition]);
   useEffect(() => {
-    if (!active) cancelRefinement();
-  }, [active, cancelRefinement]);
-  useEffect(() => cancelRefinement, [cancelRefinement]);
+    invalidateRefinement();
+  }, [invalidateRefinement, currentResult?.data_signature, dataSignature]);
+  useEffect(() => {
+    if (!active) {
+      cancelPendingRefinement();
+      cancelRefinementTransition();
+      clearDisplayedRefinement();
+    }
+  }, [active, cancelPendingRefinement, cancelRefinementTransition, clearDisplayedRefinement]);
+  useEffect(() => cancelPendingRefinement, [cancelPendingRefinement]);
   const selectedVoltageUnavailable = voltageChannelUnavailable(
     cfg.voltage_channel,
     currentResult?.voltage_channels
@@ -1465,10 +1563,10 @@ function TimeCapacityPlotCardView({
   );
   const activeRefinedResult =
     refinedResult &&
-    timeCapacityRefinementRequestIsCurrent(
+    displayedRefinementCompatibilitySignatureRef.current === compatibilitySignature &&
+    timeCapacityRefinementResultMatchesOverview(
       refinedResult,
       currentResult,
-      String(refinementGenerationRef.current),
     )
       ? refinedResult
       : null;
@@ -1480,13 +1578,36 @@ function TimeCapacityPlotCardView({
         : [],
     [plotResult, selectedVoltageUnavailable, viewSignature]
   );
+  const transitionTraces = useMemo(() => {
+    if (!refinementTransition) return null;
+    // Keep the old line at its exact visual weight. The new LoD is revealed
+    // over it; this avoids alpha-compositing two copies of the same line,
+    // which otherwise produces a brief lightness/thickness blink.
+    const oldOpacity = 1;
+    const newOpacity = refinementTransitionProgress;
+    return [
+      ...refinementTransition.from.map((trace) =>
+        transitionTraceOpacity(trace, oldOpacity, true),
+      ),
+      ...refinementTransition.to.map((trace) =>
+        transitionTraceOpacity(trace, newOpacity, false),
+      ),
+    ];
+  }, [refinementTransition, refinementTransitionProgress]);
   const plotExportReady = timeCapacityPlotExportReady(
     timeResult.isPlaceholderData,
     Boolean(currentResult),
     selectedVoltageUnavailable,
     exportTraces.length > 0,
   );
-  const traces = useMemo(() => interactivePlotTraces(plotTraces), [plotTraces]);
+  const traces = useMemo(
+    () => transitionTraces ?? interactivePlotTraces(plotTraces),
+    [plotTraces, transitionTraces],
+  );
+  const exportInteractiveTraces = useMemo(
+    () => interactivePlotTraces(exportTraces),
+    [exportTraces],
+  );
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
@@ -1550,7 +1671,9 @@ function TimeCapacityPlotCardView({
       return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
     };
     if (axisPrefixes.some((prefix) => relayout[`${prefix}.autorange`] === true)) {
-      cancelRefinement();
+      cancelPendingRefinement();
+      cancelRefinementTransition();
+      clearDisplayedRefinement();
     } else if (timeCapacityRefinementCanSchedule(active, spec)) {
       const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
       const previousViewport = refinementViewportRef.current;
@@ -1562,7 +1685,15 @@ function TimeCapacityPlotCardView({
       if (viewport && !sameViewport) {
         const overview = timeCapacityOverviewExtent(currentResultRef.current);
         const cycleRange = timeCapacityCycleRangeForViewport(currentResultRef.current, viewport);
-        cancelRefinement();
+        const keepDisplayedRefinement = timeCapacityRefinementDisplayIsCompatible(
+          refinedResult,
+          currentResultRef.current,
+          displayedRefinementViewportRef.current,
+          viewport,
+        );
+        cancelPendingRefinement();
+        cancelRefinementTransition();
+        if (!keepDisplayedRefinement) clearDisplayedRefinement();
         if (
           timeCapacityRefinementWorthwhile(overview, viewport) &&
           cycleRange &&
@@ -1596,6 +1727,29 @@ function TimeCapacityPlotCardView({
                     generation,
                   )
                 ) {
+                  displayedRefinementViewportRef.current = { ...viewport };
+                  displayedRefinementCompatibilitySignatureRef.current = compatibilitySignature;
+                  const previousDisplayedResult = activeRefinedResult ?? currentResultRef.current;
+                  const transitionDuration = timeCapacityRefinementTransitionDuration(
+                    prefersReducedMotion(),
+                  );
+                  const fromTraces = previousDisplayedResult
+                    ? refinementTransitionTraces(previousDisplayedResult, spec)
+                    : [];
+                  const toTraces = refinementTransitionTraces(response, spec);
+                  if (
+                    previousDisplayedResult &&
+                    transitionDuration > 0 &&
+                    refinementTransitionCanReveal(fromTraces, toTraces)
+                  ) {
+                    setRefinementTransitionProgress(0);
+                    setRefinementTransition({
+                      from: fromTraces,
+                      to: toTraces,
+                    });
+                  } else {
+                    cancelRefinementTransition();
+                  }
                   setRefinedResult(response);
                 }
               })
@@ -1640,7 +1794,7 @@ function TimeCapacityPlotCardView({
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
     ).toImage;
-    const previewTraces = style.export_format === "png" ? traces : exportTraces;
+    const previewTraces = style.export_format === "png" ? exportInteractiveTraces : exportTraces;
     return toImage(exportFigure(previewTraces, layout, style, plotName, plan), {
       format: "png",
       width: plan.layoutWidth,
@@ -1696,7 +1850,7 @@ function TimeCapacityPlotCardView({
       const plan = resolveExportPlan(style, currentViewSize(), layout);
       const ppi = Math.max(36, style.export_ppi ?? 96);
       const filename = slugFilename(baseName);
-      const outputTraces = format === "png" ? traces : exportTraces;
+      const outputTraces = format === "png" ? exportInteractiveTraces : exportTraces;
       const figure = exportFigure(outputTraces, layout, style, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
@@ -1848,8 +2002,6 @@ function TimeCapacityPlotCardView({
             style={{
               width: "100%",
               minWidth: 0,
-              opacity: timeResult.isFetching ? 0.42 : 1,
-              transition: "opacity 160ms ease",
             }}
           >
             <Plot

@@ -6,9 +6,14 @@ import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
+  timeCapacityRefinementDisplayIsCompatible,
   timeCapacityRefinementEligible,
   timeCapacityRefinementRequestIsCurrent,
+  timeCapacityRefinementResultMatchesOverview,
+  timeCapacityRefinementTransitionDuration,
+  timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
+  timeCapacityViewportContains,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementPolicy.ts";
 
 function result(): TimeCapacityResult {
@@ -96,8 +101,83 @@ test("stale refinement identity and generation are rejected", () => {
   } as TimeCapacityRefinementResult;
   assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g1"), true);
   assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g2"), false);
+  assert.equal(timeCapacityRefinementResultMatchesOverview(response, current), true);
   response.overview_data_signature = "other";
   assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g1"), false);
+  assert.equal(timeCapacityRefinementResultMatchesOverview(response, current), false);
+});
+
+test("a compatible refined view remains while the next zoom request is pending", () => {
+  const current = result();
+  const response = {
+    ...current,
+    data_signature: "overview",
+    overview_data_signature: "overview",
+    request_generation: "g1",
+  } as TimeCapacityRefinementResult;
+  const displayedViewport = { min: 0, max: 100 };
+  const nextViewport = { min: 25, max: 75 };
+
+  assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g2"), false);
+  assert.equal(
+    timeCapacityRefinementDisplayIsCompatible(
+      response,
+      current,
+      displayedViewport,
+      nextViewport,
+    ),
+    true,
+  );
+});
+
+test("rapid zoom generations cannot let a late response replace the newest one", () => {
+  const current = result();
+  const responseB = {
+    ...current,
+    data_signature: "overview",
+    overview_data_signature: "overview",
+    request_generation: "g2",
+  } as TimeCapacityRefinementResult;
+  const responseC = { ...responseB, request_generation: "g3" };
+
+  assert.equal(timeCapacityRefinementRequestIsCurrent(responseB, current, "g3"), false);
+  assert.equal(timeCapacityRefinementRequestIsCurrent(responseC, current, "g3"), true);
+});
+
+test("autorange, semantic changes, and uncovered pans cannot retain a refinement", () => {
+  const current = result();
+  const response = {
+    ...current,
+    data_signature: "overview",
+    overview_data_signature: "overview",
+    request_generation: "g1",
+  } as TimeCapacityRefinementResult;
+
+  assert.equal(timeCapacityRefinementDisplayIsCompatible(response, current, { min: 0, max: 100 }, null), false);
+  assert.equal(
+    timeCapacityRefinementDisplayIsCompatible(response, current, { min: 0, max: 100 }, { min: -10, max: 50 }),
+    false,
+  );
+  assert.equal(
+    timeCapacityRefinementDisplayIsCompatible(
+      response,
+      { ...current, data_signature: "changed" },
+      { min: 0, max: 100 },
+      { min: 25, max: 75 },
+    ),
+    false,
+  );
+  assert.equal(timeCapacityViewportContains({ min: 0, max: 100 }, { min: 25, max: 75 }), true);
+});
+
+test("refinement transition is bounded and reduced-motion safe", () => {
+  const duration = timeCapacityRefinementTransitionDuration(false);
+  assert.ok(duration >= 100 && duration <= 180);
+  assert.equal(timeCapacityRefinementTransitionDuration(true), 0);
+  assert.equal(timeCapacityRefinementTransitionProgress(0, duration), 0);
+  assert.equal(timeCapacityRefinementTransitionProgress(duration / 2, duration), 0.5);
+  assert.equal(timeCapacityRefinementTransitionProgress(duration, duration), 1);
+  assert.equal(timeCapacityRefinementTransitionProgress(10, 0), 1);
 });
 
 test("ordinary default spec is eligible and unsafe refinement modes are not", () => {

@@ -273,6 +273,22 @@ cancellation guarantee. A retained placeholder is display-only: plot/image/vecto
 disabled until the current query resolves, while the separate data-export path requests and validates
 full-resolution data for the current identity.
 
+Adaptive Time refinement is also display-only and ephemeral. Its response-generation check remains
+strict for accepting a newly arriving response, but it is independent from the compatibility check
+for the refinement already on screen: a compatible old viewport may remain visible while a newer
+zoom request is debounced or in flight. The frontend keeps the displayed refinement's requested
+viewport in a client-only ref, clears it on autorange, semantic/data-signature changes, inactive
+keep-mounted tabs, or an uncovered pan/jump, and never treats it as the scientific or export source.
+Late responses remain generation-gated, and an aborted or failed replacement leaves the best valid
+overview/refinement already displayed.
+
+When a valid refinement replaces another valid display, the Time/Capacity card may reveal the new
+traces over the old traces for 140 ms while keeping the old line at its exact visual weight. This
+avoids alpha-compositing two fading copies of the same line, does not interpolate scientific
+coordinates or rebuild point arrays per frame, and never exports the transient trace list. A new
+viewport interaction, semantic reset, tab deactivation, custom sub-unit trace opacity, or
+reduced-motion preference cancels or atomically skips that presentation-only effect.
+
 Spec 050.1 also makes `analysis_cache._scientific_spec(spec, kind)` an explicit dependency
 projection. Cycles owns its generic calculation/filter/aggregation settings, Time/Capacity owns
 its dedicated settings plus the generic cycle-range fallback and protocol filtering, Steps owns
