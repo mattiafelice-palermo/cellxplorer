@@ -19,12 +19,10 @@
     "050.14"
   ],
   "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R1"
-  ],
-  "resume_review": "REVIEW",
+  "action": "COMPLETE",
+  "findings": [],
+  "resume_review": null,
   "user_message_seq": 0,
   "pending_user_messages": [],
-  "updated_at": "2026-08-23T05:52:30+02:00"
+  "updated_at": "2026-08-23T06:38:52+02:00"
 }
