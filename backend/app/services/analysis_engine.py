@@ -108,6 +108,27 @@ def _dcir_profile_finished(
     calls[name] = calls.get(name, 0) + 1
 
 
+def _cycles_profile_started(
+    profiling: dict[str, Any] | None,
+):
+    """Start an opt-in direct compute_cycles boundary without normal timing."""
+    return perf_counter() if profiling is not None else None
+
+
+def _cycles_profile_finished(
+    profiling: dict[str, Any] | None,
+    name: str,
+    started: float | None,
+) -> None:
+    if profiling is None or started is None:
+        return
+    elapsed_ms = (perf_counter() - started) * 1000.0
+    stages = profiling.setdefault("direct_stages_ms", {})
+    stages[name] = stages.get(name, 0.0) + elapsed_ms
+    calls = profiling.setdefault("direct_stage_calls", {})
+    calls[name] = calls.get(name, 0) + 1
+
+
 def default_spec(title: str) -> dict:
     now = now_iso()
     return {
@@ -1242,12 +1263,15 @@ def _retention_reference(frame: pd.DataFrame, computation: dict) -> float:
     dchg = frame.get("discharge_capacity_mah")
     if dchg is None or frame.empty:
         return float("nan")
+    cycle_values = frame["cycle"].to_numpy(dtype="float64", copy=False)
+    discharge_values = dchg.to_numpy(dtype="float64", copy=False)
     if ref_cfg.get("mode") == "cycle" and ref_cfg.get("cycle"):
-        at = frame.loc[frame["cycle"] == int(ref_cfg["cycle"]), "discharge_capacity_mah"]
-        return float(at.iloc[0]) if len(at) else float("nan")
+        matching = np.flatnonzero(cycle_values == int(ref_cfg["cycle"]))
+        return float(discharge_values[matching[0]]) if len(matching) else float("nan")
     n = int(ref_cfg.get("n") or 5)
-    first_n = frame.nsmallest(n, "cycle")["discharge_capacity_mah"]
-    return float(first_n.max()) if len(first_n) else float("nan")
+    order = np.argsort(cycle_values, kind="stable")[:n]
+    first_n = discharge_values[order]
+    return float(np.max(first_n)) if len(first_n) else float("nan")
 
 
 POLARIZATION_METHOD_COLUMNS = {
@@ -1425,7 +1449,11 @@ def cell_electrode_area_cm2(cell: Cell, metadata: dict[str, str] | None = None) 
     return None
 
 
-def _polarization_values(frame: pd.DataFrame, computation: dict) -> tuple[np.ndarray, np.ndarray]:
+def _polarization_values(
+    frame: pd.DataFrame,
+    computation: dict,
+    numeric_values: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     cfg = computation.get("polarization") or {}
     method = cfg.get("method") or "mean"
     charge_col, discharge_col = POLARIZATION_METHOD_COLUMNS.get(
@@ -1436,8 +1464,18 @@ def _polarization_values(frame: pd.DataFrame, computation: dict) -> tuple[np.nda
     if charge is None or discharge is None:
         empty = np.full(len(frame), np.nan)
         return empty, empty.copy()
-    charge_v = charge.to_numpy(dtype="float64")
-    discharge_v = discharge.to_numpy(dtype="float64")
+    if numeric_values is None:
+        charge_v = charge.to_numpy(dtype="float64")
+        discharge_v = discharge.to_numpy(dtype="float64")
+    else:
+        charge_v = numeric_values.get(charge_col)
+        discharge_v = numeric_values.get(discharge_col)
+        if charge_v is None:
+            charge_v = charge.to_numpy(dtype="float64", copy=False)
+            numeric_values[charge_col] = charge_v
+        if discharge_v is None:
+            discharge_v = discharge.to_numpy(dtype="float64", copy=False)
+            numeric_values[discharge_col] = discharge_v
     delta = charge_v - discharge_v
     denominator = discharge_v
     if cfg.get("direction") == "discharge_minus_charge":
@@ -1452,28 +1490,46 @@ def add_derived_columns(
     frame: pd.DataFrame, computation: dict, active_mass_mg: float | None = None
 ) -> tuple[pd.DataFrame, float]:
     """Add render-time derived columns; returns (frame, retention_ref)."""
-    frame = frame.copy()
     ref = _retention_reference(frame, computation)
+    numeric_values: dict[str, np.ndarray] = {}
+
+    def values(column: str) -> np.ndarray:
+        cached = numeric_values.get(column)
+        if cached is not None:
+            return cached
+        series = frame.get(column)
+        if series is None:
+            cached = np.full(len(frame), np.nan)
+        else:
+            cached = series.to_numpy(dtype="float64", copy=False)
+        numeric_values[column] = cached
+        return cached
+
+    derived: dict[str, np.ndarray] = {}
 
     mcv = frame.get("mean_charge_voltage_v")
     mdv = frame.get("mean_discharge_voltage_v")
     if mcv is not None and mdv is not None:
+        mcv_v = values("mean_charge_voltage_v")
+        mdv_v = values("mean_discharge_voltage_v")
         with np.errstate(divide="ignore", invalid="ignore"):
-            ve = np.where(mcv.to_numpy(dtype="float64") != 0,
-                          mdv.to_numpy(dtype="float64") / mcv.to_numpy(dtype="float64") * 100.0,
-                          np.nan)
+            ve = np.where(mcv_v != 0, mdv_v / mcv_v * 100.0, np.nan)
     else:
         ve = np.full(len(frame), np.nan)
-    frame["voltaic_efficiency_pct"] = ve
-    polarization_v, polarization_pct = _polarization_values(frame, computation)
-    frame["polarization_v"] = polarization_v
-    frame["polarization_pct"] = polarization_pct
+    derived["voltaic_efficiency_pct"] = ve
+    polarization_v, polarization_pct = _polarization_values(
+        frame,
+        computation,
+        numeric_values,
+    )
+    derived["polarization_v"] = polarization_v
+    derived["polarization_pct"] = polarization_pct
 
     dchg = frame.get("discharge_capacity_mah")
     if dchg is not None and ref and not np.isnan(ref):
-        frame["capacity_retention_pct"] = dchg.to_numpy(dtype="float64") / ref * 100.0
+        derived["capacity_retention_pct"] = values("discharge_capacity_mah") / ref * 100.0
     else:
-        frame["capacity_retention_pct"] = np.nan
+        derived["capacity_retention_pct"] = np.full(len(frame), np.nan)
 
     for src, dst in (
         ("discharge_capacity_mah", "discharge_capacity_loss_mah"),
@@ -1481,7 +1537,16 @@ def add_derived_columns(
     ):
         col = frame.get(src)
         # positive value = capacity lost versus the previous cycle
-        frame[dst] = -col.diff().to_numpy(dtype="float64") if col is not None else np.nan
+        if col is None:
+            derived[dst] = np.full(len(frame), np.nan)
+        else:
+            current = values(src)
+            loss = np.empty(len(current), dtype="float64")
+            if len(loss):
+                loss[0] = np.nan
+            if len(loss) > 1:
+                loss[1:] = -(current[1:] - current[:-1])
+            derived[dst] = loss
     active_mass_g = active_mass_mg / 1000.0 if active_mass_mg and active_mass_mg > 0 else None
     for src, dst in (
         ("discharge_capacity_mah", "discharge_capacity_mah_g"),
@@ -1493,11 +1558,15 @@ def add_derived_columns(
         ("cv_charge_capacity_mah", "cv_charge_capacity_mah_g"),
     ):
         col = frame.get(src)
-        if active_mass_g and col is not None:
-            frame[dst] = col.to_numpy(dtype="float64") / active_mass_g
+        source_values = values(src) if col is not None else derived.get(src)
+        if active_mass_g and source_values is not None:
+            derived[dst] = source_values / active_mass_g
         else:
-            frame[dst] = np.nan
-    return frame, ref
+            derived[dst] = np.full(len(frame), np.nan)
+
+    derived_frame = pd.DataFrame(derived, index=frame.index)
+    base_frame = frame.drop(columns=derived_frame.columns, errors="ignore")
+    return pd.concat([base_frame, derived_frame], axis=1), ref
 
 
 def apply_filters(frame: pd.DataFrame, computation: dict) -> pd.DataFrame:
@@ -1554,6 +1623,16 @@ def _jsonsafe(arr) -> list:
     for v in np.asarray(arr, dtype="float64"):
         out.append(None if np.isnan(v) else float(v))
     return out
+
+
+def _jsonsafe_columns(frame: pd.DataFrame, columns: list[str]) -> dict[str, list]:
+    """Project several numeric columns in one conversion while preserving NaN nulls."""
+
+    if not columns:
+        return {}
+    values = frame.reindex(columns=columns).to_numpy(dtype="float64", copy=False)
+    safe = np.where(np.isnan(values), None, values).T.tolist()
+    return dict(zip(columns, safe))
 
 
 def _jsonsafe_plot(arr, digits: int | None) -> list:
@@ -1898,32 +1977,88 @@ def cell_metrics(
 
     x = filtered["cycle"].to_numpy(dtype="float64")
     formation = int(computation.get("formation_cycles") or 0)
-    steady = filtered[filtered["cycle"] > formation]
+    steady_mask = x > formation
 
-    def fmean(frame: pd.DataFrame, col: str) -> float | None:
+    def numeric_column(frame: pd.DataFrame, col: str, mask: np.ndarray | None = None) -> np.ndarray | None:
         vals = frame.get(col)
         if vals is None:
             return None
-        v = float(vals.mean())
+        values = vals.to_numpy(dtype="float64", copy=False)
+        return values if mask is None else values[mask]
+
+    def fmean(frame: pd.DataFrame, col: str, mask: np.ndarray | None = None) -> float | None:
+        values = numeric_column(frame, col, mask)
+        if values is None or not len(values):
+            return None
+        valid = ~np.isnan(values)
+        if not valid.any():
+            return None
+        v = float(values[valid].mean())
         return None if np.isnan(v) else v
+
+    def fmedian(frame: pd.DataFrame, col: str, mask: np.ndarray | None = None) -> float | None:
+        values = numeric_column(frame, col, mask)
+        if values is None or not len(values):
+            return None
+        valid = values[~np.isnan(values)]
+        if not len(valid):
+            return None
+        return fval(np.median(valid))
+
+    def fmax(frame: pd.DataFrame, col: str) -> float | None:
+        values = numeric_column(frame, col)
+        if values is None or not len(values):
+            return None
+        valid = values[~np.isnan(values)]
+        if not len(valid):
+            return None
+        return fval(valid.max())
+
+    def first_cycle_index(frame: pd.DataFrame) -> int | None:
+        values = numeric_column(frame, "cycle")
+        if values is None:
+            return None
+        valid = ~np.isnan(values)
+        if not valid.any():
+            return None
+        indexes = np.flatnonzero(valid)
+        return int(indexes[np.argmin(values[valid])])
+
+    def last_cycle_index(frame: pd.DataFrame) -> int | None:
+        values = numeric_column(frame, "cycle")
+        if values is None:
+            return None
+        valid = ~np.isnan(values)
+        if not valid.any():
+            return None
+        indexes = np.flatnonzero(valid)
+        return int(indexes[np.argmax(values[valid])])
 
     def fval(v) -> float | None:
         v = float(v)
         return None if np.isnan(v) else v
 
     m["n_cycles"] = int(len(filtered))
-    m["max_discharge_capacity_mah"] = fval(filtered["discharge_capacity_mah"].max())
+    m["max_discharge_capacity_mah"] = fmax(filtered, "discharge_capacity_mah")
     m["mean_discharge_capacity_mah"] = fmean(filtered, "discharge_capacity_mah")
 
-    first = unfiltered.nsmallest(1, "cycle")
-    m["first_cycle_ce_pct"] = fval(first["coulombic_efficiency_pct"].iloc[0]) if len(first) else None
-    m["mean_ce_pct"] = fmean(steady, "coulombic_efficiency_pct")
-    m["mean_ee_pct"] = fmean(steady, "energy_efficiency_pct")
-    m["mean_ve_pct"] = fmean(steady, "voltaic_efficiency_pct")
+    first_index = first_cycle_index(unfiltered)
+    m["first_cycle_ce_pct"] = (
+        fval(unfiltered["coulombic_efficiency_pct"].iloc[first_index])
+        if first_index is not None
+        else None
+    )
+    m["mean_ce_pct"] = fmean(filtered, "coulombic_efficiency_pct", steady_mask)
+    m["mean_ee_pct"] = fmean(filtered, "energy_efficiency_pct", steady_mask)
+    m["mean_ve_pct"] = fmean(filtered, "voltaic_efficiency_pct", steady_mask)
 
-    last = filtered.nlargest(1, "cycle")
-    m["last_cycle"] = int(last["cycle"].iloc[0])
-    m["retention_last_pct"] = fval(last["capacity_retention_pct"].iloc[0])
+    last_index = last_cycle_index(filtered)
+    if last_index is None:
+        m["last_cycle"] = None
+        m["retention_last_pct"] = None
+    else:
+        m["last_cycle"] = int(filtered["cycle"].iloc[last_index])
+        m["retention_last_pct"] = fval(filtered["capacity_retention_pct"].iloc[last_index])
 
     # fade rates: linear fit over the filtered range (loss reported positive)
     for col, key in (
@@ -1954,27 +2089,31 @@ def cell_metrics(
 
     # time metrics (NaN-safe: columns are all-NaN on pre-1.2.0 caches)
     dur = unfiltered.get("cycle_duration_h")
-    m["total_duration_h"] = fval(dur.sum()) if dur is not None and dur.notna().any() else None
-    m["mean_cycle_duration_h"] = fmean(steady, "cycle_duration_h")
-    m["mean_charge_time_h"] = fmean(steady, "charge_time_h")
-    m["mean_discharge_time_h"] = fmean(steady, "discharge_time_h")
+    duration_values = dur.to_numpy(dtype="float64", copy=False) if dur is not None else None
+    if duration_values is not None and (~np.isnan(duration_values)).any():
+        m["total_duration_h"] = fval(duration_values[~np.isnan(duration_values)].sum())
+    else:
+        m["total_duration_h"] = None
+    m["mean_cycle_duration_h"] = fmean(filtered, "cycle_duration_h", steady_mask)
+    m["mean_charge_time_h"] = fmean(filtered, "charge_time_h", steady_mask)
+    m["mean_discharge_time_h"] = fmean(filtered, "discharge_time_h", steady_mask)
     cv_reached = filtered.get("cv_reached")
     if cv_reached is not None:
-        reached = cv_reached.fillna(0) > 0
-        reached_frame = filtered.loc[reached]
+        reached_values = cv_reached.to_numpy(dtype="float64", copy=False)
+        reached = np.where(np.isnan(reached_values), 0.0, reached_values) > 0
         m["cv_reached_cycles"] = int(reached.sum())
         m["cv_reached_pct"] = float(reached.mean() * 100.0) if len(reached) else None
         events = filtered.get("cv_charge_event_count")
-        m["cv_charge_event_count"] = int(events.fillna(0).sum()) if events is not None else int(reached.sum())
-        m["mean_cv_charge_time_h"] = fmean(reached_frame, "cv_charge_time_h")
-        m["median_cv_charge_time_h"] = (
-            fval(reached_frame["cv_charge_time_h"].median()) if len(reached_frame) else None
-        )
-        m["mean_cv_charge_capacity_mah"] = fmean(reached_frame, "cv_charge_capacity_mah")
-        m["median_cv_charge_capacity_mah"] = (
-            fval(reached_frame["cv_charge_capacity_mah"].median()) if len(reached_frame) else None
-        )
-        m["mean_cv_charge_fraction_pct"] = fmean(reached_frame, "cv_charge_fraction_pct")
+        if events is not None:
+            event_values = events.to_numpy(dtype="float64", copy=False)
+            m["cv_charge_event_count"] = int(np.where(np.isnan(event_values), 0.0, event_values).sum())
+        else:
+            m["cv_charge_event_count"] = int(reached.sum())
+        m["mean_cv_charge_time_h"] = fmean(filtered, "cv_charge_time_h", reached)
+        m["median_cv_charge_time_h"] = fmedian(filtered, "cv_charge_time_h", reached)
+        m["mean_cv_charge_capacity_mah"] = fmean(filtered, "cv_charge_capacity_mah", reached)
+        m["median_cv_charge_capacity_mah"] = fmedian(filtered, "cv_charge_capacity_mah", reached)
+        m["mean_cv_charge_fraction_pct"] = fmean(filtered, "cv_charge_fraction_pct", reached)
     return m
 
 
@@ -2128,8 +2267,11 @@ def compute(
     provenance: dict | None,
     use_current_versions: bool = False,
     progress: ProgressCallback | None = None,
+    *,
+    profiling: dict[str, Any] | None = None,
 ) -> dict:
     ensure_canonical_cycling_available(db, spec)
+    compute_setup_started = _cycles_profile_started(profiling)
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version
@@ -2139,7 +2281,9 @@ def compute(
     selection = spec.get("selection", {})
     exclusions = selection.get("exclusions", [])
     hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
+    _cycles_profile_finished(profiling, "cycles_compute_setup", compute_setup_started)
     units, missing_refs = resolve_selection(db, spec)
+    protocol_setup_started = _cycles_profile_started(profiling)
     protocol_context, protocol_badges = _protocol_filter_context(spec)
 
     quantity_cols = [col for col, _ in ALL_QUANTITIES.values()]
@@ -2154,6 +2298,11 @@ def compute(
     calc_at_current = calc_version == CALC_VERSION
 
     total_units = len(units)
+    _cycles_profile_finished(
+        profiling,
+        "cycles_protocol_and_output_setup",
+        protocol_setup_started,
+    )
     for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
         if progress:
@@ -2162,6 +2311,7 @@ def compute(
         source_versions = resolve_source_parser_versions(
             files, provenance, cell.id, use_current_versions
         )
+        source_bookkeeping_started = _cycles_profile_started(profiling)
         refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
         all_current_versions.extend(current_parser_identity(f) for f in files)
@@ -2201,7 +2351,13 @@ def compute(
                     scanner.parse_file(db, f)
                     reparsed = True
 
+        _cycles_profile_finished(
+            profiling,
+            "cycles_source_bookkeeping",
+            source_bookkeeping_started,
+        )
         stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
+        post_stitch_started = _cycles_profile_started(profiling)
         descriptors = source_descriptors(files, segments, missing, stitched)
         complete = stitch.stitch_metadata(stitched)["complete"]
         if complete:
@@ -2232,7 +2388,13 @@ def compute(
                     ),
                 }
             )
+        _cycles_profile_finished(
+            profiling,
+            "cycles_post_stitch_projection",
+            post_stitch_started,
+        )
 
+        source_status_started = _cycles_profile_started(profiling)
         for f in files:
             if not Path(f.path).exists():
                 if f.location_status != "offline":
@@ -2259,11 +2421,22 @@ def compute(
             badges.append(
                 {"kind": "cell_archived", "cell_id": cell.id, "cell_name": cell.name,
                  "detail": "Cell is archived (soft-deleted); still rendering from cache."})
+        _cycles_profile_finished(
+            profiling,
+            "cycles_source_status_badges",
+            source_status_started,
+        )
 
         exclusion = exclusion_for_unit(exclusions, unit)
         group_hidden = unit["group_id"] in hidden_group_ids
         excluded = exclusion is not None or group_hidden
+        active_mass_started = _cycles_profile_started(profiling)
         active_mass_mg = cell_active_mass_mg(cell)
+        _cycles_profile_finished(
+            profiling,
+            "cycles_active_mass_resolution",
+            active_mass_started,
+        )
         if stitched.empty or not complete:
             x: list[int] = []
             quantities = {c: [] for c in quantity_cols}
@@ -2271,28 +2444,55 @@ def compute(
             ref = None
             source_values = {key: [] for key in ("source_cycle", "source_position", "source_filename", "source_hash")}
         else:
+            protocol_mask_started = _cycles_profile_started(profiling)
             metric_frame = stitched
             if protocol_context["only_active"]:
                 metric_frame = metric_frame[metric_frame["cycle"].isin(protocol_cycles["only"])]
             if protocol_cycles["excluded"]:
                 metric_frame = metric_frame[~metric_frame["cycle"].isin(protocol_cycles["excluded"])]
+            _cycles_profile_finished(
+                profiling,
+                "cycles_protocol_masking",
+                protocol_mask_started,
+            )
+            derived_started = _cycles_profile_started(profiling)
             derived, ref_val = add_derived_columns(metric_frame, computation, active_mass_mg)
+            _cycles_profile_finished(
+                profiling,
+                "cycles_derived_columns",
+                derived_started,
+            )
+            filtering_started = _cycles_profile_started(profiling)
             metric_filtered = apply_filters(derived, computation).sort_values("cycle")
             plot_filtered = metric_filtered
             if protocol_cycles["hidden"]:
                 plot_filtered = plot_filtered[
                     ~plot_filtered["cycle"].isin(protocol_cycles["hidden"])
                 ]
+            _cycles_profile_finished(
+                profiling,
+                "cycles_filtering",
+                filtering_started,
+            )
+            series_projection_started = _cycles_profile_started(profiling)
             x = [int(v) for v in plot_filtered["cycle"]]
-            quantities = {
-                c: _jsonsafe(plot_filtered[c].to_numpy(dtype="float64")) if c in plot_filtered.columns
-                else [None] * len(x)
-                for c in quantity_cols
-            }
+            quantities = _jsonsafe_columns(plot_filtered, quantity_cols)
+            _cycles_profile_finished(
+                profiling,
+                "cycles_series_projection",
+                series_projection_started,
+            )
             metrics = cell_metrics(derived, metric_filtered, computation, ref_val)
+            source_projection_started = _cycles_profile_started(profiling)
             ref = None if np.isnan(ref_val) else float(ref_val)
             source_values = source_columns(plot_filtered, files)
+            _cycles_profile_finished(
+                profiling,
+                "cycles_source_projection",
+                source_projection_started,
+            )
 
+        response_assembly_started = _cycles_profile_started(profiling)
         cell_series.append(
             {"cell_id": cell.id, "cell_name": cell.name, "label": unit["label"],
              "group_id": unit["group_id"], "group_name": unit["group_name"],
@@ -2318,7 +2518,13 @@ def compute(
                 cell.name,
                 "Re-parsed from source" if reparsed else "Read from cache",
             )
+        _cycles_profile_finished(
+            profiling,
+            "cycles_cell_response_assembly",
+            response_assembly_started,
+        )
 
+    badge_provenance_started = _cycles_profile_started(profiling)
     _append_unmatched_protocol_badges(protocol_context, badges)
 
     for miss in missing_refs:
@@ -2348,23 +2554,35 @@ def compute(
         elif prev_hashes != cur_hashes:
             badges.append({"kind": "new_data",
                            "detail": "New source files are attached to selected cells since last computed."})
+    _cycles_profile_finished(
+        profiling,
+        "cycles_badge_provenance_assembly",
+        badge_provenance_started,
+    )
 
     # replicate aggregation (rendering only)
     aggregates: list[dict] = []
+    by_group: dict[int, list[dict]] = {}
+    group_names: dict[int, str] = {}
+    aggregation_setup_started = _cycles_profile_started(profiling)
     if (aggregation.get("mode") or "replicate_mean") == "replicate_mean":
-        by_group: dict[int, list[dict]] = {}
-        group_names: dict[int, str] = {}
         for s in cell_series:
             if s["group_id"] is not None and not s["excluded"] and len(s["x"]):
                 by_group.setdefault(s["group_id"], []).append(s)
                 group_names[s["group_id"]] = s["group_name"]
-        for gid, members in by_group.items():
-            agg = aggregate_series(members, quantity_cols, aggregation)
-            agg["group_id"] = gid
-            agg["group_name"] = group_names[gid]
-            aggregates.append(agg)
+    _cycles_profile_finished(
+        profiling,
+        "cycles_aggregation_setup",
+        aggregation_setup_started,
+    )
+    for gid, members in by_group.items():
+        agg = aggregate_series(members, quantity_cols, aggregation)
+        agg["group_id"] = gid
+        agg["group_name"] = group_names[gid]
+        aggregates.append(agg)
 
     # group metric rows
+    group_metrics_started = _cycles_profile_started(profiling)
     group_metrics: list[dict] = []
     seen_groups: list[int] = []
     for s in cell_series:
@@ -2377,7 +2595,13 @@ def compute(
                 {"group_id": gid, "group_name": members[0]["group_name"],
                  "metrics": aggregate_metrics([m["metrics"] for m in members])})
 
-    return {
+    _cycles_profile_finished(
+        profiling,
+        "cycles_group_metrics_assembly",
+        group_metrics_started,
+    )
+    final_response_started = _cycles_profile_started(profiling)
+    response = {
         "computed_at": now_iso(),
         "type": spec.get("type", "cycling"),
         "parser_version": display_parser_version(all_pinned_versions),
@@ -2394,6 +2618,12 @@ def compute(
         "badges": badges,
         "sources": sources,
     }
+    _cycles_profile_finished(
+        profiling,
+        "cycles_final_response_assembly",
+        final_response_started,
+    )
+    return response
 
 
 def _step_segments(spec: dict) -> dict[str, dict]:

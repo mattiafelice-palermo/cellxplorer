@@ -667,6 +667,7 @@ def _profile_route(
     }
     route = _route_for(family)
     request = _request_for(family, analyses, recompute)
+    cycles_profile: dict[str, Any] = {}
     rate_profile: dict[str, Any] = {}
     dcir_profile: dict[str, Any] = {}
     sql_profile = time_capacity_profiling.SQLProfile(env.db) if instrumented else None
@@ -903,6 +904,16 @@ def _profile_route(
                         call_rate,
                         parent=None,
                     )
+                elif family == "cycles":
+                    def call_cycles(*args: Any, **kwargs: Any) -> Any:
+                        kwargs["profiling"] = cycles_profile
+                        return original_compute(*args, **kwargs)
+
+                    compute_wrapper = timed(
+                        "scientific_compute",
+                        call_cycles,
+                        parent=None,
+                    )
                 elif family == "dcir":
                     def call_dcir(*args: Any, **kwargs: Any) -> Any:
                         kwargs["profiling"] = dcir_profile
@@ -971,6 +982,21 @@ def _profile_route(
         if sql_profile is not None:
             sql_profile.finish(metrics)
 
+    if family == "cycles" and cycles_profile:
+        cycles_profile["scientific_compute_direct_residual_ms"] = recorder.exclusive_ms.get(
+            "scientific_compute",
+            0.0,
+        )
+        direct_stages = cycles_profile.get("direct_stages_ms") or {}
+        direct_calls = cycles_profile.get("direct_stage_calls") or {}
+        for name, elapsed_ms in direct_stages.items():
+            recorder.add(
+                name,
+                float(elapsed_ms),
+                parent="scientific_compute",
+                calls=int(direct_calls.get(name, 0)),
+            )
+
     if family == "dcir" and dcir_profile:
         dcir_profile["scientific_compute_direct_residual_ms"] = recorder.exclusive_ms.get(
             "scientific_compute",
@@ -1013,6 +1039,7 @@ def _profile_route(
         float(metrics["complete_route_ms"]), metrics["root_stage_ms"]
     )
     metrics["rate_deep"] = rate_profile or None
+    metrics["cycles_deep"] = cycles_profile or None
     metrics["dcir_deep"] = dcir_profile or None
     metrics["taxonomy_stage_ms"] = _taxonomy_stage_ms(recorder, family, rate_profile)
     metrics["source_hashes"] = sorted(metrics.get("source_hashes", set()))
@@ -1400,6 +1427,106 @@ DCIR_OCCURRENCE_CHILDREN = (
     "dcir_quantity_calculation",
 )
 
+CYCLES_DIRECT_CHILDREN = (
+    "cycles_compute_setup",
+    "cycles_protocol_and_output_setup",
+    "cycles_source_bookkeeping",
+    "cycles_post_stitch_projection",
+    "cycles_source_status_badges",
+    "cycles_active_mass_resolution",
+    "cycles_protocol_masking",
+    "cycles_derived_columns",
+    "cycles_filtering",
+    "cycles_series_projection",
+    "cycles_source_projection",
+    "cycles_cell_response_assembly",
+    "cycles_badge_provenance_assembly",
+    "cycles_aggregation_setup",
+    "cycles_group_metrics_assembly",
+    "cycles_final_response_assembly",
+)
+
+
+def _cycles_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
+    profiles = [sample.get("cycles_deep") for sample in samples if sample.get("cycles_deep")]
+    if not profiles:
+        return None
+
+    direct_stages = {}
+    for name in CYCLES_DIRECT_CHILDREN:
+        values = [
+            float(profile.get("direct_stages_ms", {}).get(name, 0.0))
+            for profile in profiles
+            if isinstance(profile.get("direct_stages_ms", {}).get(name), (int, float))
+        ]
+        calls = [
+            float(profile.get("direct_stage_calls", {}).get(name, 0))
+            for profile in profiles
+        ]
+        if not values:
+            continue
+        direct_stages[name] = {
+            "p50": _median(values),
+            "calls_p50": _median(calls),
+            "available": True,
+            "parent": "scientific_compute",
+        }
+
+    direct_reconciliation_samples = []
+    for profile in profiles:
+        parent = profile.get("scientific_compute_direct_residual_ms")
+        if not isinstance(parent, (int, float)):
+            continue
+        child_sum = sum(
+            float(profile.get("direct_stages_ms", {}).get(name, 0.0))
+            for name in direct_stages
+        )
+        direct_reconciliation_samples.append(
+            {
+                "scientific_compute_direct_residual_ms": float(parent),
+                "child_sum_ms": child_sum,
+                "residual_ms": max(0.0, float(parent) - child_sum),
+                "overlap_ms": max(0.0, child_sum - float(parent)),
+            }
+        )
+
+    p50_residual = _median([
+        item["residual_ms"] for item in direct_reconciliation_samples
+    ])
+    largest_child = max(
+        (float(stage["p50"]) for stage in direct_stages.values()),
+        default=0.0,
+    )
+    return {
+        "direct_compute_children": list(direct_stages),
+        "direct_compute_stages_ms": direct_stages,
+        "direct_compute_reconciliation": {
+            "samples": direct_reconciliation_samples,
+            "p50_scientific_compute_direct_residual_ms": _median([
+                item["scientific_compute_direct_residual_ms"]
+                for item in direct_reconciliation_samples
+            ]),
+            "p50_child_sum_ms": _median([
+                item["child_sum_ms"] for item in direct_reconciliation_samples
+            ]),
+            "p50_residual_ms": p50_residual,
+            "p50_overlap_ms": _median([
+                item["overlap_ms"] for item in direct_reconciliation_samples
+            ]),
+            "largest_named_child_p50_ms": largest_child,
+            "closure_status": (
+                "closed"
+                if p50_residual is not None and p50_residual <= largest_child
+                else "requires_focused_follow_up"
+            ),
+            "all_non_overlapping": all(
+                item["overlap_ms"] <= 1.0
+                for item in direct_reconciliation_samples
+            ),
+        },
+    }
+
+
 DCIR_DIRECT_CHILDREN = (
     "dcir_compute_setup",
     "dcir_context_metadata_setup",
@@ -1739,6 +1866,7 @@ def _run_workload(
             "all_order_parity": all(item["order_parity"] for item in overhead) if overhead else None,
         },
         "specialist_time_capacity_profile": specialist,
+        "cycles_deep": _cycles_deep_summary(misses) if family == "cycles" else None,
         "dcir_deep": _dcir_deep_summary(misses) if family == "dcir" else None,
         "rate_deep": _rate_deep_summary(misses) if family == "rate_capability" else None,
     }

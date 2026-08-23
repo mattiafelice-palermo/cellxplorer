@@ -810,6 +810,19 @@ and an all-pandas grouped variant was measurably slower than the prior route. Ex
 persisted hits must continue to bypass protocol reconstruction, raw access, block
 assignment, CV classification, and aggregation.
 
+Spec 050.22 closes the Cycles direct-compute attribution gap with opt-in sibling
+timers that are absent from the ordinary route when no profiling dictionary is
+provided. The safe render-time optimization boundary is request-local numeric
+work: reuse converted source arrays while constructing derived columns, append
+derived values in one frame operation, project the complete quantity matrix in
+one NaN-to-null conversion, and compute cell metrics from stable NumPy masks
+instead of repeated DataFrame extrema and filtered-frame construction. These
+changes preserve cycle/source order, missing values, retention and efficiency
+formulas, active-mass normalization, and exact cache identity. The final
+profile must reconcile direct children without overlap; do not dispatch
+workers for Cycles unless serial cleanup leaves at least 100 ms of independent
+CPU work, and exact persisted hits must continue to bypass the whole path.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

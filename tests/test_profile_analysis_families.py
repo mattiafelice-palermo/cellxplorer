@@ -328,6 +328,70 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
             self.assertEqual(metrics["counts"]["resolved_cells"], 6)
             self.assertEqual(metrics["counts"]["source_hashes"], 6)
 
+    def test_real_cycles_profile_closes_direct_compute_residual(self) -> None:
+        with profiler.GoldenFixtureEnvironment.create() as env:
+            analysis_id, _cell_ids = profiler._family_workload(env, "cycles", 1)
+            with tempfile.TemporaryDirectory() as root:
+                _payload, metrics = profiler._profile_route(
+                    env,
+                    analysis_id,
+                    "cycles",
+                    recompute=True,
+                    cache_root=Path(root),
+                    instrumented=True,
+                )
+
+            raw = metrics["cycles_deep"]
+            deep = profiler._cycles_deep_summary([metrics])
+            self.assertIsNotNone(raw)
+            self.assertIsNotNone(deep)
+            for name in profiler.CYCLES_DIRECT_CHILDREN:
+                self.assertIn(name, deep["direct_compute_children"])
+                self.assertIsInstance(
+                    deep["direct_compute_stages_ms"][name]["p50"],
+                    float,
+                )
+            direct = deep["direct_compute_reconciliation"]
+            self.assertTrue(direct["all_non_overlapping"])
+            self.assertEqual(direct["closure_status"], "closed")
+            self.assertLessEqual(
+                direct["p50_residual_ms"],
+                direct["largest_named_child_p50_ms"],
+            )
+
+    def test_cycles_profile_helpers_are_noop_without_opt_in_profile(self) -> None:
+        from app.services import analysis_engine
+
+        with patch.object(
+            analysis_engine,
+            "perf_counter",
+            side_effect=AssertionError("normal Cycles path must not time stages"),
+        ):
+            self.assertIsNone(analysis_engine._cycles_profile_started(None))
+            analysis_engine._cycles_profile_finished(None, "ignored", None)
+
+    def test_cycles_batch_series_projection_preserves_jsonsafe_contract(self) -> None:
+        import numpy as np
+        import pandas as pd
+
+        from app.services import analysis_engine
+
+        frame = pd.DataFrame(
+            {
+                "present": [1.25, np.nan, np.inf],
+                "other": [2.5, -3.0, np.nan],
+            }
+        )
+        expected = {
+            "present": analysis_engine._jsonsafe(frame["present"].to_numpy()),
+            "missing": [None, None, None],
+            "other": analysis_engine._jsonsafe(frame["other"].to_numpy()),
+        }
+        self.assertEqual(
+            analysis_engine._jsonsafe_columns(frame, list(expected)),
+            expected,
+        )
+
     def test_real_rate_deep_profile_contains_measured_children_and_reconciliation(self) -> None:
         with profiler.GoldenFixtureEnvironment.create() as env:
             analysis_id, _cell_ids = profiler._family_workload(env, "rate_capability", 1)

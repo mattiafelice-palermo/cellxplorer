@@ -27,11 +27,11 @@
     "050.22",
     "050.23"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "IMPLEMENT",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [],
   "resume_review": null,
   "user_message_seq": 0,
   "pending_user_messages": [],
-  "updated_at": "2026-08-23T18:58:00+02:00"
+  "updated_at": "2026-08-23T19:32:12+02:00"
 }
