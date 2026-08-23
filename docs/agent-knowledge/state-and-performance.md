@@ -778,6 +778,13 @@ protocol result before the canonical JSON-key fallback, without changing cache
 identity. Exact persisted hits still bypass raw access, protocol reconstruction,
 run metadata, and occurrence extraction.
 
+Direct DCIR stage profiling is opt-in and must remain absent from the ordinary
+route's hot-path control flow: use a start/finish pair that returns immediately
+when no profiling dictionary is supplied, rather than a context-manager boundary
+around every stage. Keep the profiled stage names and non-overlapping residual
+reconciliation stable so route comparisons can distinguish instrumentation cost
+from scientific work.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

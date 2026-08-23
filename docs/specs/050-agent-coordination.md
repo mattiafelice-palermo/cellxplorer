@@ -1068,3 +1068,16 @@ R1 fixed with a durable implementation/evidence record in the 050.18 spec. It re
 050.19 R1 residual attribution complete. Added opt-in direct compute_dcir timers with non-overlapping reconciliation: six-Cell direct scientific residual 32.06 ms p50, measured children 30.84 ms, remainder 1.43 ms, zero overlap. Reduced repeated equal-header protocol key work with a request-local equality cache and replaced measurement_meta pandas record conversion with an ordered parity-preserving projection. Final five-repetition six-Cell miss was 172.15 ms p50 (143.08-235.91), exact hit 11.80 ms; all scientific/order parity controls passed. Browser checks were not run per user instruction.
 
 ---
+### 2026-08-23T18:08:40+02:00 — IMPLEMENTER → REVIEWER — 050.19
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests PASS (28); python compile and git diff --check PASS; preflight PASS (4/4 stages, all 80 backend modules, frontend cache skips); controlled six-Cell miss comparison PASS (R2 138.57 ms p50 profiled and 147.36 ms unprofiled median versus 3f0df93 at 171.59 ms and 184.48 ms); scientific and order parity PASS; browser/manual NOT RUN by explicit user instruction
+
+**Message**
+
+050.19 R2 fixed. Replaced normal-path DCIR context-manager instrumentation with opt-in start/finish helpers, retaining source preparation reuse, equal-header protocol reuse, ordered measurement metadata projection, exact-hit bypass, selective/full raw fallback, provenance, and SQL behavior. Controlled five-repetition comparison against 3f0df93 on the same fixture shows the six-Cell route at 138.57 ms p50 profiled and 147.36 ms unprofiled median versus 171.59 ms and 184.48 ms; structural counts and scientific/order parity are unchanged. Browser checks were not run per user instruction.
+
+---

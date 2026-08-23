@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -413,6 +414,17 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
             self.assertIn("input_rows", raw_deep["counts"])
             self.assertIn("runs", raw_deep["counts"])
             self.assertIn("valid_occurrences", raw_deep["counts"])
+
+    def test_dcir_profile_helpers_are_noop_without_opt_in_profile(self) -> None:
+        from app.services import analysis_engine
+
+        with patch.object(
+            analysis_engine,
+            "perf_counter",
+            side_effect=AssertionError("normal DCIR path must not time stages"),
+        ):
+            self.assertIsNone(analysis_engine._dcir_profile_started(None))
+            analysis_engine._dcir_profile_finished(None, "ignored", None)
 
 
 if __name__ == "__main__":
