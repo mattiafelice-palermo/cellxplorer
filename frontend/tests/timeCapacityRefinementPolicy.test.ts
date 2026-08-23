@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { TimeCapacityRefinementResult, TimeCapacityResult } from "../src/api.ts";
+import { TimeCapacityRefinementLifecycle } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementLifecycle.ts";
 import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
@@ -212,29 +213,73 @@ test("stacked mode cannot display a previously accepted flat refinement", () => 
     overview_data_signature: "overview",
     request_generation: "g1",
   } as TimeCapacityRefinementResult;
-  const flat = {
-    computation: {
-      time_capacity: { view: "voltage_current", x_axis: "time", display_mode: "consecutive" },
-    },
-  } as never;
-  const stacked = {
-    computation: {
-      time_capacity: {
-        view: "voltage_current",
-        x_axis: "time",
-        display_mode: "consecutive",
-        stacked: true,
-      },
-    },
-  } as never;
-
   assert.equal(
-    timeCapacityRefinementDisplayIsCurrent(flat, response, current, "compat", "compat"),
+    timeCapacityRefinementDisplayIsCurrent(false, response, current, "compat", "compat"),
     true,
   );
   assert.equal(
-    timeCapacityRefinementDisplayIsCurrent(stacked, response, current, "compat", "compat"),
+    timeCapacityRefinementDisplayIsCurrent(true, response, current, "compat", "compat"),
     false,
+  );
+});
+
+test("production refinement lifecycle schedules, accepts, retains, and invalidates displays", () => {
+  const current = result();
+  const lifecycle = new TimeCapacityRefinementLifecycle(false);
+  const responseFor = (generation: string): TimeCapacityRefinementResult => ({
+    ...current,
+    data_signature: "overview",
+    overview_data_signature: "overview",
+    request_generation: generation,
+  });
+  const viewportA = { min: 0, max: 100 };
+  const viewportB = { min: 25, max: 75 };
+  const viewportC = { min: 35, max: 65 };
+
+  lifecycle.cancelPending();
+  const generationA = lifecycle.beginRequest(viewportA);
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationA), current, generationA, viewportA, "compat"),
+    true,
+  );
+
+  lifecycle.cancelPending();
+  const generationB = lifecycle.beginRequest(viewportB);
+  assert.equal(lifecycle.displayed?.viewport.max, 100);
+
+  lifecycle.cancelPending();
+  const generationC = lifecycle.beginRequest(viewportC);
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationB), current, generationB, viewportB, "compat"),
+    false,
+  );
+  assert.equal(lifecycle.displayed?.result.request_generation, generationA);
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationC), current, generationC, viewportC, "compat"),
+    true,
+  );
+  assert.equal(lifecycle.displayed?.result.request_generation, generationC);
+
+  lifecycle.setStacked(true);
+  lifecycle.invalidate();
+  assert.equal(lifecycle.displayed, null);
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationC), current, generationC, viewportC, "compat"),
+    false,
+  );
+
+  lifecycle.setStacked(false);
+  lifecycle.cancelPending();
+  const freshGeneration = lifecycle.beginRequest(viewportC);
+  assert.equal(
+    lifecycle.acceptResponse(
+      responseFor(freshGeneration),
+      current,
+      freshGeneration,
+      viewportC,
+      "compat",
+    ),
+    true,
   );
 });
 

@@ -1195,3 +1195,16 @@ R1-R5 fixed: P4 benchmark now uses the production router/helper and exact-hit in
 050.24 R1 fixed: stacked mode is an explicit refinement-ineligible boundary. The layout-effect invalidates pending/displayed refinement state; the display and reveal are synchronously gated by current eligibility; a current eligibility ref blocks relayout scheduling and late pre-toggle responses. The canonical overview remains the stacked source, and returning to flat mode cannot resurrect the old refinement. Added policy, lifecycle source-contract, and stacked-display regression coverage; no scientific/query/cache/export identity changed.
 
 ---
+### 2026-08-23T23:23:53+02:00 — IMPLEMENTER → REVIEWER — 050.24
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (37); production lifecycle regression: PASS; TypeScript/Vite build: PASS; preflight: PASS (4/4; all 153 backend/frontend modules); browser adaptive-zoom check: NOT RUN (user requested no browser)
+
+**Message**
+
+050.24 R2 fixed narrowly: ordinary eligible flat adaptive zoom again follows the a42e910 scheduler/response path; redundant render-time eligibility ref gates were removed. Stacked false-to-true remains the only client-only lifecycle invalidation boundary, and stacked rendering suppresses transient refinement/reveal without changing query/cache identity. Added production-used TimeCapacityRefinementLifecycle and a focused A->B->C request/response/display regression covering retained A, late B rejection, stacked invalidation, and fresh flat recovery. Browser/manual adaptive-zoom validation was not run per user instruction; reviewer/user confirmation remains the visual acceptance gate.
+
+---

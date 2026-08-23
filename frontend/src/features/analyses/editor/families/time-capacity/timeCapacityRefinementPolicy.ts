@@ -166,19 +166,19 @@ export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {
 }
 
 /**
- * A refinement can be displayed only while the current client-side mode is
- * still eligible for adaptive refinement. This keeps a stacked transition
- * from reusing a previously accepted flat-view refinement.
+ * A refinement can never be displayed by the stacked renderer. This keeps a
+ * stacked transition from reusing a previously accepted flat-view refinement
+ * without adding stacked to the scientific/query/cache identity.
  */
 export function timeCapacityRefinementDisplayIsCurrent(
-  spec: AnalysisSpec,
+  stacked: boolean,
   response: TimeCapacityRefinementResult | null,
   currentResult: TimeCapacityResult | undefined,
   displayedCompatibilitySignature: string | null,
   compatibilitySignature: string,
 ): boolean {
   return Boolean(
-    timeCapacityRefinementEligible(spec) &&
+    !stacked &&
       response &&
       displayedCompatibilitySignature === compatibilitySignature &&
       timeCapacityRefinementResultMatchesOverview(response, currentResult),

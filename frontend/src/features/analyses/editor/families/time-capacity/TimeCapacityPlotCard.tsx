@@ -111,13 +111,12 @@ import {
   timeCapacityRefinementCanSchedule,
   timeCapacityRefinementDisplayIsCompatible,
   timeCapacityRefinementDisplayIsCurrent,
-  timeCapacityRefinementEligible,
-  timeCapacityRefinementRequestIsCurrent,
   timeCapacityRefinementTransitionDuration,
   timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
   type TimeCapacityViewport,
 } from "./timeCapacityRefinementPolicy";
+import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
@@ -1211,17 +1210,19 @@ function TimeCapacityPlotCardView({
   const [refinementTransitionProgress, setRefinementTransitionProgress] = useState(1);
   const refinementTimerRef = useRef<number | null>(null);
   const refinementAbortRef = useRef<AbortController | null>(null);
-  const refinementGenerationRef = useRef(0);
-  const refinementViewportRef = useRef<TimeCapacityViewport | null>(null);
-  const displayedRefinementViewportRef = useRef<TimeCapacityViewport | null>(null);
-  const displayedRefinementCompatibilitySignatureRef = useRef<string | null>(null);
   const refinementTransitionFrameRef = useRef<number | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
-  const refinementEligible = timeCapacityRefinementEligible(spec);
-  const refinementEligibilityRef = useRef(refinementEligible);
-  refinementEligibilityRef.current = refinementEligible;
+  const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
+  if (refinementLifecycleRef.current === null) {
+    refinementLifecycleRef.current = new TimeCapacityRefinementLifecycle(cfg.stacked);
+  }
+  const refinementLifecycle = refinementLifecycleRef.current;
+  const stackedModeRef = useRef(cfg.stacked);
+  const stackedModeChanged = stackedModeRef.current !== cfg.stacked;
+  stackedModeRef.current = cfg.stacked;
+  refinementLifecycle.setStacked(cfg.stacked);
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
   const viewportWidth = 1200;
@@ -1432,15 +1433,14 @@ function TimeCapacityPlotCardView({
   const currentResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   currentResultRef.current = currentResult;
   const cancelPendingRefinement = useCallback(() => {
-    refinementGenerationRef.current += 1;
+    refinementLifecycle.cancelPending();
     if (refinementTimerRef.current !== null) {
       window.clearTimeout(refinementTimerRef.current);
       refinementTimerRef.current = null;
     }
     refinementAbortRef.current?.abort();
     refinementAbortRef.current = null;
-    refinementViewportRef.current = null;
-  }, []);
+  }, [refinementLifecycle]);
   const cancelRefinementTransition = useCallback(() => {
     if (refinementTransitionFrameRef.current !== null) {
       window.cancelAnimationFrame(refinementTransitionFrameRef.current);
@@ -1450,10 +1450,9 @@ function TimeCapacityPlotCardView({
     setRefinementTransitionProgress(1);
   }, []);
   const clearDisplayedRefinement = useCallback(() => {
-    displayedRefinementViewportRef.current = null;
-    displayedRefinementCompatibilitySignatureRef.current = null;
+    refinementLifecycle.clearDisplayed();
     setRefinedResult(null);
-  }, []);
+  }, [refinementLifecycle]);
   const invalidateRefinement = useCallback(() => {
     cancelPendingRefinement();
     cancelRefinementTransition();
@@ -1490,8 +1489,8 @@ function TimeCapacityPlotCardView({
     invalidateRefinement();
   }, [invalidateRefinement, currentResult?.data_signature, dataSignature]);
   useLayoutEffect(() => {
-    if (!refinementEligible) invalidateRefinement();
-  }, [invalidateRefinement, refinementEligible]);
+    if (stackedModeChanged && cfg.stacked) invalidateRefinement();
+  }, [cfg.stacked, invalidateRefinement, stackedModeChanged]);
   useEffect(() => {
     if (!active) {
       cancelPendingRefinement();
@@ -1569,10 +1568,10 @@ function TimeCapacityPlotCardView({
     [currentResult, selectedVoltageUnavailable, viewSignature]
   );
   const activeRefinedResult = timeCapacityRefinementDisplayIsCurrent(
-    spec,
+    cfg.stacked,
     refinedResult,
     currentResult,
-    displayedRefinementCompatibilitySignatureRef.current,
+    refinementLifecycle.displayed?.compatibilitySignature ?? null,
     compatibilitySignature,
   )
     ? refinedResult
@@ -1586,7 +1585,7 @@ function TimeCapacityPlotCardView({
     [plotResult, selectedVoltageUnavailable, viewSignature]
   );
   const transitionTraces = useMemo(() => {
-    if (!refinementEligible || !refinementTransition) return null;
+    if (cfg.stacked || !refinementTransition) return null;
     // Keep the old line at its exact visual weight. The new LoD is revealed
     // over it; this avoids alpha-compositing two copies of the same line,
     // which otherwise produces a brief lightness/thickness blink.
@@ -1600,7 +1599,7 @@ function TimeCapacityPlotCardView({
         transitionTraceOpacity(trace, newOpacity, false),
       ),
     ];
-  }, [refinementEligible, refinementTransition, refinementTransitionProgress]);
+  }, [cfg.stacked, refinementTransition, refinementTransitionProgress]);
   const plotExportReady = timeCapacityPlotExportReady(
     timeResult.isPlaceholderData,
     Boolean(currentResult),
@@ -1681,9 +1680,9 @@ function TimeCapacityPlotCardView({
       cancelPendingRefinement();
       cancelRefinementTransition();
       clearDisplayedRefinement();
-    } else if (refinementEligibilityRef.current && timeCapacityRefinementCanSchedule(active, spec)) {
+    } else if (timeCapacityRefinementCanSchedule(active, spec)) {
       const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
-      const previousViewport = refinementViewportRef.current;
+      const previousViewport = refinementLifecycle.requestedViewport;
       const sameViewport =
         viewport !== null &&
         previousViewport !== null &&
@@ -1695,7 +1694,7 @@ function TimeCapacityPlotCardView({
         const keepDisplayedRefinement = timeCapacityRefinementDisplayIsCompatible(
           refinedResult,
           currentResultRef.current,
-          displayedRefinementViewportRef.current,
+          refinementLifecycle.displayed?.viewport ?? null,
           viewport,
         );
         cancelPendingRefinement();
@@ -1706,8 +1705,7 @@ function TimeCapacityPlotCardView({
           cycleRange &&
           currentResultRef.current?.data_signature
         ) {
-          const generation = String(refinementGenerationRef.current);
-          refinementViewportRef.current = viewport;
+          const generation = refinementLifecycle.beginRequest(viewport);
           refinementTimerRef.current = window.setTimeout(() => {
             refinementTimerRef.current = null;
             const controller = new AbortController();
@@ -1726,17 +1724,13 @@ function TimeCapacityPlotCardView({
               { signal: controller.signal },
             )
               .then((response) => {
-                if (
-                  refinementEligibilityRef.current &&
-                  refinementGenerationRef.current === Number(generation) &&
-                  timeCapacityRefinementRequestIsCurrent(
-                    response,
-                    currentResultRef.current,
-                    generation,
-                  )
-                ) {
-                  displayedRefinementViewportRef.current = { ...viewport };
-                  displayedRefinementCompatibilitySignatureRef.current = compatibilitySignature;
+                if (refinementLifecycle.acceptResponse(
+                  response,
+                  currentResultRef.current,
+                  generation,
+                  viewport,
+                  compatibilitySignature,
+                )) {
                   const previousDisplayedResult = activeRefinedResult ?? currentResultRef.current;
                   const transitionDuration = timeCapacityRefinementTransitionDuration(
                     prefersReducedMotion(),

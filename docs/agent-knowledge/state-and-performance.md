@@ -282,8 +282,10 @@ keep-mounted tabs, an ineligible client-only mode such as stacked rendering, or 
 pan/jump, and never treats it as the scientific or export source. The eligibility boundary is
 separate from query/compatibility identity: client-only mode changes must not enter scientific cache
 identity merely to invalidate this ephemeral display state.
-Late responses remain generation-gated, and an aborted or failed replacement leaves the best valid
-overview/refinement already displayed.
+The production card delegates request generation, displayed/requested viewport metadata, stacked
+invalidation, and response acceptance to its ephemeral lifecycle controller. Late responses remain
+generation-gated, and an aborted or failed replacement leaves the best valid overview/refinement
+already displayed.
 
 When a valid refinement replaces another valid display, the Time/Capacity card may reveal the new
 traces over the old traces for 140 ms while keeping the old line at its exact visual weight. This
