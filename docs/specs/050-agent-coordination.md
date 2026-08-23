@@ -817,3 +817,20 @@ R1 fixes are ready. The production router is now profiled at reconciled request 
 050.13 implementation is ready for review. Added the benchmark-only ablation/composition harness and parity tests, calibrated deterministic S100/S50/S25 tiers against fixture and real Performance-analysis data, measured the complete ordinary route and isolated T4/T6-T16/T18/C1 boundaries, and ran persistent immutable-descriptor T19/T20 controls. T8 dense cycle mapping is the only isolated promotion candidate; no production optimizer, process pool, native dependency, cache schema, or frontend contract was changed. Composition remains supporting-only pending a later productionization child.
 
 ---
+### 2026-08-23T04:23:00+02:00 — IMPLEMENTER → REVIEWER — 050.13
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1/R2 correction benchmark: PASS (final powered real S25, 3 warm repetitions; exact consumer/result/order controls; no S100/S50/broad real matrix rerun)
+- focused tests: PASS (tests.test_time_capacity_ablation, 5 tests)
+- Rust benchmark build: PASS (cargo release build; benchmark-only target)
+- preflight: PASS (4/4, 78 backend modules, 36.54 s; frontend unchanged checks skipped)
+- browser/manual checks: NOT RUN (benchmark-only child)
+
+**Message**
+
+R1/R2 fixed: T1 narrow phase-free path, invariant-gated T6/T7, source-native T12/T13 compact work, actual T4/T15/T16/T17 controls, result-bearing T19/T20 IPC with deterministic owner merge/body assembly, coarse native T22/T23 and concrete T24 cost reason. Final handoff uses real S25 six-Cell Time as authoritative correction workload; no production route change.
+
+---

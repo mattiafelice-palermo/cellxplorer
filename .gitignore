@@ -35,6 +35,7 @@ build/
 dist/
 src-tauri/target/
 scripts/rust_derivative_kernel/target/
+scripts/rust_time_capacity_display/target/
 
 # Local assistant/tooling state
 .claude/

@@ -1,0 +1,11 @@
+[package]
+name = "cellxplorer-05013-time-capacity-display"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rayon = "1.10"

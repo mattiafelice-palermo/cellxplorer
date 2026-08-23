@@ -320,6 +320,7 @@ Cellxplorer/
 │   ├── profile_time_capacity_ablation.py Spec 050.13 ordinary-path ablation/composition benchmark
 │   ├── profile_rust_derivative_kernel.py Rust/Rayon derivative-kernel benchmark (Spec 050.10)
 │   ├── rust_derivative_kernel/ Isolated Cargo/Rayon benchmark target (Spec 050.10)
+│   ├── rust_time_capacity_display/ Benchmark-only coarse native display boundary (Spec 050.13)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
 │   ├── release_tag.py              Exact Stable/Beta SemVer tag validation
 │   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
