@@ -563,8 +563,11 @@ class AnalysisEngineTests(unittest.TestCase):
             }
 
             result = engine.compute_dcir(self.db, spec, None)
+            with patch.object(engine.stitch, "stitch_raw_steps", return_value=None):
+                fallback_result = engine.compute_dcir(self.db, spec, None)
 
             self.assertEqual(result["type"], "dcir")
+            self.assertEqual(result["cell_series"], fallback_result["cell_series"])
             self.assertEqual(len(result["cell_series"]), 2)
             by_id = {series["series_id"]: series for series in result["cell_series"]}
             self.assertEqual(by_id["discharge-series"]["n_measurements"], 3)

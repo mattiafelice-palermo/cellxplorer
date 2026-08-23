@@ -3,10 +3,43 @@
 from __future__ import annotations
 
 import math
+from time import perf_counter
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+
+def _profile_started(profiling: dict[str, Any] | None) -> float | None:
+    return perf_counter() if profiling is not None else None
+
+
+def _profile_finished(
+    profiling: dict[str, Any] | None,
+    name: str,
+    started: float | None,
+) -> None:
+    if profiling is None or started is None:
+        return
+    profiling.setdefault("stages_ms", {})[name] = (
+        profiling.setdefault("stages_ms", {}).get(name, 0.0)
+        + (perf_counter() - started) * 1000.0
+    )
+    profiling.setdefault("calls", {})[name] = (
+        profiling.setdefault("calls", {}).get(name, 0) + 1
+    )
+
+
+def _profile_count(
+    profiling: dict[str, Any] | None,
+    name: str,
+    value: int,
+) -> None:
+    if profiling is None:
+        return
+    profiling.setdefault("counts", {})[name] = (
+        profiling.setdefault("counts", {}).get(name, 0) + int(value)
+    )
 
 
 def _finite_float(value: Any) -> float | None:
@@ -120,6 +153,7 @@ def per_occurrence(
     direction: str,
     nominal_capacity_mah: float | None = None,
     origin_timestamp: pd.Timestamp | None = None,
+    profiling: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """Measure each adjacent rest/pulse occurrence in one source-file frame."""
     columns = [
@@ -140,49 +174,142 @@ def per_occurrence(
     if step_column not in frame.columns:
         return pd.DataFrame(columns=columns)
 
-    work = frame.reset_index(drop=True).copy()
-    steps = pd.to_numeric(work[step_column], errors="coerce")
+    started = _profile_started(profiling)
+    work = frame.reset_index(drop=True)
+
+    def numeric_array(column: str) -> np.ndarray | None:
+        if column not in work.columns:
+            return None
+        return pd.to_numeric(work[column], errors="coerce").to_numpy(
+            dtype="float64",
+        )
+
+    step_values = numeric_array(step_column)
+    cycle_values = numeric_array("cycle")
+    time_values = numeric_array("time_s")
+    record_values = numeric_array("record_index")
+    voltage_values = numeric_array("voltage_v")
+    current_values = numeric_array("current_ma")
+    timestamp_values = (
+        pd.to_datetime(work["timestamp"], errors="coerce")
+        if "timestamp" in work.columns
+        else None
+    )
+    _profile_finished(profiling, "dcir_frame_normalization", started)
+
+    started = _profile_started(profiling)
+    steps = pd.Series(step_values, index=work.index)
     boundary = steps.ne(steps.shift())
-    if "cycle" in work.columns:
-        cycles = pd.to_numeric(work["cycle"], errors="coerce")
+    if cycle_values is not None:
+        cycles = pd.Series(cycle_values, index=work.index)
         boundary |= cycles.ne(cycles.shift())
-    if "time_s" in work.columns:
-        times = pd.to_numeric(work["time_s"], errors="coerce")
+    if time_values is not None:
+        times = pd.Series(time_values, index=work.index)
         boundary |= times.lt(times.shift())
-    if "record_index" in work.columns:
-        record_index = pd.to_numeric(work["record_index"], errors="coerce")
-        # A selective detail read retains source positions.  Preserve the
+    if record_values is not None:
+        record_index = pd.Series(record_values, index=work.index)
+        # A selective detail read retains source positions. Preserve the
         # existing adjacency/completeness rule when unrequested protocol
         # steps are omitted from the frame.
         boundary |= record_index.diff().ne(1)
-    work["_run"] = boundary.fillna(True).cumsum()
-    runs = [
-        (int(run_id), chunk)
-        for run_id, chunk in work.groupby("_run", sort=True)
-    ]
+    boundary_values = boundary.fillna(True).to_numpy(dtype=bool, copy=False)
+    run_starts = np.flatnonzero(boundary_values)
+    _profile_finished(profiling, "dcir_run_boundary_construction", started)
 
-    if origin_timestamp is None and "timestamp" in work.columns:
-        timestamps = pd.to_datetime(work["timestamp"], errors="coerce").dropna()
-        if len(timestamps):
-            origin_timestamp = timestamps.min()
+    started = _profile_started(profiling)
+    run_ends = np.concatenate(
+        (
+            run_starts[1:],
+            np.asarray([len(work)], dtype="int64"),
+        )
+    )
+    runs = list(zip(run_starts.tolist(), run_ends.tolist()))
+    if origin_timestamp is None and timestamp_values is not None:
+        valid_timestamps = timestamp_values.dropna()
+        if len(valid_timestamps):
+            origin_timestamp = valid_timestamps.min()
+    _profile_finished(profiling, "dcir_run_metadata_construction", started)
+    _profile_count(profiling, "input_rows", len(work))
+    _profile_count(profiling, "runs", len(runs))
+
+    def last_finite(
+        values: np.ndarray | None,
+        start: int,
+        end: int,
+    ) -> float | None:
+        if values is None:
+            return None
+        selected = values[start:end]
+        finite = selected[np.isfinite(selected)]
+        return float(finite[-1]) if len(finite) else None
+
+    def timestamp_slice(start: int, end: int) -> pd.Series | None:
+        if timestamp_values is None:
+            return None
+        return timestamp_values.iloc[start:end].dropna()
+
+    def duration_seconds(
+        start: int,
+        end: int,
+        timestamps: pd.Series | None,
+    ) -> float | None:
+        if timestamps is not None and len(timestamps) >= 2:
+            return max(
+                0.0,
+                float((timestamps.iloc[-1] - timestamps.iloc[0]).total_seconds()),
+            )
+        if time_values is not None:
+            selected = time_values[start:end]
+            finite = selected[np.isfinite(selected)]
+            if len(finite):
+                return max(0.0, float(finite.max() - finite.min()))
+        return None
 
     rows: list[dict] = []
-    for (_, rest), (_, pulse) in zip(runs, runs[1:]):
-        rest_step = _finite_float(rest[step_column].iloc[0])
-        pulse_step = _finite_float(pulse[step_column].iloc[0])
-        if rest_step != rest_step_index or pulse_step != pulse_step_index:
+    nominal = _finite_float(nominal_capacity_mah)
+    for (rest_start, rest_end), (pulse_start, pulse_end) in zip(
+        runs,
+        runs[1:],
+    ):
+        started = _profile_started(profiling)
+        rest_step = _finite_float(step_values[rest_start])
+        pulse_step = _finite_float(step_values[pulse_start])
+        matching = rest_step == rest_step_index and pulse_step == pulse_step_index
+        _profile_finished(profiling, "dcir_adjacency_scanning", started)
+        if not matching:
             continue
-        v_rest = _last_finite(rest, "voltage_v")
-        v_pulse = _last_finite(pulse, "voltage_v")
-        currents = (
-            pd.to_numeric(pulse["current_ma"], errors="coerce").abs()
-            if "current_ma" in pulse.columns
-            else pd.Series(dtype="float64")
+
+        started = _profile_started(profiling)
+        v_rest = last_finite(voltage_values, rest_start, rest_end)
+        v_pulse = last_finite(voltage_values, pulse_start, pulse_end)
+        if current_values is not None:
+            currents = np.abs(current_values[pulse_start:pulse_end])
+            currents = currents[np.isfinite(currents) & (currents > 1e-12)]
+            current_ma = float(np.median(currents)) if len(currents) else None
+        else:
+            current_ma = None
+        cycle = last_finite(cycle_values, pulse_start, pulse_end)
+        rest_timestamps = timestamp_slice(rest_start, rest_end)
+        pulse_timestamps = timestamp_slice(pulse_start, pulse_end)
+        start_time_h = None
+        if origin_timestamp is not None and rest_timestamps is not None:
+            if len(rest_timestamps):
+                start_time_h = float(
+                    (rest_timestamps.iloc[0] - origin_timestamp).total_seconds()
+                    / 3600
+                )
+        rest_duration_s = duration_seconds(rest_start, rest_end, rest_timestamps)
+        pulse_duration_s = duration_seconds(pulse_start, pulse_end, pulse_timestamps)
+        c_rate = (
+            current_ma / nominal
+            if current_ma is not None and nominal is not None and nominal > 0
+            else None
         )
-        currents = currents[np.isfinite(currents) & (currents > 1e-12)]
-        current_ma = float(currents.median()) if len(currents) else None
+        _profile_finished(profiling, "dcir_scalar_extraction", started)
         if v_rest is None or v_pulse is None or current_ma is None:
             continue
+
+        started = _profile_started(profiling)
         delta_v = (
             v_rest - v_pulse
             if direction == "discharge"
@@ -190,20 +317,8 @@ def per_occurrence(
         )
         dcir_mohm = 1_000_000.0 * delta_v / current_ma
         if not math.isfinite(dcir_mohm):
+            _profile_finished(profiling, "dcir_quantity_calculation", started)
             continue
-
-        cycle = _last_finite(pulse, "cycle")
-        start_time_h = None
-        if origin_timestamp is not None and "timestamp" in rest.columns:
-            timestamps = pd.to_datetime(rest["timestamp"], errors="coerce").dropna()
-            if len(timestamps):
-                start_time_h = float(
-                    (timestamps.iloc[0] - origin_timestamp).total_seconds() / 3600
-                )
-        c_rate = None
-        nominal = _finite_float(nominal_capacity_mah)
-        if nominal is not None and nominal > 0:
-            c_rate = current_ma / nominal
         rows.append(
             {
                 "occurrence": len(rows) + 1,
@@ -214,8 +329,10 @@ def per_occurrence(
                 "current_ma": current_ma,
                 "c_rate": c_rate,
                 "dcir_mohm": dcir_mohm,
-                "rest_duration_s": _duration_seconds(rest),
-                "pulse_duration_s": _duration_seconds(pulse),
+                "rest_duration_s": rest_duration_s,
+                "pulse_duration_s": pulse_duration_s,
             }
         )
+        _profile_finished(profiling, "dcir_quantity_calculation", started)
+        _profile_count(profiling, "valid_occurrences", 1)
     return pd.DataFrame(rows, columns=columns)

@@ -666,6 +666,7 @@ def _profile_route(
     route = _route_for(family)
     request = _request_for(family, analyses, recompute)
     rate_profile: dict[str, Any] = {}
+    dcir_profile: dict[str, Any] = {}
     sql_profile = time_capacity_profiling.SQLProfile(env.db) if instrumented else None
 
     def timed(
@@ -882,6 +883,16 @@ def _profile_route(
                         call_rate,
                         parent=None,
                     )
+                elif family == "dcir":
+                    def call_dcir(*args: Any, **kwargs: Any) -> Any:
+                        kwargs["profiling"] = dcir_profile
+                        return original_compute(*args, **kwargs)
+
+                    compute_wrapper = timed(
+                        "scientific_compute",
+                        call_dcir,
+                        parent=None,
+                    )
                 else:
                     compute_wrapper = timed(
                         "scientific_compute",
@@ -967,6 +978,7 @@ def _profile_route(
         float(metrics["complete_route_ms"]), metrics["root_stage_ms"]
     )
     metrics["rate_deep"] = rate_profile or None
+    metrics["dcir_deep"] = dcir_profile or None
     metrics["taxonomy_stage_ms"] = _taxonomy_stage_ms(recorder, family, rate_profile)
     metrics["source_hashes"] = sorted(metrics.get("source_hashes", set()))
     return payload, metrics
@@ -1340,6 +1352,102 @@ def _rate_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+DCIR_OCCURRENCE_CHILDREN = (
+    "dcir_frame_normalization",
+    "dcir_run_boundary_construction",
+    "dcir_run_metadata_construction",
+    "dcir_adjacency_scanning",
+    "dcir_scalar_extraction",
+    "dcir_quantity_calculation",
+)
+
+
+def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
+    profiles = [sample.get("dcir_deep") for sample in samples if sample.get("dcir_deep")]
+    if not profiles:
+        return None
+
+    stage_names = {
+        name
+        for profile in profiles
+        for name in (profile.get("stages_ms") or {})
+    }
+    stages = {}
+    for name in sorted(stage_names):
+        values = [
+            float(profile.get("stages_ms", {}).get(name, 0.0))
+            for profile in profiles
+            if isinstance(profile.get("stages_ms", {}).get(name), (int, float))
+        ]
+        calls = [
+            float(profile.get("calls", {}).get(name, 0))
+            for profile in profiles
+        ]
+        stages[name] = {
+            "p50": _median(values),
+            "calls_p50": _median(calls),
+            "available": bool(values),
+            "parent": "dcir_occurrence_extraction",
+        }
+    count_names = {
+        name
+        for profile in profiles
+        for name in (profile.get("counts") or {})
+    }
+    reconciliation_samples = []
+    for sample, profile in zip(
+        [sample for sample in samples if sample.get("dcir_deep")],
+        profiles,
+    ):
+        parent = sample.get("nested_stages_ms", {}).get(
+            "dcir_occurrence_extraction"
+        )
+        if not isinstance(parent, (int, float)):
+            continue
+        child_sum = sum(
+            float(profile.get("stages_ms", {}).get(name, 0.0))
+            for name in DCIR_OCCURRENCE_CHILDREN
+        )
+        reconciliation_samples.append(
+            {
+                "occurrence_extraction_ms": float(parent),
+                "child_sum_ms": child_sum,
+                "residual_ms": max(0.0, float(parent) - child_sum),
+                "overlap_ms": max(0.0, child_sum - float(parent)),
+            }
+        )
+    return {
+        "stages_ms": stages,
+        "counts": {
+            name: _median([
+                float(profile.get("counts", {}).get(name, 0))
+                for profile in profiles
+            ])
+            for name in sorted(count_names)
+        },
+        "occurrence_extraction_children": list(DCIR_OCCURRENCE_CHILDREN),
+        "occurrence_extraction_reconciliation": {
+            "samples": reconciliation_samples,
+            "p50_occurrence_extraction_ms": _median([
+                item["occurrence_extraction_ms"]
+                for item in reconciliation_samples
+            ]),
+            "p50_child_sum_ms": _median([
+                item["child_sum_ms"] for item in reconciliation_samples
+            ]),
+            "p50_residual_ms": _median([
+                item["residual_ms"] for item in reconciliation_samples
+            ]),
+            "p50_overlap_ms": _median([
+                item["overlap_ms"] for item in reconciliation_samples
+            ]),
+            "all_non_overlapping": all(
+                item["overlap_ms"] <= 1.0 for item in reconciliation_samples
+            ),
+        },
+    }
+
+
 def _time_specialist_profile(
     env: GoldenFixtureEnvironment,
     analysis_id: int,
@@ -1480,6 +1588,7 @@ def _run_workload(
             "all_order_parity": all(item["order_parity"] for item in overhead) if overhead else None,
         },
         "specialist_time_capacity_profile": specialist,
+        "dcir_deep": _dcir_deep_summary(misses) if family == "dcir" else None,
         "rate_deep": _rate_deep_summary(misses) if family == "rate_capability" else None,
     }
 

@@ -760,6 +760,18 @@ Request-local protocol reconstruction reuse is limited to identical immutable
 header metadata plus nominal capacity and does not alter protocol semantics or
 cache identity.
 
+Spec 050.19 keeps DCIR serial and adds a request-local per-Cell compute context.
+When multiple DCIR series consume the same Cell, the context reconstructs each
+distinct immutable header once, unions the selected rest/pulse step indices for
+one selective raw read (or one full-raw fallback), and reuses that stitched frame
+for the configured series in their original order. `dcir.per_occurrence` then
+normalizes required arrays once per series, derives compact run boundaries, and
+scans adjacent runs without copied group DataFrames. Record-index gaps, cycle and
+time resets, timestamp/time-s duration precedence, NaN handling, current sign,
+and source-local ordering remain part of the contract. The context and its
+protocol cache are request-local only; exact persisted hits still bypass raw
+access, protocol reconstruction, run metadata, and occurrence extraction.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

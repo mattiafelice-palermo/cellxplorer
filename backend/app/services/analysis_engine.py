@@ -15,6 +15,7 @@ newer is a badge, never a silent recompute.
 """
 from __future__ import annotations
 
+import json
 import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2730,6 +2731,7 @@ def compute_dcir(
     progress: ProgressCallback | None = None,
     *,
     request_context: AnalysisRequestContext | None = None,
+    profiling: dict[str, Any] | None = None,
 ) -> dict:
     """Compute one DCIR line for every explicit (cell, DCIR segment) pair."""
     ensure_canonical_cycling_available(
@@ -2759,6 +2761,8 @@ def compute_dcir(
     badges: list[dict] = []
     cell_series: list[dict] = []
     sources_by_cell: dict[int, dict] = {}
+    dcir_cell_contexts: dict[int, dict[str, Any]] = {}
+    dcir_protocol_cache: dict[tuple[str, float | None], dict] = {}
     if not configured_series:
         badges.append(
             {
@@ -2780,40 +2784,82 @@ def compute_dcir(
                 cell.name,
                 "Reading DCIR pulse data",
             )
-        if request_context is None:
-            hashes, files = cell_ordered_hashes(db, cell)
-            source_versions = resolve_source_parser_versions(
-                files, provenance, cell.id, use_current_versions
+        context = dcir_cell_contexts.get(cell.id)
+        if context is None:
+            if request_context is None:
+                hashes, files = cell_ordered_hashes(db, cell)
+                source_versions = resolve_source_parser_versions(
+                    files, provenance, cell.id, use_current_versions
+                )
+            else:
+                hashes = list(request_context.hashes_by_cell[cell.id])
+                files = list(request_context.files_by_cell[cell.id])
+                source_versions = request_context.parser_versions_by_cell[cell.id]
+            refs = [
+                stitch.CachedSourceRef(f.hash, source_versions[f.hash])
+                for f in files
+            ]
+            all_pinned_versions.extend(source_versions[f.hash] for f in files)
+            all_current_versions.extend(current_parser_identity(f) for f in files)
+            nominal = cell_nominal_capacity_mah(
+                cell,
+                request_context.scalar_metadata.get(cell.id)
+                if request_context is not None
+                else None,
             )
-        else:
-            hashes = list(request_context.hashes_by_cell[cell.id])
-            files = list(request_context.files_by_cell[cell.id])
-            source_versions = request_context.parser_versions_by_cell[cell.id]
-        refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
-        all_pinned_versions.extend(source_versions[f.hash] for f in files)
-        all_current_versions.extend(current_parser_identity(f) for f in files)
-        nominal = cell_nominal_capacity_mah(
-            cell,
-            request_context.scalar_metadata.get(cell.id)
-            if request_context is not None
-            else None,
-        )
-        targets = {
-            str(target.get("protocol_signature")): target
-            for target in ((segment or {}).get("targets") or [])
-            if isinstance(target, dict) and target.get("protocol_signature")
-        }
-        occurrence_frames: list[pd.DataFrame] = []
-        matched_target: dict | None = None
-        targets_by_source: dict[int, dict] = {}
-        for source_index, source_file in enumerate(files):
-            reconstructed = protocol_service.reconstruct_protocol(
-                source_file.header_meta, nominal
-            )
-            target = protocol_service.protocol_target_for_protocol(targets, reconstructed)
-            if target:
-                targets_by_source[source_index] = target
-        if targets_by_source:
+            reconstructed_by_source = []
+            for source_file in files:
+                protocol_key = (
+                    json.dumps(
+                        source_file.header_meta or {},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ),
+                    nominal,
+                )
+                reconstructed = dcir_protocol_cache.get(protocol_key)
+                if reconstructed is None:
+                    reconstructed = protocol_service.reconstruct_protocol(
+                        source_file.header_meta,
+                        nominal,
+                    )
+                    dcir_protocol_cache[protocol_key] = reconstructed
+                elif profiling is not None:
+                    profiling.setdefault("counts", {})[
+                        "protocol_reconstruction_cache_hits"
+                    ] = profiling.setdefault("counts", {}).get(
+                        "protocol_reconstruction_cache_hits",
+                        0,
+                    ) + 1
+                reconstructed_by_source.append(reconstructed)
+            targets_by_series: dict[str, dict[int, dict]] = {}
+            selected_by_hash: dict[str, set[int]] = {}
+            for candidate_series in configured_series:
+                if candidate_series["cell_id"] != cell.id:
+                    continue
+                candidate_segment = segments.get(candidate_series["segment_id"])
+                candidate_targets = {
+                    str(target.get("protocol_signature")): target
+                    for target in ((candidate_segment or {}).get("targets") or [])
+                    if isinstance(target, dict) and target.get("protocol_signature")
+                }
+                targets_for_series: dict[int, dict] = {}
+                for source_index, reconstructed in enumerate(reconstructed_by_source):
+                    target = protocol_service.protocol_target_for_protocol(
+                        candidate_targets,
+                        reconstructed,
+                    )
+                    if target:
+                        targets_for_series[source_index] = target
+                        selected_by_hash.setdefault(files[source_index].hash, set()).update(
+                            {
+                                int(target["rest_step_index"]),
+                                int(target["pulse_step_index"]),
+                            }
+                        )
+                targets_by_series[candidate_series["id"]] = targets_for_series
+
             step_columns = [
                 "record_index",
                 "cycle",
@@ -2824,28 +2870,42 @@ def compute_dcir(
                 "current_ma",
                 "timestamp",
             ]
-            selected_by_hash = {
-                files[source_index].hash: {
-                    int(target["rest_step_index"]),
-                    int(target["pulse_step_index"]),
-                }
-                for source_index, target in targets_by_source.items()
-            }
-            selective = stitch.stitch_raw_steps(refs, selected_by_hash, step_columns)
-            if selective is None:
-                raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+            if selected_by_hash:
+                selective = stitch.stitch_raw_steps(refs, selected_by_hash, step_columns)
+                if selective is None:
+                    raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+                else:
+                    raw, _raw_segments, _missing = selective
             else:
-                raw, _raw_segments, _missing = selective
-        else:
-            raw, _raw_segments, _missing = stitch.stitch_raw(refs)
-        raw_start = raw.attrs.get("raw_timestamp_start")
-        if raw_start is None:
-            raw_timestamps = (
-                pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
-                if not raw.empty and "timestamp" in raw.columns
-                else pd.Series(dtype="datetime64[ns]")
-            )
-            raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+                raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+            raw_start = raw.attrs.get("raw_timestamp_start")
+            if raw_start is None:
+                raw_timestamps = (
+                    pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+                    if not raw.empty and "timestamp" in raw.columns
+                    else pd.Series(dtype="datetime64[ns]")
+                )
+                raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+            context = {
+                "hashes": hashes,
+                "files": files,
+                "source_versions": source_versions,
+                "nominal": nominal,
+                "raw": raw,
+                "raw_start": raw_start,
+                "targets_by_series": targets_by_series,
+            }
+            dcir_cell_contexts[cell.id] = context
+
+        hashes = context["hashes"]
+        files = context["files"]
+        source_versions = context["source_versions"]
+        nominal = context["nominal"]
+        raw = context["raw"]
+        raw_start = context["raw_start"]
+        targets_by_source = context["targets_by_series"].get(series_cfg["id"], {})
+        occurrence_frames: list[pd.DataFrame] = []
+        matched_target: dict | None = None
         for source_index, source_file in enumerate(files):
             target = targets_by_source.get(source_index)
             if not target or raw.empty:
@@ -2866,6 +2926,7 @@ def compute_dcir(
                 direction=direction,
                 nominal_capacity_mah=nominal,
                 origin_timestamp=raw_start,
+                profiling=profiling,
             )
             if not occurrences.empty:
                 occurrence_frames.append(occurrences)

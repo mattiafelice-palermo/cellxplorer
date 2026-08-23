@@ -254,6 +254,32 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
         self.assertIs(analysis_cache.result_key, original_result_key)
         self.assertIs(analysis_engine.resolve_selection, original_resolve_selection)
 
+    def test_real_dcir_exact_hit_bypasses_compute_and_raw_reads(self) -> None:
+        with profiler.GoldenFixtureEnvironment.create() as env:
+            analysis_id, _cell_ids = profiler._family_workload(env, "dcir", 1)
+            with tempfile.TemporaryDirectory() as root:
+                cache_root = Path(root)
+                warm_payload, _warm = profiler._profile_route_simple(
+                    env,
+                    analysis_id,
+                    "dcir",
+                    recompute=True,
+                    cache_root=cache_root,
+                )
+                hit_payload, hit = profiler._profile_route(
+                    env,
+                    analysis_id,
+                    "dcir",
+                    recompute=False,
+                    cache_root=cache_root,
+                    instrumented=True,
+                )
+            self.assertTrue(profiler._exact_hit_is_clean(hit))
+            self.assertEqual(hit["calls"].get("scientific_compute", 0), 0)
+            self.assertEqual(hit["counts"].get("raw_load_calls", 0), 0)
+            self.assertIsNone(hit.get("dcir_deep"))
+            self.assertEqual(profiler._digest(warm_payload), profiler._digest(hit_payload))
+
     def test_real_clone_workload_has_distinct_relational_and_cache_identity(self) -> None:
         from app.models import Analysis, Cell, TestFile
         from app.services import analysis_engine, cache, parsing
@@ -330,6 +356,32 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
             )
             self.assertIn("measurement_groups", raw_deep["counts"])
             self.assertIn("execution_rows", raw_deep["counts"])
+
+    def test_real_dcir_deep_profile_contains_measured_children_and_reconciliation(self) -> None:
+        with profiler.GoldenFixtureEnvironment.create() as env:
+            analysis_id, _cell_ids = profiler._family_workload(env, "dcir", 1)
+            with tempfile.TemporaryDirectory() as root:
+                _payload, metrics = profiler._profile_route(
+                    env,
+                    analysis_id,
+                    "dcir",
+                    recompute=True,
+                    cache_root=Path(root),
+                    instrumented=True,
+                )
+            raw_deep = metrics["dcir_deep"]
+            deep = profiler._dcir_deep_summary([metrics])
+            self.assertIsNotNone(deep)
+            for name in profiler.DCIR_OCCURRENCE_CHILDREN:
+                self.assertIn(name, deep["stages_ms"])
+                self.assertIsInstance(deep["stages_ms"][name]["p50"], float)
+                self.assertGreaterEqual(deep["stages_ms"][name]["calls_p50"], 0.0)
+            reconciliation = deep["occurrence_extraction_reconciliation"]
+            self.assertTrue(reconciliation["all_non_overlapping"])
+            self.assertGreater(reconciliation["p50_occurrence_extraction_ms"], 0.0)
+            self.assertIn("input_rows", raw_deep["counts"])
+            self.assertIn("runs", raw_deep["counts"])
+            self.assertIn("valid_occurrences", raw_deep["counts"])
 
 
 if __name__ == "__main__":
