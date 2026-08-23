@@ -167,6 +167,46 @@ class DcirOccurrenceTests(unittest.TestCase):
         self.assertAlmostEqual(row["rest_duration_s"], 30)
         self.assertAlmostEqual(row["pulse_duration_s"], 20)
 
+    def test_prepared_source_index_is_reused_across_multiple_target_series(self):
+        frame = pd.DataFrame(
+            {
+                "cycle": [1] * 8,
+                "step_index": [10, 10, 11, 11, 20, 20, 21, 21],
+                "time_s": [0, 1, 0, 1, 0, 1, 0, 1],
+                "voltage_v": [3.5, 3.5, 3.3, 3.3, 3.3, 3.3, 3.5, 3.5],
+                "current_ma": [0, 0, -10, -10, 0, 0, 10, 10],
+            }
+        )
+        profiling: dict = {}
+        prepared = dcir.prepare_dcir_frame(frame, profiling=profiling)
+        self.assertIsNotNone(prepared)
+        discharge = dcir.per_occurrence(
+            frame,
+            rest_step_index=10,
+            pulse_step_index=11,
+            direction="discharge",
+            profiling=profiling,
+            prepared=prepared,
+        )
+        charge = dcir.per_occurrence(
+            frame,
+            rest_step_index=20,
+            pulse_step_index=21,
+            direction="charge",
+            profiling=profiling,
+            prepared=prepared,
+        )
+
+        self.assertEqual(discharge["cycle"].tolist(), [1])
+        self.assertEqual(charge["cycle"].tolist(), [1])
+        self.assertEqual(profiling["counts"]["input_rows"], 8)
+        self.assertEqual(profiling["counts"]["runs"], 4)
+        self.assertEqual(profiling["counts"]["valid_occurrences"], 2)
+        self.assertEqual(profiling["calls"]["dcir_frame_normalization"], 1)
+        self.assertEqual(profiling["calls"]["dcir_run_boundary_construction"], 1)
+        self.assertEqual(profiling["calls"]["dcir_scalar_extraction"], 1)
+        self.assertEqual(profiling["calls"]["dcir_adjacency_scanning"], 1)
+
     def test_missing_nan_and_zero_current_values_are_rejected(self):
         frame = pd.DataFrame(
             {

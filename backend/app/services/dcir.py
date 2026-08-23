@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
@@ -40,6 +41,39 @@ def _profile_count(
     profiling.setdefault("counts", {})[name] = (
         profiling.setdefault("counts", {}).get(name, 0) + int(value)
     )
+
+
+@dataclass(frozen=True)
+class DcirRun:
+    """Immutable source-local facts reused by every DCIR target series."""
+
+    start: int
+    end: int
+    step: float | None
+    cycle: float | None
+    last_voltage_v: float | None
+    pulse_current_ma: float | None
+    start_timestamp: pd.Timestamp | None
+    duration_s: float | None
+
+
+@dataclass(frozen=True)
+class PreparedDcirFrame:
+    """Request-local normalized arrays and run index for one source frame."""
+
+    step_values: np.ndarray
+    cycle_values: np.ndarray | None
+    time_values: np.ndarray | None
+    record_values: np.ndarray | None
+    voltage_values: np.ndarray | None
+    current_values: np.ndarray | None
+    timestamp_values: pd.Series | None
+    origin_timestamp: pd.Timestamp | None
+    runs: tuple[DcirRun, ...]
+    adjacent_pairs: dict[
+        tuple[float, float],
+        tuple[tuple[DcirRun, DcirRun], ...],
+    ]
 
 
 def _finite_float(value: Any) -> float | None:
@@ -145,34 +179,17 @@ def _duration_seconds(frame: pd.DataFrame) -> float | None:
     return None
 
 
-def per_occurrence(
+def prepare_dcir_frame(
     frame: pd.DataFrame,
     *,
-    rest_step_index: int,
-    pulse_step_index: int,
-    direction: str,
-    nominal_capacity_mah: float | None = None,
-    origin_timestamp: pd.Timestamp | None = None,
     profiling: dict[str, Any] | None = None,
-) -> pd.DataFrame:
-    """Measure each adjacent rest/pulse occurrence in one source-file frame."""
-    columns = [
-        "occurrence",
-        "cycle",
-        "start_time_h",
-        "v_rest_v",
-        "v_pulse_v",
-        "current_ma",
-        "c_rate",
-        "dcir_mohm",
-        "rest_duration_s",
-        "pulse_duration_s",
-    ]
+) -> PreparedDcirFrame | None:
+    """Build one reusable normalized/run index for a source-local DCIR frame."""
     if frame.empty:
-        return pd.DataFrame(columns=columns)
+        return None
     step_column = "step_index" if "step_index" in frame.columns else "step"
     if step_column not in frame.columns:
-        return pd.DataFrame(columns=columns)
+        return None
 
     started = _profile_started(profiling)
     work = frame.reset_index(drop=True)
@@ -196,6 +213,8 @@ def per_occurrence(
         else None
     )
     _profile_finished(profiling, "dcir_frame_normalization", started)
+    if step_values is None:
+        return None
 
     started = _profile_started(profiling)
     steps = pd.Series(step_values, index=work.index)
@@ -223,14 +242,15 @@ def per_occurrence(
             np.asarray([len(work)], dtype="int64"),
         )
     )
-    runs = list(zip(run_starts.tolist(), run_ends.tolist()))
-    if origin_timestamp is None and timestamp_values is not None:
+    run_positions = list(zip(run_starts.tolist(), run_ends.tolist()))
+    origin_timestamp = None
+    if timestamp_values is not None:
         valid_timestamps = timestamp_values.dropna()
         if len(valid_timestamps):
             origin_timestamp = valid_timestamps.min()
     _profile_finished(profiling, "dcir_run_metadata_construction", started)
     _profile_count(profiling, "input_rows", len(work))
-    _profile_count(profiling, "runs", len(runs))
+    _profile_count(profiling, "runs", len(run_positions))
 
     def last_finite(
         values: np.ndarray | None,
@@ -265,57 +285,124 @@ def per_occurrence(
                 return max(0.0, float(finite.max() - finite.min()))
         return None
 
+    started = _profile_started(profiling)
+    runs: list[DcirRun] = []
+    for start, end in run_positions:
+        current_ma = None
+        if current_values is not None:
+            currents = np.abs(current_values[start:end])
+            currents = currents[np.isfinite(currents) & (currents > 1e-12)]
+            if len(currents):
+                current_ma = float(np.median(currents))
+        timestamps = timestamp_slice(start, end)
+        runs.append(
+            DcirRun(
+                start=start,
+                end=end,
+                step=_finite_float(step_values[start]),
+                cycle=last_finite(cycle_values, start, end),
+                last_voltage_v=last_finite(voltage_values, start, end),
+                pulse_current_ma=current_ma,
+                start_timestamp=timestamps.iloc[0] if timestamps is not None and len(timestamps) else None,
+                duration_s=duration_seconds(start, end, timestamps),
+            )
+        )
+    _profile_finished(profiling, "dcir_scalar_extraction", started)
+
+    started = _profile_started(profiling)
+    adjacent_pairs: dict[
+        tuple[float, float],
+        list[tuple[DcirRun, DcirRun]],
+    ] = {}
+    for rest, pulse in zip(runs, runs[1:]):
+        if rest.step is None or pulse.step is None:
+            continue
+        adjacent_pairs.setdefault((rest.step, pulse.step), []).append((rest, pulse))
+    _profile_finished(profiling, "dcir_adjacency_scanning", started)
+
+    return PreparedDcirFrame(
+        step_values=step_values,
+        cycle_values=cycle_values,
+        time_values=time_values,
+        record_values=record_values,
+        voltage_values=voltage_values,
+        current_values=current_values,
+        timestamp_values=timestamp_values,
+        origin_timestamp=origin_timestamp,
+        runs=tuple(runs),
+        adjacent_pairs={
+            key: tuple(pairs) for key, pairs in adjacent_pairs.items()
+        },
+    )
+
+
+def per_occurrence(
+    frame: pd.DataFrame,
+    *,
+    rest_step_index: int,
+    pulse_step_index: int,
+    direction: str,
+    nominal_capacity_mah: float | None = None,
+    origin_timestamp: pd.Timestamp | None = None,
+    profiling: dict[str, Any] | None = None,
+    prepared: PreparedDcirFrame | None = None,
+) -> pd.DataFrame:
+    """Measure each adjacent rest/pulse occurrence in one source-file frame."""
+    columns = [
+        "occurrence",
+        "cycle",
+        "start_time_h",
+        "v_rest_v",
+        "v_pulse_v",
+        "current_ma",
+        "c_rate",
+        "dcir_mohm",
+        "rest_duration_s",
+        "pulse_duration_s",
+    ]
+    if prepared is None:
+        prepared = prepare_dcir_frame(frame, profiling=profiling)
+    if prepared is None:
+        return pd.DataFrame(columns=columns)
+
+    started = _profile_started(profiling)
+    pairs = prepared.adjacent_pairs.get(
+        (float(rest_step_index), float(pulse_step_index)),
+        (),
+    )
+    _profile_finished(profiling, "dcir_target_pair_selection", started)
     rows: list[dict] = []
     nominal = _finite_float(nominal_capacity_mah)
-    for (rest_start, rest_end), (pulse_start, pulse_end) in zip(
-        runs,
-        runs[1:],
-    ):
-        started = _profile_started(profiling)
-        rest_step = _finite_float(step_values[rest_start])
-        pulse_step = _finite_float(step_values[pulse_start])
-        matching = rest_step == rest_step_index and pulse_step == pulse_step_index
-        _profile_finished(profiling, "dcir_adjacency_scanning", started)
-        if not matching:
-            continue
-
-        started = _profile_started(profiling)
-        v_rest = last_finite(voltage_values, rest_start, rest_end)
-        v_pulse = last_finite(voltage_values, pulse_start, pulse_end)
-        if current_values is not None:
-            currents = np.abs(current_values[pulse_start:pulse_end])
-            currents = currents[np.isfinite(currents) & (currents > 1e-12)]
-            current_ma = float(np.median(currents)) if len(currents) else None
-        else:
-            current_ma = None
-        cycle = last_finite(cycle_values, pulse_start, pulse_end)
-        rest_timestamps = timestamp_slice(rest_start, rest_end)
-        pulse_timestamps = timestamp_slice(pulse_start, pulse_end)
+    source_origin = (
+        origin_timestamp
+        if origin_timestamp is not None
+        else prepared.origin_timestamp
+    )
+    for rest, pulse in pairs:
+        v_rest = rest.last_voltage_v
+        v_pulse = pulse.last_voltage_v
+        current_ma = pulse.pulse_current_ma
+        cycle = pulse.cycle
         start_time_h = None
-        if origin_timestamp is not None and rest_timestamps is not None:
-            if len(rest_timestamps):
-                start_time_h = float(
-                    (rest_timestamps.iloc[0] - origin_timestamp).total_seconds()
-                    / 3600
-                )
-        rest_duration_s = duration_seconds(rest_start, rest_end, rest_timestamps)
-        pulse_duration_s = duration_seconds(pulse_start, pulse_end, pulse_timestamps)
+        if source_origin is not None and rest.start_timestamp is not None:
+            start_time_h = float(
+                (rest.start_timestamp - source_origin).total_seconds() / 3600
+            )
         c_rate = (
             current_ma / nominal
             if current_ma is not None and nominal is not None and nominal > 0
             else None
         )
-        _profile_finished(profiling, "dcir_scalar_extraction", started)
         if v_rest is None or v_pulse is None or current_ma is None:
             continue
 
-        started = _profile_started(profiling)
         delta_v = (
             v_rest - v_pulse
             if direction == "discharge"
             else v_pulse - v_rest
         )
         dcir_mohm = 1_000_000.0 * delta_v / current_ma
+        started = _profile_started(profiling)
         if not math.isfinite(dcir_mohm):
             _profile_finished(profiling, "dcir_quantity_calculation", started)
             continue
@@ -329,8 +416,8 @@ def per_occurrence(
                 "current_ma": current_ma,
                 "c_rate": c_rate,
                 "dcir_mohm": dcir_mohm,
-                "rest_duration_s": rest_duration_s,
-                "pulse_duration_s": pulse_duration_s,
+                "rest_duration_s": rest.duration_s,
+                "pulse_duration_s": pulse.duration_s,
             }
         )
         _profile_finished(profiling, "dcir_quantity_calculation", started)

@@ -764,13 +764,17 @@ Spec 050.19 keeps DCIR serial and adds a request-local per-Cell compute context.
 When multiple DCIR series consume the same Cell, the context reconstructs each
 distinct immutable header once, unions the selected rest/pulse step indices for
 one selective raw read (or one full-raw fallback), and reuses that stitched frame
-for the configured series in their original order. `dcir.per_occurrence` then
-normalizes required arrays once per series, derives compact run boundaries, and
-scans adjacent runs without copied group DataFrames. Record-index gaps, cycle and
-time resets, timestamp/time-s duration precedence, NaN handling, current sign,
-and source-local ordering remain part of the contract. The context and its
-protocol cache are request-local only; exact persisted hits still bypass raw
-access, protocol reconstruction, run metadata, and occurrence extraction.
+for the configured series in their original order. `dcir.prepare_dcir_frame`
+now owns one source-local numeric/timestamp normalization, boundary and compact
+run construction, run metadata extraction, and adjacent-run index per distinct
+source. `dcir.per_occurrence` receives that prepared frame and performs only
+target-specific pair selection and quantity calculation for each configured
+series. This prevents source-frame copies and run preparation from repeating
+across series while retaining record-index gaps, cycle and time resets,
+timestamp/time-s duration precedence, NaN handling, current sign, and
+source-local ordering. The context, prepared frames, and protocol cache are
+request-local only; exact persisted hits still bypass raw access, protocol
+reconstruction, run metadata, and occurrence extraction.
 
 ## Presentation filters versus computation
 

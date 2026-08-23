@@ -372,13 +372,22 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
             raw_deep = metrics["dcir_deep"]
             deep = profiler._dcir_deep_summary([metrics])
             self.assertIsNotNone(deep)
-            for name in profiler.DCIR_OCCURRENCE_CHILDREN:
+            for name in (
+                profiler.DCIR_SOURCE_PREPARATION_CHILDREN
+                + profiler.DCIR_OCCURRENCE_CHILDREN
+            ):
                 self.assertIn(name, deep["stages_ms"])
                 self.assertIsInstance(deep["stages_ms"][name]["p50"], float)
                 self.assertGreaterEqual(deep["stages_ms"][name]["calls_p50"], 0.0)
-            reconciliation = deep["occurrence_extraction_reconciliation"]
-            self.assertTrue(reconciliation["all_non_overlapping"])
-            self.assertGreater(reconciliation["p50_occurrence_extraction_ms"], 0.0)
+            self.assertEqual(metrics["calls"]["dcir_source_preparation"], 1)
+            self.assertEqual(metrics["calls"]["dcir_occurrence_extraction"], 2)
+            for reconciliation_name in (
+                "source_preparation_reconciliation",
+                "occurrence_extraction_reconciliation",
+            ):
+                reconciliation = deep[reconciliation_name]
+                self.assertTrue(reconciliation["all_non_overlapping"])
+                self.assertGreater(reconciliation["p50_child_sum_ms"], 0.0)
             self.assertIn("input_rows", raw_deep["counts"])
             self.assertIn("runs", raw_deep["counts"])
             self.assertIn("valid_occurrences", raw_deep["counts"])

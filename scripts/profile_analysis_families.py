@@ -830,8 +830,19 @@ def _profile_route(
                         (step_blocks, "per_block", "step_block_extraction")
                     )
                 elif family == "dcir":
-                    family_helpers.append(
-                        (dcir_service, "per_occurrence", "dcir_occurrence_extraction")
+                    family_helpers.extend(
+                        [
+                            (
+                                dcir_service,
+                                "prepare_dcir_frame",
+                                "dcir_source_preparation",
+                            ),
+                            (
+                                dcir_service,
+                                "per_occurrence",
+                                "dcir_occurrence_extraction",
+                            ),
+                        ]
                     )
                 elif family == "chargeability":
                     family_helpers.extend(
@@ -1352,14 +1363,29 @@ def _rate_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
-DCIR_OCCURRENCE_CHILDREN = (
+DCIR_SOURCE_PREPARATION_CHILDREN = (
     "dcir_frame_normalization",
     "dcir_run_boundary_construction",
     "dcir_run_metadata_construction",
-    "dcir_adjacency_scanning",
     "dcir_scalar_extraction",
+    "dcir_adjacency_scanning",
+)
+
+DCIR_OCCURRENCE_CHILDREN = (
+    "dcir_target_pair_selection",
     "dcir_quantity_calculation",
 )
+
+DCIR_STAGE_PARENTS = {
+    **{
+        name: "dcir_source_preparation"
+        for name in DCIR_SOURCE_PREPARATION_CHILDREN
+    },
+    **{
+        name: "dcir_occurrence_extraction"
+        for name in DCIR_OCCURRENCE_CHILDREN
+    },
+}
 
 
 def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1387,50 +1413,44 @@ def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
             "p50": _median(values),
             "calls_p50": _median(calls),
             "available": bool(values),
-            "parent": "dcir_occurrence_extraction",
+            "parent": DCIR_STAGE_PARENTS.get(
+                name,
+                "dcir_occurrence_extraction",
+            ),
         }
     count_names = {
         name
         for profile in profiles
         for name in (profile.get("counts") or {})
     }
-    reconciliation_samples = []
-    for sample, profile in zip(
-        [sample for sample in samples if sample.get("dcir_deep")],
-        profiles,
-    ):
-        parent = sample.get("nested_stages_ms", {}).get(
-            "dcir_occurrence_extraction"
-        )
-        if not isinstance(parent, (int, float)):
-            continue
-        child_sum = sum(
-            float(profile.get("stages_ms", {}).get(name, 0.0))
-            for name in DCIR_OCCURRENCE_CHILDREN
-        )
-        reconciliation_samples.append(
-            {
-                "occurrence_extraction_ms": float(parent),
-                "child_sum_ms": child_sum,
-                "residual_ms": max(0.0, float(parent) - child_sum),
-                "overlap_ms": max(0.0, child_sum - float(parent)),
-            }
-        )
-    return {
-        "stages_ms": stages,
-        "counts": {
-            name: _median([
-                float(profile.get("counts", {}).get(name, 0))
-                for profile in profiles
-            ])
-            for name in sorted(count_names)
-        },
-        "occurrence_extraction_children": list(DCIR_OCCURRENCE_CHILDREN),
-        "occurrence_extraction_reconciliation": {
+    profile_samples = [sample for sample in samples if sample.get("dcir_deep")]
+
+    def reconciliation(
+        parent_name: str,
+        child_names: tuple[str, ...],
+        value_name: str,
+    ) -> dict[str, Any]:
+        reconciliation_samples = []
+        for sample, profile in zip(profile_samples, profiles):
+            parent = sample.get("nested_stages_ms", {}).get(parent_name)
+            if not isinstance(parent, (int, float)):
+                continue
+            child_sum = sum(
+                float(profile.get("stages_ms", {}).get(name, 0.0))
+                for name in child_names
+            )
+            reconciliation_samples.append(
+                {
+                    f"{value_name}_ms": float(parent),
+                    "child_sum_ms": child_sum,
+                    "residual_ms": max(0.0, float(parent) - child_sum),
+                    "overlap_ms": max(0.0, child_sum - float(parent)),
+                }
+            )
+        return {
             "samples": reconciliation_samples,
-            "p50_occurrence_extraction_ms": _median([
-                item["occurrence_extraction_ms"]
-                for item in reconciliation_samples
+            f"p50_{value_name}_ms": _median([
+                item[f"{value_name}_ms"] for item in reconciliation_samples
             ]),
             "p50_child_sum_ms": _median([
                 item["child_sum_ms"] for item in reconciliation_samples
@@ -1444,7 +1464,29 @@ def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
             "all_non_overlapping": all(
                 item["overlap_ms"] <= 1.0 for item in reconciliation_samples
             ),
+        }
+
+    return {
+        "stages_ms": stages,
+        "counts": {
+            name: _median([
+                float(profile.get("counts", {}).get(name, 0))
+                for profile in profiles
+            ])
+            for name in sorted(count_names)
         },
+        "source_preparation_children": list(DCIR_SOURCE_PREPARATION_CHILDREN),
+        "occurrence_extraction_children": list(DCIR_OCCURRENCE_CHILDREN),
+        "source_preparation_reconciliation": reconciliation(
+            "dcir_source_preparation",
+            DCIR_SOURCE_PREPARATION_CHILDREN,
+            "source_preparation",
+        ),
+        "occurrence_extraction_reconciliation": reconciliation(
+            "dcir_occurrence_extraction",
+            DCIR_OCCURRENCE_CHILDREN,
+            "occurrence_extraction",
+        ),
     }
 
 

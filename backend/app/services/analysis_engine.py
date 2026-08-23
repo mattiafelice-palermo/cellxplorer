@@ -2886,6 +2886,22 @@ def compute_dcir(
                     else pd.Series(dtype="datetime64[ns]")
                 )
                 raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+            required_source_indices = sorted(
+                {
+                    source_index
+                    for targets_for_series in targets_by_series.values()
+                    for source_index in targets_for_series
+                }
+            )
+            prepared_by_source = {}
+            for source_index in required_source_indices:
+                source_raw = raw.loc[raw["segment"] == source_index].copy()
+                prepared = dcir.prepare_dcir_frame(
+                    source_raw,
+                    profiling=profiling,
+                )
+                if prepared is not None:
+                    prepared_by_source[source_index] = prepared
             context = {
                 "hashes": hashes,
                 "files": files,
@@ -2894,6 +2910,7 @@ def compute_dcir(
                 "raw": raw,
                 "raw_start": raw_start,
                 "targets_by_series": targets_by_series,
+                "prepared_by_source": prepared_by_source,
             }
             dcir_cell_contexts[cell.id] = context
 
@@ -2903,6 +2920,7 @@ def compute_dcir(
         nominal = context["nominal"]
         raw = context["raw"]
         raw_start = context["raw_start"]
+        prepared_by_source = context["prepared_by_source"]
         targets_by_source = context["targets_by_series"].get(series_cfg["id"], {})
         occurrence_frames: list[pd.DataFrame] = []
         matched_target: dict | None = None
@@ -2918,15 +2936,18 @@ def compute_dcir(
             direction = str(target.get("direction") or "")
             if direction not in {"charge", "discharge"}:
                 continue
-            source_raw = raw.loc[raw["segment"] == source_index].copy()
+            prepared = prepared_by_source.get(source_index)
+            if prepared is None:
+                continue
             occurrences = dcir.per_occurrence(
-                source_raw,
+                raw,
                 rest_step_index=rest_step,
                 pulse_step_index=pulse_step,
                 direction=direction,
                 nominal_capacity_mah=nominal,
                 origin_timestamp=raw_start,
                 profiling=profiling,
+                prepared=prepared,
             )
             if not occurrences.empty:
                 occurrence_frames.append(occurrences)
