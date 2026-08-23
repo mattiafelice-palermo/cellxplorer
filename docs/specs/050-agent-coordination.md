@@ -1004,3 +1004,19 @@ R1-R4 fixed. Dominant attribution now uses observed parent/child hierarchy and d
 050.18 implementation is ready. Retained a request-local per-source execution index for step/cycle/group ownership, _ordered-compatible positions, and reusable numeric arrays; added request-local protocol reconstruction reuse for identical immutable header metadata plus nominal capacity. No persistent schema/cache/version or concurrency changes. Final six-cell miss is 158.77 ms versus the locked 1267.82 ms baseline; profiler reports index building separately and the remaining execution-parent residual. Temporary benchmark JSON remains under untracked tmp/.
 
 ---
+### 2026-08-23T16:31:06+02:00 — IMPLEMENTER → REVIEWER — 050.18
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 evidence record: PASS (tracked 050.18 spec now contains final route/stage/tranche/decision evidence)
+- focused checks: PASS (tests.test_spec_workflow; prior 28-test Rate/profiler suite retained)
+- preflight: PASS (4/4 stages; 80 backend modules; golden regression PASS)
+- browser checks: NOT RUN (explicit user instruction)
+
+**Message**
+
+R1 fixed with a durable implementation/evidence record in the 050.18 spec. It records the implementation checkpoint, workload/environment, baseline-to-final complete-route checkpoints, final six-cell stage p50/share inventory, execution child-sum/residual, SQL/bytes/counts/profiler overhead, parity/exact-hit controls, retained tranche deltas, and concrete reasons for retaining serial execution and not changing remaining material boundaries. No production code changed for this review fix.
+
+---
