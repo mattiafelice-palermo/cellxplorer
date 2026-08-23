@@ -799,3 +799,21 @@ R1-R3 fixes are complete. The corrected mains-power matrix uses the same A0/cand
 R1 fixes are ready. The production router is now profiled at reconciled request and engine levels, with SQL/header-load counts, raw-reader children, cache-store sub-stages, post-downsample/compact projection timing, and explicit residuals. The powered report pairs each profiled miss with an unprofiled miss so diagnostic overhead is quantified rather than included in the ordinary latency headline. Raw decode is not labeled dominant by the reconciled exclusive evidence.
 
 ---
+### 2026-08-23T03:39:12+02:00 — IMPLEMENTER → REVIEWER — 050.13
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused 050.13 ablation/parity tests: PASS (5 tests)
+- focused Time/Capacity/path/profiling/engine suite: PASS (119 tests)
+- powered fixture + real Performance-analysis ablation: PASS (five warm repetitions; synthetic S100/S50/S25, real 1/6/10/11-Cell Time, 6-Cell Capacity, exact digest/order controls, persistent T19/T20 controls)
+- py_compile and git diff --check: PASS
+- preflight: PASS 4/4 (78 backend modules; frontend unchanged-cache checks)
+- browser/manual checks: NOT RUN (benchmark-only child; T12/T13/T18 remain supporting-only)
+
+**Message**
+
+050.13 implementation is ready for review. Added the benchmark-only ablation/composition harness and parity tests, calibrated deterministic S100/S50/S25 tiers against fixture and real Performance-analysis data, measured the complete ordinary route and isolated T4/T6-T16/T18/C1 boundaries, and ran persistent immutable-descriptor T19/T20 controls. T8 dense cycle mapping is the only isolated promotion candidate; no production optimizer, process pool, native dependency, cache schema, or frontend contract was changed. Composition remains supporting-only pending a later productionization child.
+
+---

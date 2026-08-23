@@ -295,6 +295,7 @@ Cellxplorer/
 │   ├── test_preflight_script.py    Preflight command unit tests
 │   ├── test_profile_test_suite.py  Exhaustive profiler regression tests (Spec 048.2)
 │   ├── test_time_capacity_profiling.py Opt-in Time/Capacity diagnostics tests (Spec 050.4)
+│   ├── test_time_capacity_ablation.py  Spec 050.13 ablation/parity contract tests
 │   └── test_benchmark_test_runners.py Persistent-runner isolation tests (Spec 048.2)
 ├── docs/
 │   ├── biologic-mpr-format.md      Independent MPR binary-format notebook (Spec 041.1)
@@ -316,6 +317,7 @@ Cellxplorer/
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
 │   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Spec 050.12)
 │   ├── profile_time_capacity_composition.py Spec 050.11 execution-strategy composition benchmark
+│   ├── profile_time_capacity_ablation.py Spec 050.13 ordinary-path ablation/composition benchmark
 │   ├── profile_rust_derivative_kernel.py Rust/Rayon derivative-kernel benchmark (Spec 050.10)
 │   ├── rust_derivative_kernel/ Isolated Cargo/Rayon benchmark target (Spec 050.10)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
