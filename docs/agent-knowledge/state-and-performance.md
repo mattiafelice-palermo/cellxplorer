@@ -708,6 +708,24 @@ two different datasets serves a cached result for data it no longer describes (s
 Verify any such change by recomputing keys both ways across every analysis and asserting the digests
 are byte-identical before trusting it.
 
+Spec 050.16 extends the immutable body/sidecar response path to Steps, DCIR,
+Chargeability, and Rate Capability. Modern exact hits still perform the
+request-local owner resolution needed to derive the key and current
+availability badges, but they do not parse the stored scientific body, call a
+family compute service, or read raw Parquet. On misses, the router builds one
+request-local `AnalysisRequestContext` and shares its selection units, ordered
+source files, parser identities, and scalar metadata with the cache key and
+family service; direct service callers retain the resolving fallback.
+
+The raw-layout sidecar may also carry an optional `step_to_row_groups` map.
+Steps and DCIR use it only when the current sidecar is valid and ready; missing,
+legacy, corrupt, or busy detail metadata falls back immediately to the full
+raw reader. The detail reader preserves source cycle labels, timestamps, and
+record-index gaps so protocol occurrence/block boundaries remain identical.
+Chargeability and Rate Capability remain on their existing full raw path when
+their measured materialization cost does not justify selective access. These
+protocol-derived families continue to fail closed for multi-source Cells.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

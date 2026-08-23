@@ -918,3 +918,19 @@ R1-R4 fixed. Later-cycle refinement now uses indexed cumulative reset facts to r
 Parent review R1 fixed as documentation-only. The parent roadmap now records 050.1-050.7 and 050.9-050.15 as review-clean/completed with concise 050.12-050.15 outcomes; 050.8 remains withdrawn. P4 now states that its bounded ordinary non-stacked consecutive-Time on-demand refinement subset was promoted by 050.15 while fixed-density, reservoir, Plotly-timing, stacked/other-mode and hybrid experiments remain planning-only. 050.15 is marked review-clean. git diff --check passes; no broader verification was rerun per the reviewer finding.
 
 ---
+### 2026-08-23T13:42:53+02:00 — IMPLEMENTER → REVIEWER — 050.16
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused backend suites: PASS (analysis cache 39, protocol safety 6, analysis engine 104, chargeability 5, rate capability 8, raw cache layout 12, golden analysis 30; direct-hit route test included)
+- cross-family profiler: PASS (three warm repetitions; B/C parity and D controls recorded in the child spec)
+- preflight: PASS (4/4 stages; frontend policy/build checks skipped by unchanged-cache policy)
+- browser/manual checks: NOT RUN (backend-only child; user requested no browser)
+
+**Message**
+
+Spec 050.16 implementation complete: direct stored-body hits and request-local context cover all four protocol families; selective raw step access is promoted for Steps/DCIR only after measured complete-route wins; Chargeability/Rate Capability retain full raw access; process controls rejected and no 050.17 is justified.
+
+---

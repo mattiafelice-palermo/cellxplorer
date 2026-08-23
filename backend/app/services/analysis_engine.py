@@ -16,6 +16,7 @@ newer is a badge, never a silent recompute.
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import re
@@ -198,6 +199,25 @@ class CellSourceChainInvariantError(ValueError):
         super().__init__(self.detail["message"])
 
 
+@dataclass(frozen=True)
+class AnalysisRequestContext:
+    """One request-local owner-side resolution shared by keying and compute.
+
+    The context deliberately contains only the ORM objects owned by the
+    current request and immutable-shaped tuples/maps around them.  It is never
+    retained across requests and is not passed to worker processes.
+    """
+
+    units: tuple[dict[str, Any], ...]
+    missing_refs: tuple[dict[str, Any], ...]
+    cells: tuple[Cell, ...]
+    files_by_cell: dict[int, tuple[SourceFile, ...]]
+    hashes_by_cell: dict[int, tuple[str, ...]]
+    parser_versions_by_cell: dict[int, dict[str, str]]
+    scalar_metadata: dict[int, dict[str, str]]
+    labels_by_cell: dict[int, str]
+
+
 def require_single_internal_test(cell: Cell) -> Test:
     """Resolve the compatibility row that owns the Cell's ordered sources."""
     tests = sorted(cell.tests, key=lambda item: item.id)
@@ -318,19 +338,32 @@ class CanonicalCyclingUnavailable(ValueError):
         super().__init__(str(detail.get("message") or "Canonical cycling data is unavailable."))
 
 
-def canonical_cycling_capability(db: Session, spec: dict) -> dict[str, object] | None:
+def canonical_cycling_capability(
+    db: Session,
+    spec: dict,
+    *,
+    request_context: AnalysisRequestContext | None = None,
+) -> dict[str, object] | None:
     """Return a stable capability response when selection contains metadata-only sources."""
 
-    units, _missing = resolve_selection(db, spec)
-    cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
-    # Saved-artifact and warmup callers use this same capability boundary as
-    # compute endpoints. Warm the relational source chain once so the guard
-    # does not turn a multi-cell analysis into a per-cell relationship walk.
-    preload_cell_sources(db, cells)
+    if request_context is None:
+        units, _missing = resolve_selection(db, spec)
+        cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
+        # Saved-artifact and warmup callers use this same capability boundary as
+        # compute endpoints. Warm the relational source chain once so the guard
+        # does not turn a multi-cell analysis into a per-cell relationship walk.
+        preload_cell_sources(db, cells)
+    else:
+        units = list(request_context.units)
+        cells = list(request_context.cells)
     sources: list[dict[str, object]] = []
     seen: set[int] = set()
     for unit in units:
-        _hashes, files = cell_ordered_hashes(db, unit["cell"])
+        files = (
+            list(request_context.files_by_cell[unit["cell"].id])
+            if request_context is not None
+            else cell_ordered_hashes(db, unit["cell"])[1]
+        )
         for source in files:
             if source.id in seen or not parsing.source_record_metadata_only(
                 source,
@@ -366,8 +399,17 @@ def canonical_cycling_capability(db: Session, spec: dict) -> dict[str, object] |
     }
 
 
-def ensure_canonical_cycling_available(db: Session, spec: dict) -> None:
-    detail = canonical_cycling_capability(db, spec)
+def ensure_canonical_cycling_available(
+    db: Session,
+    spec: dict,
+    *,
+    request_context: AnalysisRequestContext | None = None,
+) -> None:
+    detail = canonical_cycling_capability(
+        db,
+        spec,
+        request_context=request_context,
+    )
     if detail is not None:
         raise CanonicalCyclingUnavailable(detail)
 
@@ -489,21 +531,35 @@ PROTOCOL_DERIVED_FAMILIES = frozenset(
 )
 
 
-def multi_source_cells_for_spec(db: Session, spec: dict) -> list[dict]:
+def multi_source_cells_for_spec(
+    db: Session,
+    spec: dict,
+    *,
+    request_context: AnalysisRequestContext | None = None,
+) -> list[dict]:
     """Return selected Cells whose ordered source chain has more than one file.
 
     Protocol-derived analysis must not infer semantic step mappings across a
     continuation boundary. Keep this selection expansion in one helper so
     every guarded endpoint and background path applies the same rule.
     """
-    units, _missing = resolve_selection(db, spec)
-    cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
-    if not cells:
-        return []
-    preload_cell_sources(db, cells)
+    if request_context is None:
+        units, _missing = resolve_selection(db, spec)
+        cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
+        if not cells:
+            return []
+        preload_cell_sources(db, cells)
+    else:
+        cells = list(request_context.cells)
+        if not cells:
+            return []
     unsupported: list[dict] = []
     for cell in sorted(cells, key=lambda item: (item.name.casefold(), item.id)):
-        _hashes, files = cell_ordered_hashes(db, cell)
+        files = (
+            list(request_context.files_by_cell[cell.id])
+            if request_context is not None
+            else cell_ordered_hashes(db, cell)[1]
+        )
         if len(files) > 1:
             unsupported.append(
                 {
@@ -519,11 +575,17 @@ def protocol_analysis_guard(
     db: Session,
     spec: dict,
     plot_family: str,
+    *,
+    request_context: AnalysisRequestContext | None = None,
 ) -> dict | None:
     """Build the structured fail-closed response for protocol plot families."""
     if plot_family not in PROTOCOL_DERIVED_FAMILIES:
         return None
-    unsupported = multi_source_cells_for_spec(db, spec)
+    unsupported = multi_source_cells_for_spec(
+        db,
+        spec,
+        request_context=request_context,
+    )
     if not unsupported:
         return None
     return {
@@ -1216,6 +1278,60 @@ def load_scalar_metadata(db: Session, cells: list[Cell]) -> dict[int, dict[str, 
     for cell_id, key, value in rows:
         found[cell_id][key] = value
     return found
+
+
+def build_analysis_request_context(
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    *,
+    use_current_versions: bool,
+) -> AnalysisRequestContext:
+    """Resolve owner-side request state once for a family cache miss/hit.
+
+    The result-key builder and the four protocol-derived compute services need
+    the same selection expansion, source chain, parser identities, and scalar
+    metadata.  Keeping that work in one request-local object avoids repeating
+    it while preserving the existing direct-service fallback when no context
+    is supplied.
+    """
+
+    units, missing_refs = resolve_selection(db, spec)
+    cells: list[Cell] = []
+    seen_cells: set[int] = set()
+    for unit in units:
+        cell = unit["cell"]
+        if cell.id in seen_cells:
+            continue
+        seen_cells.add(cell.id)
+        cells.append(cell)
+    preload_cell_sources(db, cells)
+    scalar_metadata = load_scalar_metadata(db, cells)
+    files_by_cell: dict[int, tuple[SourceFile, ...]] = {}
+    hashes_by_cell: dict[int, tuple[str, ...]] = {}
+    parser_versions_by_cell: dict[int, dict[str, str]] = {}
+    labels_by_cell = {unit["cell"].id: unit["label"] for unit in units}
+    for cell in cells:
+        hashes, files = cell_ordered_hashes(db, cell)
+        versions = resolve_source_parser_versions(
+            files,
+            provenance,
+            cell.id,
+            use_current_versions,
+        )
+        files_by_cell[cell.id] = tuple(files)
+        hashes_by_cell[cell.id] = tuple(hashes)
+        parser_versions_by_cell[cell.id] = dict(versions)
+    return AnalysisRequestContext(
+        units=tuple(units),
+        missing_refs=tuple(missing_refs),
+        cells=tuple(cells),
+        files_by_cell=files_by_cell,
+        hashes_by_cell=hashes_by_cell,
+        parser_versions_by_cell=parser_versions_by_cell,
+        scalar_metadata=scalar_metadata,
+        labels_by_cell=labels_by_cell,
+    )
 
 
 def _cell_metadata_values(cell: Cell, keys: tuple[str, ...]) -> dict[str, str]:
@@ -1911,7 +2027,13 @@ def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation:
 # ------------------------------------------------------------- computation
 
 
-def refresh_availability_badges(db: Session, spec: dict, result: dict) -> None:
+def refresh_availability_badges(
+    db: Session,
+    spec: dict,
+    result: dict,
+    *,
+    request_context: AnalysisRequestContext | None = None,
+) -> None:
     """Replace source-availability badges on a cached result with fresh ones.
 
     Availability is deliberately not part of the cache key (transient
@@ -1927,13 +2049,22 @@ def refresh_availability_badges(db: Session, spec: dict, result: dict) -> None:
         for badge in (result.get("badges") or [])
         if badge.get("kind") not in availability_kinds
     ]
-    result["badges"] = kept + availability_badges(db, spec)
+    result["badges"] = kept + availability_badges(
+        db,
+        spec,
+        request_context=request_context,
+    )
 
 
 AVAILABILITY_BADGE_KINDS = {"source_offline", "source_changed"}
 
 
-def availability_badges(db: Session, spec: dict) -> list[dict]:
+def availability_badges(
+    db: Session,
+    spec: dict,
+    *,
+    request_context: AnalysisRequestContext | None = None,
+) -> list[dict]:
     """Build source-availability badges from current database status.
 
     Split out from :func:`refresh_availability_badges` so a cached response can
@@ -1941,11 +2072,18 @@ def availability_badges(db: Session, spec: dict) -> list[dict]:
     cached result that must not be reused as stored.
     """
     fresh: list[dict] = []
-    units, _missing = resolve_selection(db, spec)
-    preload_cell_sources(db, [unit["cell"] for unit in units])
+    if request_context is None:
+        units, _missing = resolve_selection(db, spec)
+        preload_cell_sources(db, [unit["cell"] for unit in units])
+    else:
+        units = list(request_context.units)
     for unit in units:
         cell = unit["cell"]
-        _hashes, files = cell_ordered_hashes(db, cell)
+        files = (
+            list(request_context.files_by_cell[cell.id])
+            if request_context is not None
+            else cell_ordered_hashes(db, cell)[1]
+        )
         for f in files:
             if f.location_status == "offline":
                 fresh.append(
@@ -2289,6 +2427,8 @@ def compute_steps(
     provenance: dict | None,
     use_current_versions: bool = False,
     progress: ProgressCallback | None = None,
+    *,
+    request_context: AnalysisRequestContext | None = None,
 ) -> dict:
     """One point per execution of a chosen step block, rather than per cycle.
 
@@ -2297,7 +2437,11 @@ def compute_steps(
     plotted in isolation, which the cycle path cannot do. See
     ``services/step_blocks.py`` for the block definitions.
     """
-    ensure_canonical_cycling_available(db, spec)
+    ensure_canonical_cycling_available(
+        db,
+        spec,
+        request_context=request_context,
+    )
     from . import protocol as protocol_service
     from . import step_blocks
 
@@ -2313,9 +2457,14 @@ def compute_steps(
         if steps_cfg.get("mode") in step_blocks.BLOCK_MODES
         else "union"
     )
-    units, missing_refs = resolve_selection(db, spec)
+    if request_context is None:
+        units, missing_refs = resolve_selection(db, spec)
+    else:
+        units = list(request_context.units)
+        missing_refs = list(request_context.missing_refs)
     cell_by_id = {unit["cell"].id: unit["cell"] for unit in units}
-    preload_cell_sources(db, list(cell_by_id.values()))
+    if request_context is None:
+        preload_cell_sources(db, list(cell_by_id.values()))
     configured_series = _step_series_config(spec, cell_by_id)
     segments = _step_segments(spec)
     quantity_cols = [
@@ -2354,14 +2503,24 @@ def compute_steps(
         )
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading step data")
-        hashes, files = cell_ordered_hashes(db, cell)
-        source_versions = resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
+        if request_context is None:
+            hashes, files = cell_ordered_hashes(db, cell)
+            source_versions = resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
+        else:
+            hashes = list(request_context.hashes_by_cell[cell.id])
+            files = list(request_context.files_by_cell[cell.id])
+            source_versions = request_context.parser_versions_by_cell[cell.id]
         refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
         all_current_versions.extend(current_parser_identity(f) for f in files)
-        nominal = cell_nominal_capacity_mah(cell)
+        nominal = cell_nominal_capacity_mah(
+            cell,
+            request_context.scalar_metadata.get(cell.id)
+            if request_context is not None
+            else None,
+        )
         targets = {
             str(target.get("protocol_signature")): {
                 int(step) for step in (target.get("step_indices") or [])
@@ -2375,15 +2534,10 @@ def compute_steps(
         x_time: list[float | None] = []
         quantities: dict[str, list] = {c: [] for c in quantity_cols}
         block_meta: list[dict] = []
-        raw, _raw_segments, _missing = stitch.stitch_raw(refs)
         block_frames: list[pd.DataFrame] = []
-        if segment and not raw.empty:
-            raw_timestamps = (
-                pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
-                if "timestamp" in raw.columns
-                else pd.Series(dtype="datetime64[ns]")
-            )
-            raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+        selected_by_source: dict[int, set[int]] = {}
+        selective_used = False
+        if segment:
             for source_index, source_file in enumerate(files):
                 reconstructed = protocol_service.reconstruct_protocol(
                     source_file.header_meta, nominal
@@ -2391,13 +2545,53 @@ def compute_steps(
                 selected = protocol_service.protocol_steps_for_protocol(
                     targets, reconstructed
                 )
+                if selected:
+                    selected_by_source[source_index] = selected
+        if segment and selected_by_source:
+            step_columns = [
+                "record_index",
+                "cycle",
+                "step",
+                "step_index",
+                "status",
+                "time_s",
+                "voltage_v",
+                "current_ma",
+                "charge_capacity_mah",
+                "discharge_capacity_mah",
+                "timestamp",
+            ]
+            selected_by_hash = {
+                files[source_index].hash: selected
+                for source_index, selected in selected_by_source.items()
+            }
+            selective = stitch.stitch_raw_steps(refs, selected_by_hash, step_columns)
+            if selective is None:
+                raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+            else:
+                raw, _raw_segments, _missing = selective
+                selective_used = True
+        else:
+            raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+        if segment and not raw.empty:
+            raw_start = raw.attrs.get("raw_timestamp_start")
+            if raw_start is None:
+                raw_timestamps = (
+                    pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+                    if "timestamp" in raw.columns
+                    else pd.Series(dtype="datetime64[ns]")
+                )
+                raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+            for source_index, source_file in enumerate(files):
+                selected = selected_by_source.get(source_index)
                 if not selected:
                     continue
                 source_raw = raw.loc[raw["segment"] == source_index].copy()
                 if source_raw.empty:
                     continue
                 source_raw = source_raw.reset_index(drop=True)
-                source_raw["record_index"] = np.arange(len(source_raw))
+                if not selective_used:
+                    source_raw["record_index"] = np.arange(len(source_raw))
                 source_blocks = step_blocks.per_block(
                     source_raw,
                     selected,
@@ -2534,9 +2728,15 @@ def compute_dcir(
     provenance: dict | None,
     use_current_versions: bool = False,
     progress: ProgressCallback | None = None,
+    *,
+    request_context: AnalysisRequestContext | None = None,
 ) -> dict:
     """Compute one DCIR line for every explicit (cell, DCIR segment) pair."""
-    ensure_canonical_cycling_available(db, spec)
+    ensure_canonical_cycling_available(
+        db,
+        spec,
+        request_context=request_context,
+    )
     from . import dcir
     from . import protocol as protocol_service
 
@@ -2546,9 +2746,14 @@ def compute_dcir(
     all_pinned_versions: list[str] = []
     all_current_versions: list[str] = []
 
-    units, missing_refs = resolve_selection(db, spec)
+    if request_context is None:
+        units, missing_refs = resolve_selection(db, spec)
+    else:
+        units = list(request_context.units)
+        missing_refs = list(request_context.missing_refs)
     cell_by_id = {unit["cell"].id: unit["cell"] for unit in units}
-    preload_cell_sources(db, list(cell_by_id.values()))
+    if request_context is None:
+        preload_cell_sources(db, list(cell_by_id.values()))
     configured_series = _dcir_series_config(spec, cell_by_id)
     segments = _dcir_segments(spec)
     badges: list[dict] = []
@@ -2575,33 +2780,74 @@ def compute_dcir(
                 cell.name,
                 "Reading DCIR pulse data",
             )
-        hashes, files = cell_ordered_hashes(db, cell)
-        source_versions = resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
+        if request_context is None:
+            hashes, files = cell_ordered_hashes(db, cell)
+            source_versions = resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
+        else:
+            hashes = list(request_context.hashes_by_cell[cell.id])
+            files = list(request_context.files_by_cell[cell.id])
+            source_versions = request_context.parser_versions_by_cell[cell.id]
         refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
         all_current_versions.extend(current_parser_identity(f) for f in files)
-        nominal = cell_nominal_capacity_mah(cell)
+        nominal = cell_nominal_capacity_mah(
+            cell,
+            request_context.scalar_metadata.get(cell.id)
+            if request_context is not None
+            else None,
+        )
         targets = {
             str(target.get("protocol_signature")): target
             for target in ((segment or {}).get("targets") or [])
             if isinstance(target, dict) and target.get("protocol_signature")
         }
-        raw, _raw_segments, _missing = stitch.stitch_raw(refs)
-        raw_timestamps = (
-            pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
-            if not raw.empty and "timestamp" in raw.columns
-            else pd.Series(dtype="datetime64[ns]")
-        )
-        raw_start = raw_timestamps.min() if len(raw_timestamps) else None
         occurrence_frames: list[pd.DataFrame] = []
         matched_target: dict | None = None
+        targets_by_source: dict[int, dict] = {}
         for source_index, source_file in enumerate(files):
             reconstructed = protocol_service.reconstruct_protocol(
                 source_file.header_meta, nominal
             )
             target = protocol_service.protocol_target_for_protocol(targets, reconstructed)
+            if target:
+                targets_by_source[source_index] = target
+        if targets_by_source:
+            step_columns = [
+                "record_index",
+                "cycle",
+                "step",
+                "step_index",
+                "time_s",
+                "voltage_v",
+                "current_ma",
+                "timestamp",
+            ]
+            selected_by_hash = {
+                files[source_index].hash: {
+                    int(target["rest_step_index"]),
+                    int(target["pulse_step_index"]),
+                }
+                for source_index, target in targets_by_source.items()
+            }
+            selective = stitch.stitch_raw_steps(refs, selected_by_hash, step_columns)
+            if selective is None:
+                raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+            else:
+                raw, _raw_segments, _missing = selective
+        else:
+            raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+        raw_start = raw.attrs.get("raw_timestamp_start")
+        if raw_start is None:
+            raw_timestamps = (
+                pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+                if not raw.empty and "timestamp" in raw.columns
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+        for source_index, source_file in enumerate(files):
+            target = targets_by_source.get(source_index)
             if not target or raw.empty:
                 continue
             try:

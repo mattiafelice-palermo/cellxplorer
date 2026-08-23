@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -468,23 +468,36 @@ def compute(
     provenance: dict | None,
     use_current_versions: bool = False,
     progress: ProgressCallback | None = None,
+    *,
+    request_context: Any = None,
 ) -> dict:
     """Resolve matching chargeability events for every selected cell."""
     from . import analysis_engine as engine
     from . import scanner
 
-    engine.ensure_canonical_cycling_available(db, spec)
+    engine.ensure_canonical_cycling_available(
+        db,
+        spec,
+        request_context=request_context,
+    )
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version
     all_pinned_versions: list[str] = []
     all_current_versions: list[str] = []
     filters = _filters(spec)
-    units, missing_refs = engine.resolve_selection(db, spec)
-    cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
-    labels = {unit["cell"].id: unit["label"] for unit in units}
-    engine.preload_cell_sources(db, cells)
-    scalar_metadata = engine.load_scalar_metadata(db, cells)
+    if request_context is None:
+        units, missing_refs = engine.resolve_selection(db, spec)
+        cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
+        labels = {unit["cell"].id: unit["label"] for unit in units}
+        engine.preload_cell_sources(db, cells)
+        scalar_metadata = engine.load_scalar_metadata(db, cells)
+    else:
+        units = list(request_context.units)
+        missing_refs = list(request_context.missing_refs)
+        cells = list(request_context.cells)
+        labels = dict(request_context.labels_by_cell)
+        scalar_metadata = request_context.scalar_metadata
     matches: list[dict] = []
     all_candidates: list[dict] = []
     cell_results: list[dict] = []
@@ -502,10 +515,15 @@ def compute(
         nominal = engine.cell_nominal_capacity_mah(cell, metadata)
         active_mass = engine.cell_active_mass_mg(cell, metadata)
         area = engine.cell_electrode_area_cm2(cell, metadata)
-        hashes, files = engine.cell_ordered_hashes(db, cell)
-        source_versions = engine.resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
+        if request_context is None:
+            hashes, files = engine.cell_ordered_hashes(db, cell)
+            source_versions = engine.resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
+        else:
+            hashes = list(request_context.hashes_by_cell[cell.id])
+            files = list(request_context.files_by_cell[cell.id])
+            source_versions = request_context.parser_versions_by_cell[cell.id]
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
         all_current_versions.extend(engine.current_parser_identity(f) for f in files)
         cell_matches: list[dict] = []

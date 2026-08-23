@@ -87,13 +87,25 @@ def assign_blocks(
     sel_steps = steps.to_numpy()[positions].astype("int64")
     min_step = int(min(selected_steps))
 
+    # Selective raw reads retain the canonical record index even though rows
+    # outside the requested steps are omitted.  Use it for gap detection so a
+    # filtered frame has the same occurrence/contiguous boundaries as the
+    # complete raw frame.
+    if "record_index" in work.columns:
+        record_positions = pd.to_numeric(
+            work["record_index"], errors="coerce"
+        ).to_numpy()
+    else:
+        record_positions = np.arange(len(work), dtype="int64")
+
     prev_step = np.empty_like(sel_steps)
     prev_step[0] = -1
     prev_step[1:] = sel_steps[:-1]
-    prev_pos = np.empty_like(positions)
-    prev_pos[0] = positions[0] - 10
-    prev_pos[1:] = positions[:-1]
-    gap = (positions - prev_pos) > 1
+    selected_records = record_positions[positions]
+    prev_pos = np.empty_like(selected_records)
+    prev_pos[0] = selected_records[0] - 10
+    prev_pos[1:] = selected_records[:-1]
+    gap = (selected_records - prev_pos) > 1
 
     # A new occurrence begins when the lowest selected step is re-entered. Using
     # the minimum rather than any decrease is what survives nested repeats: an

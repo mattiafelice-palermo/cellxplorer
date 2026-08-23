@@ -72,6 +72,21 @@ class RawCycleReadDiagnostics:
 
 
 @dataclass
+class RawStepReadDiagnostics:
+    """Optional evidence for one source-local selective step read."""
+
+    status: str = "uninitialized"
+    requested_steps: tuple[int, ...] = ()
+    row_groups_read: tuple[int, ...] = ()
+    row_groups_total: int = 0
+    rows_read: int = 0
+    rows_returned: int = 0
+    columns_read: tuple[str, ...] = ()
+    columns_returned: tuple[str, ...] = ()
+    stages_ms: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
 class TimeCapacityDerivedReadDiagnostics:
     """Optional bounded evidence for one prepared-derived selective read."""
 
@@ -627,6 +642,21 @@ def _build_raw_layout_index(
     raw_file_size = parquet_path.stat().st_size
     timestamp_start, timestamp_end = _timestamp_bounds(frame)
     consecutive_time = _consecutive_time_metadata(frame)
+    step_column = next(
+        (column for column in ("step_index", "step") if column in frame.columns),
+        None,
+    )
+    step_to_row_groups: dict[str, list[int]] = {}
+    if step_column is not None:
+        cursor = 0
+        for group, row_count in enumerate(row_group_counts):
+            values = pd.to_numeric(
+                frame.iloc[cursor : cursor + row_count][step_column],
+                errors="coerce",
+            ).dropna()
+            for value in sorted({int(number) for number in values if float(number).is_integer()}):
+                step_to_row_groups.setdefault(str(value), []).append(group)
+            cursor += row_count
     voltage_availability = {
         column: _finite_column_available(frame, column)
         for column in canonical_cycling.VOLTAGE_QUANTITIES.values()
@@ -641,6 +671,10 @@ def _build_raw_layout_index(
         "observed_source_cycles": observed_cycles,
         "row_groups": row_groups,
         "cycle_to_row_groups": cycle_to_row_groups,
+        # Optional physical detail metadata. Older sidecars remain valid and
+        # simply use the full-raw fallback for protocol-detail readers.
+        "step_column": step_column,
+        "step_to_row_groups": step_to_row_groups,
         "voltage_data_availability": voltage_availability,
         "timestamp_start": timestamp_start,
         "timestamp_end": timestamp_end,
@@ -1537,6 +1571,163 @@ def load_raw_cycles(
         if diagnostics is not None:
             diagnostics.rows_returned = len(result)
         return result
+
+
+def load_raw_step_rows(
+    file_hash: str,
+    parser_version: str,
+    step_indices: Iterable[object],
+    columns: Iterable[str],
+    *,
+    diagnostics: RawStepReadDiagnostics | None = None,
+) -> pd.DataFrame | None:
+    """Load exact source-local step rows from the optional raw-layout map.
+
+    ``None`` is the safe fallback signal for a missing, legacy, corrupt, or
+    busy detail index.  The caller must then use :func:`load_raw`, so this
+    helper never waits for interactive layout preparation and never opens the
+    original source file.
+    """
+
+    try:
+        requested_steps = _normalize_requested_cycles(step_indices)
+    except ValueError:
+        if diagnostics is not None:
+            diagnostics.status = "invalid_request"
+        raise
+    requested_columns = list(dict.fromkeys(columns))
+    if not all(isinstance(column, str) for column in requested_columns):
+        if diagnostics is not None:
+            diagnostics.status = "invalid_request"
+        raise ValueError("raw columns must be strings")
+    if diagnostics is not None:
+        diagnostics.requested_steps = requested_steps
+        diagnostics.columns_returned = tuple(requested_columns)
+
+    started = time.perf_counter()
+    index = try_load_raw_layout_index(file_hash, parser_version)
+    if diagnostics is not None:
+        diagnostics.stages_ms["raw_step_index_lookup"] = (
+            time.perf_counter() - started
+        ) * 1000.0
+    if index is None:
+        if diagnostics is not None:
+            diagnostics.status = "layout_unavailable"
+        return None
+
+    available_columns = set(index.get("raw_column_names") or [])
+    step_column = index.get("step_column")
+    mapping_value = index.get("step_to_row_groups")
+    if (
+        not isinstance(step_column, str)
+        or step_column not in available_columns
+        or not isinstance(mapping_value, dict)
+    ):
+        if diagnostics is not None:
+            diagnostics.status = "step_index_unavailable"
+        return None
+
+    step_to_row_groups: dict[int, list[int]] = {}
+    row_group_total = int(index.get("raw_row_group_count") or 0)
+    for raw_step, raw_groups in mapping_value.items():
+        if not isinstance(raw_step, str) or not isinstance(raw_groups, list):
+            if diagnostics is not None:
+                diagnostics.status = "step_index_invalid"
+            return None
+        try:
+            step = int(raw_step)
+        except (TypeError, ValueError):
+            if diagnostics is not None:
+                diagnostics.status = "step_index_invalid"
+            return None
+        if str(step) != raw_step:
+            if diagnostics is not None:
+                diagnostics.status = "step_index_invalid"
+            return None
+        try:
+            groups = [int(group) for group in raw_groups]
+        except (TypeError, ValueError):
+            if diagnostics is not None:
+                diagnostics.status = "step_index_invalid"
+            return None
+        if groups != sorted(set(groups)) or any(
+            group < 0 or group >= row_group_total for group in groups
+        ):
+            if diagnostics is not None:
+                diagnostics.status = "step_index_invalid"
+            return None
+        step_to_row_groups[step] = groups
+
+    row_groups = sorted(
+        {
+            group
+            for step in requested_steps
+            for group in step_to_row_groups.get(step, [])
+        }
+    )
+    row_group_counts = {
+        int(item["row_group"]): int(item["row_count"])
+        for item in (index.get("row_groups") or [])
+        if isinstance(item, dict)
+    }
+    read_columns = [column for column in requested_columns if column in available_columns]
+    if step_column not in read_columns:
+        read_columns.append(step_column)
+    if diagnostics is not None:
+        diagnostics.status = "ready"
+        diagnostics.row_groups_total = row_group_total
+        diagnostics.row_groups_read = tuple(row_groups)
+        diagnostics.rows_read = sum(row_group_counts.get(group, 0) for group in row_groups)
+        diagnostics.columns_read = tuple(read_columns)
+    if not row_groups:
+        result = pd.DataFrame(columns=[column for column in requested_columns if column in available_columns])
+        result.attrs["_raw_timestamp_start"] = index.get("timestamp_start")
+        result.attrs["_raw_observed_source_cycles"] = index.get("observed_source_cycles") or []
+        result.attrs["_raw_step_row_groups"] = tuple(row_groups)
+        result.attrs["_raw_step_rows_read"] = 0
+        if diagnostics is not None:
+            diagnostics.rows_returned = 0
+        return result
+
+    parquet_path = raw_path(file_hash, parser_version)
+    try:
+        import pyarrow.parquet as pq
+
+        decode_started = time.perf_counter()
+        loaded = pq.ParquetFile(parquet_path).read_row_groups(
+            row_groups,
+            columns=read_columns,
+        ).to_pandas()
+        if diagnostics is not None:
+            diagnostics.stages_ms["raw_step_row_group_decode"] = (
+                time.perf_counter() - decode_started
+            ) * 1000.0
+    except Exception:
+        logger.warning(
+            "Could not read indexed raw step rows for %s",
+            file_hash[:12],
+            exc_info=True,
+        )
+        if diagnostics is not None:
+            diagnostics.status = "invalid_raw"
+        return None
+
+    filter_started = time.perf_counter()
+    numeric_steps = pd.to_numeric(loaded[step_column], errors="coerce")
+    result_columns = [column for column in requested_columns if column in loaded.columns]
+    result = loaded.loc[numeric_steps.isin(requested_steps), result_columns].reset_index(drop=True)
+    result.attrs["_raw_timestamp_start"] = index.get("timestamp_start")
+    result.attrs["_raw_observed_source_cycles"] = index.get("observed_source_cycles") or []
+    result.attrs["_raw_step_row_groups"] = tuple(row_groups)
+    result.attrs["_raw_step_rows_read"] = sum(row_group_counts.get(group, 0) for group in row_groups)
+    if diagnostics is not None:
+        diagnostics.stages_ms["raw_step_exact_filter"] = (
+            time.perf_counter() - filter_started
+        ) * 1000.0
+        diagnostics.rows_returned = len(result)
+    _touch(parquet_path)
+    _touch(raw_index_path(file_hash, parser_version))
+    return result
 
 
 def _write_index_temp(index: dict[str, Any], index_path: Path) -> Path:

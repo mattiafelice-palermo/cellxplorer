@@ -286,6 +286,7 @@ def _result_fingerprint_payload(
     provenance: dict | None,
     *,
     use_current_versions: bool,
+    request_context: Any | None = None,
 ) -> dict[str, Any]:
     """Resolve the authoritative scientific/source identity once.
 
@@ -305,25 +306,35 @@ def _result_fingerprint_payload(
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version
 
-    units, missing = engine.resolve_selection(db, spec)
-    # Pure loading strategy — the fingerprints below are byte-identical either
-    # way, this just avoids ~10 lazy-load queries per cell.
-    selected = [unit["cell"] for unit in units]
-    engine.preload_cell_sources(db, selected)
-    scalar_metadata = engine.load_scalar_metadata(db, selected)
+    if request_context is None:
+        units, missing = engine.resolve_selection(db, spec)
+        # Pure loading strategy — the fingerprints below are byte-identical either
+        # way, this just avoids ~10 lazy-load queries per cell.
+        selected = [unit["cell"] for unit in units]
+        engine.preload_cell_sources(db, selected)
+        scalar_metadata = engine.load_scalar_metadata(db, selected)
+    else:
+        units = list(request_context.units)
+        missing = list(request_context.missing_refs)
+        scalar_metadata = request_context.scalar_metadata
     unit_fingerprints: list[dict[str, Any]] = []
     for unit in units:
         cell = unit["cell"]
-        hashes, files = engine.cell_ordered_hashes(db, cell)
-        # Spec 040.3: per-source parser identity, resolved with the EXACT
-        # same function `compute()` uses so the cache key always matches
-        # what would actually be rendered. A pinned identity for one source
-        # changes only the units whose cells contain that source; an
-        # unrelated format's adapter revision changing does not touch this
-        # cell's fingerprint at all (case 13/14).
-        source_versions = engine.resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
+        if request_context is None:
+            hashes, files = engine.cell_ordered_hashes(db, cell)
+            # Spec 040.3: per-source parser identity, resolved with the EXACT
+            # same function `compute()` uses so the cache key always matches
+            # what would actually be rendered. A pinned identity for one source
+            # changes only the units whose cells contain that source; an
+            # unrelated format's adapter revision changing does not touch this
+            # cell's fingerprint at all (case 13/14).
+            source_versions = engine.resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
+        else:
+            hashes = list(request_context.hashes_by_cell[cell.id])
+            files = list(request_context.files_by_cell[cell.id])
+            source_versions = request_context.parser_versions_by_cell[cell.id]
         unit_fingerprints.append(
             {
                 "entry_kind": unit["entry_kind"],
@@ -367,6 +378,7 @@ def result_key(
     *,
     use_current_versions: bool,
     request_options: dict | None = None,
+    request_context: Any | None = None,
 ) -> str:
     payload = _result_fingerprint_payload(
         db,
@@ -374,6 +386,7 @@ def result_key(
         spec,
         provenance,
         use_current_versions=use_current_versions,
+        request_context=request_context,
     )
     payload["options"] = request_options or {}
     return _digest(payload)

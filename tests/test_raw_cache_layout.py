@@ -184,6 +184,54 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertEqual(unknown_diagnostics.row_groups_read, ())
         self.assertEqual(unknown_diagnostics.rows_read, 0)
 
+    def test_step_reader_uses_optional_step_groups_and_preserves_source_metadata(self) -> None:
+        frame = canonical_frame()
+        frame["step_index"] = [1, 1, 2, 3, 3, 1, 2, 4, 4, 5, 5, 1]
+        self._indexed(frame)
+
+        diagnostics = cache.RawStepReadDiagnostics()
+        selected = cache.load_raw_step_rows(
+            self.FILE_HASH,
+            self.PARSER,
+            [2, 5],
+            ["record_index", "cycle", "step_index", "timestamp"],
+            diagnostics=diagnostics,
+        )
+        self.assertIsNotNone(selected)
+        expected = frame.loc[
+            frame["step_index"].isin([2, 5]),
+            ["record_index", "cycle", "step_index", "timestamp"],
+        ].reset_index(drop=True)
+        pd.testing.assert_frame_equal(selected, expected, check_dtype=False)
+        self.assertEqual(diagnostics.status, "ready")
+        self.assertEqual(diagnostics.row_groups_read, (0, 1, 2))
+        self.assertEqual(diagnostics.rows_read, 12)
+        self.assertEqual(diagnostics.rows_returned, 4)
+        self.assertEqual(selected.attrs["_raw_observed_source_cycles"], [1, 2, 4])
+        self.assertEqual(selected.attrs["_raw_timestamp_start"], "2026-01-01T00:00:00")
+
+    def test_step_reader_falls_back_when_optional_mapping_is_absent(self) -> None:
+        self._indexed()
+        with patch.object(
+            cache,
+            "try_load_raw_layout_index",
+            return_value={
+                "raw_column_names": ["record_index", "step_index"],
+                "raw_row_group_count": 1,
+            },
+        ):
+            diagnostics = cache.RawStepReadDiagnostics()
+            self.assertIsNone(
+                cache.load_raw_step_rows(
+                    self.FILE_HASH,
+                    self.PARSER,
+                    [1],
+                    ["record_index", "step_index"],
+                    diagnostics=diagnostics,
+                )
+            )
+            self.assertEqual(diagnostics.status, "step_index_unavailable")
+
     def test_legacy_readers_work_and_selective_reader_reports_layout_unavailable(self) -> None:
         frame = canonical_frame()
         self._legacy(frame)

@@ -113,6 +113,10 @@ def _stitch_ordered(
     missing: list[str] = []
     missing_positions: list[int] = []
     skipped_segments: list[int] = []
+    timestamp_starts: list[pd.Timestamp] = []
+    observed_cycle_overrides: dict[int, list[int]] = {}
+    selective_row_groups: set[int] = set()
+    selective_rows_read = 0
     global_next = 1
     continuation_blocked = False
 
@@ -128,7 +132,30 @@ def _stitch_ordered(
             skipped_segments.append(segment)
             continue
 
-        local_labels, errors = observed_local_cycles(loaded["cycle"]) if "cycle" in loaded.columns else ([], [])
+        raw_timestamp_start = loaded.attrs.get("_raw_timestamp_start")
+        if raw_timestamp_start is not None:
+            parsed_start = pd.to_datetime(raw_timestamp_start, errors="coerce")
+            if pd.notna(parsed_start):
+                timestamp_starts.append(parsed_start)
+        raw_observed_cycles = loaded.attrs.get("_raw_observed_source_cycles")
+        if isinstance(raw_observed_cycles, list):
+            try:
+                observed_cycle_overrides[segment] = [int(value) for value in raw_observed_cycles]
+            except (TypeError, ValueError):
+                observed_cycle_overrides.pop(segment, None)
+        raw_groups = loaded.attrs.get("_raw_step_row_groups")
+        if isinstance(raw_groups, tuple):
+            selective_row_groups.update(int(value) for value in raw_groups)
+        raw_rows_read = loaded.attrs.get("_raw_step_rows_read")
+        if isinstance(raw_rows_read, int):
+            selective_rows_read += raw_rows_read
+        local_labels, errors = (
+            (observed_cycle_overrides[segment], [])
+            if segment in observed_cycle_overrides
+            else observed_local_cycles(loaded["cycle"])
+            if "cycle" in loaded.columns
+            else ([], [])
+        )
         if errors or (len(loaded) > 0 and not local_labels):
             missing.append(file_hash)
             missing_positions.append(segment)
@@ -169,6 +196,11 @@ def _stitch_ordered(
     result.attrs["stitch_complete"] = not missing_positions
     result.attrs["missing_positions"] = missing_positions
     result.attrs["skipped_segments"] = skipped_segments
+    if timestamp_starts:
+        result.attrs["raw_timestamp_start"] = min(timestamp_starts)
+    if selective_row_groups:
+        result.attrs["raw_step_row_groups"] = tuple(sorted(selective_row_groups))
+        result.attrs["raw_step_rows_read"] = selective_rows_read
     return result, segments, missing
 
 
@@ -192,3 +224,29 @@ def stitch_raw(
         lambda ref: cache.load_raw(ref.file_hash, ref.parser_version),
         sort_output=False,
     )
+
+
+def stitch_raw_steps(
+    ordered_sources: list[CachedSourceRef],
+    step_indices_by_hash: dict[str, set[int]],
+    columns: list[str],
+) -> tuple[pd.DataFrame, list[dict], list[str]] | None:
+    """Read selected raw step rows, or return ``None`` for safe fallback."""
+
+    def load(ref: CachedSourceRef) -> pd.DataFrame | None:
+        loaded = cache.load_raw_step_rows(
+            ref.file_hash,
+            ref.parser_version,
+            step_indices_by_hash.get(ref.file_hash, set()),
+            columns,
+        )
+        if loaded is None:
+            raise RuntimeError("selective raw step access unavailable")
+        return loaded
+
+    try:
+        return _stitch_ordered(ordered_sources, load, sort_output=False)
+    except RuntimeError as exc:
+        if str(exc) != "selective raw step access unavailable":
+            raise
+        return None

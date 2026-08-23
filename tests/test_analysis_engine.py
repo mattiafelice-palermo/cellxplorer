@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -377,6 +378,57 @@ class AnalysisEngineTests(unittest.TestCase):
             self.assertNotIn("active_time_h", series["quantities"])
         self.assertAlmostEqual(by_id["charge-series"]["x_time"][0], 0.0)
         self.assertAlmostEqual(by_id["discharge-series"]["x_time"][0], 1.0)
+
+    def test_protocol_family_cache_hits_bypass_compute_parsing_and_serialization(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Protocol hit path", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+
+        routes = (
+            ("steps", analyses_router.compute_steps_analysis),
+            ("dcir", analyses_router.compute_dcir_analysis),
+            ("chargeability", analyses_router.compute_chargeability_analysis),
+            ("rate_capability", analyses_router.compute_rate_capability_analysis),
+        )
+        compute_calls: list[str] = []
+
+        def fake_compute(_db, _spec, _provenance, **_options):
+            compute_calls.append("compute")
+            return {
+                "computed_at": "2026-08-23T00:00:00+00:00",
+                "type": "protocol-test",
+                "cell_series": [],
+                "badges": [],
+            }
+
+        with tempfile.TemporaryDirectory(prefix="cellxplorer-analysis-hit-") as temp:
+            cache_root = Path(temp)
+            with (
+                patch.object(analysis_cache, "_RESULTS", cache_root / "results"),
+                patch.object(analysis_cache, "_ARTIFACTS", cache_root / "artifacts"),
+                patch.object(analysis_cache, "_budget_total", None),
+                patch.object(analyses_router.engine, "compute_steps", side_effect=fake_compute),
+                patch.object(analyses_router.engine, "compute_dcir", side_effect=fake_compute),
+                patch("app.services.chargeability.compute", side_effect=fake_compute),
+                patch("app.services.rate_capability.compute", side_effect=fake_compute),
+                patch.object(analyses_router, "fast_json", wraps=analyses_router.fast_json) as serializer,
+            ):
+                for family, route in routes:
+                    with self.subTest(family=family):
+                        miss = route(analysis.id, analyses_router.ComputeRequest(), self.db)
+                        self.assertEqual(json.loads(miss.body)["cache_status"], "miss")
+                        calls_after_miss = len(compute_calls)
+                        serializations_after_miss = serializer.call_count
+                        with patch.object(
+                            analysis_cache,
+                            "load_result",
+                            side_effect=AssertionError("parsed result loader entered on hit"),
+                        ):
+                            hit = route(analysis.id, analyses_router.ComputeRequest(), self.db)
+                        self.assertEqual(json.loads(hit.body)["cache_status"], "hit")
+                        self.assertEqual(len(compute_calls), calls_after_miss)
+                        self.assertEqual(serializer.call_count, serializations_after_miss)
 
     def test_steps_compute_expands_legacy_segment_to_selected_cells(self):
         signature = protocol.reconstruct_protocol(

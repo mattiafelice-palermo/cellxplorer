@@ -778,14 +778,29 @@ class AnalysisComputeJobCreate(BaseModel):
     spec: dict | None = None
 
 
-def _guard_protocol_analysis(db: Session, spec: dict, plot_family: str) -> None:
-    detail = engine.protocol_analysis_guard(db, spec, plot_family)
+def _guard_protocol_analysis(
+    db: Session,
+    spec: dict,
+    plot_family: str,
+    *,
+    request_context=None,
+) -> None:
+    detail = engine.protocol_analysis_guard(
+        db,
+        spec,
+        plot_family,
+        request_context=request_context,
+    )
     if detail is not None:
         raise HTTPException(status_code=422, detail=detail)
 
 
-def _guard_canonical_cycling(db: Session, spec: dict) -> None:
-    detail = engine.canonical_cycling_capability(db, spec)
+def _guard_canonical_cycling(db: Session, spec: dict, *, request_context=None) -> None:
+    detail = engine.canonical_cycling_capability(
+        db,
+        spec,
+        request_context=request_context,
+    )
     if detail is not None:
         raise HTTPException(status_code=422, detail=detail)
 
@@ -796,6 +811,8 @@ def _open_compute_job(
     spec: dict,
     kind: str,
     token: str | None,
+    *,
+    request_context=None,
 ) -> int:
     """Open an activity entry for a compute that is about to do real work.
 
@@ -803,7 +820,11 @@ def _open_compute_job(
     selection to build the per-cell item list is itself a handful of queries,
     so a cached load should never reach here.
     """
-    units, _ = engine.resolve_selection(db, spec)
+    units = (
+        list(request_context.units)
+        if request_context is not None
+        else engine.resolve_selection(db, spec)[0]
+    )
     kind_label = {
         "time_capacity": "time/capacity",
         "steps": "steps",
@@ -917,15 +938,54 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
     if a is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or a.spec
-    _guard_canonical_cycling(db, spec)
-    _guard_protocol_analysis(db, spec, "steps")
-    key = analysis_cache.result_key(
-        db, "steps", spec, a.provenance, use_current_versions=req.recompute
+    request_context = engine.build_analysis_request_context(
+        db,
+        spec,
+        a.provenance,
+        use_current_versions=req.recompute,
     )
+    _guard_canonical_cycling(db, spec, request_context=request_context)
+    _guard_protocol_analysis(
+        db,
+        spec,
+        "steps",
+        request_context=request_context,
+    )
+    key = analysis_cache.result_key(
+        db,
+        "steps",
+        spec,
+        a.provenance,
+        use_current_versions=req.recompute,
+        request_context=request_context,
+    )
+    if not req.recompute:
+        stored = analysis_cache.load_result_body("steps", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body,
+                    kept + engine.availability_badges(
+                        db,
+                        spec,
+                        request_context=request_context,
+                    ),
+                    "hit",
+                    {"data_signature": key},
+                ),
+                media_type="application/json",
+            )
     result = None if req.recompute else analysis_cache.load_result("steps", key)
     cached = result is not None
     if cached:
-        engine.refresh_availability_badges(db, spec, result)
+        engine.refresh_availability_badges(
+            db,
+            spec,
+            result,
+            request_context=request_context,
+        )
         analysis_cache.upgrade_result_format("steps", key, result)
     job_id = req.job_id
     try:
@@ -933,7 +993,14 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
             from ..services.process_priority import background_thread_priority
 
             if job_id is None and req.job_token:
-                job_id = _open_compute_job(db, a, spec, "steps", req.job_token)
+                job_id = _open_compute_job(
+                    db,
+                    a,
+                    spec,
+                    "steps",
+                    req.job_token,
+                    request_context=request_context,
+                )
             with background_thread_priority(req.background):
                 result = engine.compute_steps(
                     db,
@@ -941,6 +1008,7 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
                     a.provenance,
                     use_current_versions=req.recompute,
                     progress=_progress_callback(job_id),
+                    request_context=request_context,
                 )
             result["cache_status"] = "miss"
             result["data_signature"] = key
@@ -1039,15 +1107,54 @@ def compute_dcir_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
-    _guard_canonical_cycling(db, spec)
-    _guard_protocol_analysis(db, spec, "dcir")
-    key = analysis_cache.result_key(
-        db, "dcir", spec, analysis.provenance, use_current_versions=req.recompute
+    request_context = engine.build_analysis_request_context(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
     )
+    _guard_canonical_cycling(db, spec, request_context=request_context)
+    _guard_protocol_analysis(
+        db,
+        spec,
+        "dcir",
+        request_context=request_context,
+    )
+    key = analysis_cache.result_key(
+        db,
+        "dcir",
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+        request_context=request_context,
+    )
+    if not req.recompute:
+        stored = analysis_cache.load_result_body("dcir", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body,
+                    kept + engine.availability_badges(
+                        db,
+                        spec,
+                        request_context=request_context,
+                    ),
+                    "hit",
+                    {"data_signature": key},
+                ),
+                media_type="application/json",
+            )
     result = None if req.recompute else analysis_cache.load_result("dcir", key)
     cached = result is not None
     if cached:
-        engine.refresh_availability_badges(db, spec, result)
+        engine.refresh_availability_badges(
+            db,
+            spec,
+            result,
+            request_context=request_context,
+        )
         analysis_cache.upgrade_result_format("dcir", key, result)
     job_id = req.job_id
     try:
@@ -1056,7 +1163,12 @@ def compute_dcir_analysis(
 
             if job_id is None and req.job_token:
                 job_id = _open_compute_job(
-                    db, analysis, spec, "dcir", req.job_token
+                    db,
+                    analysis,
+                    spec,
+                    "dcir",
+                    req.job_token,
+                    request_context=request_context,
                 )
             with background_thread_priority(req.background):
                 result = engine.compute_dcir(
@@ -1065,6 +1177,7 @@ def compute_dcir_analysis(
                     analysis.provenance,
                     use_current_versions=req.recompute,
                     progress=_recognition_progress_callback(job_id),
+                    request_context=request_context,
                 )
             result["cache_status"] = "miss"
             result["data_signature"] = key
@@ -1087,8 +1200,19 @@ def compute_chargeability_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
-    _guard_canonical_cycling(db, spec)
-    _guard_protocol_analysis(db, spec, "chargeability")
+    request_context = engine.build_analysis_request_context(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+    )
+    _guard_canonical_cycling(db, spec, request_context=request_context)
+    _guard_protocol_analysis(
+        db,
+        spec,
+        "chargeability",
+        request_context=request_context,
+    )
     from ..services import chargeability
     key = analysis_cache.result_key(
         db,
@@ -1096,7 +1220,26 @@ def compute_chargeability_analysis(
         spec,
         analysis.provenance,
         use_current_versions=req.recompute,
+        request_context=request_context,
     )
+    if not req.recompute:
+        stored = analysis_cache.load_result_body("chargeability", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body,
+                    kept + engine.availability_badges(
+                        db,
+                        spec,
+                        request_context=request_context,
+                    ),
+                    "hit",
+                    {"data_signature": key},
+                ),
+                media_type="application/json",
+            )
     result = (
         None
         if req.recompute
@@ -1104,7 +1247,12 @@ def compute_chargeability_analysis(
     )
     cached = result is not None
     if cached:
-        engine.refresh_availability_badges(db, spec, result)
+        engine.refresh_availability_badges(
+            db,
+            spec,
+            result,
+            request_context=request_context,
+        )
         analysis_cache.upgrade_result_format("chargeability", key, result)
     job_id = req.job_id
     try:
@@ -1113,7 +1261,12 @@ def compute_chargeability_analysis(
 
             if job_id is None and req.job_token:
                 job_id = _open_compute_job(
-                    db, analysis, spec, "chargeability", req.job_token
+                    db,
+                    analysis,
+                    spec,
+                    "chargeability",
+                    req.job_token,
+                    request_context=request_context,
                 )
             with background_thread_priority(req.background):
                 result = chargeability.compute(
@@ -1122,6 +1275,7 @@ def compute_chargeability_analysis(
                     analysis.provenance,
                     use_current_versions=req.recompute,
                     progress=_recognition_progress_callback(job_id),
+                    request_context=request_context,
                 )
             result["cache_status"] = "miss"
             result["data_signature"] = key
@@ -1144,8 +1298,19 @@ def compute_rate_capability_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
-    _guard_canonical_cycling(db, spec)
-    _guard_protocol_analysis(db, spec, "rate_capability")
+    request_context = engine.build_analysis_request_context(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+    )
+    _guard_canonical_cycling(db, spec, request_context=request_context)
+    _guard_protocol_analysis(
+        db,
+        spec,
+        "rate_capability",
+        request_context=request_context,
+    )
     from ..services import rate_capability
     key = analysis_cache.result_key(
         db,
@@ -1153,7 +1318,26 @@ def compute_rate_capability_analysis(
         spec,
         analysis.provenance,
         use_current_versions=req.recompute,
+        request_context=request_context,
     )
+    if not req.recompute:
+        stored = analysis_cache.load_result_body("rate_capability", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body,
+                    kept + engine.availability_badges(
+                        db,
+                        spec,
+                        request_context=request_context,
+                    ),
+                    "hit",
+                    {"data_signature": key},
+                ),
+                media_type="application/json",
+            )
     result = (
         None
         if req.recompute
@@ -1161,7 +1345,12 @@ def compute_rate_capability_analysis(
     )
     cached = result is not None
     if cached:
-        engine.refresh_availability_badges(db, spec, result)
+        engine.refresh_availability_badges(
+            db,
+            spec,
+            result,
+            request_context=request_context,
+        )
         analysis_cache.upgrade_result_format("rate_capability", key, result)
     job_id = req.job_id
     try:
@@ -1175,6 +1364,7 @@ def compute_rate_capability_analysis(
                     spec,
                     "rate_capability",
                     req.job_token,
+                    request_context=request_context,
                 )
             with background_thread_priority(req.background):
                 result = rate_capability.compute(
@@ -1183,6 +1373,7 @@ def compute_rate_capability_analysis(
                     analysis.provenance,
                     use_current_versions=req.recompute,
                     progress=_recognition_progress_callback(job_id),
+                    request_context=request_context,
                 )
             result["cache_status"] = "miss"
             result["data_signature"] = key

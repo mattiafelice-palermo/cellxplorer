@@ -149,6 +149,12 @@ def per_occurrence(
     if "time_s" in work.columns:
         times = pd.to_numeric(work["time_s"], errors="coerce")
         boundary |= times.lt(times.shift())
+    if "record_index" in work.columns:
+        record_index = pd.to_numeric(work["record_index"], errors="coerce")
+        # A selective detail read retains source positions.  Preserve the
+        # existing adjacency/completeness rule when unrequested protocol
+        # steps are omitted from the frame.
+        boundary |= record_index.diff().ne(1)
     work["_run"] = boundary.fillna(True).cumsum()
     runs = [
         (int(run_id), chunk)
