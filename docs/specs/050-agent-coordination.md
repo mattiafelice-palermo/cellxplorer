@@ -988,3 +988,19 @@ R1 fixed: bounded per-row-group step facts plus a step-detail fingerprint reject
 R1-R4 fixed. Dominant attribution now uses observed parent/child hierarchy and direct scientific children only; Cycles is explicitly unresolved where the direct residual dominates. Rate Capability now measures filtering/grouping, phase rows, cutoff checks, capacity/current/rate work with a non-overlapping execution-parent reconciliation. SQL evidence is retained without query text, and focused tests exercise real five-family routes, exact hits, clones, and cleanup. Time/Capacity remains reference-only under the normative amendment.
 
 ---
+### 2026-08-23T16:18:41+02:00 — IMPLEMENTER → REVIEWER — 050.18
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused tests: PASS (28 tests: Rate Capability, corpus, profiler)
+- Rate-only benchmark: PASS (1-cell miss 48.34 ms; 6-cell miss 158.77 ms p50, 155.77-162.16 ms; exact hit 9.02/12.25 ms; parity PASS)
+- preflight: PASS (4/4 stages; 80 backend modules; golden regression PASS)
+- browser checks: NOT RUN (explicit user instruction)
+
+**Message**
+
+050.18 implementation is ready. Retained a request-local per-source execution index for step/cycle/group ownership, _ordered-compatible positions, and reusable numeric arrays; added request-local protocol reconstruction reuse for identical immutable header metadata plus nominal capacity. No persistent schema/cache/version or concurrency changes. Final six-cell miss is 158.77 ms versus the locked 1267.82 ms baseline; profiler reports index building separately and the remaining execution-parent residual. Temporary benchmark JSON remains under untracked tmp/.
+
+---

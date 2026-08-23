@@ -745,6 +745,21 @@ cutoff validation, capacity/current/rate extraction, candidate selection,
 invalid-neighbour validation and result assembly without changing scientific results
 or ordinary cache identity.
 
+Spec 050.18 keeps Rate Capability serial and request-local. For each loaded raw
+source, `rate_capability._ExecutionIndex` owns bounded step, cycle/step and
+measurement-group position lookups, the `_ordered()` row rank, and reusable
+numeric views for voltage, capacity, and current. Execution extraction consumes
+those positions and arrays instead of rebuilding full-frame masks, temporary
+measurement DataFrames, or repeated numeric coercions for every protocol pair
+and occurrence. The index is not persistent cache state and is never created on
+the exact persisted-result hit path. Any change to this boundary must retain
+legacy grouping, ordered cycle association, cutoff extrema, NaN handling, and
+result order; focused parity tests should compare both the indexed row/value
+lookups and the complete scientific projection with the legacy implementation.
+Request-local protocol reconstruction reuse is limited to identical immutable
+header metadata plus nominal capacity and does not alter protocol semantics or
+cache identity.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

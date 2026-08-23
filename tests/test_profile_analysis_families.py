@@ -323,6 +323,11 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
             self.assertTrue(
                 deep["execution_extraction_reconciliation"]["all_non_overlapping"]
             )
+            self.assertIn("execution_index_building", deep["stages_ms"])
+            self.assertGreaterEqual(
+                deep["stages_ms"]["execution_index_building"]["calls_p50"],
+                1.0,
+            )
             self.assertIn("measurement_groups", raw_deep["counts"])
             self.assertIn("execution_rows", raw_deep["counts"])
 

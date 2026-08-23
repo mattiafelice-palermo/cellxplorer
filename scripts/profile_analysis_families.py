@@ -1230,6 +1230,7 @@ def _rate_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
             "available": bool(values),
             "parent": "execution_extraction" if name in RATE_EXECUTION_CHILDREN else (
                 "scientific_compute" if name in {
+                    "execution_index_building",
                     "protocol_reconstruction",
                     "rate_pair_building",
                     "execution_extraction",
@@ -1276,6 +1277,7 @@ def _rate_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
         return {"p50_ms": _median(values), "available": bool(values)}
 
     required_names = (
+        "execution_index_building",
         "protocol_reconstruction",
         "rate_pair_building",
         "execution_extraction",

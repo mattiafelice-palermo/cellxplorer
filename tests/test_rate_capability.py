@@ -1,6 +1,8 @@
 import unittest
 
 import pandas as pd
+from numpy.testing import assert_equal
+from pandas.testing import assert_frame_equal
 
 from backend.app.models import Cell, SourceFile
 from backend.app.services import rate_capability
@@ -143,6 +145,79 @@ class CapacityExtractionTests(unittest.TestCase):
                 for row in executions
             )
         )
+
+    def test_indexed_phase_rows_match_legacy_filtering_and_order(self):
+        frame = self.frame()
+        frame["record_index"] = [90, 10, 70, 50, 30, 110, 20, 80, 40]
+        index = rate_capability._ExecutionIndex(frame)
+
+        for phase in (self.pair["charge"], self.pair["discharge"]):
+            for cycle in (20, None):
+                legacy = rate_capability._phase_rows(frame, phase, cycle)
+                indexed = rate_capability._phase_rows(
+                    frame,
+                    phase,
+                    cycle,
+                    execution_index=index,
+                )
+                assert_frame_equal(legacy, indexed)
+
+    def test_indexed_measurement_groups_match_legacy_groups_with_nan_values(self):
+        frame = self.frame()
+        frame.loc[0, "cycle"] = float("nan")
+        frame.loc[1, "voltage_v"] = float("nan")
+        frame.loc[2, "current_ma"] = float("nan")
+        index = rate_capability._ExecutionIndex(frame)
+        step = self.pair["charge"]["measurement_step_index"]
+        legacy_frame = frame[frame["step_index"] == int(step)]
+        legacy_groups = rate_capability._execution_groups(legacy_frame)
+        indexed_groups = index.measurement_groups(int(step))
+        self.assertEqual(len(legacy_groups), len(indexed_groups))
+        for legacy, indexed in zip(legacy_groups, indexed_groups):
+            assert_frame_equal(legacy, indexed)
+
+        indexed_positions = index.measurement_group_positions(int(step))
+        self.assertEqual(
+            [legacy.index.tolist() for legacy in legacy_groups],
+            indexed_positions,
+        )
+
+    def test_indexed_cycle_association_preserves_ordered_first_cycle(self):
+        frame = self.frame()
+        frame["record_index"] = [90, 10, 70, 50, 30, 110, 20, 80, 40]
+        frame.loc[0, "cycle"] = 21
+        frame.loc[1, "cycle"] = 20
+        index = rate_capability._ExecutionIndex(frame)
+        step = self.pair["charge"]["measurement_step_index"]
+        positions = index.measurement_group_positions(int(step))[0]
+
+        self.assertEqual(index.first_cycle(positions), 20)
+
+    def test_indexed_lookup_handles_missing_cycle_column_like_legacy(self):
+        frame = self.frame().drop(columns=["cycle"])
+        index = rate_capability._ExecutionIndex(frame)
+        phase = self.pair["charge"]
+        legacy = rate_capability._phase_rows(frame, phase, 20)
+        indexed = rate_capability._phase_rows(
+            frame,
+            phase,
+            20,
+            execution_index=index,
+        )
+        assert_frame_equal(legacy, indexed)
+
+    def test_indexed_phase_voltage_values_match_legacy_nan_semantics(self):
+        frame = self.frame()
+        frame["record_index"] = [90, 10, 70, 50, 30, 110, 20, 80, 40]
+        frame.loc[1, "voltage_v"] = float("nan")
+        index = rate_capability._ExecutionIndex(frame)
+        for phase in (self.pair["charge"], self.pair["discharge"]):
+            legacy = rate_capability._numeric(
+                rate_capability._phase_rows(frame, phase, 20),
+                "voltage_v",
+            )
+            indexed = index.phase_voltage_values(phase, 20)
+            assert_equal(indexed, legacy)
 
 
 def execution(

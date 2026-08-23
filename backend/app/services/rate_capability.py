@@ -11,7 +11,7 @@ plotted capacity comes only from the CC step.
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -271,7 +271,16 @@ def build_rate_pairs(reconstructed: dict) -> list[dict]:
     return pairs
 
 
-def _numeric(frame: pd.DataFrame, column: str) -> np.ndarray:
+def _numeric(
+    frame: pd.DataFrame,
+    column: str,
+    *,
+    execution_index: "_ExecutionIndex | None" = None,
+) -> np.ndarray:
+    if execution_index is not None:
+        cached = execution_index.numeric(frame, column)
+        if cached is not None:
+            return cached
     if column not in frame:
         return np.full(len(frame), np.nan)
     return pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype="float64")
@@ -294,15 +303,288 @@ def _ordered(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def _index_value(value: Any) -> Any:
+    """Return a stable scalar key for a raw-frame lookup index."""
+
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    return value
+
+
+def _cycle_key(value: Any) -> int | float | None:
+    if not isinstance(value, (int, float, np.integer, np.floating)):
+        return None
+    value = float(value)
+    if not np.isfinite(value):
+        return None
+    return int(value) if value.is_integer() else value
+
+
+def _group_sort_key(value: Any) -> tuple[int, Any]:
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return (0, float(value))
+    if value is None:
+        return (2, "")
+    return (1, f"{type(value).__name__}:{value}")
+
+
+class _ExecutionIndex:
+    """Request-local row ownership index for one immutable raw source frame.
+
+    The legacy path builds a full-frame boolean mask for every pair, phase and
+    occurrence. This index scans the frame once, retains row positions, and
+    materializes only the bounded rows requested by a phase/cycle lookup. The
+    returned frames keep the source index and use the same `_ordered` helper as
+    the legacy path.
+    """
+
+    def __init__(self, raw: pd.DataFrame) -> None:
+        self.raw = raw
+        self._has_cycle = "cycle" in raw
+        self._by_step: dict[Any, list[int]] = defaultdict(list)
+        self._by_cycle_step: dict[tuple[int | float, Any], list[int]] = defaultdict(list)
+        self._measurement_group_positions: dict[
+            Any, dict[Any, list[int]]
+        ] = defaultdict(lambda: defaultdict(list))
+        self._measurement_groups: dict[Any, list[pd.DataFrame]] = {}
+        self._phase_positions_cache: dict[
+            tuple[tuple[Any, ...], int | None], list[int]
+        ] = {}
+        self._phase_cache: dict[tuple[tuple[Any, ...], int | None], pd.DataFrame] = {}
+        self._frame_positions: dict[int, np.ndarray] = {}
+        self._cycle_values: np.ndarray | None = None
+        self._order_rank: np.ndarray | None = None
+        self._numeric_arrays = {
+            column: pd.to_numeric(raw[column], errors="coerce").to_numpy(
+                dtype="float64"
+            )
+            for column in (
+                "voltage_v",
+                "charge_capacity_mah",
+                "discharge_capacity_mah",
+                "current_ma",
+            )
+            if column in raw
+        }
+
+        order_column = next(
+            (
+                column
+                for column in ("record_index", "timestamp", "time_s")
+                if column in raw
+            ),
+            None,
+        )
+        if order_column is not None:
+            order_work = pd.DataFrame(
+                {
+                    "value": raw[order_column].to_numpy(copy=False),
+                    "position": np.arange(len(raw), dtype="int64"),
+                }
+            )
+            ordered_positions = order_work.sort_values("value")[
+                "position"
+            ].to_numpy(dtype="int64", copy=False)
+            order_rank = np.empty(len(raw), dtype="int64")
+            order_rank[ordered_positions] = np.arange(
+                len(raw),
+                dtype="int64",
+            )
+            self._order_rank = order_rank
+
+        step_values = raw["step_index"].to_numpy(copy=False)
+        work = pd.DataFrame({"step_index": step_values})
+
+        def positions(groups: Any) -> list[int]:
+            return [int(value) for value in groups]
+
+        for step_value, row_positions in work.groupby(
+            "step_index", sort=False, dropna=True
+        ).indices.items():
+            step_key = _index_value(step_value)
+            if step_key is not None:
+                self._by_step[step_key] = positions(row_positions)
+
+        if "step" in raw:
+            group_work = pd.DataFrame({
+                "step_index": step_values,
+                "group": raw["step"].to_numpy(copy=False),
+            })
+            grouped = group_work.groupby(
+                ["step_index", "group"], sort=True, dropna=True
+            ).indices
+        elif "cycle" in raw:
+            group_work = pd.DataFrame({
+                "step_index": step_values,
+                "group": raw["cycle"].to_numpy(copy=False),
+            })
+            grouped = group_work.groupby(
+                ["step_index", "group"], sort=True, dropna=True
+            ).indices
+        else:
+            grouped = {
+                (step_key, None): row_positions
+                for step_key, row_positions in work.groupby(
+                    "step_index", sort=False, dropna=True
+                ).indices.items()
+            }
+        for (step_value, group_value), row_positions in grouped.items():
+            step_key = _index_value(step_value)
+            group_key = _index_value(group_value)
+            if step_key is not None:
+                self._measurement_group_positions[step_key][group_key] = positions(
+                    row_positions
+                )
+
+        if self._has_cycle:
+            cycle_values = pd.to_numeric(raw["cycle"], errors="coerce").to_numpy(
+                dtype="float64"
+            )
+            self._cycle_values = cycle_values
+            cycle_work = pd.DataFrame({
+                "cycle": cycle_values,
+                "step_index": step_values,
+            })
+            for (cycle_value, step_value), row_positions in cycle_work.groupby(
+                ["cycle", "step_index"], sort=False, dropna=True
+            ).indices.items():
+                step_key = _index_value(step_value)
+                cycle_key = _cycle_key(cycle_value)
+                if step_key is not None and cycle_key is not None:
+                    self._by_cycle_step[(cycle_key, step_key)] = positions(
+                        row_positions
+                    )
+
+    @property
+    def step_key_count(self) -> int:
+        return len(self._by_step)
+
+    @property
+    def cycle_step_key_count(self) -> int:
+        return len(self._by_cycle_step)
+
+    def _frame(self, positions: list[int]) -> pd.DataFrame:
+        if not positions:
+            frame = self.raw.iloc[0:0]
+            self._frame_positions[id(frame)] = np.empty(0, dtype="int64")
+            return frame
+        positions_array = np.asarray(positions, dtype="int64")
+        frame = self.raw.iloc[positions_array]
+        self._frame_positions[id(frame)] = positions_array
+        return frame
+
+    def register_frame(self, frame: pd.DataFrame) -> None:
+        if isinstance(frame.index, pd.RangeIndex):
+            self._frame_positions[id(frame)] = frame.index.to_numpy(
+                dtype="int64",
+                copy=False,
+            )
+
+    def numeric(self, frame: pd.DataFrame, column: str) -> np.ndarray | None:
+        values = self._numeric_arrays.get(column)
+        positions = self._frame_positions.get(id(frame))
+        if values is None or positions is None:
+            return None
+        return values[positions]
+
+    def ordered_positions(self, positions: list[int]) -> list[int]:
+        if self._order_rank is None or len(positions) < 2:
+            return positions
+        position_array = np.asarray(positions, dtype="int64")
+        order = np.argsort(
+            self._order_rank[position_array],
+            kind="stable",
+        )
+        return position_array[order].tolist()
+
+    def measurement_groups(self, measurement_step_index: int) -> list[pd.DataFrame]:
+        key = _index_value(measurement_step_index)
+        if key not in self._measurement_groups:
+            position_sets = self.measurement_group_positions(measurement_step_index)
+            self._measurement_groups[key] = [
+                self._frame(positions)
+                for positions in position_sets
+            ]
+        return self._measurement_groups[key]
+
+    def measurement_group_positions(
+        self,
+        measurement_step_index: int,
+    ) -> list[list[int]]:
+        key = _index_value(measurement_step_index)
+        groups = self._measurement_group_positions.get(key, {})
+        return [
+            groups[group_key]
+            for group_key in sorted(groups, key=_group_sort_key)
+        ]
+
+    def values(self, column: str, positions: list[int]) -> np.ndarray:
+        values = self._numeric_arrays.get(column)
+        if values is None:
+            return np.full(len(positions), np.nan)
+        return values[np.asarray(positions, dtype="int64")]
+
+    def first_cycle(self, positions: list[int]) -> int | None:
+        if self._cycle_values is None:
+            return None
+        for position in self.ordered_positions(positions):
+            value = self._cycle_values[position]
+            if not np.isnan(value):
+                return int(value)
+        return None
+
+    def phase_rows(self, phase: dict, cycle: int | None) -> pd.DataFrame:
+        key = (
+            tuple(dict.fromkeys(phase.get("step_indices") or ())),
+            cycle,
+        )
+        cached = self._phase_cache.get(key)
+        if cached is not None:
+            return cached
+        result = _ordered(self._frame(self.phase_positions(phase, cycle)))
+        self.register_frame(result)
+        self._phase_cache[key] = result
+        return result
+
+    def phase_positions(self, phase: dict, cycle: int | None) -> list[int]:
+        steps = tuple(dict.fromkeys(phase.get("step_indices") or ()))
+        key = (steps, cycle)
+        cached = self._phase_positions_cache.get(key)
+        if cached is not None:
+            return cached
+        positions: list[int] = []
+        if cycle is not None and self._has_cycle:
+            for step in steps:
+                positions.extend(self._by_cycle_step.get((cycle, _index_value(step)), []))
+        else:
+            for step in steps:
+                positions.extend(self._by_step.get(_index_value(step), []))
+        positions.sort()
+        self._phase_positions_cache[key] = positions
+        return positions
+
+    def phase_voltage_values(self, phase: dict, cycle: int | None) -> np.ndarray:
+        positions = self.ordered_positions(self.phase_positions(phase, cycle))
+        values = self._numeric_arrays.get("voltage_v")
+        if values is None:
+            return np.full(len(positions), np.nan)
+        return values[np.asarray(positions, dtype="int64")]
+
+
 def _phase_rows(
     raw: pd.DataFrame,
     phase: dict,
     cycle: int | None,
     *,
     profiling: dict[str, Any] | None = None,
+    execution_index: _ExecutionIndex | None = None,
 ) -> pd.DataFrame:
     started = _profile_started(profiling)
     try:
+        if execution_index is not None:
+            return execution_index.phase_rows(phase, cycle)
         selected = raw[raw["step_index"].isin(phase["step_indices"])]
         if cycle is not None and "cycle" in selected:
             selected = selected[
@@ -314,18 +596,30 @@ def _phase_rows(
 
 
 def _reached_voltage(
-    frame: pd.DataFrame,
+    frame: pd.DataFrame | None,
     *,
     direction: str,
     target_v: float | None,
     tolerance_v: float,
     profiling: dict[str, Any] | None = None,
+    execution_index: _ExecutionIndex | None = None,
+    numeric_values: np.ndarray | None = None,
 ) -> bool:
     started = _profile_started(profiling)
     try:
-        if target_v is None or frame.empty:
+        if target_v is None or (
+            frame is not None and frame.empty
+        ) or (numeric_values is not None and not len(numeric_values)):
             return False
-        voltage = _numeric(frame, "voltage_v")
+        voltage = (
+            numeric_values
+            if numeric_values is not None
+            else _numeric(
+                frame,
+                "voltage_v",
+                execution_index=execution_index,
+            )
+        )
         finite = voltage[np.isfinite(voltage)]
         if not len(finite):
             return False
@@ -348,9 +642,11 @@ def extract_pair_executions(
     electrode_area_cm2: float | None,
     cutoff_tolerance_v: float,
     profiling: dict[str, Any] | None = None,
+    execution_index: _ExecutionIndex | None = None,
 ) -> list[dict]:
     """Extract both possible measurement directions from one protocol pair."""
     rows: list[dict] = []
+    execution_index = execution_index or _ExecutionIndex(raw)
     mass_g = active_mass_mg / 1000.0 if active_mass_mg and active_mass_mg > 0 else None
     area = electrode_area_cm2 if electrode_area_cm2 and electrode_area_cm2 > 0 else None
     for family, phase, reference, capacity_column, direction in (
@@ -370,23 +666,26 @@ def extract_pair_executions(
         ),
     ):
         started = _profile_started(profiling)
-        measurement = raw[
-            raw["step_index"] == int(phase["measurement_step_index"])
-        ]
-        groups = _execution_groups(measurement)
+        group_position_sets = execution_index.measurement_group_positions(
+            int(phase["measurement_step_index"])
+        )
         _profile_finished(profiling, "measurement_filtering_grouping", started)
-        _profile_count(profiling, "measurement_rows", len(measurement))
-        _profile_count(profiling, "measurement_groups", len(groups))
-        for occurrence, frame in enumerate(groups, start=1):
-            frame = _ordered(frame)
-            cycle_values = (
-                pd.to_numeric(frame["cycle"], errors="coerce").dropna()
-                if "cycle" in frame
-                else pd.Series(dtype="float64")
+        _profile_count(
+            profiling,
+            "measurement_rows",
+            sum(len(positions) for positions in group_position_sets),
+        )
+        _profile_count(profiling, "measurement_groups", len(group_position_sets))
+        for occurrence, positions in enumerate(group_position_sets, start=1):
+            positions = execution_index.ordered_positions(positions)
+            cycle = execution_index.first_cycle(positions)
+            started = _profile_started(profiling)
+            phase_voltage_values = execution_index.phase_voltage_values(phase, cycle)
+            reference_voltage_values = execution_index.phase_voltage_values(
+                reference,
+                cycle,
             )
-            cycle = int(cycle_values.iloc[0]) if len(cycle_values) else None
-            phase_frame = _phase_rows(raw, phase, cycle, profiling=profiling)
-            reference_frame = _phase_rows(raw, reference, cycle, profiling=profiling)
+            _profile_finished(profiling, "execution_phase_row_filtering", started)
             phase_target = (
                 pair.get("upper_voltage_v")
                 if direction == "charge"
@@ -398,28 +697,34 @@ def extract_pair_executions(
                 else pair.get("upper_voltage_v")
             )
             measurement_complete = _reached_voltage(
-                frame,
+                None,
                 direction=direction,
                 target_v=phase_target,
                 tolerance_v=cutoff_tolerance_v,
                 profiling=profiling,
+                execution_index=execution_index,
+                numeric_values=execution_index.values("voltage_v", positions),
             )
             phase_complete = _reached_voltage(
-                phase_frame,
+                None,
                 direction=direction,
                 target_v=phase_target,
                 tolerance_v=cutoff_tolerance_v,
                 profiling=profiling,
+                execution_index=execution_index,
+                numeric_values=phase_voltage_values,
             )
             reference_complete = _reached_voltage(
-                reference_frame,
+                None,
                 direction="discharge" if direction == "charge" else "charge",
                 target_v=reference_target,
                 tolerance_v=cutoff_tolerance_v,
                 profiling=profiling,
+                execution_index=execution_index,
+                numeric_values=reference_voltage_values,
             )
             started = _profile_started(profiling)
-            capacity_values = _numeric(frame, capacity_column)
+            capacity_values = execution_index.values(capacity_column, positions)
             capacity = (
                 float(np.nanmax(capacity_values))
                 if np.isfinite(capacity_values).any()
@@ -427,7 +732,7 @@ def extract_pair_executions(
             )
             _profile_finished(profiling, "capacity_extraction", started)
             started = _profile_started(profiling)
-            current_values = np.abs(_numeric(frame, "current_ma"))
+            current_values = np.abs(execution_index.values("current_ma", positions))
             finite_current = current_values[np.isfinite(current_values)]
             current_ma = (
                 float(np.nanmedian(finite_current)) if len(finite_current) else None
@@ -932,6 +1237,7 @@ def compute(
         calc_version = provenance.get("calc_version") or calc_version
     all_pinned_versions: list[str] = []
     all_current_versions: list[str] = []
+    protocol_cache: dict[tuple[str, float | None], dict] = {}
     config = _merged_config(spec)
     if request_context is None:
         units, missing_refs = engine.resolve_selection(db, spec)
@@ -988,8 +1294,38 @@ def compute(
             ):
                 scanner.parse_file(db, source)
             raw = cache.load_raw(source.hash, parser_version)
+            execution_index = None
+            if raw is not None:
+                started = _profile_started(profiling)
+                execution_index = _ExecutionIndex(raw)
+                _profile_finished(profiling, "execution_index_building", started)
+                _profile_count(profiling, "execution_index_rows", len(raw))
+                _profile_count(
+                    profiling,
+                    "execution_index_step_keys",
+                    execution_index.step_key_count,
+                )
+                _profile_count(
+                    profiling,
+                    "execution_index_cycle_step_keys",
+                    execution_index.cycle_step_key_count,
+                )
+            protocol_key = (
+                json.dumps(
+                    source.header_meta or {},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+                nominal,
+            )
             started = _profile_started(profiling)
-            reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
+            reconstructed = protocol_cache.get(protocol_key)
+            if reconstructed is None:
+                reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
+                protocol_cache[protocol_key] = reconstructed
+            else:
+                _profile_count(profiling, "protocol_reconstruction_cache_hits", 1)
             _profile_finished(profiling, "protocol_reconstruction", started)
             _profile_count(
                 profiling,
@@ -1016,6 +1352,7 @@ def compute(
                             electrode_area_cm2=area,
                             cutoff_tolerance_v=config["cutoff_tolerance_v"],
                             profiling=profiling,
+                            execution_index=execution_index,
                         )
                     )
                     _profile_finished(profiling, "execution_extraction", started)
