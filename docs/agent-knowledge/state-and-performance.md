@@ -823,6 +823,20 @@ profile must reconcile direct children without overlap; do not dispatch
 workers for Cycles unless serial cleanup leaves at least 100 ms of independent
 CPU work, and exact persisted hits must continue to bypass the whole path.
 
+Spec 050.23 promotes a bounded cross-family process boundary using the existing
+four-worker application pool from `time_capacity_workers`; it does not create
+family-specific pools or enlarge the global pool to eight workers. Cycles, DCIR,
+Rate Capability, and Steps dispatch compact immutable one-Cell jobs at four or
+more unique selected Cells, while Chargeability remains serial. The owner keeps
+SQLAlchemy/request context, source/parser/cache identity, protocol facts, cache
+lookup/store, progress/error ownership, and deterministic cross-Cell merging;
+workers receive no ORM/session, original path, raw header, or DataFrame and read
+canonical Parquet caches directly. Pool-not-ready, timeout, and broken-IPC
+conditions fall back to the exact serial service; scientific or merge errors
+remain visible. Exact persisted hits stay above this policy and dispatch zero
+jobs. The P8 candidate was rejected by the stronger resident-RSS gate, so do not
+add an eight-worker pool without a new measured and reviewed decision.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

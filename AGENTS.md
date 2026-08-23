@@ -196,6 +196,7 @@ Cellxplorer/
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
 │           ├── canonical_cycling.py Canonical raw cycling-data contract/validation (Spec 040.1)
 │           ├── time_capacity_derived.py Shared exact Time/Capacity transforms/prepared-row contract (Spec 050.6)
+│           ├── analysis_family_workers.py Compact cross-family worker boundary and merge (Spec 050.23)
 │           ├── time_capacity_workers.py Owner-resolved ordinary Time/Capacity execution and bounded pool (Spec 050.14)
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR container/data reader (Spec 041.1)
@@ -316,6 +317,7 @@ Cellxplorer/
 │   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
 │   ├── preflight.py                Canonical local verification command
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
+│   ├── profile_analysis_family_concurrency.py Five-family S1/P4/P8 route benchmark (Spec 050.23)
 │   ├── profile_analysis_families.py Cross-family production-route profiler (Spec 050.17)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── profile_time_capacity_refinement.py Focused adaptive-refinement S25 measurement (Spec 050.15)

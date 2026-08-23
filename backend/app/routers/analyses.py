@@ -905,13 +905,34 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
             if job_id is None and req.job_token:
                 job_id = _open_compute_job(db, a, spec, "cycles", req.job_token)
             with background_thread_priority(req.background):
-                result = engine.compute(
-                    db,
-                    spec,
-                    a.provenance,
-                    use_current_versions=req.recompute,
-                    progress=_progress_callback(job_id),
-                )
+                from ..services import analysis_family_workers
+
+                progress = _progress_callback(job_id)
+                candidate_units, _candidate_missing = engine.resolve_selection(db, spec)
+                candidate_cell_ids = {
+                    int(unit["cell"].id) for unit in candidate_units
+                }
+                result = None
+                if (
+                    len(candidate_units) >= analysis_family_workers.PROMOTED_MIN_CELLS
+                    and len(candidate_units) == len(candidate_cell_ids)
+                ):
+                    result = analysis_family_workers.try_compute_family(
+                        db,
+                        spec,
+                        a.provenance,
+                        family="cycles",
+                        use_current_versions=req.recompute,
+                        progress=progress,
+                    )
+                if result is None:
+                    result = engine.compute(
+                        db,
+                        spec,
+                        a.provenance,
+                        use_current_versions=req.recompute,
+                        progress=progress,
+                    )
             result["cache_status"] = "miss"
             result["data_signature"] = key
             analysis_cache.store_result("cycles", key, result)
@@ -1002,14 +1023,27 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
                     request_context=request_context,
                 )
             with background_thread_priority(req.background):
-                result = engine.compute_steps(
+                from ..services import analysis_family_workers
+
+                progress = _progress_callback(job_id)
+                result = analysis_family_workers.try_compute_family(
                     db,
                     spec,
                     a.provenance,
+                    family="steps",
                     use_current_versions=req.recompute,
-                    progress=_progress_callback(job_id),
                     request_context=request_context,
+                    progress=progress,
                 )
+                if result is None:
+                    result = engine.compute_steps(
+                        db,
+                        spec,
+                        a.provenance,
+                        use_current_versions=req.recompute,
+                        progress=progress,
+                        request_context=request_context,
+                    )
             result["cache_status"] = "miss"
             result["data_signature"] = key
             analysis_cache.store_result("steps", key, result)
@@ -1171,14 +1205,27 @@ def compute_dcir_analysis(
                     request_context=request_context,
                 )
             with background_thread_priority(req.background):
-                result = engine.compute_dcir(
+                from ..services import analysis_family_workers
+
+                progress = _recognition_progress_callback(job_id)
+                result = analysis_family_workers.try_compute_family(
                     db,
                     spec,
                     analysis.provenance,
+                    family="dcir",
                     use_current_versions=req.recompute,
-                    progress=_recognition_progress_callback(job_id),
                     request_context=request_context,
+                    progress=progress,
                 )
+                if result is None:
+                    result = engine.compute_dcir(
+                        db,
+                        spec,
+                        analysis.provenance,
+                        use_current_versions=req.recompute,
+                        progress=progress,
+                        request_context=request_context,
+                    )
             result["cache_status"] = "miss"
             result["data_signature"] = key
             analysis_cache.store_result("dcir", key, result)
@@ -1367,14 +1414,27 @@ def compute_rate_capability_analysis(
                     request_context=request_context,
                 )
             with background_thread_priority(req.background):
-                result = rate_capability.compute(
+                from ..services import analysis_family_workers
+
+                progress = _recognition_progress_callback(job_id)
+                result = analysis_family_workers.try_compute_family(
                     db,
                     spec,
                     analysis.provenance,
+                    family="rate_capability",
                     use_current_versions=req.recompute,
-                    progress=_recognition_progress_callback(job_id),
                     request_context=request_context,
+                    progress=progress,
                 )
+                if result is None:
+                    result = rate_capability.compute(
+                        db,
+                        spec,
+                        analysis.provenance,
+                        use_current_versions=req.recompute,
+                        progress=progress,
+                        request_context=request_context,
+                    )
             result["cache_status"] = "miss"
             result["data_signature"] = key
             analysis_cache.store_result("rate_capability", key, result)

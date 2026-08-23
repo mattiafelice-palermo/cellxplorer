@@ -575,7 +575,9 @@ def compute(
 
     stages_per_cell = 3
     total_units = max(1, len(cells) * stages_per_cell)
-    protocol_cache_entries: list[ProtocolCacheEntry] = []
+    protocol_cache_entries: list[ProtocolCacheEntry] = list(
+        getattr(request_context, "protocol_cache_entries", ())
+    )
 
     for cell_index, cell in enumerate(cells, start=1):
         base = (cell_index - 1) * stages_per_cell
@@ -608,12 +610,16 @@ def compute(
                 and Path(source.path).exists()
             ):
                 scanner.parse_file(db, source)
-            reconstructed = _reconstruct_protocol_for_request(
-                source,
-                nominal,
-                parser_version,
-                protocol_cache_entries,
-            )
+            reconstructed = dict(
+                getattr(request_context, "protocol_by_source", ())
+            ).get(source.hash)
+            if reconstructed is None:
+                reconstructed = _reconstruct_protocol_for_request(
+                    source,
+                    nominal,
+                    parser_version,
+                    protocol_cache_entries,
+                )
             signature = str(reconstructed.get("signature") or "")
             detected = detect_candidates(reconstructed)
             matching_candidates = [

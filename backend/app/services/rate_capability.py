@@ -1237,7 +1237,9 @@ def compute(
         calc_version = provenance.get("calc_version") or calc_version
     all_pinned_versions: list[str] = []
     all_current_versions: list[str] = []
-    protocol_cache: dict[tuple[str, float | None], dict] = {}
+    protocol_cache: dict[tuple[str, float | None], dict] = dict(
+        getattr(request_context, "protocol_cache", ())
+    )
     config = _merged_config(spec)
     if request_context is None:
         units, missing_refs = engine.resolve_selection(db, spec)
@@ -1320,7 +1322,11 @@ def compute(
                 nominal,
             )
             started = _profile_started(profiling)
-            reconstructed = protocol_cache.get(protocol_key)
+            reconstructed = dict(
+                getattr(request_context, "protocol_by_source", ())
+            ).get(source.hash)
+            if reconstructed is None:
+                reconstructed = protocol_cache.get(protocol_key)
             if reconstructed is None:
                 reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
                 protocol_cache[protocol_key] = reconstructed

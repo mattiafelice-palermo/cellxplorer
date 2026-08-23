@@ -1002,16 +1002,23 @@ def _target_step_indices(target: object) -> set[int]:
 
 
 def _protocol_step_targets(
-    files: list[SourceFile], context: dict, badges: list[dict], cell: Cell
+    files: list[SourceFile],
+    context: dict,
+    badges: list[dict],
+    cell: Cell,
+    *,
+    protocol_by_source: dict[str, dict] | None = None,
 ) -> dict[int, dict[str, set[int]]]:
     by_segment: dict[int, dict[str, set[int]]] = {}
     if not context["active"]:
         return by_segment
     for segment_index, source_file in enumerate(files):
-        reconstructed = protocol.reconstruct_protocol(
-            source_file.header_meta,
-            source_file.nominal_capacity_mah,
-        )
+        reconstructed = (protocol_by_source or {}).get(source_file.hash)
+        if reconstructed is None:
+            reconstructed = protocol.reconstruct_protocol(
+                source_file.header_meta,
+                source_file.nominal_capacity_mah,
+            )
         if not reconstructed.get("n_steps"):
             _add_protocol_badge(
                 context,
@@ -2270,8 +2277,13 @@ def compute(
     progress: ProgressCallback | None = None,
     *,
     profiling: dict[str, Any] | None = None,
+    request_context: Any = None,
 ) -> dict:
-    ensure_canonical_cycling_available(db, spec)
+    ensure_canonical_cycling_available(
+        db,
+        spec,
+        request_context=request_context,
+    )
     compute_setup_started = _cycles_profile_started(profiling)
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
@@ -2283,7 +2295,11 @@ def compute(
     exclusions = selection.get("exclusions", [])
     hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
     _cycles_profile_finished(profiling, "cycles_compute_setup", compute_setup_started)
-    units, missing_refs = resolve_selection(db, spec)
+    if request_context is None:
+        units, missing_refs = resolve_selection(db, spec)
+    else:
+        units = list(request_context.units)
+        missing_refs = list(request_context.missing_refs)
     protocol_setup_started = _cycles_profile_started(profiling)
     protocol_context, protocol_badges = _protocol_filter_context(spec)
 
@@ -2308,10 +2324,15 @@ def compute(
         cell: Cell = unit["cell"]
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading cached cycle data")
-        hashes, files = cell_ordered_hashes(db, cell)
-        source_versions = resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
+        if request_context is None:
+            hashes, files = cell_ordered_hashes(db, cell)
+            source_versions = resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
+        else:
+            hashes = list(request_context.hashes_by_cell[cell.id])
+            files = list(request_context.files_by_cell[cell.id])
+            source_versions = request_context.parser_versions_by_cell[cell.id]
         source_bookkeeping_started = _cycles_profile_started(profiling)
         refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
@@ -2349,7 +2370,8 @@ def compute(
                     and not cache.raw_path(f.hash, ref.parser_version).exists()
                     and Path(f.path).exists()
                 ):
-                    scanner.parse_file(db, f)
+                    if db is not None:
+                        scanner.parse_file(db, f)
                     reparsed = True
 
         _cycles_profile_finished(
@@ -2362,7 +2384,13 @@ def compute(
         descriptors = source_descriptors(files, segments, missing, stitched)
         complete = stitch.stitch_metadata(stitched)["complete"]
         if complete:
-            step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
+            step_targets = _protocol_step_targets(
+                files,
+                protocol_context,
+                badges,
+                cell,
+                protocol_by_source=dict(getattr(request_context, "protocol_by_source", ())),
+            )
             protocol_cycles = _protocol_cycle_sets(
                 files,
                 segments,
@@ -2398,7 +2426,7 @@ def compute(
         source_status_started = _cycles_profile_started(profiling)
         for f in files:
             if not Path(f.path).exists():
-                if f.location_status != "offline":
+                if f.location_status != "offline" and db is not None:
                     f.location_status = "offline"
                     db.commit()
                 badges.append(
@@ -2432,7 +2460,12 @@ def compute(
         group_hidden = unit["group_id"] in hidden_group_ids
         excluded = exclusion is not None or group_hidden
         active_mass_started = _cycles_profile_started(profiling)
-        active_mass_mg = cell_active_mass_mg(cell)
+        active_mass_mg = cell_active_mass_mg(
+            cell,
+            request_context.scalar_metadata.get(cell.id)
+            if request_context is not None
+            else None,
+        )
         _cycles_profile_finished(
             profiling,
             "cycles_active_mass_resolution",
@@ -2747,13 +2780,21 @@ def compute_steps(
         )
 
     total_units = len(configured_series)
-    protocol_cache_entries: list[tuple[str, float | None, dict, dict]] = []
+    protocol_cache_entries: list[tuple[str, float | None, dict, dict]] = list(
+        getattr(request_context, "protocol_cache_entries", ())
+    )
 
     def reconstruct_protocol_for_request(
         source_file: SourceFile,
         parser_version: str,
         nominal_capacity: float | None,
     ) -> dict:
+        reconstructed_by_source = dict(
+            getattr(request_context, "protocol_by_source", ())
+        )
+        reconstructed = reconstructed_by_source.get(source_file.hash)
+        if reconstructed is not None:
+            return reconstructed
         header_meta = source_file.header_meta or {}
         for (
             cached_parser_version,
@@ -3052,8 +3093,12 @@ def compute_dcir(
     cell_series: list[dict] = []
     sources_by_cell: dict[int, dict] = {}
     dcir_cell_contexts: dict[int, dict[str, Any]] = {}
-    dcir_protocol_cache: dict[tuple[str, float | None], dict] = {}
-    dcir_protocol_header_cache: list[tuple[dict, float | None, dict]] = []
+    dcir_protocol_cache: dict[tuple[str, float | None], dict] = dict(
+        getattr(request_context, "dcir_protocol_cache", ())
+    )
+    dcir_protocol_header_cache: list[tuple[dict, float | None, dict]] = list(
+        getattr(request_context, "dcir_protocol_header_cache", ())
+    )
     if not configured_series:
         badges.append(
             {
@@ -3132,7 +3177,11 @@ def compute_dcir(
                         ),
                         nominal,
                     )
-                    reconstructed = dcir_protocol_cache.get(protocol_key)
+                    reconstructed = dict(
+                        getattr(request_context, "protocol_by_source", ())
+                    ).get(source_file.hash)
+                    if reconstructed is None:
+                        reconstructed = dcir_protocol_cache.get(protocol_key)
                     cache_hit = reconstructed is not None
                 _dcir_profile_finished(
                     profiling,
