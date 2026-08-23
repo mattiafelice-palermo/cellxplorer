@@ -190,16 +190,35 @@ def _compute(job: FamilyWorkerJob) -> dict[str, Any]:
 def _assert_cache_only(job: FamilyWorkerJob) -> None:
     """Fail closed instead of allowing a worker to re-open an original file."""
 
-    from . import cache
+    from . import analysis_engine, cache
+
+    calc_version = analysis_engine.CALC_VERSION
+    if job.provenance and not job.use_current_versions:
+        calc_version = job.provenance.get("calc_version") or calc_version
+    pending = cache.pending_hashes()
 
     for cell in job.request_context.cells:
         versions = job.request_context.parser_versions_by_cell[cell.id]
         for source in job.request_context.files_by_cell[cell.id]:
             parser_version = versions[source.hash]
+            if source.hash in pending:
+                raise RuntimeError(
+                    "family worker cache-only boundary has a pending cache write for "
+                    f"{source.hash[:12]}"
+                )
             if not cache.raw_path(source.hash, parser_version).exists():
                 raise RuntimeError(
                     "family worker cache-only boundary unavailable for "
                     f"{source.hash[:12]} at parser {parser_version}"
+                )
+            if job.family == "cycles" and not cache.has_cycles(
+                source.hash,
+                parser_version,
+                calc_version,
+            ):
+                raise RuntimeError(
+                    "family worker cycle cache-only boundary unavailable for "
+                    f"{source.hash[:12]} at parser {parser_version}, calc {calc_version}"
                 )
 
 
@@ -338,15 +357,36 @@ def _worker_jobs(
     return jobs
 
 
-def _owner_cache_ready(owner_context: Any) -> bool:
-    """Return whether every source has the raw cache needed by a worker."""
+def _owner_cache_ready(
+    owner_context: Any,
+    *,
+    family: str | None = None,
+    calc_version: str | None = None,
+) -> bool:
+    """Return whether every source has the exact cache needed by a worker.
 
-    from . import cache
+    In particular, raw Parquet alone is not enough for a Cycles worker:
+    ``cache.load_cycles`` is allowed to derive and write a missing cycle cache,
+    which would violate the worker's read-only boundary and make readiness
+    depend on a hidden write.
+    """
+
+    from . import analysis_engine, cache
+
+    pending = cache.pending_hashes()
+    expected_calc_version = calc_version or analysis_engine.CALC_VERSION
 
     for cell in owner_context.cells:
         versions = owner_context.parser_versions_by_cell[cell.id]
         for source in owner_context.files_by_cell[cell.id]:
-            if not cache.raw_path(source.hash, versions[source.hash]).exists():
+            parser_version = versions[source.hash]
+            if source.hash in pending or not cache.raw_path(source.hash, parser_version).exists():
+                return False
+            if family == "cycles" and not cache.has_cycles(
+                source.hash,
+                parser_version,
+                expected_calc_version,
+            ):
                 return False
     return True
 
@@ -613,7 +653,6 @@ def _merge_rate_capability(
                     {
                         block["charge_structure"]
                         for block in detected
-                        if block["family"] == "charge"
                     }
                 ),
             },
@@ -623,6 +662,11 @@ def _merge_rate_capability(
             ),
             "cells": cells,
             "selection_contexts": [
+                deepcopy(context)
+                for item in ordered
+                for context in item["result"].get("selection_contexts", [])
+            ]
+            or [
                 {
                     "cell_id": int(cell_id),
                     "entry_kind": "cell",
@@ -766,6 +810,7 @@ def try_compute_family(
     use_current_versions: bool = False,
     request_context: Any = None,
     progress: Any = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Run one promoted family through the shared application pool.
 
@@ -800,9 +845,17 @@ def try_compute_family(
         # multiplicity, so retain the serial route for those requests.
         if len(cells) < PROMOTED_MIN_CELLS or len(units) != len(cells):
             return None
-        if not _owner_cache_ready(request_context):
+        calc_version = analysis_engine.CALC_VERSION
+        if provenance and not use_current_versions:
+            calc_version = provenance.get("calc_version") or calc_version
+        if not _owner_cache_ready(
+            request_context,
+            family=family,
+            calc_version=calc_version,
+        ):
             return None
         cell_ids = [int(unit["cell"].id) for unit in units]
+        jobs_started = perf_counter()
         jobs = _worker_jobs(
             family,
             spec,
@@ -810,8 +863,13 @@ def try_compute_family(
             provenance,
             use_current_versions,
         )
+        if diagnostics is not None:
+            diagnostics["job_construction_ms"] = (perf_counter() - jobs_started) * 1000.0
+            diagnostics["job_count"] = len(jobs)
         pool = time_capacity_workers._ready_pool(PROMOTED_WORKERS)
         submitted: list[FamilyWorkerJob] = []
+        serialized_job_bytes = 0
+        serialization_started = perf_counter()
         for job in jobs:
             next_job = FamilyWorkerJob(
                 family=job.family,
@@ -826,26 +884,51 @@ def try_compute_family(
             if worker_job_has_forbidden_state(next_job):
                 raise RuntimeError("forbidden owner state crossed family worker boundary")
             submitted.append(next_job)
+            if diagnostics is not None:
+                serialized_job_bytes += len(
+                    pickle.dumps(next_job, protocol=pickle.HIGHEST_PROTOCOL)
+                )
+        if diagnostics is not None:
+            diagnostics["serialized_job_bytes"] = serialized_job_bytes
+            diagnostics["job_serialization_ms"] = (
+                perf_counter() - serialization_started
+            ) * 1000.0
         try:
+            submit_started = perf_counter()
             futures = [pool.submit(run_family_job, job) for job in submitted]
+            if diagnostics is not None:
+                diagnostics["submit_ms"] = (perf_counter() - submit_started) * 1000.0
             results: list[dict[str, Any]] = []
+            transfer_started = perf_counter()
             for index, future in enumerate(futures):
                 results.append(future.result(timeout=180))
                 if progress:
                     label = str(units[index].get("label") or units[index]["cell"].name)
                     progress(index + 1, len(units), label, "Read from cache")
+            if diagnostics is not None:
+                diagnostics["result_transfer_ms"] = (
+                    perf_counter() - transfer_started
+                ) * 1000.0
+                diagnostics["worker_results"] = results
         except (BrokenProcessPool, FutureTimeoutError):
             time_capacity_workers._mark_pool_failed(pool)
             logger.exception("Shared family worker infrastructure failed; using serial fallback")
             return None
+        merge_started = perf_counter()
         result = _merge_results(family, results, spec, cell_ids)
-        return _finalize_merged_result(
+        if diagnostics is not None:
+            diagnostics["owner_merge_ms"] = (perf_counter() - merge_started) * 1000.0
+        finalize_started = perf_counter()
+        result = _finalize_merged_result(
             result,
             family,
             sorted(results, key=lambda item: item["ordinal"]),
             request_context,
             provenance,
         )
+        if diagnostics is not None:
+            diagnostics["finalization_ms"] = (perf_counter() - finalize_started) * 1000.0
+        return result
     except time_capacity_workers.PoolNotReadyError:
         return None
 

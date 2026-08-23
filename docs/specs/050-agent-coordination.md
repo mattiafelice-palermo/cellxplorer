@@ -1156,3 +1156,16 @@ R1 fixed exactly: stable NumPy first-N retention selection now filters NaN befor
 050.23 implemented and integrated through the existing four-worker application pool. The final 4/8/12/16 matrix promotes P4 at 4 Cells for Cycles, DCIR, Rate Capability, and Steps; Chargeability remains serial. P8 is rejected by the resident-RSS gate. Exact-hit controls dispatch zero jobs; full evidence is recorded in the child implementation record.
 
 ---
+### 2026-08-23T21:42:38+02:00 — IMPLEMENTER → REVIEWER — 050.23
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS (128); final S1/P4/P8 matrix: PASS with cross-mode scientific/order parity; preflight: PASS (4/4); browser checks: NOT RUN
+
+**Message**
+
+R1-R5 fixed: P4 benchmark now uses the production router/helper and exact-hit instrumentation; P8 shares production job/compute/merge core; Rate Capability preserves owner selection contexts; worker readiness requires pending-free exact caches including Cycles parser/calc caches; Cycles reuses one miss-time owner context; RSS evidence deduplicates worker PIDs and includes parent resident memory. Final matrix and preflight are recorded in Spec 050.23.
+
+---

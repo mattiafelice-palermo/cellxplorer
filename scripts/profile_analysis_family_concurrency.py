@@ -61,6 +61,52 @@ def _median(values: Iterable[object]) -> float | None:
     return statistics.median(finite) if finite else None
 
 
+def _dedupe_worker_rss_samples(
+    samples: Iterable[tuple[int, int | None]],
+) -> dict[int, int]:
+    """Keep one stable warm-idle RSS sample per distinct worker PID."""
+
+    by_pid: dict[int, int] = {}
+    for pid, rss in samples:
+        if isinstance(rss, int):
+            # The final acknowledgement for a PID is sampled after the whole
+            # warmup batch has drained, so it represents the idle worker once.
+            by_pid[int(pid)] = int(rss)
+    return by_pid
+
+
+def _resident_rss_bytes(
+    worker_rss_bytes: int | None,
+    parent_rss_bytes: int | None,
+) -> int | None:
+    if not isinstance(worker_rss_bytes, int) or not isinstance(parent_rss_bytes, int):
+        return None
+    return int(worker_rss_bytes) + int(parent_rss_bytes)
+
+
+def _rss_memory_gate(
+    p4_worker_rss_bytes: int | None,
+    p4_parent_rss_bytes: int | None,
+    p8_worker_rss_bytes: int | None,
+    p8_parent_rss_bytes: int | None,
+    *,
+    multiplier: float = 1.5,
+) -> dict[str, Any]:
+    p4_resident = _resident_rss_bytes(p4_worker_rss_bytes, p4_parent_rss_bytes)
+    p8_resident = _resident_rss_bytes(p8_worker_rss_bytes, p8_parent_rss_bytes)
+    ratio = (
+        float(p8_resident) / float(p4_resident)
+        if isinstance(p4_resident, int) and p4_resident > 0 and isinstance(p8_resident, int)
+        else None
+    )
+    return {
+        "p4_resident_rss_bytes": p4_resident,
+        "p8_resident_rss_bytes": p8_resident,
+        "ratio": ratio,
+        "ok": isinstance(ratio, (int, float)) and ratio <= multiplier,
+    }
+
+
 def _digest(value: Any) -> str:
     def project(item: Any) -> Any:
         if isinstance(item, dict):
@@ -68,6 +114,10 @@ def _digest(value: Any) -> str:
                 key: project(child)
                 for key, child in item.items()
                 if key not in {
+                    # Availability is owner-side presentation state, not a
+                    # scientific payload difference between serial and
+                    # worker execution.
+                    "badges",
                     "computed_at",
                     "cache_status",
                     "data_signature",
@@ -278,30 +328,15 @@ def _worker_jobs(
     cell_ids: list[int],
     owner_context: Any,
 ) -> list[family_workers.FamilyWorkerJob]:
-    protocol_entries, protocol_cache, dcir_header_cache, protocol_by_source = _protocol_caches(
-        owner_context
+    # Keep the benchmark candidate on the exact production job constructor;
+    # only the pool ownership differs for the isolated P8 diagnostic.
+    return family_workers._worker_jobs(
+        family,
+        spec,
+        owner_context,
+        None,
+        True,
     )
-    jobs: list[family_workers.FamilyWorkerJob] = []
-    for ordinal, cell_id in enumerate(cell_ids):
-        jobs.append(
-            family_workers.FamilyWorkerJob(
-                family=family,
-                spec=_one_cell_spec(spec, family, cell_id),
-                provenance=None,
-                request_context=_worker_context(
-                    owner_context,
-                    cell_id,
-                    protocol_entries,
-                    protocol_cache,
-                    dcir_header_cache,
-                    protocol_by_source,
-                ),
-                ordinal=ordinal,
-                cell_id=int(cell_id),
-                submitted_at=0.0,
-            )
-        )
-    return jobs
 
 
 def _make_05023_workloads(
@@ -572,7 +607,7 @@ def _merge_rate_capability(
                     {round(float(block["fixed_rate_c"]), 6) for block in available_blocks if block["family"] == "discharge"}
                 ),
                 "charge_structures": sorted(
-                    {block["charge_structure"] for block in available_blocks if block["family"] == "charge"}
+                    {block["charge_structure"] for block in available_blocks}
                 ),
             },
             "invalid_execution_count": sum(
@@ -606,6 +641,10 @@ def _merge_results(
 ) -> dict[str, Any]:
     if not results:
         raise RuntimeError("family worker returned no results")
+    if family in family_workers.PROMOTED_FAMILIES:
+        # P8 is intentionally an isolated measurement, but it must not carry
+        # a second scientific merge implementation that can drift from P4.
+        return family_workers._merge_results(family, results, spec, cell_ids)
     if family == "cycles":
         return _merge_cycles(results, spec)
     if family == "steps":
@@ -627,6 +666,7 @@ class ResidentFamilyPool:
         self.executor: ProcessPoolExecutor | None = None
         self.warm_pids: list[int] = []
         self.warm_idle_rss_bytes: int | None = None
+        self.warm_idle_parent_rss_bytes: int | None = None
 
     def start(self) -> None:
         from app.services.process_priority import background_pool_initializer
@@ -656,8 +696,12 @@ class ResidentFamilyPool:
             raise RuntimeError(
                 f"family worker warmup acknowledged {len(self.warm_pids)} of {self.workers} PIDs"
             )
-        rss_values = [int(rss) for _pid, rss in acknowledgements if isinstance(rss, int)]
-        self.warm_idle_rss_bytes = sum(rss_values) if rss_values else None
+        # Every warmup acknowledgement is a sample from a worker, not a new
+        # resident process.  Keep the last sample for each distinct PID after
+        # the warmup batch has drained, then add the parent once.
+        rss_by_pid = _dedupe_worker_rss_samples(acknowledgements)
+        self.warm_idle_rss_bytes = sum(rss_by_pid.values()) if rss_by_pid else None
+        self.warm_idle_parent_rss_bytes = family_workers._rss_bytes()
 
     def close(self) -> None:
         executor, self.executor = self.executor, None
@@ -733,10 +777,180 @@ def _run_serial_miss(
         "parent_rss_before_bytes": rss_before,
         "parent_rss_after_bytes": family_workers._rss_bytes(),
         "worker_warm_idle_rss_bytes": None,
+        "parent_warm_idle_rss_bytes": None,
+        "warm_idle_resident_rss_bytes": None,
         "worker_request_peak_rss_bytes": None,
         "sql": metrics.get("sql"),
         "native_thread_settings": _native_thread_settings(),
     }
+
+
+def _run_production_route_miss(
+    env: GoldenFixtureEnvironment,
+    analysis_id: int,
+    family: str,
+    cache_root: Path,
+    pool: ResidentFamilyPool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Measure P4 through the real route and production family helper."""
+
+    from app.routers import analyses
+    from app.services import analysis_cache, analysis_engine, time_capacity_workers
+    from app.services.analysis_family_workers import _cache_wrappers
+
+    if pool.executor is None:
+        raise RuntimeError("family pool is not warm")
+
+    diagnostics: dict[str, Any] = {"request_context_build_ms": 0.0, "request_context_build_calls": 0}
+    counters: dict[str, Any] = {
+        "calls": {},
+        "elapsed_ms": {},
+        "rows": {},
+        "physical_rows": 0,
+        "row_groups": 0,
+    }
+    route = family_profiler._route_for(family)
+    request = family_profiler._request_for(family, analyses, True)
+    sql = _sql_profile(env.db)
+    rss_before = family_workers._rss_bytes()
+    started_cpu = process_time()
+    started = perf_counter()
+
+    original_build_context = analysis_engine.build_analysis_request_context
+
+    def timed_build_context(*args: Any, **kwargs: Any) -> Any:
+        context_started = perf_counter()
+        value = original_build_context(*args, **kwargs)
+        diagnostics["request_context_build_calls"] += 1
+        diagnostics["request_context_build_ms"] += (perf_counter() - context_started) * 1000.0
+        return value
+
+    original_helper = family_workers.try_compute_family
+
+    def measured_helper(*args: Any, **kwargs: Any) -> Any:
+        kwargs["diagnostics"] = diagnostics
+        return original_helper(*args, **kwargs)
+
+    original_store_result = analysis_cache.store_result
+
+    def timed_store_result(*args: Any, **kwargs: Any) -> Any:
+        store_started = perf_counter()
+        value = original_store_result(*args, **kwargs)
+        diagnostics["cache_persistence_ms"] = (perf_counter() - store_started) * 1000.0
+        return value
+
+    original_fast_json = analyses.fast_json
+
+    def timed_fast_json(*args: Any, **kwargs: Any) -> Any:
+        json_started = perf_counter()
+        value = original_fast_json(*args, **kwargs)
+        diagnostics["json_serialization_ms"] = (perf_counter() - json_started) * 1000.0
+        return value
+
+    with family_profiler._analysis_cache_root(cache_root):
+        with ExitStack() as stack:
+            # Make this benchmark pool look exactly like the already-ready
+            # application pool that production _ready_pool() owns.
+            stack.enter_context(patch.object(time_capacity_workers, "_POOL", pool.executor))
+            stack.enter_context(patch.object(time_capacity_workers, "_POOL_WORKERS", pool.workers))
+            stack.enter_context(patch.object(time_capacity_workers, "_POOL_STATE", "ready"))
+            stack.enter_context(
+                patch.object(
+                    analysis_engine,
+                    "build_analysis_request_context",
+                    timed_build_context,
+                )
+            )
+            stack.enter_context(
+                patch.object(family_workers, "try_compute_family", measured_helper)
+            )
+            stack.enter_context(patch.object(analysis_cache, "store_result", timed_store_result))
+            stack.enter_context(patch.object(analyses, "fast_json", timed_fast_json))
+            with _cache_wrappers(counters):
+                response = route(analysis_id, request, env.db)
+
+    elapsed = (perf_counter() - started) * 1000.0
+    sql_metrics: dict[str, Any] = {}
+    sql.finish(sql_metrics)
+    payload, digest = _route_response_metrics(response)
+    results = list(diagnostics.get("worker_results") or [])
+    worker_wall = [float(item["worker_wall_ms"]) for item in results]
+    worker_after = [
+        int(item["rss_after_bytes"])
+        for item in results
+        if isinstance(item.get("rss_after_bytes"), int)
+    ]
+    worker_before = [
+        int(item["rss_before_bytes"])
+        for item in results
+        if isinstance(item.get("rss_before_bytes"), int)
+    ]
+    raw_reads = {
+        "calls": {},
+        "elapsed_ms": {},
+        "rows": {},
+        "physical_rows": 0,
+        "row_groups": 0,
+    }
+    for item in results:
+        reads = item.get("cache_reads") or {}
+        for key_name in ("calls", "elapsed_ms", "rows"):
+            for name, value in (reads.get(key_name) or {}).items():
+                raw_reads[key_name][name] = raw_reads[key_name].get(name, 0) + value
+        raw_reads["physical_rows"] += int(reads.get("physical_rows") or 0)
+        raw_reads["row_groups"] += int(reads.get("row_groups") or 0)
+    # Serial fallback (Chargeability or an unready promoted request) is still
+    # a real-route observation; retain the parent-side cache counters then.
+    if not results:
+        raw_reads = counters
+    metrics = {
+        "mode": "P4",
+        "workers": 4,
+        "complete_route_ms": elapsed,
+        "cpu_seconds": process_time() - started_cpu,
+        "body_bytes": len(response.body or b""),
+        "scientific_digest": digest,
+        "series_order": _order(payload),
+        "cache_status": payload.get("cache_status"),
+        "raw_reads": raw_reads,
+        "owner_preprocessing_ms": diagnostics.get("request_context_build_ms"),
+        "request_context_build_calls": diagnostics.get("request_context_build_calls"),
+        "job_construction_ms": diagnostics.get("job_construction_ms", 0.0),
+        "job_count": diagnostics.get("job_count", 0),
+        "serialized_job_bytes": diagnostics.get("serialized_job_bytes", 0),
+        "job_serialization_ms": diagnostics.get("job_serialization_ms", 0.0),
+        "submit_ms": diagnostics.get("submit_ms", 0.0),
+        "result_transfer_ms": diagnostics.get("result_transfer_ms", 0.0),
+        "queue_ms": _median(item.get("queue_ms") for item in results),
+        "worker_wall_ms": worker_wall,
+        "worker_wall_range_ms": {
+            "min": min(worker_wall) if worker_wall else None,
+            "max": max(worker_wall) if worker_wall else None,
+        },
+        "worker_pids": sorted({int(item["worker_pid"]) for item in results}),
+        "worker_result_bytes": [int(item["result_bytes"]) for item in results],
+        "worker_result_serialization_ms": _median(
+            item.get("result_serialization_ms") for item in results
+        ),
+        "owner_merge_ms": diagnostics.get("owner_merge_ms"),
+        "finalization_ms": diagnostics.get("finalization_ms"),
+        "cache_persistence_ms": diagnostics.get("cache_persistence_ms"),
+        "json_serialization_ms": diagnostics.get("json_serialization_ms"),
+        "parent_rss_before_bytes": rss_before,
+        "parent_rss_after_bytes": family_workers._rss_bytes(),
+        "worker_warm_idle_rss_bytes": pool.warm_idle_rss_bytes,
+        "parent_warm_idle_rss_bytes": pool.warm_idle_parent_rss_bytes,
+        "warm_idle_resident_rss_bytes": _resident_rss_bytes(
+            pool.warm_idle_rss_bytes,
+            pool.warm_idle_parent_rss_bytes,
+        ),
+        "worker_request_peak_rss_bytes": (
+            sum(worker_after) if worker_after else sum(worker_before) if worker_before else None
+        ),
+        "sql": sql_metrics.get("sql"),
+        "native_thread_settings": _native_thread_settings(),
+    }
+    return metrics, payload
 
 
 def _run_parallel_miss(
@@ -754,6 +968,14 @@ def _run_parallel_miss(
 
     if pool.executor is None:
         raise RuntimeError("family pool is not warm")
+    if pool.workers == 4:
+        return _run_production_route_miss(
+            env,
+            analysis_id,
+            family,
+            cache_root,
+            pool,
+        )
     analysis = env.db.get(Analysis, analysis_id)
     if analysis is None:
         raise RuntimeError(f"analysis {analysis_id} not found")
@@ -804,6 +1026,14 @@ def _run_parallel_miss(
         result_transfer_ms = (perf_counter() - transfer_started) * 1000.0
         merge_started = perf_counter()
         merged = _merge_results(family, results, spec, cell_ids)
+        if family in family_workers.PROMOTED_FAMILIES:
+            merged = family_workers._finalize_merged_result(
+                merged,
+                family,
+                sorted(results, key=lambda item: item["ordinal"]),
+                owner_context,
+                None,
+            )
         owner_merge_ms = (perf_counter() - merge_started) * 1000.0
         key = analysis_cache.result_key(
             env.db,
@@ -883,6 +1113,11 @@ def _run_parallel_miss(
         "parent_rss_before_bytes": rss_before,
         "parent_rss_after_bytes": family_workers._rss_bytes(),
         "worker_warm_idle_rss_bytes": pool.warm_idle_rss_bytes,
+        "parent_warm_idle_rss_bytes": pool.warm_idle_parent_rss_bytes,
+        "warm_idle_resident_rss_bytes": _resident_rss_bytes(
+            pool.warm_idle_rss_bytes,
+            pool.warm_idle_parent_rss_bytes,
+        ),
         "worker_request_peak_rss_bytes": (
             sum(worker_after) if worker_after else sum(worker_before) if worker_before else None
         ),
@@ -899,11 +1134,53 @@ def _run_exact_hit(
     cache_root: Path,
 ) -> dict[str, Any]:
     from app.routers import analyses
+    from app.services import time_capacity_workers
+
+    observations = {
+        "worker_helper_calls": 0,
+        "worker_job_construction_calls": 0,
+        "worker_job_count": 0,
+        "worker_pool_acquire_calls": 0,
+        "worker_dispatch_count": 0,
+    }
+
+    original_helper = family_workers.try_compute_family
+
+    def observed_helper(*args: Any, **kwargs: Any) -> Any:
+        observations["worker_helper_calls"] += 1
+        return original_helper(*args, **kwargs)
+
+    original_jobs = family_workers._worker_jobs
+
+    def observed_jobs(*args: Any, **kwargs: Any) -> Any:
+        observations["worker_job_construction_calls"] += 1
+        jobs = original_jobs(*args, **kwargs)
+        observations["worker_job_count"] += len(jobs)
+        return jobs
+
+    class ObservedPool:
+        def __init__(self, wrapped: Any):
+            self.wrapped = wrapped
+
+        def submit(self, *args: Any, **kwargs: Any) -> Any:
+            observations["worker_dispatch_count"] += 1
+            return self.wrapped.submit(*args, **kwargs)
+
+    original_ready_pool = time_capacity_workers._ready_pool
+
+    def observed_ready_pool(workers: int) -> Any:
+        observations["worker_pool_acquire_calls"] += 1
+        return ObservedPool(original_ready_pool(workers))
 
     route = family_profiler._route_for(family)
     request = family_profiler._request_for(family, analyses, False)
     started = perf_counter()
-    with family_profiler._analysis_cache_root(cache_root):
+    with family_profiler._analysis_cache_root(cache_root), ExitStack() as stack:
+        stack.enter_context(patch.object(family_workers, "try_compute_family", observed_helper))
+        stack.enter_context(patch.object(family_workers, "_worker_jobs", observed_jobs))
+        stack.enter_context(
+            patch.object(time_capacity_workers, "_ready_pool", observed_ready_pool)
+        )
         response = route(analysis_id, request, env.db)
     elapsed = (perf_counter() - started) * 1000.0
     payload, digest = _route_response_metrics(response)
@@ -912,8 +1189,11 @@ def _run_exact_hit(
         "cache_status": payload.get("cache_status"),
         "scientific_digest": digest,
         "series_order": _order(payload),
-        "worker_dispatch_count": 0,
-        "worker_job_count": 0,
+        "worker_dispatch_count": observations["worker_dispatch_count"],
+        "worker_job_count": observations["worker_job_count"],
+        "worker_helper_calls": observations["worker_helper_calls"],
+        "worker_job_construction_calls": observations["worker_job_construction_calls"],
+        "worker_pool_acquire_calls": observations["worker_pool_acquire_calls"],
         "exact_hit_contract": payload.get("cache_status") == "hit",
     }
 
@@ -942,11 +1222,23 @@ def _summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "queue_p50_ms": _median(sample.get("queue_ms") for sample in samples),
         "owner_merge_p50_ms": _median(sample.get("owner_merge_ms") for sample in samples),
+        "request_context_build_calls": (
+            samples[0].get("request_context_build_calls") if samples else None
+        ),
+        "job_count_p50": _median(sample.get("job_count") for sample in samples),
+        "submit_p50_ms": _median(sample.get("submit_ms") for sample in samples),
+        "result_transfer_p50_ms": _median(
+            sample.get("result_transfer_ms") for sample in samples
+        ),
         "serialized_job_bytes_p50": _median(sample.get("serialized_job_bytes") for sample in samples),
         "worker_result_bytes_p50": _median(
             sum(sample.get("worker_result_bytes", [])) for sample in samples
         ),
         "worker_warm_idle_rss_bytes": samples[0].get("worker_warm_idle_rss_bytes") if samples else None,
+        "parent_warm_idle_rss_bytes": samples[0].get("parent_warm_idle_rss_bytes") if samples else None,
+        "warm_idle_resident_rss_bytes": (
+            samples[0].get("warm_idle_resident_rss_bytes") if samples else None
+        ),
         "worker_request_peak_rss_bytes_max": max(
             (sample.get("worker_request_peak_rss_bytes") or 0 for sample in samples),
             default=None,
@@ -987,6 +1279,14 @@ def _point_summary(
             and summaries[mode]["ordering_parity"]
             for mode in MODES
         },
+        "cross_mode_scientific_parity": {
+            "P4_vs_S1": summaries["P4"]["scientific_digests"]
+            == summaries["S1"]["scientific_digests"],
+            "P8_vs_P4": summaries["P8"]["scientific_digests"]
+            == summaries["P4"]["scientific_digests"],
+            "P8_vs_S1": summaries["P8"]["scientific_digests"]
+            == summaries["S1"]["scientific_digests"],
+        },
     }
 
 
@@ -1003,6 +1303,7 @@ def _promotion_decision(
         serial = point["modes"]["S1"]
         qualifies = (
             bool(p4.get("scientific_parity") and p4.get("ordering_parity"))
+            and bool(point["cross_mode_scientific_parity"].get("P4_vs_S1"))
             and isinstance(delta.get("ms"), (int, float))
             and isinstance(delta.get("fraction"), (int, float))
             and delta["ms"] >= 10.0
@@ -1020,12 +1321,16 @@ def _promotion_decision(
                 and larger_delta["fraction"] >= 0.15
                 and larger_point["modes"]["P4"].get("scientific_parity")
                 and larger_point["modes"]["P4"].get("ordering_parity")
+                and larger_point["cross_mode_scientific_parity"].get("P4_vs_S1")
             )
         if larger_ok:
             p4_thresholds.append(count)
     p4_threshold = min(p4_thresholds) if p4_thresholds else None
 
     p8_thresholds: list[int] = []
+    p8_timing_thresholds: list[int] = []
+    p8_memory_thresholds: list[int] = []
+    p8_rss_by_count: dict[str, dict[str, Any]] = {}
     p8_host_ok = (
         isinstance(resources.get("logical_cpus"), int)
         and resources["logical_cpus"] >= 12
@@ -1037,35 +1342,54 @@ def _promotion_decision(
         delta = point["deltas"]["P8_vs_P4"]
         p8 = point["modes"]["P8"]
         p4 = point["modes"]["P4"]
-        rss4 = p4.get("worker_warm_idle_rss_bytes")
-        rss8 = p8.get("worker_warm_idle_rss_bytes")
-        rss_ok = (
-            isinstance(rss4, (int, float))
-            and isinstance(rss8, (int, float))
-            and rss8 <= rss4 * 1.5
+        rss_gate = _rss_memory_gate(
+            p4.get("worker_warm_idle_rss_bytes"),
+            p4.get("parent_warm_idle_rss_bytes"),
+            p8.get("worker_warm_idle_rss_bytes"),
+            p8.get("parent_warm_idle_rss_bytes"),
         )
-        qualifies = (
-            p8_host_ok
-            and rss_ok
-            and bool(p8.get("scientific_parity") and p8.get("ordering_parity"))
+        p8_rss_by_count[str(count)] = rss_gate
+        timing_qualifies = (
+            bool(p8.get("scientific_parity") and p8.get("ordering_parity"))
+            and bool(point["cross_mode_scientific_parity"].get("P8_vs_P4"))
             and isinstance(delta.get("ms"), (int, float))
             and isinstance(delta.get("fraction"), (int, float))
             and delta["ms"] >= 15.0
             and delta["fraction"] >= 0.15
         )
-        if not qualifies:
-            continue
-        larger_ok = True
+        memory_qualifies = p8_host_ok and bool(rss_gate["ok"])
+        if timing_qualifies:
+            p8_timing_thresholds.append(count)
+        if memory_qualifies:
+            p8_memory_thresholds.append(count)
+        timing_larger_ok = True
+        memory_larger_ok = True
         for larger in thresholds[index + 1 :]:
+            larger_point = family_matrix[larger]
             larger_delta = family_matrix[larger]["deltas"]["P8_vs_P4"]
-            larger_ok = larger_ok and (
+            timing_larger_ok = timing_larger_ok and (
                 isinstance(larger_delta.get("ms"), (int, float))
                 and larger_delta["ms"] >= 15.0
                 and larger_delta["fraction"] >= 0.15
                 and family_matrix[larger]["modes"]["P8"].get("scientific_parity")
                 and family_matrix[larger]["modes"]["P8"].get("ordering_parity")
+                and family_matrix[larger]["cross_mode_scientific_parity"].get("P8_vs_P4")
             )
-        if larger_ok:
+            larger_rss_gate = p8_rss_by_count.get(str(larger))
+            if larger_rss_gate is None:
+                larger_p4 = larger_point["modes"]["P4"]
+                larger_p8 = larger_point["modes"]["P8"]
+                larger_rss_gate = _rss_memory_gate(
+                    larger_p4.get("worker_warm_idle_rss_bytes"),
+                    larger_p4.get("parent_warm_idle_rss_bytes"),
+                    larger_p8.get("worker_warm_idle_rss_bytes"),
+                    larger_p8.get("parent_warm_idle_rss_bytes"),
+                )
+                p8_rss_by_count[str(larger)] = larger_rss_gate
+            memory_larger_ok = memory_larger_ok and p8_host_ok and bool(
+                larger_rss_gate["ok"]
+            )
+        if timing_qualifies and timing_larger_ok and memory_qualifies and memory_larger_ok:
             p8_thresholds.append(count)
     p8_threshold = min(p8_thresholds) if p8_thresholds else None
     if p8_threshold is not None:
@@ -1082,6 +1406,30 @@ def _promotion_decision(
         "chosen_threshold_cells": threshold,
         "p4_threshold_candidates": p4_thresholds,
         "p8_threshold_candidates": p8_thresholds,
+        "p8_timing_gate": {
+            "threshold_candidates": p8_timing_thresholds,
+            "sustained_candidates": [
+                count
+                for count in p8_timing_thresholds
+                if all(
+                    larger in p8_timing_thresholds
+                    for larger in thresholds[thresholds.index(count) + 1 :]
+                )
+            ],
+        },
+        "p8_memory_gate": {
+            "host_gate": p8_host_ok,
+            "threshold_candidates": p8_memory_thresholds,
+            "sustained_candidates": [
+                count
+                for count in p8_memory_thresholds
+                if all(
+                    larger in p8_memory_thresholds
+                    for larger in thresholds[thresholds.index(count) + 1 :]
+                )
+            ],
+            "resident_rss_by_count": p8_rss_by_count,
+        },
         "p8_host_gate": {
             "logical_cpus_and_memory": p8_host_ok,
             "logical_cpus": resources.get("logical_cpus"),

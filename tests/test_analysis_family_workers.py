@@ -13,15 +13,20 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.services.analysis_family_workers import (
     FamilyWorkerJob,
     WorkerCell,
     WorkerRequestContext,
     WorkerSource,
+    _merge_rate_capability,
+    _owner_cache_ready,
     try_compute_family,
     worker_job_has_forbidden_state,
 )
+from profile_analysis_family_concurrency import _dedupe_worker_rss_samples, _rss_memory_gate
+from app.routers import analyses as analyses_router
 
 
 class AnalysisFamilyWorkerJobTests(unittest.TestCase):
@@ -181,6 +186,197 @@ class AnalysisFamilyWorkerJobTests(unittest.TestCase):
                     family="cycles",
                     request_context=context,
                 )
+
+    def test_cycles_require_exact_cycle_cache_and_do_not_dispatch_when_missing(self):
+        cell = WorkerCell(id=7, name="Cell 7")
+        source = self._job().request_context.files_by_cell[7][0]
+        context = SimpleNamespace(
+            cells=(cell,),
+            files_by_cell={7: (source,)},
+            parser_versions_by_cell={7: {source.hash: "neware-nda:1"}},
+        )
+        with (
+            patch("app.services.cache.pending_hashes", return_value=set()),
+            patch("app.services.cache.raw_path", return_value=Path(__file__)),
+            patch("app.services.cache.has_cycles", return_value=False),
+        ):
+            self.assertFalse(
+                _owner_cache_ready(
+                    context,
+                    family="cycles",
+                    calc_version="calc-current",
+                )
+            )
+
+        cells = tuple(WorkerCell(id=index, name=f"Cell {index}") for index in range(4))
+        request_context = SimpleNamespace(
+            units=tuple({"cell": cell, "label": cell.name} for cell in cells),
+            cells=cells,
+        )
+        with (
+            patch("app.services.analysis_engine.ensure_canonical_cycling_available"),
+            patch(
+                "app.services.analysis_family_workers._owner_cache_ready",
+                return_value=False,
+            ),
+            patch(
+                "app.services.analysis_family_workers._worker_jobs"
+            ) as worker_jobs,
+            patch("app.services.time_capacity_workers._ready_pool") as ready_pool,
+        ):
+            result = try_compute_family(
+                None,
+                {"selection": {"entries": []}},
+                None,
+                family="cycles",
+                request_context=request_context,
+            )
+        self.assertIsNone(result)
+        worker_jobs.assert_not_called()
+        ready_pool.assert_not_called()
+
+    def test_rate_p4_merge_matches_serial_replicate_group_selection_contexts(self):
+        cell_ids = [1, 2, 3, 4]
+        results = []
+        for ordinal, cell_id in enumerate(cell_ids):
+            results.append(
+                {
+                    "ordinal": ordinal,
+                    "result": {
+                        "cells": [{"cell_id": cell_id, "cell_name": f"Cell {cell_id}"}],
+                        "blocks": [],
+                        "detected_blocks": [],
+                        "config": {"rate_tolerance_fraction": 0.03},
+                        "selection_contexts": [
+                            {
+                                "cell_id": cell_id,
+                                "entry_kind": "replicate_group",
+                                "entry_ref_id": 77,
+                            }
+                        ],
+                        "badges": [],
+                        "sources": [],
+                        "invalid_execution_count": 0,
+                    },
+                }
+            )
+        spec = {
+            "selection": {
+                "entries": [{"kind": "replicate_group", "ref_id": 77}],
+                "hidden_replicate_group_ids": [88],
+                "exclusions": [
+                    {
+                        "cell_id": 3,
+                        "entry_kind": "replicate_group",
+                        "entry_ref_id": 77,
+                    }
+                ],
+            }
+        }
+        serial_selection_contexts = [
+            {
+                "cell_id": cell_id,
+                "entry_kind": "replicate_group",
+                "entry_ref_id": 77,
+            }
+            for cell_id in cell_ids
+        ]
+        with patch(
+            "app.services.rate_capability.build_common_rate_comparison",
+            return_value=([], {}),
+        ):
+            merged = _merge_rate_capability(results, spec, cell_ids)
+        self.assertEqual(
+            merged["selection_contexts"],
+            serial_selection_contexts,
+        )
+        self.assertGreaterEqual(len(merged["selection_contexts"]), 4)
+        self.assertEqual(spec["selection"]["hidden_replicate_group_ids"], [88])
+        self.assertEqual(
+            spec["selection"]["exclusions"][0]["entry_kind"],
+            "replicate_group",
+        )
+        self.assertEqual(merged["selection_contexts"][0]["entry_kind"], "replicate_group")
+
+    def test_rss_math_deduplicates_worker_pings_and_includes_parent(self):
+        samples = [(101, 100), (101, 125), (202, 200), (202, 225)]
+        self.assertEqual(
+            _dedupe_worker_rss_samples(samples),
+            {101: 125, 202: 225},
+        )
+        gate = _rss_memory_gate(350, 50, 700, 100)
+        self.assertEqual(gate["p4_resident_rss_bytes"], 400)
+        self.assertEqual(gate["p8_resident_rss_bytes"], 800)
+        self.assertEqual(gate["ratio"], 2.0)
+        self.assertFalse(gate["ok"])
+
+
+class CyclesRouteContextTests(unittest.TestCase):
+    def test_small_cycle_misses_build_one_context_for_helper_and_serial_fallback(self):
+        for cell_count in (1, 3):
+            with self.subTest(cell_count=cell_count):
+                context = SimpleNamespace(
+                    units=[{"cell": SimpleNamespace(id=index, name=f"Cell {index}")} for index in range(cell_count)],
+                    cells=[SimpleNamespace(id=index, name=f"Cell {index}") for index in range(cell_count)],
+                )
+                build_calls = []
+                helper_calls = []
+                compute_calls = []
+
+                class FakeEngine:
+                    CALC_VERSION = "calc-test"
+
+                    def build_analysis_request_context(self, *args, **kwargs):
+                        build_calls.append((args, kwargs))
+                        return context
+
+                    def compute(self, *args, **kwargs):
+                        compute_calls.append((args, kwargs))
+                        return {"cell_series": [], "badges": []}
+
+                    def build_provenance(self, result):
+                        return {}
+
+                fake_cache = SimpleNamespace(
+                    result_key=lambda *args, **kwargs: "route-test-key",
+                    load_result_body=lambda *args, **kwargs: None,
+                    load_result=lambda *args, **kwargs: None,
+                    store_result=lambda *args, **kwargs: None,
+                )
+                analysis = SimpleNamespace(
+                    spec={"selection": {"entries": []}},
+                    provenance=None,
+                    title="route test",
+                    modified_at=None,
+                )
+                db = SimpleNamespace(
+                    get=lambda *_args, **_kwargs: analysis,
+                    commit=lambda: None,
+                )
+
+                def helper(*args, **kwargs):
+                    helper_calls.append((args, kwargs))
+                    return None
+
+                request = analyses_router.ComputeRequest(recompute=True)
+                with (
+                    patch.object(analyses_router, "engine", FakeEngine()),
+                    patch.object(analyses_router, "analysis_cache", fake_cache),
+                    patch.object(analyses_router, "_guard_canonical_cycling"),
+                    patch.object(analyses_router, "_finish_job"),
+                    patch.object(analyses_router, "fast_json", side_effect=lambda value: value),
+                    patch(
+                        "app.services.analysis_family_workers.try_compute_family",
+                        side_effect=helper,
+                    ),
+                ):
+                    analyses_router.compute_analysis(1, request, db)
+
+                self.assertEqual(len(build_calls), 1)
+                self.assertEqual(len(helper_calls), 1)
+                self.assertEqual(len(compute_calls), 1)
+                self.assertIs(helper_calls[0][1]["request_context"], context)
+                self.assertIs(compute_calls[0][1]["request_context"], context)
 
 
 if __name__ == "__main__":

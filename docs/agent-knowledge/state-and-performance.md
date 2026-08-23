@@ -832,10 +832,18 @@ SQLAlchemy/request context, source/parser/cache identity, protocol facts, cache
 lookup/store, progress/error ownership, and deterministic cross-Cell merging;
 workers receive no ORM/session, original path, raw header, or DataFrame and read
 canonical Parquet caches directly. Pool-not-ready, timeout, and broken-IPC
-conditions fall back to the exact serial service; scientific or merge errors
-remain visible. Exact persisted hits stay above this policy and dispatch zero
-jobs. The P8 candidate was rejected by the stronger resident-RSS gate, so do not
-add an eight-worker pool without a new measured and reviewed decision.
+conditions fall back to the exact serial service; Cycles additionally require an
+empty pending-hash set plus the exact parser/calc cycle cache, so a worker never
+derives and writes a missing cycle cache. Scientific or merge errors remain
+visible. The Cycles miss route builds one owner context and reuses it for the
+worker threshold/helper and serial fallback; exact persisted hits stay above
+this policy and dispatch zero jobs. Rate Capability merges preserve the owner
+selection unit's `entry_kind` and `entry_ref_id`, including replicate groups.
+The P4 benchmark evidence uses the real analysis route/helper; its P8 candidate
+reuses the production job/compute/merge core in an isolated eight-worker pool.
+P8 was rejected independently by the >=15%/>=15 ms timing gate and by the
+parent-plus-distinct-worker warm-idle RSS gate, so do not add an eight-worker
+pool without a new measured and reviewed decision.
 
 ## Presentation filters versus computation
 

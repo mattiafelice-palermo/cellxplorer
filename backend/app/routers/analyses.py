@@ -908,29 +908,32 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
                 from ..services import analysis_family_workers
 
                 progress = _progress_callback(job_id)
-                candidate_units, _candidate_missing = engine.resolve_selection(db, spec)
-                candidate_cell_ids = {
-                    int(unit["cell"].id) for unit in candidate_units
-                }
-                result = None
-                if (
-                    len(candidate_units) >= analysis_family_workers.PROMOTED_MIN_CELLS
-                    and len(candidate_units) == len(candidate_cell_ids)
-                ):
-                    result = analysis_family_workers.try_compute_family(
-                        db,
-                        spec,
-                        a.provenance,
-                        family="cycles",
-                        use_current_versions=req.recompute,
-                        progress=progress,
-                    )
+                # Exact hits return above without building request context.
+                # Once a miss is known, resolve the owner context once and
+                # reuse it for the promoted threshold decision, the worker
+                # helper, and the serial fallback.
+                request_context = engine.build_analysis_request_context(
+                    db,
+                    spec,
+                    a.provenance,
+                    use_current_versions=req.recompute,
+                )
+                result = analysis_family_workers.try_compute_family(
+                    db,
+                    spec,
+                    a.provenance,
+                    family="cycles",
+                    use_current_versions=req.recompute,
+                    request_context=request_context,
+                    progress=progress,
+                )
                 if result is None:
                     result = engine.compute(
                         db,
                         spec,
                         a.provenance,
                         use_current_versions=req.recompute,
+                        request_context=request_context,
                         progress=progress,
                     )
             result["cache_status"] = "miss"
