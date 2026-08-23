@@ -734,12 +734,16 @@ selecting another optimization: call the real family route in a disposable golde
 fixture, report forced result-cache misses and exact persisted-body hits separately,
 and keep nested helper timers out of the sibling-stage reconciliation. Source-distinct
 content-identical Cell clones are acceptable for scaling only when their relational
-Cell/SourceFile/TestFile rows and cache identities are real. Time/Capacity's existing
-opt-in request profile remains the authority for its indexed/raw/transform breakdown;
-do not use its diagnostic response-assembly cost as ordinary-route latency. Rate
-Capability's `compute(..., profiling=...)` hook is opt-in only and exposes the inline
-execution, candidate-selection, invalid-neighbour, and result-assembly stages without
-changing scientific results or ordinary cache identity.
+Cell/SourceFile/TestFile rows and cache identities are real. The authoritative child
+matrix covers Cycles, Steps, DCIR, Chargeability and Rate Capability; Time/Capacity's
+existing opt-in request profile remains reference evidence rather than a new ranking
+input. The profiler preserves observed timer parent/child edges plus inclusive and
+exclusive elapsed values, and retains bounded SQL counts/timing without query text or
+parameters. Rate Capability's `compute(..., profiling=...)` hook is opt-in only and
+exposes execution-parent children for measurement grouping, phase-row filtering,
+cutoff validation, capacity/current/rate extraction, candidate selection,
+invalid-neighbour validation and result assembly without changing scientific results
+or ordinary cache identity.
 
 ## Presentation filters versus computation
 

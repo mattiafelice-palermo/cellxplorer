@@ -1,4 +1,4 @@
-"""Profile the current production route for all Spec 050.17 families.
+"""Profile the current production route for the Spec 050.17 families.
 
 This is a bounded developer diagnostic.  It calls the real analysis routers in
 the disposable golden-analysis environment, separates persisted result misses
@@ -37,12 +37,13 @@ from golden_analysis_support import GoldenFixtureEnvironment, load_case_spec  # 
 
 FAMILIES = (
     "cycles",
-    "time_capacity",
     "steps",
     "dcir",
     "chargeability",
     "rate_capability",
 )
+REFERENCE_FAMILIES = ("time_capacity",)
+AVAILABLE_FAMILIES = FAMILIES + REFERENCE_FAMILIES
 FAMILY_CASES = {
     "cycles": ("cycles_baseline", 101),
     "time_capacity": ("time_capacity_baseline", 101),
@@ -143,17 +144,75 @@ def _case(manifest: Mapping[str, Any], case_id: str) -> dict[str, Any]:
 
 
 class _Recorder:
-    """Small request-local timer/counter sink used only by this script."""
+    """Small request-local timer/counter sink used only by this script.
+
+    Timers retain both inclusive and exclusive elapsed time.  The active call
+    stack supplies the observed parent, so a helper and its descendants cannot
+    later be mistaken for non-overlapping siblings during attribution.
+    """
 
     def __init__(self) -> None:
         self.elapsed_ms: dict[str, float] = {}
+        self.exclusive_ms: dict[str, float] = {}
         self.calls: dict[str, int] = {}
         self.parents: dict[str, str | None] = {}
+        self.parent_edges: dict[str, set[str | None]] = {}
+        self._active: list[dict[str, Any]] = []
 
-    def add(self, name: str, elapsed_ms: float, *, parent: str | None = None) -> None:
+    def add(
+        self,
+        name: str,
+        elapsed_ms: float,
+        *,
+        parent: str | None = None,
+        exclusive_ms: float | None = None,
+    ) -> None:
+        actual_parent = self._active[-1]["name"] if self._active else parent
         self.elapsed_ms[name] = self.elapsed_ms.get(name, 0.0) + float(elapsed_ms)
+        self.exclusive_ms[name] = self.exclusive_ms.get(name, 0.0) + float(
+            exclusive_ms if exclusive_ms is not None else elapsed_ms
+        )
         self.calls[name] = self.calls.get(name, 0) + 1
-        self.parents.setdefault(name, parent)
+        self.parent_edges.setdefault(name, set()).add(actual_parent)
+        self.parents.setdefault(name, actual_parent)
+
+    @contextmanager
+    def span(self, name: str, *, parent: str | None = None):
+        frame = {"name": name, "child_ms": 0.0}
+        self._active.append(frame)
+        started = perf_counter()
+        try:
+            yield
+        finally:
+            elapsed_ms = (perf_counter() - started) * 1000.0
+            self._active.pop()
+            self.add(
+                name,
+                elapsed_ms,
+                parent=parent,
+                exclusive_ms=max(0.0, elapsed_ms - frame["child_ms"]),
+            )
+            if self._active:
+                self._active[-1]["child_ms"] += elapsed_ms
+
+    def hierarchy(self) -> dict[str, dict[str, Any]]:
+        def parent_key(value: str | None) -> tuple[int, str]:
+            return (value is not None, value or "")
+
+        records: dict[str, dict[str, Any]] = {}
+        for name in sorted(self.elapsed_ms):
+            parents = sorted(
+                self.parent_edges.get(name, {self.parents.get(name)}),
+                key=parent_key,
+            )
+            records[name] = {
+                "inclusive_ms": self.elapsed_ms[name],
+                "exclusive_ms": self.exclusive_ms.get(name, self.elapsed_ms[name]),
+                "calls": self.calls.get(name, 0),
+                "parent": parents[0] if len(parents) == 1 else None,
+                "parents": parents,
+            }
+        return records
 
     def timed(
         self,
@@ -164,9 +223,8 @@ class _Recorder:
         observe: Callable[[Any], None] | None = None,
     ) -> Callable[..., Any]:
         def wrapped(*args: Any, **kwargs: Any) -> Any:
-            started = perf_counter()
-            result = original(*args, **kwargs)
-            self.add(name, (perf_counter() - started) * 1000.0, parent=parent)
+            with self.span(name, parent=parent):
+                result = original(*args, **kwargs)
             if observe is not None:
                 observe(result)
             return result
@@ -836,17 +894,11 @@ def _profile_route(
                     for name, observer in (
                         ("build_rate_pairs", _observe_rate_pairs),
                         ("extract_pair_executions", _observe_executions),
-                        ("_phase_rows", None),
-                        ("_reached_voltage", None),
-                        ("_selected_rate", None),
                     ):
                         if hasattr(rate_capability, name):
                             stage = {
                                 "build_rate_pairs": "rate_pair_building",
                                 "extract_pair_executions": "execution_extraction",
-                                "_phase_rows": "execution_phase_row_filtering",
-                                "_reached_voltage": "execution_cutoff_validation",
-                                "_selected_rate": "selected_rate_filtering",
                             }[name]
                             callback = (
                                 lambda result, observer=observer: observer(metrics, result)
@@ -864,13 +916,11 @@ def _profile_route(
 
                     def detect_wrapper(*args: Any, **kwargs: Any) -> Any:
                         family_name = str(args[1]) if len(args) > 1 else str(kwargs.get("family"))
-                        started = perf_counter()
-                        result = original_detect(*args, **kwargs)
-                        recorder.add(
+                        with recorder.span(
                             f"sweep_detection_{family_name}",
-                            (perf_counter() - started) * 1000.0,
                             parent="scientific_compute",
-                        )
+                        ):
+                            result = original_detect(*args, **kwargs)
                         _observe_blocks(metrics, result, family_name)
                         return result
 
@@ -888,7 +938,7 @@ def _profile_route(
             metrics["body_bytes"] = len(response.body or b"")
     finally:
         if sql_profile is not None:
-            sql_profile.finish(None)
+            sql_profile.finish(metrics)
 
     payload = json.loads(response.body)
     metrics["cache_status"] = payload.get("cache_status")
@@ -906,6 +956,7 @@ def _profile_route(
     metrics["counts"]["raw_row_groups_read"] = metrics.get("raw_row_groups_read", 0)
     metrics["counts"]["raw_load_calls"] = metrics.get("raw_load_calls", 0)
     metrics["nested_stages_ms"] = dict(sorted(recorder.elapsed_ms.items()))
+    metrics["stage_hierarchy"] = recorder.hierarchy()
     metrics["calls"] = dict(sorted(recorder.calls.items()))
     metrics["root_stage_ms"] = {
         name: recorder.elapsed_ms.get(name)
@@ -969,6 +1020,46 @@ def _family_workload(
     return analysis.id, cell_ids
 
 
+def _sql_summary(samples: list[Mapping[str, Any]]) -> dict[str, Any]:
+    profiles = [
+        sample.get("sql")
+        for sample in samples
+        if isinstance(sample.get("sql"), Mapping)
+    ]
+    kinds = sorted({
+        str(kind)
+        for profile in profiles
+        for kind in (profile.get("statements_by_kind") or {})
+    })
+
+    def metric(name: str) -> dict[str, Any]:
+        values = [
+            float(profile.get(name))
+            for profile in profiles
+            if isinstance(profile.get(name), (int, float))
+            and not isinstance(profile.get(name), bool)
+        ]
+        return {
+            "samples": values,
+            "p50": _median(values),
+        }
+
+    return {
+        "available": bool(profiles),
+        "sample_count": len(profiles),
+        "statement_count": metric("statement_count"),
+        "cumulative_sql_ms": metric("cumulative_sql_ms"),
+        "source_header_lazy_loads": metric("source_header_lazy_loads"),
+        "statements_by_kind_p50": {
+            kind: _median([
+                float((profile.get("statements_by_kind") or {}).get(kind, 0))
+                for profile in profiles
+            ])
+            for kind in kinds
+        },
+    }
+
+
 def _summarize_samples(samples: list[dict[str, Any]], family: str) -> dict[str, Any]:
     total = [float(sample["complete_route_ms"]) for sample in samples]
     p50_total = _median(total)
@@ -983,6 +1074,11 @@ def _summarize_samples(samples: list[dict[str, Any]], family: str) -> dict[str, 
         for sample in samples
         for name in sample.get("nested_stages_ms", {})
     }
+    nested_names.update(
+        name
+        for sample in samples
+        for name in sample.get("stage_hierarchy", {})
+    )
     stages = {}
     for name in sorted(stage_names):
         values = [
@@ -1009,17 +1105,46 @@ def _summarize_samples(samples: list[dict[str, Any]], family: str) -> dict[str, 
             for sample in samples
             if isinstance(sample.get("nested_stages_ms", {}).get(name), (int, float))
         ]
+        hierarchy_records = [
+            sample.get("stage_hierarchy", {}).get(name)
+            for sample in samples
+            if isinstance(sample.get("stage_hierarchy", {}).get(name), Mapping)
+        ]
+        inclusive_values = [
+            float(record["inclusive_ms"])
+            for record in hierarchy_records
+            if isinstance(record.get("inclusive_ms"), (int, float))
+        ]
+        if not inclusive_values:
+            inclusive_values = values
+        exclusive_values = [
+            float(record["exclusive_ms"])
+            for record in hierarchy_records
+            if isinstance(record.get("exclusive_ms"), (int, float))
+        ]
+        parents = {
+            record.get("parent")
+            for record in hierarchy_records
+            if "parent" in record
+        }
         nested[name] = {
-            "ms": _median(values),
+            "ms": _median(inclusive_values),
             "share_of_route": (
-                _median(values) / p50_total
-                if values and p50_total and p50_total > 0
+                _median(inclusive_values) / p50_total
+                if inclusive_values and p50_total and p50_total > 0
                 else None
             ),
             "calls_p50": _median([
                 float(sample.get("calls", {}).get(name, 0)) for sample in samples
             ]),
-            "available": bool(values),
+            "available": bool(inclusive_values),
+            "inclusive_ms": _median(inclusive_values),
+            "exclusive_ms": _median(exclusive_values) if exclusive_values else None,
+            "parent": next(iter(parents)) if len(parents) == 1 else None,
+            "parents": sorted(
+                parents,
+                key=lambda value: (value is not None, value or ""),
+            ),
         }
     count_names = {
         name
@@ -1042,6 +1167,7 @@ def _summarize_samples(samples: list[dict[str, Any]], family: str) -> dict[str, 
         "stages": stages,
         "outer_stages_ms": stages,
         "nested_stages_ms": nested,
+        "stage_hierarchy": nested,
         "reconciliation": {
             "p50_route_ms": _median([float(item["route_ms"]) for item in reconciliations]),
             "p50_root_stage_sum_ms": _median([
@@ -1050,10 +1176,14 @@ def _summarize_samples(samples: list[dict[str, Any]], family: str) -> dict[str, 
             "p50_unattributed_residual_ms": _median([
                 float(item["unattributed_residual_ms"]) for item in reconciliations
             ]),
+            "p50_root_overlap_ms": _median([
+                float(item.get("root_overlap_ms", 0.0)) for item in reconciliations
+            ]),
             "all_within_root_hierarchy": all(
                 bool(item["within_root_hierarchy"]) for item in reconciliations
             ),
         },
+        "sql": _sql_summary(samples),
         "counts": counts,
         "scientific_digests": sorted({sample["scientific_digest"] for sample in samples}),
         "series_order": samples[0].get("series_order", []) if samples else [],
@@ -1069,51 +1199,142 @@ def _summarize_samples(samples: list[dict[str, Any]], family: str) -> dict[str, 
     }
 
 
+RATE_EXECUTION_CHILDREN = (
+    "measurement_filtering_grouping",
+    "execution_phase_row_filtering",
+    "execution_cutoff_validation",
+    "capacity_extraction",
+    "current_extraction",
+    "rate_normalization",
+)
+
+
 def _rate_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
     profiles = [sample.get("rate_deep") for sample in samples if sample.get("rate_deep")]
     if not profiles:
         return None
+
+    def stage_record(name: str) -> dict[str, Any]:
+        values = [
+            float(profile.get("stages_ms", {}).get(name, 0.0))
+            for profile in profiles
+            if isinstance(profile.get("stages_ms", {}).get(name), (int, float))
+        ]
+        calls = [
+            float(profile.get("calls", {}).get(name, 0))
+            for profile in profiles
+        ]
+        return {
+            "p50": _median(values),
+            "calls_p50": _median(calls),
+            "available": bool(values),
+            "parent": "execution_extraction" if name in RATE_EXECUTION_CHILDREN else (
+                "scientific_compute" if name in {
+                    "protocol_reconstruction",
+                    "rate_pair_building",
+                    "execution_extraction",
+                    "sweep_detection_charge",
+                    "sweep_detection_discharge",
+                    "candidate_selection_and_selected_rate_filtering",
+                    "common_rate_comparison",
+                    "invalid_neighbour_execution_validation",
+                    "result_provenance_assembly",
+                }
+                else None
+            ),
+        }
+
     stage_names = {
         name for profile in profiles for name in profile.get("stages_ms", {})
     }
     count_names = {name for profile in profiles for name in profile.get("counts", {})}
+    stages = {name: stage_record(name) for name in sorted(stage_names)}
+
+    reconciliation_samples = []
+    for profile in profiles:
+        stage_ms = profile.get("stages_ms", {})
+        parent_ms = stage_ms.get("execution_extraction")
+        child_sum = sum(
+            float(stage_ms.get(name, 0.0))
+            for name in RATE_EXECUTION_CHILDREN
+            if isinstance(stage_ms.get(name), (int, float))
+        )
+        parent = float(parent_ms) if isinstance(parent_ms, (int, float)) else 0.0
+        reconciliation_samples.append({
+            "execution_extraction_ms": parent,
+            "child_sum_ms": child_sum,
+            "residual_ms": max(0.0, parent - child_sum),
+            "overlap_ms": max(0.0, child_sum - parent),
+        })
+
+    def common_stage(name: str) -> dict[str, Any]:
+        values = [
+            float(sample.get("taxonomy_stage_ms", {}).get(name))
+            for sample in samples
+            if isinstance(sample.get("taxonomy_stage_ms", {}).get(name), (int, float))
+        ]
+        return {"p50_ms": _median(values), "available": bool(values)}
+
+    required_names = (
+        "protocol_reconstruction",
+        "rate_pair_building",
+        "execution_extraction",
+        *RATE_EXECUTION_CHILDREN,
+        "sweep_detection_charge",
+        "sweep_detection_discharge",
+        "candidate_selection_and_selected_rate_filtering",
+        "common_rate_comparison",
+        "invalid_neighbour_execution_validation",
+        "result_provenance_assembly",
+    )
+    required_decomposition = {
+        name: {
+            "p50_ms": stages.get(name, {}).get("p50"),
+            "calls_p50": stages.get(name, {}).get("calls_p50"),
+            "available": stages.get(name, {}).get("available", False),
+        }
+        for name in required_names
+    }
+    required_decomposition["owner_context_scalar_resolution"] = common_stage(
+        "selection_context"
+    )
+    required_decomposition["raw_materialization"] = common_stage(
+        "data_access_materialization"
+    )
+    required_decomposition["cache_persistence_serialization"] = {
+        "cache_persistence": common_stage("cache_persistence"),
+        "json_serialization": common_stage("json_serialization"),
+        "response_assembly": common_stage("response_assembly"),
+    }
     return {
-        "stages_ms": {
-            name: {
-                "p50": _median([
-                    float(profile.get("stages_ms", {}).get(name, 0.0))
-                    for profile in profiles
-                ]),
-                "calls_p50": _median([
-                    float(profile.get("calls", {}).get(name, 0)) for profile in profiles
-                ]),
-                "available": any(name in profile.get("stages_ms", {}) for profile in profiles),
-            }
-            for name in sorted(stage_names)
-        },
+        "stages_ms": stages,
         "counts": {
             name: _median([
-                float(profile.get("counts", {}).get(name, 0)) for profile in profiles
+                float(profile.get("counts", {}).get(name, 0))
+                for profile in profiles
             ])
             for name in sorted(count_names)
         },
-        "required_decomposition": {
-            "owner_context_scalar_resolution": "covered by common selection_context and scalar stages",
-            "raw_materialization": "covered by common data_access_materialization",
-            "protocol_reconstruction": "covered",
-            "rate_pair_building": "covered",
-            "execution_extraction": "covered",
-            "execution_phase_row_filtering": "covered by profiler wrapper",
-            "execution_cutoff_validation": "covered by profiler wrapper",
-            "capacity_current_rate_extraction": "split into capacity_extraction, current_extraction, and rate_normalization",
-            "sweep_detection_charge": "covered",
-            "sweep_detection_discharge": "covered",
-            "candidate_selection_and_selected_rate_filtering": "covered",
-            "common_rate_comparison": "covered",
-            "invalid_neighbour_execution_validation": "covered",
-            "result_provenance_assembly": "covered",
-            "cache_persistence_serialization": "covered by common root stages",
+        "execution_children": list(RATE_EXECUTION_CHILDREN),
+        "execution_extraction_reconciliation": {
+            "samples": reconciliation_samples,
+            "p50_execution_extraction_ms": _median([
+                item["execution_extraction_ms"] for item in reconciliation_samples
+            ]),
+            "p50_child_sum_ms": _median([
+                item["child_sum_ms"] for item in reconciliation_samples
+            ]),
+            "p50_residual_ms": _median([
+                item["residual_ms"] for item in reconciliation_samples
+            ]),
+            "p50_overlap_ms": _median([
+                item["overlap_ms"] for item in reconciliation_samples
+            ]),
+            "all_non_overlapping": all(
+                item["overlap_ms"] <= 1.0 for item in reconciliation_samples
+            ),
         },
+        "required_decomposition": required_decomposition,
     }
 
 
@@ -1261,63 +1482,110 @@ def _run_workload(
     }
 
 
+def _stage_inclusive_ms(record: Mapping[str, Any]) -> float | None:
+    for key in ("inclusive_ms", "ms", "p50"):
+        value = record.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def _scientific_attribution(
+    summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    hierarchy = summary.get("stage_hierarchy") or summary.get("nested_stages_ms") or {}
+    if not isinstance(hierarchy, Mapping):
+        return {
+            "scientific_ms": None,
+            "children": {},
+            "child_sum_ms": None,
+            "residual_ms": None,
+            "overlap_ms": None,
+            "status": "unresolved",
+        }
+    scientific_record = hierarchy.get("scientific_compute")
+    scientific_ms = (
+        _stage_inclusive_ms(scientific_record)
+        if isinstance(scientific_record, Mapping)
+        else None
+    )
+    children = {
+        str(name): _stage_inclusive_ms(record)
+        for name, record in hierarchy.items()
+        if isinstance(record, Mapping)
+        and record.get("parent") == "scientific_compute"
+        and name != "scientific_compute"
+        and _stage_inclusive_ms(record) is not None
+    }
+    child_sum = sum(children.values()) if children else 0.0
+    residual = (
+        max(0.0, scientific_ms - child_sum)
+        if scientific_ms is not None
+        else None
+    )
+    overlap = (
+        max(0.0, child_sum - scientific_ms)
+        if scientific_ms is not None
+        else None
+    )
+    status = "unresolved"
+    if scientific_ms is not None and children:
+        status = (
+            "unresolved"
+            if residual is not None and residual > max(children.values())
+            else "resolved"
+        )
+    return {
+        "scientific_ms": scientific_ms,
+        "children": children,
+        "child_sum_ms": child_sum,
+        "residual_ms": residual,
+        "overlap_ms": overlap,
+        "status": status,
+    }
+
+
 def _dominant_stage(workload: Mapping[str, Any]) -> tuple[str, float | None]:
     summary = workload.get("forced_miss") or {}
-    nested = summary.get("nested_stages_ms") or {}
-    candidates = [
-        (name, value.get("ms"))
-        for name, value in nested.items()
-        if isinstance(value, Mapping)
-        and isinstance(value.get("ms"), (int, float))
-        and name not in {"scientific_compute"}
-    ]
     family = workload.get("family")
+    attribution = _scientific_attribution(summary)
+
     if family == "time_capacity":
         specialist = workload.get("specialist_time_capacity_profile") or {}
-        backend_stages = specialist.get("backend_stages_ms") or {}
-        candidates.extend(
+        candidates = [
             (f"time_capacity.{name}", float(value))
-            for name, value in backend_stages.items()
+            for name, value in (specialist.get("backend_stages_ms") or {}).items()
             if isinstance(value, (int, float))
+        ]
+        return max(candidates, key=lambda item: item[1]) if candidates else (
+            "unresolved scientific compute residual",
+            None,
         )
+
     if family == "rate_capability":
         deep = workload.get("rate_deep") or {}
-        for name, value in (deep.get("stages_ms") or {}).items():
-            if isinstance(value, Mapping) and isinstance(value.get("p50"), (int, float)):
-                candidates.append((name, float(value["p50"])))
-    if not candidates:
-        return "unresolved scientific compute residual", None
-    dominant = max(candidates, key=lambda item: float(item[1] or 0.0))
-
-    # The complete scientific timer is inclusive.  If its uninstrumented
-    # direct remainder is larger than every named child, report that honestly
-    # instead of presenting a smaller child as the optimization target.
-    scientific_ms = nested.get("scientific_compute", {}).get("ms")
-    if isinstance(scientific_ms, (int, float)) and family not in {
-        "time_capacity",
-        "rate_capability",
-    }:
-        excluded = {
-            "scientific_compute",
-            "cache_key",
-            "cache_persistence",
-            "json_serialization",
-            "response_assembly",
-            "exact_cache_lookup",
-            "legacy_cache_lookup",
-            "selection_context",
-        }
-        direct_children = [
-            float(value.get("ms"))
-            for name, value in nested.items()
-            if name not in excluded
-            and isinstance(value, Mapping)
-            and isinstance(value.get("ms"), (int, float))
+        candidates = [
+            (name, float(value["p50"]))
+            for name, value in (deep.get("stages_ms") or {}).items()
+            if isinstance(value, Mapping)
+            and value.get("parent") == "scientific_compute"
+            and isinstance(value.get("p50"), (int, float))
         ]
-        child_sum = sum(direct_children)
-        residual = max(0.0, float(scientific_ms) - child_sum)
-        if residual > float(dominant[1] or 0.0):
-            return "unresolved scientific compute residual", residual
+        if candidates:
+            return max(candidates, key=lambda item: item[1])
+        return "unresolved scientific compute residual", attribution.get("residual_ms")
+
+    children = [
+        (name, value)
+        for name, value in attribution["children"].items()
+        if value is not None
+    ]
+    if not children or attribution["scientific_ms"] is None:
+        return "unresolved scientific compute residual", attribution.get("residual_ms")
+    dominant = max(children, key=lambda item: float(item[1]))
+    residual = float(attribution["residual_ms"] or 0.0)
+    if residual > float(dominant[1]):
+        return "unresolved scientific compute residual", residual
     return dominant
 
 
@@ -1336,7 +1604,9 @@ def _priority_table(families: Mapping[str, Mapping[str, Any]]) -> list[dict[str,
         band = "Critical" if representative >= 1000 else "High" if representative >= 300 else "Medium" if representative >= 150 else "Low"
         stage, stage_ms = _dominant_stage(workloads.get(6, {}))
         share = stage_ms / representative if stage_ms is not None and representative > 0 else None
-        if stage_ms is None:
+        attribution = _scientific_attribution(workloads.get(6, {}).get("forced_miss") or {})
+        unresolved = stage.startswith("unresolved")
+        if stage_ms is None or unresolved:
             next_action = "More focused profiling before choosing an optimization"
         else:
             next_action = f"Rank a narrow follow-up at {stage}"
@@ -1348,6 +1618,8 @@ def _priority_table(families: Mapping[str, Mapping[str, Any]]) -> list[dict[str,
             "dominant_stage": stage,
             "dominant_ms": stage_ms,
             "dominant_share": share,
+            "scientific_attribution": attribution,
+            "attribution_status": "unresolved" if unresolved else attribution.get("status"),
             "priority_band": band,
             "scaling_observation": (
                 "unavailable" if not one or not six else
@@ -1359,7 +1631,9 @@ def _priority_table(families: Mapping[str, Mapping[str, Any]]) -> list[dict[str,
             "next_action": next_action,
             "recommendation_boundary": stage,
             "optimization_ceiling_if_stage_removed_ms": (
-                max(0.0, representative - stage_ms) if stage_ms is not None else None
+                max(0.0, representative - stage_ms)
+                if stage_ms is not None and not unresolved
+                else None
             ),
             "optimization_scope_note": "Hypothesis only; no optimization is implemented in 050.17.",
         })
@@ -1388,7 +1662,13 @@ def _environment() -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--families", nargs="+", choices=FAMILIES, default=list(FAMILIES))
+    parser.add_argument(
+        "--families",
+        nargs="+",
+        choices=AVAILABLE_FAMILIES,
+        default=list(FAMILIES),
+        help="Five-family authoritative matrix by default; time_capacity is reference-only.",
+    )
     parser.add_argument("--repetitions", type=int, default=REPETITIONS, choices=range(1, 6))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--skip-overhead", action="store_true")
@@ -1402,6 +1682,11 @@ def main() -> int:
         "environment": _environment(),
         "repetitions": args.repetitions,
         "browser_status": "NOT RUN",
+        "scope": {
+            "authoritative_families": list(FAMILIES),
+            "reference_only_families": list(REFERENCE_FAMILIES),
+            "time_capacity_default": "excluded from the 050.17 matrix and priority ranking",
+        },
         "families": {},
     }
     try:

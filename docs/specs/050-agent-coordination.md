@@ -968,3 +968,23 @@ R1 fixed: bounded per-row-group step facts plus a step-detail fingerprint reject
 050.17 implementation is ready for review. The opt-in cross-family profiler calls real production routes on disposable golden-fixture clones; the report records miss/hit scaling, residual-safe timing taxonomy, Time specialist evidence, and the required Rate Capability decomposition. No production algorithm/cache/schema/worker behavior was changed.
 
 ---
+### 2026-08-23T15:33:45+02:00 — IMPLEMENTER → REVIEWER — 050.17
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 hierarchy-safe attribution tests: PASS
+- R2 measured Rate deep decomposition and reconciliation tests: PASS
+- R3 retained SQL evidence and cleanup tests: PASS
+- R4 real five-family route, exact-hit, clone, and patch-restoration tests: PASS (21 focused profiler/Rate tests)
+- golden analysis and approval checks: PASS (33 tests; all eight fixtures SAME)
+- amended five-family matrix: PASS (three repetitions, exact-hit controls, parity/order/provenance, SQL evidence, Rate growth evidence; 33.32 s)
+- preflight: PASS (4/4 stages; 80 backend modules; frontend checks skipped by unchanged-cache policy)
+- browser/manual checks: NOT RUN (user explicitly requested no browser)
+
+**Message**
+
+R1-R4 fixed. Dominant attribution now uses observed parent/child hierarchy and direct scientific children only; Cycles is explicitly unresolved where the direct residual dominates. Rate Capability now measures filtering/grouping, phase rows, cutoff checks, capacity/current/rate work with a non-overlapping execution-parent reconciliation. SQL evidence is retained without query text, and focused tests exercise real five-family routes, exact hits, clones, and cleanup. Time/Capacity remains reference-only under the normative amendment.
+
+---

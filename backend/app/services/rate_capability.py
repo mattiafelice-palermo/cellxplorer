@@ -294,13 +294,23 @@ def _ordered(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def _phase_rows(raw: pd.DataFrame, phase: dict, cycle: int | None) -> pd.DataFrame:
-    selected = raw[raw["step_index"].isin(phase["step_indices"])]
-    if cycle is not None and "cycle" in selected:
-        selected = selected[
-            pd.to_numeric(selected["cycle"], errors="coerce") == cycle
-        ]
-    return _ordered(selected)
+def _phase_rows(
+    raw: pd.DataFrame,
+    phase: dict,
+    cycle: int | None,
+    *,
+    profiling: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    started = _profile_started(profiling)
+    try:
+        selected = raw[raw["step_index"].isin(phase["step_indices"])]
+        if cycle is not None and "cycle" in selected:
+            selected = selected[
+                pd.to_numeric(selected["cycle"], errors="coerce") == cycle
+            ]
+        return _ordered(selected)
+    finally:
+        _profile_finished(profiling, "execution_phase_row_filtering", started)
 
 
 def _reached_voltage(
@@ -309,16 +319,21 @@ def _reached_voltage(
     direction: str,
     target_v: float | None,
     tolerance_v: float,
+    profiling: dict[str, Any] | None = None,
 ) -> bool:
-    if target_v is None or frame.empty:
-        return False
-    voltage = _numeric(frame, "voltage_v")
-    finite = voltage[np.isfinite(voltage)]
-    if not len(finite):
-        return False
-    if direction == "charge":
-        return float(np.nanmax(finite)) >= target_v - tolerance_v
-    return float(np.nanmin(finite)) <= target_v + tolerance_v
+    started = _profile_started(profiling)
+    try:
+        if target_v is None or frame.empty:
+            return False
+        voltage = _numeric(frame, "voltage_v")
+        finite = voltage[np.isfinite(voltage)]
+        if not len(finite):
+            return False
+        if direction == "charge":
+            return float(np.nanmax(finite)) >= target_v - tolerance_v
+        return float(np.nanmin(finite)) <= target_v + tolerance_v
+    finally:
+        _profile_finished(profiling, "execution_cutoff_validation", started)
 
 
 def extract_pair_executions(
@@ -354,10 +369,15 @@ def extract_pair_executions(
             "discharge",
         ),
     ):
+        started = _profile_started(profiling)
         measurement = raw[
             raw["step_index"] == int(phase["measurement_step_index"])
         ]
-        for occurrence, frame in enumerate(_execution_groups(measurement), start=1):
+        groups = _execution_groups(measurement)
+        _profile_finished(profiling, "measurement_filtering_grouping", started)
+        _profile_count(profiling, "measurement_rows", len(measurement))
+        _profile_count(profiling, "measurement_groups", len(groups))
+        for occurrence, frame in enumerate(groups, start=1):
             frame = _ordered(frame)
             cycle_values = (
                 pd.to_numeric(frame["cycle"], errors="coerce").dropna()
@@ -365,8 +385,8 @@ def extract_pair_executions(
                 else pd.Series(dtype="float64")
             )
             cycle = int(cycle_values.iloc[0]) if len(cycle_values) else None
-            phase_frame = _phase_rows(raw, phase, cycle)
-            reference_frame = _phase_rows(raw, reference, cycle)
+            phase_frame = _phase_rows(raw, phase, cycle, profiling=profiling)
+            reference_frame = _phase_rows(raw, reference, cycle, profiling=profiling)
             phase_target = (
                 pair.get("upper_voltage_v")
                 if direction == "charge"
@@ -382,18 +402,21 @@ def extract_pair_executions(
                 direction=direction,
                 target_v=phase_target,
                 tolerance_v=cutoff_tolerance_v,
+                profiling=profiling,
             )
             phase_complete = _reached_voltage(
                 phase_frame,
                 direction=direction,
                 target_v=phase_target,
                 tolerance_v=cutoff_tolerance_v,
+                profiling=profiling,
             )
             reference_complete = _reached_voltage(
                 reference_frame,
                 direction="discharge" if direction == "charge" else "charge",
                 target_v=reference_target,
                 tolerance_v=cutoff_tolerance_v,
+                profiling=profiling,
             )
             started = _profile_started(profiling)
             capacity_values = _numeric(frame, capacity_column)
