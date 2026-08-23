@@ -720,8 +720,11 @@ family service; direct service callers retain the resolving fallback.
 The raw-layout sidecar may also carry an optional `step_to_row_groups` map.
 Steps and DCIR use it only when the current sidecar is valid and ready; missing,
 legacy, corrupt, or busy detail metadata falls back immediately to the full
-raw reader. The detail reader preserves source cycle labels, timestamps, and
-record-index gaps so protocol occurrence/block boundaries remain identical.
+raw reader. Current sidecars pair the map with bounded per-row-group step facts
+and a detail fingerprint, and the non-waiting raw-layout lock stays held from
+index validation through Parquet row-group filtering. The detail reader
+preserves source cycle labels, timestamps, and record-index gaps so protocol
+occurrence/block boundaries remain identical.
 Chargeability and Rate Capability remain on their existing full raw path when
 their measured materialization cost does not justify selective access. These
 protocol-derived families continue to fail closed for multi-source Cells.

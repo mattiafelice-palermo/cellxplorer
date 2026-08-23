@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services import cache, cache_maintenance, calc, canonical_cycling, parsing
+from app.services import cache, cache_maintenance, calc, canonical_cycling, parsing, stitch
 
 
 def canonical_frame() -> pd.DataFrame:
@@ -214,7 +216,7 @@ class RawCacheLayoutTests(unittest.TestCase):
         self._indexed()
         with patch.object(
             cache,
-            "try_load_raw_layout_index",
+            "_load_raw_layout_index_unlocked",
             return_value={
                 "raw_column_names": ["record_index", "step_index"],
                 "raw_row_group_count": 1,
@@ -231,6 +233,79 @@ class RawCacheLayoutTests(unittest.TestCase):
                 )
             )
             self.assertEqual(diagnostics.status, "step_index_unavailable")
+
+    def test_step_reader_rejects_semantically_corrupt_mapping_and_stitch_falls_back(self) -> None:
+        frame = canonical_frame()
+        frame["step_index"] = [1, 1, 2, 3, 3, 1, 2, 4, 4, 5, 5, 1]
+        self._indexed(frame)
+        index_path = cache.raw_index_path(self.FILE_HASH, self.PARSER)
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        # Step 2 occurs in row groups 0 and 1.  Keep the map syntactically
+        # valid while omitting one real group; validation must fail before a
+        # partial selective frame can reach Steps/DCIR.
+        index["step_to_row_groups"]["2"] = [0]
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+
+        diagnostics = cache.RawStepReadDiagnostics()
+        self.assertIsNone(
+            cache.load_raw_step_rows(
+                self.FILE_HASH,
+                self.PARSER,
+                [2],
+                ["record_index", "cycle", "step_index"],
+                diagnostics=diagnostics,
+            )
+        )
+        self.assertEqual(diagnostics.status, "invalid_index")
+        refs = [stitch.CachedSourceRef(self.FILE_HASH, self.PARSER)]
+        self.assertIsNone(
+            stitch.stitch_raw_steps(
+                refs,
+                {self.FILE_HASH: {2}},
+                ["record_index", "cycle", "step_index"],
+            )
+        )
+        full, _segments, missing = stitch.stitch_raw(refs)
+        self.assertTrue(missing == [])
+        self.assertEqual(
+            len(full.loc[pd.to_numeric(full["step_index"]).eq(2)]),
+            2,
+        )
+
+    def test_step_reader_falls_back_immediately_when_layout_boundary_is_busy(self) -> None:
+        frame = canonical_frame()
+        frame["step_index"] = [1, 1, 2, 3, 3, 1, 2, 4, 4, 5, 5, 1]
+        self._indexed(frame)
+        locked = threading.Event()
+        release = threading.Event()
+
+        def hold_layout_boundary() -> None:
+            with cache._raw_layout_access(wait=True) as acquired:
+                self.assertTrue(acquired)
+                locked.set()
+                release.wait(5)
+
+        holder = threading.Thread(target=hold_layout_boundary)
+        holder.start()
+        self.assertTrue(locked.wait(5))
+        diagnostics = cache.RawStepReadDiagnostics()
+        started = time.perf_counter()
+        try:
+            self.assertIsNone(
+                cache.load_raw_step_rows(
+                    self.FILE_HASH,
+                    self.PARSER,
+                    [2],
+                    ["record_index", "cycle", "step_index"],
+                    diagnostics=diagnostics,
+                )
+            )
+        finally:
+            release.set()
+            holder.join(5)
+        self.assertFalse(holder.is_alive())
+        self.assertEqual(diagnostics.status, "layout_busy")
+        self.assertLess(time.perf_counter() - started, 1.0)
 
     def test_legacy_readers_work_and_selective_reader_reports_layout_unavailable(self) -> None:
         frame = canonical_frame()

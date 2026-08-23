@@ -934,3 +934,20 @@ Parent review R1 fixed as documentation-only. The parent roadmap now records 050
 Spec 050.16 implementation complete: direct stored-body hits and request-local context cover all four protocol families; selective raw step access is promoted for Steps/DCIR only after measured complete-route wins; Chargeability/Rate Capability retain full raw access; process controls rejected and no 050.17 is justified.
 
 ---
+### 2026-08-23T14:06:19+02:00 — IMPLEMENTER → REVIEWER — 050.16
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1/R2 focused safety/parity tests: PASS (raw-layout 14, analysis cache 39, protocol safety 6, analysis engine 104, chargeability 5, rate capability 8, golden analysis 30)
+- py_compile and git diff --check: PASS
+- canonical preflight: PASS (4/4 stages; all 151 backend/frontend modules, TypeScript, and Vite build)
+- benchmark rerun: NOT RUN (review fixes only harden corruption/TOCTOU fallback; normal measured read algorithm unchanged)
+- browser/manual checks: NOT RUN (backend-only child; user requested no browser)
+
+**Message**
+
+R1 fixed: bounded per-row-group step facts plus a step-detail fingerprint reject semantically inconsistent optional maps before selective reading, so the existing full-raw fallback is used. R2 fixed: the non-waiting raw-layout lock now covers sidecar validation, map selection, Parquet row-group read, and exact filtering; busy requests return immediately. Added corruption and concurrency regressions; no scientific or performance-path change.
+
+---
