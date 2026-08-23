@@ -951,3 +951,20 @@ Spec 050.16 implementation complete: direct stored-body hits and request-local c
 R1 fixed: bounded per-row-group step facts plus a step-detail fingerprint reject semantically inconsistent optional maps before selective reading, so the existing full-raw fallback is used. R2 fixed: the non-waiting raw-layout lock now covers sidecar validation, map selection, Parquet row-group read, and exact filtering; busy requests return immediately. Added corruption and concurrency regressions; no scientific or performance-path change.
 
 ---
+### 2026-08-23T14:54:57+02:00 — IMPLEMENTER → REVIEWER — 050.17
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused profiler and Rate tests: PASS (16/16)
+- golden analysis and approval checks: PASS (33 tests; all eight fixtures SAME)
+- six-family 1/6 matrix with three repetitions, exact-hit controls, parity/order/provenance, and Rate deep profile: PASS
+- preflight: PASS (4/4 stages; 152 backend/frontend modules, type check, production bundle, version consistency)
+- browser/manual checks: NOT RUN (user explicitly requested no browser)
+
+**Message**
+
+050.17 implementation is ready for review. The opt-in cross-family profiler calls real production routes on disposable golden-fixture clones; the report records miss/hit scaling, residual-safe timing taxonomy, Time specialist evidence, and the required Rate Capability decomposition. No production algorithm/cache/schema/worker behavior was changed.
+
+---

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable
 
 import numpy as np
@@ -27,6 +28,40 @@ from ..models import Cell, SourceFile
 from . import cache, protocol
 
 ProgressCallback = Callable[[int, int, str, str], None]
+
+
+def _profile_started(profile: dict[str, Any] | None) -> float | None:
+    """Start an opt-in diagnostic timer without adding ordinary-route work."""
+
+    return perf_counter() if profile is not None else None
+
+
+def _profile_finished(
+    profile: dict[str, Any] | None,
+    name: str,
+    started: float | None,
+) -> None:
+    """Accumulate one bounded profiler-only stage."""
+
+    if profile is None or started is None:
+        return
+    stages = profile.setdefault("stages_ms", {})
+    stages[name] = stages.get(name, 0.0) + (perf_counter() - started) * 1000.0
+    calls = profile.setdefault("calls", {})
+    calls[name] = calls.get(name, 0) + 1
+
+
+def _profile_count(
+    profile: dict[str, Any] | None,
+    name: str,
+    value: int,
+) -> None:
+    """Accumulate a structural count only for an explicit profiling request."""
+
+    if profile is None:
+        return
+    counts = profile.setdefault("counts", {})
+    counts[name] = counts.get(name, 0) + int(value)
 
 DEFAULT_CONFIG = {
     "min_points": 3,
@@ -297,6 +332,7 @@ def extract_pair_executions(
     active_mass_mg: float | None,
     electrode_area_cm2: float | None,
     cutoff_tolerance_v: float,
+    profiling: dict[str, Any] | None = None,
 ) -> list[dict]:
     """Extract both possible measurement directions from one protocol pair."""
     rows: list[dict] = []
@@ -359,22 +395,28 @@ def extract_pair_executions(
                 target_v=reference_target,
                 tolerance_v=cutoff_tolerance_v,
             )
+            started = _profile_started(profiling)
             capacity_values = _numeric(frame, capacity_column)
             capacity = (
                 float(np.nanmax(capacity_values))
                 if np.isfinite(capacity_values).any()
                 else None
             )
+            _profile_finished(profiling, "capacity_extraction", started)
+            started = _profile_started(profiling)
             current_values = np.abs(_numeric(frame, "current_ma"))
             finite_current = current_values[np.isfinite(current_values)]
             current_ma = (
                 float(np.nanmedian(finite_current)) if len(finite_current) else None
             )
+            _profile_finished(profiling, "current_extraction", started)
+            started = _profile_started(profiling)
             rate_c = float(
                 pair["charge_rate_c"]
                 if family == "charge"
                 else pair["discharge_rate_c"]
             )
+            _profile_finished(profiling, "rate_normalization", started)
             valid = bool(
                 capacity is not None
                 and capacity > 0
@@ -851,6 +893,7 @@ def compute(
     progress: ProgressCallback | None = None,
     *,
     request_context: Any = None,
+    profiling: dict[str, Any] | None = None,
 ) -> dict:
     """Resolve the highest-confidence charge and discharge sweep per cell."""
     from . import analysis_engine as engine
@@ -922,11 +965,22 @@ def compute(
             ):
                 scanner.parse_file(db, source)
             raw = cache.load_raw(source.hash, parser_version)
+            started = _profile_started(profiling)
             reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
+            _profile_finished(profiling, "protocol_reconstruction", started)
+            _profile_count(
+                profiling,
+                "reconstructed_protocol_steps",
+                len(reconstructed.get("steps") or []),
+            )
+            started = _profile_started(profiling)
             pairs = build_rate_pairs(reconstructed)
+            _profile_finished(profiling, "rate_pair_building", started)
+            _profile_count(profiling, "rate_pairs", len(pairs))
             executions: list[dict] = []
             if raw is not None:
                 for pair in pairs:
+                    started = _profile_started(profiling)
                     executions.extend(
                         extract_pair_executions(
                             raw,
@@ -938,19 +992,39 @@ def compute(
                             active_mass_mg=active_mass,
                             electrode_area_cm2=area,
                             cutoff_tolerance_v=config["cutoff_tolerance_v"],
+                            profiling=profiling,
                         )
                     )
+                    _profile_finished(profiling, "execution_extraction", started)
             all_executions.extend(executions)
+            _profile_count(profiling, "execution_rows", len(executions))
+            _profile_count(
+                profiling,
+                "execution_groups",
+                len({
+                    (
+                        row.get("source_hash"),
+                        row.get("pair_ordinal"),
+                        row.get("family"),
+                        row.get("cycle"),
+                    )
+                    for row in executions
+                }),
+            )
             for family in ("charge", "discharge"):
                 if not config["families"][family].get("enabled", True):
                     continue
+                started = _profile_started(profiling)
                 blocks = detect_sweep_blocks(executions, family, config)
+                _profile_finished(profiling, f"sweep_detection_{family}", started)
+                _profile_count(profiling, f"detected_blocks_{family}", len(blocks))
                 detected_blocks.extend(blocks)
                 cell_blocks.extend(blocks)
 
         if progress:
             progress(base + 2, total_units, cell.name, "Matching rate families")
         selected_for_cell: list[dict] = []
+        started = _profile_started(profiling)
         for family in ("charge", "discharge"):
             candidates = [
                 block
@@ -977,6 +1051,8 @@ def compute(
                 }
                 selected_for_cell.append(chosen)
                 chosen_blocks.append(chosen)
+        _profile_finished(profiling, "candidate_selection_and_selected_rate_filtering", started)
+        _profile_count(profiling, "chosen_blocks", len(selected_for_cell))
         if progress:
             progress(base + 3, total_units, cell.name, "Building blocks")
         if not selected_for_cell:
@@ -1085,11 +1161,19 @@ def compute(
             }
             for item in missing_refs
         )
+    started = _profile_started(profiling)
     chosen_blocks, comparison = build_common_rate_comparison(
         chosen_blocks,
         cells,
         config["rate_tolerance_fraction"],
     )
+    _profile_finished(profiling, "common_rate_comparison", started)
+    _profile_count(
+        profiling,
+        "comparison_points",
+        len(comparison.get("points") or []),
+    )
+    started = _profile_started(profiling)
     invalid_pairs: set[tuple[int, str, int]] = set()
     for block in chosen_blocks:
         lower_ordinal = min(block["pair_ordinals"]) - 1
@@ -1111,7 +1195,10 @@ def compute(
                 invalid_pairs.add(
                     (row["cell_id"], row["source_hash"], row["pair_ordinal"])
                 )
-    return {
+    _profile_finished(profiling, "invalid_neighbour_execution_validation", started)
+    _profile_count(profiling, "invalid_execution_pairs", len(invalid_pairs))
+    started = _profile_started(profiling)
+    result = {
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "type": "rate_capability",
         "parser_version": engine.display_parser_version(all_pinned_versions),
@@ -1143,3 +1230,10 @@ def compute(
         "badges": badges,
         "sources": sources,
     }
+    _profile_finished(profiling, "result_provenance_assembly", started)
+    _profile_count(
+        profiling,
+        "final_response_points",
+        len(result.get("points") or []),
+    )
+    return result

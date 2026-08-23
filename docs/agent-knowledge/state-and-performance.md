@@ -729,6 +729,18 @@ Chargeability and Rate Capability remain on their existing full raw path when
 their measured materialization cost does not justify selective access. These
 protocol-derived families continue to fail closed for multi-source Cells.
 
+Spec 050.17 adds the repeatable cross-family measurement boundary used before
+selecting another optimization: call the real family route in a disposable golden
+fixture, report forced result-cache misses and exact persisted-body hits separately,
+and keep nested helper timers out of the sibling-stage reconciliation. Source-distinct
+content-identical Cell clones are acceptable for scaling only when their relational
+Cell/SourceFile/TestFile rows and cache identities are real. Time/Capacity's existing
+opt-in request profile remains the authority for its indexed/raw/transform breakdown;
+do not use its diagnostic response-assembly cost as ordinary-route latency. Rate
+Capability's `compute(..., profiling=...)` hook is opt-in only and exposes the inline
+execution, candidate-selection, invalid-neighbour, and result-assembly stages without
+changing scientific results or ordinary cache identity.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute
