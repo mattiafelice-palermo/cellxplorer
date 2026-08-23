@@ -1271,7 +1271,8 @@ def _retention_reference(frame: pd.DataFrame, computation: dict) -> float:
     n = int(ref_cfg.get("n") or 5)
     order = np.argsort(cycle_values, kind="stable")[:n]
     first_n = discharge_values[order]
-    return float(np.max(first_n)) if len(first_n) else float("nan")
+    valid = first_n[~np.isnan(first_n)]
+    return float(valid.max()) if len(valid) else float("nan")
 
 
 POLARIZATION_METHOD_COLUMNS = {

@@ -1124,3 +1124,20 @@ R1 fixed with a durable implementation/evidence record in the 050.18 spec. It re
 050.22 implementation complete. Retained request-local NumPy/vectorized render optimizations for derived columns, 29-quantity projection, retention reference, and cell metrics; scientific and series-order parity true, exact-hit controls clean. Remaining stitch/cache materialization was measured and no stable safe route win was retained; concurrency gate not met.
 
 ---
+### 2026-08-23T19:46:41+02:00 — IMPLEMENTER → REVIEWER — 050.22
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 retention NaN regression test: PASS (mixed finite/NaN and all-NaN windows plus downstream retention metrics)
+- Focused Cycles/analysis/stitch/golden/profiler suite: PASS (177 tests)
+- R1 no-regression profile: PASS; six-Cell unprofiled control 103.02 ms, scientific/order parity true, direct residual 0.77 ms and closure closed
+- preflight: PASS (4/4 stages)
+- browser/Plotly checks: NOT RUN by explicit user instruction
+
+**Message**
+
+R1 fixed exactly: stable NumPy first-N retention selection now filters NaN before max, matching prior Pandas skipna behavior while preserving all-NaN missing output. Added focused mixed/all-NaN and downstream retention metric regression coverage. No five-run rerun was needed; bounded no-regression profile remains parity-clean.
+
+---

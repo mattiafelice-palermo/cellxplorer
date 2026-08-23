@@ -740,6 +740,52 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIsNotNone(m["mean_charge_time_h"])
         self.assertAlmostEqual(m["mean_ve_pct"], 3.1 / 3.5 * 100, places=4)
 
+    def test_retention_reference_skips_nan_but_keeps_all_nan_as_missing(self):
+        computation = {
+            "retention_reference": {"mode": "max_first_n", "n": 3},
+            "formation_cycles": 0,
+            "polarization": {"method": "mean", "direction": "charge_minus_discharge"},
+        }
+        frame = pd.DataFrame(
+            {
+                "cycle": [1, 2, 3, 4],
+                "discharge_capacity_mah": [np.nan, 5.0, 4.0, 3.0],
+                "charge_capacity_mah": [np.nan, 5.1, 4.1, 3.1],
+                "coulombic_efficiency_pct": [np.nan, 99.0, 98.0, 97.0],
+                "energy_efficiency_pct": [np.nan, 95.0, 94.0, 93.0],
+                "mean_charge_voltage_v": [4.0, 4.0, 4.0, 4.0],
+                "mean_discharge_voltage_v": [3.0, 3.0, 3.0, 3.0],
+                "cycle_duration_h": [np.nan, 1.0, 1.0, 1.0],
+                "charge_time_h": [np.nan, 0.4, 0.4, 0.4],
+                "discharge_time_h": [np.nan, 0.5, 0.5, 0.5],
+                "cv_reached": [0.0, 0.0, 0.0, 0.0],
+            }
+        )
+
+        reference = engine._retention_reference(frame, computation)
+        self.assertEqual(reference, 5.0)
+
+        derived, derived_reference = engine.add_derived_columns(frame, computation)
+        self.assertEqual(derived_reference, 5.0)
+        retention = derived["capacity_retention_pct"].to_numpy()
+        self.assertTrue(np.isnan(retention[0]))
+        self.assertEqual(retention[1:].tolist(), [100.0, 80.0, 60.0])
+
+        metrics = engine.cell_metrics(derived, derived, computation, derived_reference)
+        self.assertEqual(metrics["retention_last_pct"], 60.0)
+        self.assertEqual(metrics["cycles_to_80_pct"], 4)
+
+        all_nan = frame.copy()
+        all_nan["discharge_capacity_mah"] = [np.nan, np.nan, 4.0, 3.0]
+        self.assertTrue(
+            np.isnan(
+                engine._retention_reference(
+                    all_nan,
+                    {"retention_reference": {"mode": "max_first_n", "n": 2}},
+                )
+            )
+        )
+
     def test_polarization_quantity_uses_absolute_mean_voltage_delta_by_default(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         res = engine.compute(self.db, spec, None)
