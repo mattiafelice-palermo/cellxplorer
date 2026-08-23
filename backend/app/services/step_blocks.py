@@ -161,6 +161,166 @@ def _sum_step_capacity(frame: pd.DataFrame, column: str, step_col: str) -> float
     return total
 
 
+def _aggregate_block_rows(
+    assigned: pd.DataFrame,
+    step_col: str,
+    is_chg: np.ndarray,
+    is_dchg: np.ndarray,
+    is_rest: np.ndarray,
+    *,
+    origin_timestamp: pd.Timestamp | None,
+    cv_by_block: dict[int, float],
+    cvcap_by_block: dict[int, float],
+) -> list[dict]:
+    """Aggregate blocks from one normalized frame using compact ranges.
+
+    ``assign_blocks`` returns rows in record order, so each block is a compact
+    range. Keeping that representation avoids rebuilding a pandas group frame
+    for every phase and capacity quantity while preserving the block-local
+    step-reset semantics.
+    """
+
+    length = len(assigned)
+
+    def numeric_column(column: str) -> np.ndarray:
+        if column not in assigned.columns:
+            return np.full(length, np.nan, dtype="float64")
+        return pd.to_numeric(assigned[column], errors="coerce").to_numpy(
+            dtype="float64"
+        )
+
+    block_values = pd.to_numeric(assigned["block"], errors="coerce").to_numpy(
+        dtype="int64"
+    )
+    step_values = pd.to_numeric(assigned[step_col], errors="coerce").to_numpy(
+        dtype="float64"
+    )
+    occurrence_values = numeric_column("occurrence")
+    cycle_values = numeric_column("cycle")
+    time_values = numeric_column("time_s")
+    voltage_values = numeric_column("voltage_v")
+    charge_capacity_values = numeric_column("charge_capacity_mah")
+    discharge_capacity_values = numeric_column("discharge_capacity_mah")
+    timestamp_values = (
+        pd.to_datetime(assigned["timestamp"], errors="coerce").to_numpy()
+        if "timestamp" in assigned.columns
+        else None
+    )
+
+    block_starts = np.flatnonzero(
+        np.r_[True, block_values[1:] != block_values[:-1]]
+    )
+    block_ends = np.r_[block_starts[1:], length]
+
+    def sum_step_time(start: int, end: int, mask: np.ndarray) -> float:
+        selected = mask[start:end]
+        steps = step_values[start:end][selected]
+        times = time_values[start:end][selected]
+        valid_step = ~np.isnan(steps)
+        if not valid_step.any():
+            return 0.0
+        steps = steps[valid_step]
+        times = times[valid_step]
+        unique_steps, inverse = np.unique(steps, return_inverse=True)
+        maxima = np.full(len(unique_steps), -np.inf, dtype="float64")
+        valid_time = ~np.isnan(times)
+        np.maximum.at(maxima, inverse[valid_time], times[valid_time])
+        seen = np.zeros(len(unique_steps), dtype=bool)
+        seen[inverse[valid_time]] = True
+        return float(maxima[seen].sum()) / 3600.0
+
+    def sum_step_capacity(
+        start: int,
+        end: int,
+        mask: np.ndarray,
+        values: np.ndarray,
+    ) -> float:
+        selected = mask[start:end]
+        steps = step_values[start:end][selected]
+        capacities = values[start:end][selected]
+        valid = ~np.isnan(steps) & np.isfinite(capacities)
+        if not valid.any():
+            return 0.0
+        steps = steps[valid]
+        capacities = capacities[valid]
+        unique_steps, inverse = np.unique(steps, return_inverse=True)
+        minima = np.full(len(unique_steps), np.inf, dtype="float64")
+        maxima = np.full(len(unique_steps), -np.inf, dtype="float64")
+        np.minimum.at(minima, inverse, capacities)
+        np.maximum.at(maxima, inverse, capacities)
+        return float(np.maximum(0.0, maxima - minima).sum())
+
+    def mean_value(values: np.ndarray, mask: np.ndarray | None = None) -> float:
+        selected = values if mask is None else values[mask]
+        selected = selected[~np.isnan(selected)]
+        return float(selected.mean()) if len(selected) else np.nan
+
+    def int_value(value: float) -> int:
+        return int(value) if not np.isnan(value) else 0
+
+    origin = pd.Timestamp(origin_timestamp) if origin_timestamp is not None else None
+    rows: list[dict] = []
+    for start, end in zip(block_starts, block_ends):
+        start = int(start)
+        end = int(end)
+        block_id = int(block_values[start])
+        block_steps = step_values[start:end]
+        valid_steps = block_steps[~np.isnan(block_steps)]
+        cycle_slice = cycle_values[start:end]
+        valid_cycles = cycle_slice[~np.isnan(cycle_slice)]
+        duration_h = np.nan
+        start_time_h = np.nan
+        if timestamp_values is not None:
+            stamps = timestamp_values[start:end]
+            valid_stamps = stamps[~pd.isna(stamps)]
+            if len(valid_stamps):
+                timestamp_min = pd.Timestamp(valid_stamps.min())
+                timestamp_max = pd.Timestamp(valid_stamps.max())
+                duration_h = (
+                    timestamp_max - timestamp_min
+                ).total_seconds() / 3600.0
+                if origin is not None:
+                    start_time_h = (
+                        timestamp_min - origin
+                    ).total_seconds() / 3600.0
+        charge_time_h = sum_step_time(start, end, is_chg)
+        discharge_time_h = sum_step_time(start, end, is_dchg)
+        rest_time_h = sum_step_time(start, end, is_rest)
+        rows.append(
+            {
+                "block": block_id,
+                "occurrence": int_value(occurrence_values[start]),
+                "cycle_start": int(valid_cycles.min()) if len(valid_cycles) else 0,
+                "cycle_end": int(valid_cycles.max()) if len(valid_cycles) else 0,
+                "step_start": int(valid_steps.min()) if len(valid_steps) else 0,
+                "step_end": int(valid_steps.max()) if len(valid_steps) else 0,
+                "start_time_h": start_time_h,
+                "block_duration_h": duration_h,
+                "total_time_h": charge_time_h + discharge_time_h,
+                "charge_time_h": charge_time_h,
+                "discharge_time_h": discharge_time_h,
+                "rest_time_h": rest_time_h,
+                "cv_charge_time_h": float(cv_by_block.get(block_id, 0.0)),
+                "cv_charge_capacity_mah": float(cvcap_by_block.get(block_id, 0.0)),
+                "charge_capacity_mah": sum_step_capacity(
+                    start, end, is_chg, charge_capacity_values
+                ),
+                "discharge_capacity_mah": sum_step_capacity(
+                    start, end, is_dchg, discharge_capacity_values
+                ),
+                "mean_voltage_v": mean_value(voltage_values[start:end]),
+                "mean_charge_voltage_v": mean_value(
+                    voltage_values[start:end], is_chg[start:end]
+                ),
+                "mean_discharge_voltage_v": mean_value(
+                    voltage_values[start:end], is_dchg[start:end]
+                ),
+                "n_steps": int(len(np.unique(valid_steps))),
+            }
+        )
+    return rows
+
+
 def per_block(
     df: pd.DataFrame,
     selected_steps: set[int],
@@ -186,59 +346,35 @@ def per_block(
     # CV time and capacity are computed by the same routine the cycle path uses;
     # relabelling ``cycle`` to the block id makes its per-(cycle, step) grouping
     # act per block instead.
-    cv_frame = assigned.copy()
+    cv_columns = [
+        column
+        for column in (
+            "cycle",
+            "status",
+            "step",
+            "step_index",
+            "record_index",
+            "time_s",
+            "voltage_v",
+            "current_ma",
+            "charge_capacity_mah",
+        )
+        if column in assigned.columns
+    ]
+    cv_frame = assigned.loc[:, cv_columns].copy()
     cv_frame["cycle"] = assigned["block"].to_numpy()
     block_index = pd.Index(sorted(assigned["block"].unique()), name="block")
     cv_time, cv_capacity, _events = calc._cv_charge_by_cycle(cv_frame, block_index)
     cv_by_block = dict(zip(block_index.to_numpy(), cv_time))
     cvcap_by_block = dict(zip(block_index.to_numpy(), cv_capacity))
-
-    rows: list[dict] = []
-    for block_id, group in assigned.groupby("block", sort=True):
-        mask_chg = is_chg.loc[group.index]
-        mask_dchg = is_dchg.loc[group.index]
-        mask_rest = is_rest.loc[group.index]
-        duration_h = np.nan
-        start_time_h = np.nan
-        if "timestamp" in group.columns:
-            stamps = pd.to_datetime(group["timestamp"], errors="coerce").dropna()
-            if len(stamps):
-                duration_h = (stamps.max() - stamps.min()).total_seconds() / 3600.0
-                if origin_timestamp is not None:
-                    start_time_h = (
-                        stamps.min() - origin_timestamp
-                    ).total_seconds() / 3600.0
-
-        def mean_voltage(mask: pd.Series) -> float:
-            if "voltage_v" not in group.columns:
-                return np.nan
-            values = group.loc[mask, "voltage_v"].dropna()
-            return float(values.mean()) if len(values) else np.nan
-
-        charge_time_h = _sum_step_time(group[mask_chg.to_numpy()], step_col)
-        discharge_time_h = _sum_step_time(group[mask_dchg.to_numpy()], step_col)
-        rows.append(
-            {
-                "block": int(block_id),
-                "occurrence": int(group["occurrence"].iloc[0]),
-                "cycle_start": int(group["cycle"].min()) if "cycle" in group else 0,
-                "cycle_end": int(group["cycle"].max()) if "cycle" in group else 0,
-                "step_start": int(group[step_col].min()),
-                "step_end": int(group[step_col].max()),
-                "start_time_h": start_time_h,
-                "block_duration_h": duration_h,
-                "total_time_h": charge_time_h + discharge_time_h,
-                "charge_time_h": charge_time_h,
-                "discharge_time_h": discharge_time_h,
-                "rest_time_h": _sum_step_time(group[mask_rest.to_numpy()], step_col),
-                "cv_charge_time_h": float(cv_by_block.get(block_id, 0.0)),
-                "cv_charge_capacity_mah": float(cvcap_by_block.get(block_id, 0.0)),
-                "charge_capacity_mah": _sum_step_capacity(group[mask_chg.to_numpy()], "charge_capacity_mah", step_col),
-                "discharge_capacity_mah": _sum_step_capacity(group[mask_dchg.to_numpy()], "discharge_capacity_mah", step_col),
-                "mean_voltage_v": mean_voltage(pd.Series(True, index=group.index)),
-                "mean_charge_voltage_v": mean_voltage(mask_chg),
-                "mean_discharge_voltage_v": mean_voltage(mask_dchg),
-                "n_steps": int(group[step_col].nunique()),
-            }
-        )
+    rows = _aggregate_block_rows(
+        assigned,
+        step_col,
+        is_chg.to_numpy(dtype=bool),
+        is_dchg.to_numpy(dtype=bool),
+        is_rest.to_numpy(dtype=bool),
+        origin_timestamp=origin_timestamp,
+        cv_by_block={int(key): float(value) for key, value in cv_by_block.items()},
+        cvcap_by_block={int(key): float(value) for key, value in cvcap_by_block.items()},
+    )
     return pd.DataFrame(rows, columns=BLOCK_COLUMNS)

@@ -644,6 +644,7 @@ def _profile_route(
     from app.services import (
         analysis_cache,
         analysis_engine,
+        calc,
         cache,
         chargeability,
         dcir as dcir_service,
@@ -827,8 +828,15 @@ def _profile_route(
                         (analysis_engine, "cell_metrics", "cycle_scientific_extraction")
                     )
                 elif family == "steps":
-                    family_helpers.append(
-                        (step_blocks, "per_block", "step_block_extraction")
+                    family_helpers.extend(
+                        [
+                            (step_blocks, "per_block", "step_block_extraction"),
+                            (step_blocks, "assign_blocks", "step_block_assignment"),
+                            (step_blocks, "_aggregate_block_rows", "step_block_aggregation"),
+                            (calc, "_cv_charge_by_cycle", "step_cv_classification"),
+                            (step_blocks, "_sum_step_time", "step_time_aggregation"),
+                            (step_blocks, "_sum_step_capacity", "step_capacity_aggregation"),
+                        ]
                     )
                 elif family == "dcir":
                     family_helpers.extend(

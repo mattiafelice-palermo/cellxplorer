@@ -796,6 +796,20 @@ and falls back to `cache.load_raw` when the optional sidecar cannot prove a safe
 selective read. Request/protocol caches must remain local to the compute request,
 and exact persisted result hits must not invoke either path.
 
+Spec 050.21 Steps keeps the same request-local protocol-reuse boundary and applies
+the normalized-frame rule to `step_blocks.per_block`. `assign_blocks` returns the
+selected rows in record order, so downstream aggregation can use compact block
+ranges instead of rebuilding a pandas group frame for each phase and capacity
+quantity. `_aggregate_block_rows` converts the canonical numeric/timestamp columns
+once and uses NumPy reductions for per-step time maxima, capacity min/max deltas,
+and block metadata; the established CV kernel still owns CV classification. This
+preserves record-index gaps, programmed-step ownership, status/NaN behavior,
+source-local ordering, selective-reader fallback, and deterministic output. Keep
+the route serial: the measured optimized six-Cell fixture miss is 132.69 ms p50,
+and an all-pandas grouped variant was measurably slower than the prior route. Exact
+persisted hits must continue to bypass protocol reconstruction, raw access, block
+assignment, CV classification, and aggregation.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

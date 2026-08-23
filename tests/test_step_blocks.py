@@ -217,6 +217,28 @@ class AggregationTests(unittest.TestCase):
         # (20-10) + (12-5) = 17, not the last reading 20.
         self.assertAlmostEqual(out.iloc[0]["charge_capacity_mah"], 17.0)
 
+    def test_nan_values_are_ignored_without_poisoning_aggregates(self):
+        frame = raw(
+            [
+                (84, "cc_chg", 100, 10.0, 0),
+                (84, "cc_chg", 200, 20.0, 0),
+                (85, "cc_dchg", 300, 0, 8.0),
+                (85, "cc_dchg", 400, 0, 16.0),
+            ]
+        )
+        frame.loc[1, "time_s"] = float("nan")
+        frame.loc[1, "charge_capacity_mah"] = float("nan")
+        frame.loc[1, "voltage_v"] = float("nan")
+        frame.loc[3, "discharge_capacity_mah"] = float("nan")
+
+        row = step_blocks.per_block(frame, {84, 85}, "union").iloc[0]
+
+        self.assertAlmostEqual(row["charge_time_h"], 100 / 3600)
+        self.assertAlmostEqual(row["discharge_time_h"], 400 / 3600)
+        self.assertAlmostEqual(row["charge_capacity_mah"], 0.0)
+        self.assertAlmostEqual(row["discharge_capacity_mah"], 0.0)
+        self.assertAlmostEqual(row["mean_voltage_v"], 3.6)
+
 
 if __name__ == "__main__":
     unittest.main()

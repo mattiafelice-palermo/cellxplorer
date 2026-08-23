@@ -379,6 +379,65 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertAlmostEqual(by_id["charge-series"]["x_time"][0], 0.0)
         self.assertAlmostEqual(by_id["discharge-series"]["x_time"][0], 1.0)
 
+    def test_steps_reuse_equal_protocol_headers_within_one_request(self):
+        signature = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )["signature"]
+        cell_ids = [self.cells["c1"].id, self.cells["c2"].id]
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell_id} for cell_id in cell_ids])
+        spec["protocol_segments"] = [
+            {
+                "id": "charge",
+                "name": "Charge",
+                "targets": [{"protocol_signature": signature, "step_indices": [1]}],
+            }
+        ]
+        spec["computation"]["steps"] = {
+            "series": [
+                {"id": f"charge-{cell_id}", "cell_id": cell_id, "segment_id": "charge"}
+                for cell_id in cell_ids
+            ],
+            "mode": "union",
+        }
+
+        with patch.object(
+            protocol,
+            "reconstruct_protocol",
+            wraps=protocol.reconstruct_protocol,
+        ) as reconstruct:
+            result = engine.compute_steps(self.db, spec, None)
+
+        self.assertEqual(reconstruct.call_count, 1)
+        self.assertEqual(
+            [series["cell_id"] for series in result["cell_series"]],
+            cell_ids,
+        )
+
+    def test_steps_selective_and_full_raw_paths_have_same_result(self):
+        cell = self.cells["c1"]
+        signature = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )["signature"]
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        spec["protocol_segments"] = [
+            {
+                "id": "charge",
+                "name": "Charge",
+                "targets": [{"protocol_signature": signature, "step_indices": [1]}],
+            }
+        ]
+        spec["computation"]["steps"] = {
+            "series": [{"id": "charge-series", "cell_id": cell.id, "segment_id": "charge"}],
+            "mode": "union",
+        }
+
+        selective = engine.compute_steps(self.db, spec, None)
+        with patch.object(engine.stitch, "stitch_raw_steps", return_value=None):
+            fallback = engine.compute_steps(self.db, spec, None)
+
+        self.assertEqual(selective["cell_series"], fallback["cell_series"])
+        self.assertEqual(selective["badges"], fallback["badges"])
+
     def test_protocol_family_cache_hits_bypass_compute_parsing_and_serialization(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         analysis = Analysis(title="Protocol hit path", spec=spec)

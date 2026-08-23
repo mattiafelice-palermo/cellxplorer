@@ -1094,3 +1094,16 @@ R1 fixed with a durable implementation/evidence record in the 050.18 spec. It re
 050.20 implementation ready. Added a request-local Chargeability protocol reconstruction cache keyed by pinned parser identity, nominal capacity, and exact immutable header state; the six-Cell fixture now reconstructs once instead of six times without global or persistent state. Added indexed candidate/reference step-row reads through the existing cache sidecar with safe full-raw fallback for missing, invalid, busy, or incomplete indexes. Final five-repetition six-Cell miss is 83.17 ms p50 versus the current-head 188.46 ms baseline; exact hit remains a compute/protocol/raw bypass at 12.61 ms. Raw rows fell from 122946 to 1614, SQL remained 17, source-header lazy loads remained 6, and golden/security/scientific/order parity passed. Browser checks were not run per user instruction.
 
 ---
+### 2026-08-23T18:56:01+02:00 — IMPLEMENTER → REVIEWER — 050.21
+
+**Result:** Implementation ready
+
+**Verification**
+
+- Focused Steps/protocol/selective-fallback/golden tests passed; python scripts\\preflight.py passed; final 5-run Steps profile recorded 132.69 ms six-Cell miss p50; browser/manual NOT RUN by explicit user instruction.
+
+**Message**
+
+050.21 implementation complete: request-local exact protocol reuse and compact-range NumPy block aggregation. Scientific and selective/fallback parity verified; exact persisted hits bypass raw/scientific work. Ready for reviewer.
+
+---

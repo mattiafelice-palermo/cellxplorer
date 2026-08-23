@@ -2516,6 +2516,40 @@ def compute_steps(
         )
 
     total_units = len(configured_series)
+    protocol_cache_entries: list[tuple[str, float | None, dict, dict]] = []
+
+    def reconstruct_protocol_for_request(
+        source_file: SourceFile,
+        parser_version: str,
+        nominal_capacity: float | None,
+    ) -> dict:
+        header_meta = source_file.header_meta or {}
+        for (
+            cached_parser_version,
+            cached_nominal_capacity,
+            cached_header_meta,
+            cached_protocol,
+        ) in protocol_cache_entries:
+            if (
+                cached_parser_version == parser_version
+                and cached_nominal_capacity == nominal_capacity
+                and cached_header_meta == header_meta
+            ):
+                return cached_protocol
+        reconstructed = protocol_service.reconstruct_protocol(
+            header_meta,
+            nominal_capacity,
+        )
+        protocol_cache_entries.append(
+            (
+                parser_version,
+                nominal_capacity,
+                header_meta,
+                reconstructed,
+            )
+        )
+        return reconstructed
+
     for unit_index, series_cfg in enumerate(configured_series, start=1):
         cell = cell_by_id[series_cfg["cell_id"]]
         segment_id = series_cfg["segment_id"]
@@ -2561,8 +2595,10 @@ def compute_steps(
         selective_used = False
         if segment:
             for source_index, source_file in enumerate(files):
-                reconstructed = protocol_service.reconstruct_protocol(
-                    source_file.header_meta, nominal
+                reconstructed = reconstruct_protocol_for_request(
+                    source_file,
+                    source_versions[source_file.hash],
+                    nominal,
                 )
                 selected = protocol_service.protocol_steps_for_protocol(
                     targets, reconstructed
