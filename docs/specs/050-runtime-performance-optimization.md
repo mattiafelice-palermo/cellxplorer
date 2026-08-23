@@ -227,7 +227,7 @@ python scripts\preflight.py
 
 at final handoff. Do not repeat successful full suites for confidence. Performance comparisons must use identical scientific inputs/settings and report median plus range/tail where meaningful. Browser/manual measurements are required only for user-visible claims; backend-only evidence must be labelled backend-only.
 
-The final Parent 050 review must compare the complete branch against the correct merge base, enumerate every implemented numeric child through **050.23** and measured boundary, confirm required scientific regression evidence, reconcile cache/version/build consequences, record manual checks actually run, and state explicitly whether the branch is ready to merge.
+The final Parent 050 review must compare the complete branch against the correct merge base, enumerate every implemented numeric child through **050.24** and measured boundary, confirm required scientific regression evidence, reconcile cache/version/build consequences, record manual checks actually run, and state explicitly whether the branch is ready to merge.
 
 ## Project-context maintenance
 

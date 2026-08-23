@@ -191,6 +191,14 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /timeCapacityPlotExportReady/);
   assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
   assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);
+  assert.match(liveSource, /const refinementEligible = timeCapacityRefinementEligible\(spec\);/);
+  assert.match(
+    liveSource,
+    /useLayoutEffect\(\(\) => \{\s*if \(!refinementEligible\) invalidateRefinement\(\);\s*\}, \[invalidateRefinement, refinementEligible\]\);/s,
+  );
+  assert.match(liveSource, /timeCapacityRefinementDisplayIsCurrent\(/);
+  assert.match(liveSource, /if \(!refinementEligible \|\| !refinementTransition\) return null;/);
+  assert.match(liveSource, /refinementEligibilityRef\.current &&\s*refinementGenerationRef\.current/s);
   assert.match(headerSource, /const plotExportEnabled = canPlotExport \?\? canExport/);
   assert.match(headerSource, /getExportPreview && plotExportEnabled/);
   assert.match(headerSource, /disabled=\{!plotExportEnabled\}/);

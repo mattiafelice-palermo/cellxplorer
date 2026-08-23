@@ -7,6 +7,7 @@ import {
   timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
   timeCapacityRefinementDisplayIsCompatible,
+  timeCapacityRefinementDisplayIsCurrent,
   timeCapacityRefinementEligible,
   timeCapacityRefinementRequestIsCurrent,
   timeCapacityRefinementResultMatchesOverview,
@@ -199,6 +200,40 @@ test("ordinary default spec is eligible and unsafe refinement modes are not", ()
     timeCapacityRefinementEligible({
       computation: { time_capacity: { view: "voltage_current", x_axis: "time", cycles: [1, 10] } },
     } as never),
+    false,
+  );
+});
+
+test("stacked mode cannot display a previously accepted flat refinement", () => {
+  const current = result();
+  const response = {
+    ...current,
+    data_signature: "overview",
+    overview_data_signature: "overview",
+    request_generation: "g1",
+  } as TimeCapacityRefinementResult;
+  const flat = {
+    computation: {
+      time_capacity: { view: "voltage_current", x_axis: "time", display_mode: "consecutive" },
+    },
+  } as never;
+  const stacked = {
+    computation: {
+      time_capacity: {
+        view: "voltage_current",
+        x_axis: "time",
+        display_mode: "consecutive",
+        stacked: true,
+      },
+    },
+  } as never;
+
+  assert.equal(
+    timeCapacityRefinementDisplayIsCurrent(flat, response, current, "compat", "compat"),
+    true,
+  );
+  assert.equal(
+    timeCapacityRefinementDisplayIsCurrent(stacked, response, current, "compat", "compat"),
     false,
   );
 });

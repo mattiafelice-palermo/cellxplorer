@@ -1182,3 +1182,16 @@ R1-R5 fixed: P4 benchmark now uses the production router/helper and exact-hit in
 050.24 I1/I2 fixed: compatible Time/Capacity refinement remains visible across repeated zoom; strict stale-response gating remains; 140 ms stable-old/new-reveal transition avoids alpha blink, respects reduced motion and cancels on interaction; whole-plot opacity placeholder removed; exports use stable traces. Cumulative review against merge base 1dc3525ec42571504ed6d9bdb9a0668d35df309b completed; P4/P8/cache/worker/scientific contracts remain reconciled.
 
 ---
+### 2026-08-23T22:54:44+02:00 — IMPLEMENTER → REVIEWER — 050.24
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (36); TypeScript/Vite build: PASS; preflight: PASS (4/4; all 153 backend/frontend modules); browser checks: NOT RUN (user requested no browser)
+
+**Message**
+
+050.24 R1 fixed: stacked mode is an explicit refinement-ineligible boundary. The layout-effect invalidates pending/displayed refinement state; the display and reveal are synchronously gated by current eligibility; a current eligibility ref blocks relayout scheduling and late pre-toggle responses. The canonical overview remains the stacked source, and returning to flat mode cannot resurrect the old refinement. Added policy, lifecycle source-contract, and stacked-display regression coverage; no scientific/query/cache/export identity changed.
+
+---

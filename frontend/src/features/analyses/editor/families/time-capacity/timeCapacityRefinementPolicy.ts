@@ -165,6 +165,26 @@ export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {
   );
 }
 
+/**
+ * A refinement can be displayed only while the current client-side mode is
+ * still eligible for adaptive refinement. This keeps a stacked transition
+ * from reusing a previously accepted flat-view refinement.
+ */
+export function timeCapacityRefinementDisplayIsCurrent(
+  spec: AnalysisSpec,
+  response: TimeCapacityRefinementResult | null,
+  currentResult: TimeCapacityResult | undefined,
+  displayedCompatibilitySignature: string | null,
+  compatibilitySignature: string,
+): boolean {
+  return Boolean(
+    timeCapacityRefinementEligible(spec) &&
+      response &&
+      displayedCompatibilitySignature === compatibilitySignature &&
+      timeCapacityRefinementResultMatchesOverview(response, currentResult),
+  );
+}
+
 export function timeCapacityRefinementCanSchedule(
   active: boolean,
   spec: AnalysisSpec,

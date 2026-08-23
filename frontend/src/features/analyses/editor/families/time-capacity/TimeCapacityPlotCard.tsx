@@ -110,8 +110,9 @@ import {
   timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
   timeCapacityRefinementDisplayIsCompatible,
+  timeCapacityRefinementDisplayIsCurrent,
+  timeCapacityRefinementEligible,
   timeCapacityRefinementRequestIsCurrent,
-  timeCapacityRefinementResultMatchesOverview,
   timeCapacityRefinementTransitionDuration,
   timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
@@ -1218,6 +1219,9 @@ function TimeCapacityPlotCardView({
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
+  const refinementEligible = timeCapacityRefinementEligible(spec);
+  const refinementEligibilityRef = useRef(refinementEligible);
+  refinementEligibilityRef.current = refinementEligible;
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
   const viewportWidth = 1200;
@@ -1485,6 +1489,9 @@ function TimeCapacityPlotCardView({
   useEffect(() => {
     invalidateRefinement();
   }, [invalidateRefinement, currentResult?.data_signature, dataSignature]);
+  useLayoutEffect(() => {
+    if (!refinementEligible) invalidateRefinement();
+  }, [invalidateRefinement, refinementEligible]);
   useEffect(() => {
     if (!active) {
       cancelPendingRefinement();
@@ -1561,15 +1568,15 @@ function TimeCapacityPlotCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentResult, selectedVoltageUnavailable, viewSignature]
   );
-  const activeRefinedResult =
-    refinedResult &&
-    displayedRefinementCompatibilitySignatureRef.current === compatibilitySignature &&
-    timeCapacityRefinementResultMatchesOverview(
-      refinedResult,
-      currentResult,
-    )
-      ? refinedResult
-      : null;
+  const activeRefinedResult = timeCapacityRefinementDisplayIsCurrent(
+    spec,
+    refinedResult,
+    currentResult,
+    displayedRefinementCompatibilitySignatureRef.current,
+    compatibilitySignature,
+  )
+    ? refinedResult
+    : null;
   const plotResult = activeRefinedResult ?? currentResult;
   const plotTraces = useMemo(
     () =>
@@ -1579,7 +1586,7 @@ function TimeCapacityPlotCardView({
     [plotResult, selectedVoltageUnavailable, viewSignature]
   );
   const transitionTraces = useMemo(() => {
-    if (!refinementTransition) return null;
+    if (!refinementEligible || !refinementTransition) return null;
     // Keep the old line at its exact visual weight. The new LoD is revealed
     // over it; this avoids alpha-compositing two copies of the same line,
     // which otherwise produces a brief lightness/thickness blink.
@@ -1593,7 +1600,7 @@ function TimeCapacityPlotCardView({
         transitionTraceOpacity(trace, newOpacity, false),
       ),
     ];
-  }, [refinementTransition, refinementTransitionProgress]);
+  }, [refinementEligible, refinementTransition, refinementTransitionProgress]);
   const plotExportReady = timeCapacityPlotExportReady(
     timeResult.isPlaceholderData,
     Boolean(currentResult),
@@ -1674,7 +1681,7 @@ function TimeCapacityPlotCardView({
       cancelPendingRefinement();
       cancelRefinementTransition();
       clearDisplayedRefinement();
-    } else if (timeCapacityRefinementCanSchedule(active, spec)) {
+    } else if (refinementEligibilityRef.current && timeCapacityRefinementCanSchedule(active, spec)) {
       const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
       const previousViewport = refinementViewportRef.current;
       const sameViewport =
@@ -1720,6 +1727,7 @@ function TimeCapacityPlotCardView({
             )
               .then((response) => {
                 if (
+                  refinementEligibilityRef.current &&
                   refinementGenerationRef.current === Number(generation) &&
                   timeCapacityRefinementRequestIsCurrent(
                     response,
