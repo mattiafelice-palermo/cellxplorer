@@ -1665,6 +1665,10 @@ export interface TimeCapacityTrace {
   segments?: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
   source_descriptors?: SourceDescriptor[];
   source_cycle?: (number | null)[];
+  /** Compact ordinary Time/Capacity provenance table (Spec 050.15). */
+  sources?: { position: number; filename: string; hash: string }[];
+  /** Zero-based row-aligned indexes into `sources`; null means unresolved. */
+  source_index?: (number | null)[];
   source_position?: (number | null)[];
   source_filename?: (string | null)[];
   source_hash?: (string | null)[];
@@ -1770,6 +1774,11 @@ export interface TimeCapacityResult {
   };
   /** Present only when the local, opt-in Time/Capacity profiler is enabled. */
   profiling?: TimeCapacityBackendProfile;
+}
+
+export interface TimeCapacityRefinementResult extends TimeCapacityResult {
+  request_generation: string;
+  overview_data_signature: string;
 }
 
 export interface ScanJob {

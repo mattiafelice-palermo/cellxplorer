@@ -640,6 +640,52 @@ def source_columns(frame: pd.DataFrame, files: list[SourceFile]) -> dict[str, li
     }
 
 
+def compact_source_columns(
+    frame: pd.DataFrame,
+    files: list[SourceFile] | tuple[SourceFile, ...],
+) -> dict[str, list]:
+    """Return deduplicated provenance for compact ordinary Time/Capacity rows."""
+
+    by_hash = {source_file.hash: source_file for source_file in files}
+    hashes = (
+        frame["source_hash"].tolist()
+        if "source_hash" in frame.columns
+        else [None] * len(frame)
+    )
+    contributing_hashes = {value for value in hashes if value in by_hash}
+    ordered_sources = [
+        {
+            "position": position,
+            "filename": source_file.filename,
+            "hash": source_file.hash,
+        }
+        for position, source_file in enumerate(files, start=1)
+        if source_file.hash in contributing_hashes
+    ]
+    source_indexes = {
+        source["hash"]: index for index, source in enumerate(ordered_sources)
+    }
+    source_cycles = (
+        frame["source_cycle"].tolist()
+        if "source_cycle" in frame.columns
+        else [None] * len(frame)
+    )
+
+    def safe_int(value):
+        if value is None or pd.isna(value):
+            return None
+        return int(value)
+
+    return {
+        "source_cycle": [safe_int(value) for value in source_cycles],
+        "sources": ordered_sources,
+        "source_index": [
+            source_indexes.get(value)
+            for value in hashes
+        ],
+    }
+
+
 def _persisted_voltage_capabilities(source_file: SourceFile) -> dict:
     header = source_file.header_meta
     if not isinstance(header, dict):
@@ -1426,6 +1472,8 @@ def _time_capacity_display_x(
     capacity_g: np.ndarray | None,
     capacity_area: np.ndarray | None,
     settings: dict,
+    *,
+    origin_cycle_start: int | None = None,
 ) -> np.ndarray:
     if settings["x_axis"] == "capacity_mah_g":
         values = capacity_g.copy() if capacity_g is not None else np.full(len(raw), np.nan)
@@ -1441,7 +1489,10 @@ def _time_capacity_display_x(
             else np.full(len(raw), np.nan)
         )
     if settings["display_mode"] == "consecutive":
-        finite = np.flatnonzero(np.isfinite(values))
+        finite_mask = np.isfinite(values)
+        if origin_cycle_start is not None and "cycle" in raw.columns:
+            finite_mask &= raw["cycle"].to_numpy() >= int(origin_cycle_start)
+        finite = np.flatnonzero(finite_mask)
         return values - values[finite[0]] if len(finite) else values
 
     cycles = raw["cycle"].to_numpy() if "cycle" in raw.columns else np.zeros(len(raw))
@@ -2804,6 +2855,10 @@ def compute_time_capacity(
     compact: bool = False,
     progress: ProgressCallback | None = None,
     access_diagnostics: dict[str, Any] | None = None,
+    display_origin_cycle_start: int | None = None,
+    refinement: bool = False,
+    refinement_viewport_x_min: float | None = None,
+    refinement_viewport_x_max: float | None = None,
 ) -> dict:
     # Spec 050.14: ordinary compact requests may use the owner-resolved
     # indexed path and bounded persistent process pool. The service returns
@@ -2822,6 +2877,10 @@ def compute_time_capacity(
             compact=compact,
             progress=progress,
             access_diagnostics=access_diagnostics,
+            display_origin_cycle_start=display_origin_cycle_start,
+            refinement=refinement,
+            refinement_viewport_x_min=refinement_viewport_x_min,
+            refinement_viewport_x_max=refinement_viewport_x_max,
         )
         if optimized is not None:
             return optimized
@@ -2836,6 +2895,13 @@ def compute_time_capacity(
 
     computation = spec.get("computation", {})
     settings = time_capacity_settings(computation)
+    compact_ordinary_time = (
+        compact
+        and precision == "standard"
+        and settings["view"] == "voltage_current"
+        and settings["x_axis"] == "time"
+        and settings["display_mode"] == "consecutive"
+    )
     selection = spec.get("selection", {})
     exclusions = selection.get("exclusions", [])
     hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
@@ -2858,7 +2924,7 @@ def compute_time_capacity(
     )
     display_max = (
         configured_max
-        if precision == "full" or not compact
+        if precision == "full" or not compact or refinement
         else time_capacity_display_budget(
             configured_max,
             width,
@@ -3105,12 +3171,19 @@ def compute_time_capacity(
                     "segments": segments,
                     "source_descriptors": descriptors,
                     "source_cycle": [],
-                    "source_position": [],
-                    "source_filename": [],
-                    "source_hash": [],
                     "source_boundary_indices": [],
                 }
             )
+            if compact_ordinary_time:
+                traces[-1].update({"sources": [], "source_index": []})
+            else:
+                traces[-1].update(
+                    {
+                        "source_position": [],
+                        "source_filename": [],
+                        "source_hash": [],
+                    }
+                )
             continue
 
         transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
@@ -3423,7 +3496,42 @@ def compute_time_capacity(
         )
         with time_capacity_path.timed_stage(cell_diagnostics, "display_coordinate"):
             display_x = _time_capacity_display_x(
-                raw, phases, capacity, capacity_g, capacity_area, settings
+                raw,
+                phases,
+                capacity,
+                capacity_g,
+                capacity_area,
+                settings,
+                origin_cycle_start=display_origin_cycle_start,
+            )
+        if (
+            refinement
+            and refinement_viewport_x_min is not None
+            and refinement_viewport_x_max is not None
+        ):
+            window = np.isfinite(display_x)
+            window &= display_x >= float(refinement_viewport_x_min)
+            window &= display_x <= float(refinement_viewport_x_max)
+            take = np.flatnonzero(window)
+            raw = raw.iloc[take].reset_index(drop=True)
+            display_x = display_x[take]
+            phases = np.asarray(phases)[take].tolist() if phases else []
+            plot_mask = plot_mask[take]
+            voltage = voltage[take]
+            current = current[take]
+            capacity = capacity[take] if capacity is not None else None
+            capacity_g = capacity_g[take] if capacity_g is not None else None
+            capacity_area = capacity_area[take] if capacity_area is not None else None
+            derivative_x = derivative_x[take]
+            derivative_y = derivative_y[take]
+            source_boundary_indices = (
+                np.flatnonzero(
+                    raw["segment"].to_numpy()[1:]
+                    != raw["segment"].to_numpy()[:-1]
+                )
+                + 1
+                if "segment" in raw.columns and len(raw) > 1
+                else np.array([], dtype="int64")
             )
         # A full, non-compact request is used by scientific data export. It
         # must retain every selected-channel row even when the interactive
@@ -3468,7 +3576,11 @@ def compute_time_capacity(
         with time_capacity_path.timed_stage(
             profile_diagnostics, "transform_source_provenance"
         ):
-            source_values = source_columns(raw, files)
+            source_values = (
+                compact_source_columns(raw, files)
+                if compact_ordinary_time
+                else source_columns(raw, files)
+            )
         _record_transform_profile(
             profile_diagnostics,
             "source_provenance",

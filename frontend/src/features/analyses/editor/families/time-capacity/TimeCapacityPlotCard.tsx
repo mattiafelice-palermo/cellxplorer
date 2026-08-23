@@ -28,6 +28,7 @@ import {
   type SeriesStyleOverride,
   type SeriesStyleRule,
   type TimeCapacityResult,
+  type TimeCapacityRefinementResult,
   type TimeCapacityTrace,
 } from "../../../../../api";
 import { DebouncedNumberInput, DebouncedTextInput } from "../../../../../components/DebouncedInputs";
@@ -99,7 +100,19 @@ import {
   timeCapacitySeriesDescriptors,
   timeCapacitySeriesDescriptor,
 } from "../../plotting/seriesStyling";
-import { sourceExportColumns } from "../../plotting/sourceChainPlot";
+import { sourceExportColumns, sourceExportColumnsFromPoints } from "../../plotting/sourceChainPlot";
+import {
+  timeCapacitySourceAt,
+  type TimeCapacitySourcePoint,
+} from "./timeCapacityProvenance";
+import {
+  timeCapacityCycleRangeForViewport,
+  timeCapacityOverviewExtent,
+  timeCapacityRefinementEligible,
+  timeCapacityRefinementRequestIsCurrent,
+  timeCapacityRefinementWorthwhile,
+  type TimeCapacityViewport,
+} from "./timeCapacityRefinementPolicy";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
@@ -238,9 +251,7 @@ type TimeCapacitySegment = {
   x: number[];
   cycle: (number | null)[];
   sourceCycle: (number | null)[];
-  sourcePosition: (number | null)[];
-  sourceFilename: (string | null)[];
-  sourceHash: (string | null)[];
+  sources: TimeCapacitySourcePoint[];
   voltage: (number | null)[];
   current: (number | null)[];
 };
@@ -275,9 +286,7 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
         x: [],
         cycle: [],
         sourceCycle: [],
-        sourcePosition: [],
-        sourceFilename: [],
-        sourceHash: [],
+        sources: [],
         voltage: [],
         current: [],
       };
@@ -285,9 +294,7 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
     current.x.push(x[index]);
     current.cycle.push(trace.cycle[index] ?? null);
     current.sourceCycle.push(trace.source_cycle?.[index] ?? null);
-    current.sourcePosition.push(trace.source_position?.[index] ?? null);
-    current.sourceFilename.push(trace.source_filename?.[index] ?? null);
-    current.sourceHash.push(trace.source_hash?.[index] ?? null);
+    current.sources.push(timeCapacitySourceAt(trace, index));
     current.voltage.push(trace.voltage_v[index] ?? null);
     current.current.push(trace.current_ma[index] ?? null);
   }
@@ -473,8 +480,8 @@ export function timeCapacityTracesForResult(
       const segmentCustomdata = segment.x.map((_, index) => [
         segment.cycle[index] ?? "",
         segment.sourceCycle[index] ?? "",
-        segment.sourcePosition[index] ?? "",
-        shortSourceName(String(segment.sourceFilename[index] ?? "")),
+        segment.sources[index]?.position ?? "",
+        shortSourceName(String(segment.sources[index]?.filename ?? "")),
       ]);
       legendShown.add(seriesKey);
       out.push({
@@ -500,13 +507,11 @@ export function timeCapacityTracesForResult(
         type: traceType,
          connectgaps: false,
          customdata: segmentCustomdata,
-         cellxplorer_export_columns: sourceExportColumns(
+         cellxplorer_export_columns: sourceExportColumnsFromPoints(
           name,
           segment.cycle,
           segment.sourceCycle,
-          segment.sourcePosition,
-           segment.sourceFilename,
-           segment.sourceHash,
+          segment.sources,
          ),
          meta: selectedVoltageHoverLabel,
          cellxplorer_export_axis_labels: {
@@ -566,7 +571,7 @@ export function timeCapacityTracesForResult(
       .map((descriptor) => {
         const index = fullX.findIndex(
           (value, candidate) =>
-            trace.source_position?.[candidate] === descriptor.source_position &&
+            timeCapacitySourceAt(trace, candidate).position === descriptor.source_position &&
             Number.isFinite(value) &&
             Number.isFinite(trace.voltage_v[candidate] ?? NaN) &&
             (cfg.display_mode === "consecutive" ||
@@ -1152,6 +1157,11 @@ function TimeCapacityPlotCardView({
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
   const [computeToken, setComputeToken] = useState<string | null>(null);
   const [dataExporting, setDataExporting] = useState(false);
+  const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
+  const refinementTimerRef = useRef<number | null>(null);
+  const refinementAbortRef = useRef<AbortController | null>(null);
+  const refinementGenerationRef = useRef(0);
+  const refinementViewportRef = useRef<TimeCapacityViewport | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -1362,6 +1372,23 @@ function TimeCapacityPlotCardView({
   )
     ? timeResult.data
     : undefined;
+  const currentResultRef = useRef<TimeCapacityResult | undefined>(undefined);
+  currentResultRef.current = currentResult;
+  const cancelRefinement = useCallback(() => {
+    refinementGenerationRef.current += 1;
+    if (refinementTimerRef.current !== null) {
+      window.clearTimeout(refinementTimerRef.current);
+      refinementTimerRef.current = null;
+    }
+    refinementAbortRef.current?.abort();
+    refinementAbortRef.current = null;
+    refinementViewportRef.current = null;
+    setRefinedResult(null);
+  }, []);
+  useEffect(() => {
+    cancelRefinement();
+  }, [cancelRefinement, currentResult?.data_signature, dataSignature]);
+  useEffect(() => cancelRefinement, [cancelRefinement]);
   const selectedVoltageUnavailable = voltageChannelUnavailable(
     cfg.voltage_channel,
     currentResult?.voltage_channels
@@ -1430,19 +1457,36 @@ function TimeCapacityPlotCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentResult, selectedVoltageUnavailable, viewSignature]
   );
+  const activeRefinedResult =
+    refinedResult &&
+    timeCapacityRefinementRequestIsCurrent(
+      refinedResult,
+      currentResult,
+      String(refinementGenerationRef.current),
+    )
+      ? refinedResult
+      : null;
+  const plotResult = activeRefinedResult ?? currentResult;
+  const plotTraces = useMemo(
+    () =>
+      plotResult && !selectedVoltageUnavailable
+        ? timeCapacityTracesForResult(plotResult, spec)
+        : [],
+    [plotResult, selectedVoltageUnavailable, viewSignature]
+  );
   const plotExportReady = timeCapacityPlotExportReady(
     timeResult.isPlaceholderData,
     Boolean(currentResult),
     selectedVoltageUnavailable,
     exportTraces.length > 0,
   );
-  const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
+  const traces = useMemo(() => interactivePlotTraces(plotTraces), [plotTraces]);
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(currentResult, spec, exportTraces)),
+    () => zoom.apply(timeCapacityLayout(plotResult, spec, plotTraces)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentResult, viewSignature, exportTraces]
+    [plotResult, viewSignature, plotTraces]
   );
   const profileResultIsCurrent = Boolean(
     timeCapacityProfileResultIsCurrent(
@@ -1486,6 +1530,77 @@ function TimeCapacityPlotCardView({
   };
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     zoom.onRelayout(event);
+    const relayout = event as Record<string, unknown>;
+    const axisPrefixes = cfg.stacked ? ["xaxis", "xaxis2"] : ["xaxis"];
+    const readRange = (prefix: string): TimeCapacityViewport | null => {
+      const direct = relayout[`${prefix}.range`];
+      if (Array.isArray(direct) && direct.length >= 2) {
+        const min = Number(direct[0]);
+        const max = Number(direct[1]);
+        return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+      }
+      const min = Number(relayout[`${prefix}.range[0]`]);
+      const max = Number(relayout[`${prefix}.range[1]`]);
+      return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+    };
+    if (axisPrefixes.some((prefix) => relayout[`${prefix}.autorange`] === true)) {
+      cancelRefinement();
+    } else if (timeCapacityRefinementEligible(spec)) {
+      const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
+      const previousViewport = refinementViewportRef.current;
+      const sameViewport =
+        viewport !== null &&
+        previousViewport !== null &&
+        Math.abs(viewport.min - previousViewport.min) < 1e-9 &&
+        Math.abs(viewport.max - previousViewport.max) < 1e-9;
+      if (viewport && !sameViewport) {
+        const overview = timeCapacityOverviewExtent(currentResultRef.current);
+        const cycleRange = timeCapacityCycleRangeForViewport(currentResultRef.current, viewport);
+        cancelRefinement();
+        if (
+          timeCapacityRefinementWorthwhile(overview, viewport) &&
+          cycleRange &&
+          currentResultRef.current?.data_signature
+        ) {
+          const generation = String(refinementGenerationRef.current);
+          refinementViewportRef.current = viewport;
+          refinementTimerRef.current = window.setTimeout(() => {
+            refinementTimerRef.current = null;
+            const controller = new AbortController();
+            refinementAbortRef.current = controller;
+            void post<TimeCapacityRefinementResult>(
+              `/api/analyses/${analysisId}/time-capacity/refine`,
+              {
+                spec,
+                viewport_x_min: viewport.min,
+                viewport_x_max: viewport.max,
+                viewport_width: viewportWidth,
+                cycle_start: cycleRange.start,
+                cycle_end: cycleRange.end,
+                request_generation: generation,
+              },
+              { signal: controller.signal },
+            )
+              .then((response) => {
+                if (
+                  refinementGenerationRef.current === Number(generation) &&
+                  timeCapacityRefinementRequestIsCurrent(
+                    response,
+                    currentResultRef.current,
+                    generation,
+                  )
+                ) {
+                  setRefinedResult(response);
+                }
+              })
+              .catch(() => {
+                // Refinement is opportunistic; the stable overview remains
+                // visible when a request is aborted or unavailable.
+              });
+          }, 150);
+        }
+      }
+    }
     if (style.legend_mode === "outside") return;
     const point = draggedLegendPoint(event);
     if (!point) return;

@@ -105,6 +105,10 @@ class ResolvedRequest:
     precision: str
     compact: bool
     display_max_points_per_cell: int
+    display_origin_cycle_start: int | None = None
+    refinement: bool = False
+    refinement_viewport_x_min: float | None = None
+    refinement_viewport_x_max: float | None = None
 
 
 @dataclass(frozen=True)
@@ -467,8 +471,38 @@ def _source_columns(frame: Any, descriptor: ResolvedCellDescriptor) -> dict[str,
     }
 
 
-def _empty_trace(descriptor: ResolvedCellDescriptor) -> dict[str, Any]:
+def _compact_source_columns(frame: Any, descriptor: ResolvedCellDescriptor) -> dict[str, list[Any]]:
+    from pandas import isna
+
+    names = {file_hash: filename for file_hash, filename in descriptor.source_names}
+    hashes = frame["source_hash"].tolist() if "source_hash" in frame.columns else [None] * len(frame)
+    contributing_hashes = {value for value in hashes if value in names}
+    sources = [
+        {"position": index, "filename": filename, "hash": file_hash}
+        for index, (file_hash, filename) in enumerate(descriptor.source_names, start=1)
+        if file_hash in contributing_hashes
+    ]
+    source_indexes = {source["hash"]: index for index, source in enumerate(sources)}
+    source_cycles = frame["source_cycle"].tolist() if "source_cycle" in frame.columns else [None] * len(frame)
+
+    def safe_index(value: object) -> int | None:
+        if value is None or isna(value):
+            return None
+        return source_indexes.get(value)
+
     return {
+        "source_cycle": [None if value is None or isna(value) else int(value) for value in source_cycles],
+        "sources": sources,
+        "source_index": [safe_index(value) for value in hashes],
+    }
+
+
+def _empty_trace(
+    descriptor: ResolvedCellDescriptor,
+    *,
+    compact_ordinary_time: bool = False,
+) -> dict[str, Any]:
+    trace = {
         "cell_id": descriptor.cell_id,
         "cell_name": descriptor.cell_name,
         "label": descriptor.label,
@@ -493,11 +527,19 @@ def _empty_trace(descriptor: ResolvedCellDescriptor) -> dict[str, Any]:
         "segments": list(deepcopy(descriptor.segments)),
         "source_descriptors": list(deepcopy(descriptor.source_descriptors)),
         "source_cycle": [],
-        "source_position": [],
-        "source_filename": [],
-        "source_hash": [],
         "source_boundary_indices": [],
     }
+    if compact_ordinary_time:
+        trace.update({"sources": [], "source_index": []})
+    else:
+        trace.update(
+            {
+                "source_position": [],
+                "source_filename": [],
+                "source_hash": [],
+            }
+        )
+    return trace
 
 
 def _materialize_read(job: ReadJob, submitted_at: float) -> ReadPayload:
@@ -552,13 +594,23 @@ def _cell_result(
     }
     raw = payload.raw.copy()
     settings = request.settings
+    compact_ordinary_time = (
+        request.compact
+        and request.precision == "standard"
+        and settings["view"] == "voltage_current"
+        and settings["x_axis"] == "time"
+        and settings["display_mode"] == "consecutive"
+    )
     segments = tuple(deepcopy(descriptor.segments))
     diagnostics["raw_rows_loaded_before_filter"] = len(raw)
     if raw.empty or "cycle" not in raw.columns or not stitch.stitch_metadata(raw)["complete"]:
         analysis_engine._finish_time_capacity_cell_profile(diagnostics, cell_started)
         return (
             {
-                "trace": _empty_trace(descriptor),
+                "trace": _empty_trace(
+                    descriptor,
+                    compact_ordinary_time=compact_ordinary_time,
+                ),
                 "badges": [],
                 "voltage_facts": list(descriptor.voltage_facts),
                 "source_versions": list(descriptor.source_versions),
@@ -737,8 +789,39 @@ def _cell_result(
             if values is not None:
                 values[plot_mask] = np.nan
     display_x = analysis_engine._time_capacity_display_x(
-        raw, phases, capacity, capacity_g, capacity_area, settings
+        raw,
+        phases,
+        capacity,
+        capacity_g,
+        capacity_area,
+        settings,
+        origin_cycle_start=request.display_origin_cycle_start,
     )
+    if (
+        request.refinement
+        and request.refinement_viewport_x_min is not None
+        and request.refinement_viewport_x_max is not None
+    ):
+        window = np.isfinite(display_x)
+        window &= display_x >= float(request.refinement_viewport_x_min)
+        window &= display_x <= float(request.refinement_viewport_x_max)
+        take = np.flatnonzero(window)
+        raw = raw.iloc[take].reset_index(drop=True)
+        display_x = display_x[take]
+        phases = np.asarray(phases)[take].tolist() if phases else []
+        plot_mask = plot_mask[take]
+        voltage = voltage[take]
+        current = current[take]
+        capacity = capacity[take] if capacity is not None else None
+        capacity_g = capacity_g[take] if capacity_g is not None else None
+        capacity_area = capacity_area[take] if capacity_area is not None else None
+        derivative_x = derivative_x[take]
+        derivative_y = derivative_y[take]
+        source_boundary_indices = (
+            np.flatnonzero(raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]) + 1
+            if "segment" in raw.columns and len(raw) > 1
+            else np.array([], dtype="int64")
+        )
     full_response = request.precision == "full" or not request.compact
     if len(raw) > request.display_max_points_per_cell and not full_response:
         envelope_series = (
@@ -774,7 +857,11 @@ def _cell_result(
             if "segment" in raw.columns and len(raw) > 1
             else np.array([], dtype="int64")
         )
-    source_values = _source_columns(raw, descriptor)
+    source_values = (
+        _compact_source_columns(raw, descriptor)
+        if compact_ordinary_time
+        else _source_columns(raw, descriptor)
+    )
     is_derivative = settings["view"] != "voltage_current"
     include_time = (
         not request.compact
@@ -969,6 +1056,10 @@ def _build_jobs(
     viewport_width: int | None,
     precision: str,
     compact: bool,
+    display_origin_cycle_start: int | None = None,
+    refinement: bool = False,
+    refinement_viewport_x_min: float | None = None,
+    refinement_viewport_x_max: float | None = None,
 ) -> tuple[list[ReadJob], ResolvedRequest, list[dict[str, Any]]] | None:
     from . import analysis_engine, canonical_cycling, time_capacity_derived, time_capacity_path
     from .stitch import CachedSourceRef
@@ -1092,7 +1183,11 @@ def _build_jobs(
     visible_count = sum(1 for job in jobs if not job.descriptor.excluded)
     width = max(320, min(6000, int(viewport_width or 1200)))
     configured = max(100, settings["max_points_per_cell"])
-    display_max = analysis_engine.time_capacity_display_budget(configured, width, visible_count)
+    display_max = (
+        configured
+        if refinement
+        else analysis_engine.time_capacity_display_budget(configured, width, visible_count)
+    )
     calc_version = analysis_engine.CALC_VERSION
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version
@@ -1106,6 +1201,10 @@ def _build_jobs(
         precision=precision,
         compact=compact,
         display_max_points_per_cell=display_max,
+        display_origin_cycle_start=display_origin_cycle_start,
+        refinement=refinement,
+        refinement_viewport_x_min=refinement_viewport_x_min,
+        refinement_viewport_x_max=refinement_viewport_x_max,
     )
     return jobs, request, missing_refs
 
@@ -1150,6 +1249,10 @@ def try_compute_time_capacity(
     progress: Any = None,
     access_diagnostics: dict[str, Any] | None = None,
     force_serial: bool = False,
+    display_origin_cycle_start: int | None = None,
+    refinement: bool = False,
+    refinement_viewport_x_min: float | None = None,
+    refinement_viewport_x_max: float | None = None,
 ) -> dict[str, Any] | None:
     """Compute an eligible ordinary request or return ``None`` for fallback."""
 
@@ -1157,6 +1260,11 @@ def try_compute_time_capacity(
 
     settings = analysis_engine.time_capacity_settings(spec.get("computation", {}))
     if precision != "standard" or not compact or settings.get("view") != "voltage_current":
+        return None
+    if refinement and (
+        settings.get("x_axis") != "time"
+        or settings.get("display_mode") != "consecutive"
+    ):
         return None
     started = perf_counter()
     try:
@@ -1169,6 +1277,10 @@ def try_compute_time_capacity(
             viewport_width=viewport_width,
             precision=precision,
             compact=compact,
+            display_origin_cycle_start=display_origin_cycle_start,
+            refinement=refinement,
+            refinement_viewport_x_min=refinement_viewport_x_min,
+            refinement_viewport_x_max=refinement_viewport_x_max,
         )
         if built is None:
             return None

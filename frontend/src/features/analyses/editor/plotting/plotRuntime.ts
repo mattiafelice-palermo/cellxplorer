@@ -111,7 +111,12 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
   const onRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     if (!enabled) return;
     const ev = event as Record<string, unknown>;
-    if (ev["xaxis.autorange"] === true || ev["yaxis.autorange"] === true) {
+    if (
+      ev["xaxis.autorange"] === true ||
+      ev["xaxis2.autorange"] === true ||
+      ev["yaxis.autorange"] === true ||
+      ev["yaxis2.autorange"] === true
+    ) {
       stored.current = null; // double-click / modebar autoscale
       armed.current = false;
       return;

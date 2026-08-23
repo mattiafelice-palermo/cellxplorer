@@ -10,12 +10,14 @@ cache-hit controls keep the user's application state unchanged.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import json
+import os
 from pathlib import Path
 import statistics
 import sys
 import tempfile
+import time
 from time import perf_counter
 from unittest.mock import patch
 
@@ -40,6 +42,40 @@ REPETITIONS = 5
 GOLDEN_CELL_ID = 101
 
 
+@contextmanager
+def _null_context():
+    yield
+
+
+def _benchmark_hold_ping(delay: float) -> int:
+    time.sleep(delay)
+    return os.getpid()
+
+
+@contextmanager
+def _benchmark_worker_pool(worker_count: int):
+    """Publish one warmed pool for a bounded worker-count benchmark pass."""
+
+    from app.services import time_capacity_workers
+
+    time_capacity_workers.shutdown_time_capacity_worker_pool()
+    pool = time_capacity_workers._new_pool(worker_count)
+    try:
+        futures = [pool.submit(_benchmark_hold_ping, 0.25) for _ in range(worker_count)]
+        pids = {future.result() for future in futures}
+        if len(pids) < worker_count:
+            raise RuntimeError(
+                f"benchmark worker warmup acknowledged {len(pids)} of {worker_count} workers"
+            )
+        with time_capacity_workers._POOL_LOCK:
+            time_capacity_workers._POOL = pool
+            time_capacity_workers._POOL_WORKERS = worker_count
+            time_capacity_workers._POOL_STATE = "ready"
+        yield
+    finally:
+        time_capacity_workers.shutdown_time_capacity_worker_pool()
+
+
 def _median(values: list[object]) -> float | None:
     finite = [float(value) for value in values if isinstance(value, (int, float))]
     return statistics.median(finite) if finite else None
@@ -57,11 +93,14 @@ def run_profiled_route_sample(
     reference: dict | None,
     *,
     scenario: str,
+    worker_override: int | None = None,
 ) -> tuple[dict[str, object], dict]:
     """Measure the complete production router boundary on a disposable cache."""
 
     from app.routers import analyses as analyses_router
     from app.services import analysis_cache
+
+    from app.services import time_capacity_workers
 
     with tempfile.TemporaryDirectory(prefix="cellxplorer-05012-route-cache-") as root:
         cache_root = Path(root)
@@ -76,18 +115,32 @@ def run_profiled_route_sample(
             stack.enter_context(patch.object(analysis_cache, "_PREPARED", cache_root / "prepared"))
             stack.enter_context(patch.object(analysis_cache, "_budget_total", None))
             started = perf_counter()
-            response = analyses_router.compute_time_capacity_analysis(
-                analysis_id,
-                analyses_router.ComputeRequest(
-                    recompute=False,
-                    profile=True,
-                    profile_request_id=f"050.12-route-{scenario}",
-                    viewport_width=1200,
-                    precision="standard",
-                    compact=True,
-                ),
-                env.db,
-            )
+            with (
+                patch.object(
+                    time_capacity_workers,
+                    "choose_execution",
+                    return_value=time_capacity_workers.ExecutionDecision(
+                        "process",
+                        worker_override,
+                        "benchmark_worker_override",
+                        **time_capacity_workers.host_resources().__dict__,
+                    ),
+                )
+                if worker_override is not None
+                else _null_context()
+            ):
+                response = analyses_router.compute_time_capacity_analysis(
+                    analysis_id,
+                    analyses_router.ComputeRequest(
+                        recompute=False,
+                        profile=True,
+                        profile_request_id=f"050.12-route-{scenario}",
+                        viewport_width=1200,
+                        precision="standard",
+                        compact=True,
+                    ),
+                    env.db,
+                )
             complete_wall_ms = (perf_counter() - started) * 1000.0
     body = json.loads(response.body)
     payload = _profile_result_payload(body)
@@ -106,7 +159,7 @@ def run_profiled_route_sample(
     )
     row: dict[str, object] = {
         "candidate": "ROUTE",
-        "workers": 1,
+        "workers": worker_override or 1,
         "scenario": scenario,
         "cell_count": len(candidate_order),
         "selection_count": len(candidate_order),
@@ -151,11 +204,14 @@ def run_unprofiled_route_sample(
     reference: dict,
     *,
     scenario: str,
+    worker_override: int | None = None,
 ) -> tuple[float, dict]:
     """Measure the same complete route miss without opt-in profiling overhead."""
 
     from app.routers import analyses as analyses_router
     from app.services import analysis_cache
+
+    from app.services import time_capacity_workers
 
     with tempfile.TemporaryDirectory(prefix="cellxplorer-05012-route-cache-plain-") as root:
         cache_root = Path(root)
@@ -170,17 +226,31 @@ def run_unprofiled_route_sample(
             stack.enter_context(patch.object(analysis_cache, "_PREPARED", cache_root / "prepared"))
             stack.enter_context(patch.object(analysis_cache, "_budget_total", None))
             started = perf_counter()
-            response = analyses_router.compute_time_capacity_analysis(
-                analysis_id,
-                analyses_router.ComputeRequest(
-                    recompute=False,
-                    profile=False,
-                    viewport_width=1200,
-                    precision="standard",
-                    compact=True,
-                ),
-                env.db,
-            )
+            with (
+                patch.object(
+                    time_capacity_workers,
+                    "choose_execution",
+                    return_value=time_capacity_workers.ExecutionDecision(
+                        "process",
+                        worker_override,
+                        "benchmark_worker_override",
+                        **time_capacity_workers.host_resources().__dict__,
+                    ),
+                )
+                if worker_override is not None
+                else _null_context()
+            ):
+                response = analyses_router.compute_time_capacity_analysis(
+                    analysis_id,
+                    analyses_router.ComputeRequest(
+                        recompute=False,
+                        profile=False,
+                        viewport_width=1200,
+                        precision="standard",
+                        compact=True,
+                    ),
+                    env.db,
+                )
             wall_ms = (perf_counter() - started) * 1000.0
     payload = _profile_result_payload(json.loads(response.body))
     if scientific_digest(payload) != scientific_digest(reference) or result_order(payload) != result_order(reference):
@@ -309,6 +379,7 @@ def profile_workload(
     workload: dict[str, object],
     *,
     repetitions: int,
+    worker_count: int | None = None,
 ) -> dict[str, object]:
     scenario = str(workload["scenario"])
     cell_ids = list(workload["cell_ids"])
@@ -325,36 +396,42 @@ def profile_workload(
     analysis = Analysis(title=f"050.12 route profiler {scenario}", spec=spec)
     env.db.add(analysis)
     env.db.commit()
-    _, reference = run_profiled_route_sample(
-        env,
-        analysis.id,
-        None,
-        scenario=f"{scenario}-warmup",
-    )
-    samples: list[dict[str, object]] = []
-    for _ in range(repetitions):
-        row, _result = run_profiled_route_sample(
+    pool_context = _benchmark_worker_pool(worker_count) if worker_count is not None else _null_context()
+    with pool_context:
+        _, reference = run_profiled_route_sample(
             env,
             analysis.id,
-            reference,
-            scenario=scenario,
+            None,
+            scenario=f"{scenario}-warmup",
+            worker_override=worker_count,
         )
-        plain_wall_ms, _plain_result = run_unprofiled_route_sample(
-            env,
-            analysis.id,
-            reference,
-            scenario=scenario,
-        )
-        profiled_wall_ms = float(row["backend_wall_ms"])
-        row["profiled_route_wall_ms"] = profiled_wall_ms
-        row["profiling_overhead_ms"] = profiled_wall_ms - plain_wall_ms
-        row["backend_wall_ms"] = plain_wall_ms
-        samples.append(row)
+        samples: list[dict[str, object]] = []
+        for _ in range(repetitions):
+            row, _result = run_profiled_route_sample(
+                env,
+                analysis.id,
+                reference,
+                scenario=scenario,
+                worker_override=worker_count,
+            )
+            plain_wall_ms, _plain_result = run_unprofiled_route_sample(
+                env,
+                analysis.id,
+                reference,
+                scenario=scenario,
+                worker_override=worker_count,
+            )
+            profiled_wall_ms = float(row["backend_wall_ms"])
+            row["profiled_route_wall_ms"] = profiled_wall_ms
+            row["profiling_overhead_ms"] = profiled_wall_ms - plain_wall_ms
+            row["backend_wall_ms"] = plain_wall_ms
+            samples.append(row)
     if any(row.get("status") != "PASS" for row in samples):
         raise RuntimeError(f"Scientific parity failed in {scenario}")
     return {
         **{key: value for key, value in workload.items() if key != "cell_ids"},
         "cell_count": len(cell_ids),
+        "worker_count": worker_count or 1,
         "repetitions": repetitions,
         "warmup": "one complete router/backend request, not recorded",
         "samples": samples,
@@ -443,6 +520,7 @@ def run_suite(
     repetitions: int,
     requested: set[str] | None = None,
     workload_builder=ordinary_workload_matrix,
+    worker_count: int | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     workloads = workload_builder(cell_ids)
     if requested:
@@ -451,7 +529,13 @@ def run_suite(
     for workload in workloads:
         print(f"profiling {workload['scenario']}", flush=True)
         results.append(
-            profile_workload(env, base, workload, repetitions=repetitions)
+            profile_workload(
+                env,
+                base,
+                workload,
+                repetitions=repetitions,
+                worker_count=worker_count,
+            )
         )
     return results, run_cache_hit_control(env, base, cell_ids[: min(3, len(cell_ids))])
 

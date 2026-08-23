@@ -1424,8 +1424,8 @@ class AnalysisEngineTests(unittest.TestCase):
         }
         with patch.object(
             time_capacity_workers,
-            "_source_columns",
-            wraps=time_capacity_workers._source_columns,
+            "_compact_source_columns",
+            wraps=time_capacity_workers._compact_source_columns,
         ) as provenance:
             result = engine.compute_time_capacity(
                 self.db,
@@ -1438,9 +1438,81 @@ class AnalysisEngineTests(unittest.TestCase):
         trace = result["cell_traces"][0]
         self.assertEqual(provenance.call_count, 1)
         self.assertEqual(len(provenance.call_args.args[0]), len(trace["cycle"]))
-        for key in ("source_cycle", "source_position", "source_filename", "source_hash"):
-            self.assertEqual(len(trace[key]), len(trace["cycle"]))
+        self.assertEqual(len(trace["source_cycle"]), len(trace["cycle"]))
+        self.assertEqual(len(trace["source_index"]), len(trace["cycle"]))
+        self.assertEqual(
+            trace["sources"],
+            [
+                {"position": 1, "filename": "c1.ndax", "hash": self.HASHES["c1"]},
+            ],
+        )
+        self.assertNotIn("source_position", trace)
+        self.assertNotIn("source_filename", trace)
+        self.assertNotIn("source_hash", trace)
         self.assertTrue(all(index < len(trace["cycle"]) for index in trace["source_boundary_indices"]))
+
+    def test_time_capacity_refinement_keeps_canonical_consecutive_origin(self):
+        overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        overview_spec["computation"]["time_capacity"] = {
+            "cycle_start": 2,
+            "cycle_end": 3,
+            "x_axis": "time",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+        candidate_spec = deepcopy(overview_spec)
+        candidate_spec["computation"]["time_capacity"]["cycle_start"] = 1
+
+        refined = engine.compute_time_capacity(
+            self.db,
+            candidate_spec,
+            None,
+            precision="standard",
+            compact=True,
+            display_origin_cycle_start=2,
+            refinement=True,
+            refinement_viewport_x_min=-1_000_000,
+            refinement_viewport_x_max=1_000_000,
+        )
+        trace = refined["cell_traces"][0]
+        cycle_two = next(index for index, cycle in enumerate(trace["cycle"]) if cycle == 2)
+        self.assertAlmostEqual(trace["display_x"][cycle_two], 0.0, places=6)
+        self.assertEqual(len(trace["source_index"]), len(trace["cycle"]))
+        self.assertEqual(len(trace["sources"]), 1)
+
+    def test_time_capacity_refinement_is_ephemeral_and_returns_identity(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": 3,
+            "x_axis": "time",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+        analysis = Analysis(title="Ephemeral refinement", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        request = analyses_router.TimeCapacityRefinementRequest(
+            spec=spec,
+            viewport_x_min=0.0,
+            viewport_x_max=10.0,
+            viewport_width=1200,
+            cycle_start=1,
+            cycle_end=3,
+            request_generation="g1",
+        )
+        with patch.object(analysis_cache, "load_result_body", side_effect=AssertionError("refinement cache read")), patch.object(
+            analysis_cache, "store_result", side_effect=AssertionError("refinement cache write")
+        ):
+            response = analyses_router.refine_time_capacity_analysis(
+                analysis.id,
+                request,
+                self.db,
+            )
+        body = json.loads(response.body)
+        self.assertEqual(body["request_generation"], "g1")
+        self.assertEqual(body["overview_data_signature"], body["data_signature"])
+        self.assertTrue(body["cell_traces"])
 
     def test_ordinary_worker_process_matches_forced_serial_trace_order(self):
         spec = self.spec_with(
@@ -2217,6 +2289,28 @@ class AnalysisEngineTests(unittest.TestCase):
             prepared_time["cell_traces"],
             fallback_time["cell_traces"],
         )
+
+        compact_time_spec = deepcopy(time_spec)
+        compact_time_spec["computation"]["time_capacity"]["x_axis"] = "time"
+        compact_time = engine.compute_time_capacity(
+            self.db,
+            compact_time_spec,
+            None,
+            precision="standard",
+            compact=True,
+        )["cell_traces"][0]
+        self.assertEqual(
+            compact_time["sources"],
+            [
+                {"position": 1, "filename": "a.ndax", "hash": hash_a},
+                {"position": 2, "filename": "b.ndax", "hash": hash_b},
+            ],
+        )
+        self.assertEqual(
+            set(compact_time["source_index"]),
+            {0, 1},
+        )
+        self.assertNotIn("source_position", compact_time)
 
     def test_incomplete_multi_source_cycle_result_fails_closed(self):
         hash_a = "f1" * 32

@@ -48,7 +48,9 @@ RESULT_SCHEMA_VERSIONS = {
     # availability map, "settings" gained "voltage_channel", and the channel
     # entries now carry resolved role/reference presentation context. Legacy
     # payloads must not be served as if those semantics existed.
-    "time_capacity": 4,
+    # Spec 050.15: compact ordinary Time/Capacity provenance is now a
+    # deduplicated source table plus row-aligned source indexes.
+    "time_capacity": 5,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

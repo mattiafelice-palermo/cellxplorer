@@ -436,6 +436,18 @@ class ComputeRequest(BaseModel):
     profile_request_id: str | None = Field(default=None, max_length=200)
 
 
+class TimeCapacityRefinementRequest(BaseModel):
+    """Ephemeral viewport refinement; never enters the result cache."""
+
+    spec: dict
+    viewport_x_min: float
+    viewport_x_max: float
+    viewport_width: int = Field(default=1200, ge=240, le=10000)
+    cycle_start: int = Field(ge=1, le=10_000_000)
+    cycle_end: int = Field(ge=1, le=10_000_000)
+    request_generation: str = Field(min_length=1, max_length=200)
+
+
 class DcirProtocolRequest(BaseModel):
     spec: dict | None = None
     min_rest_s: float = Field(default=600, ge=1, le=86400)
@@ -1334,6 +1346,77 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         finish_request_profile()
         _finish_job(job_id, error=str(exc))
         raise
+
+
+@router.post("/analyses/{analysis_id}/time-capacity/refine")
+def refine_time_capacity_analysis(
+    analysis_id: int,
+    req: TimeCapacityRefinementRequest,
+    db: Session = Depends(get_db),
+):
+    """Return a non-persistent viewport refinement for ordinary Time/Capacity."""
+
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    if req.viewport_x_max < req.viewport_x_min:
+        raise HTTPException(422, "viewport_x_max must be greater than viewport_x_min")
+    if req.cycle_end < req.cycle_start:
+        raise HTTPException(422, "cycle_end must be greater than or equal to cycle_start")
+
+    spec = deepcopy(req.spec)
+    settings = engine.time_capacity_settings(spec.get("computation", {}))
+    if not (
+        settings["view"] == "voltage_current"
+        and settings["x_axis"] == "time"
+        and settings["display_mode"] == "consecutive"
+    ):
+        raise HTTPException(422, "viewport refinement is only available for ordinary Time/Capacity")
+    _guard_canonical_cycling(db, spec)
+
+    source_data_signature, overview_key = analysis_cache.time_capacity_keys(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=False,
+        request_options={
+            "viewport_width": req.viewport_width,
+            "precision": "standard",
+            "compact": True,
+        },
+    )
+    origin_cycle_start = (
+        min(settings["cycles"])
+        if settings["cycles"]
+        else int(settings["cycle_start"])
+        if settings["cycle_start"] is not None
+        else None
+    )
+    candidate_time_capacity = dict(settings)
+    candidate_time_capacity["cycles"] = []
+    candidate_time_capacity["cycle_start"] = req.cycle_start
+    candidate_time_capacity["cycle_end"] = req.cycle_end
+    spec.setdefault("computation", {})["time_capacity"] = candidate_time_capacity
+    result = engine.compute_time_capacity(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=False,
+        viewport_width=req.viewport_width,
+        precision="standard",
+        compact=True,
+        display_origin_cycle_start=origin_cycle_start,
+        refinement=True,
+        refinement_viewport_x_min=req.viewport_x_min,
+        refinement_viewport_x_max=req.viewport_x_max,
+    )
+    # Deliberately do not call analysis_cache.store_result and do not mutate
+    # Analysis.spec/provenance: this response is an ephemeral viewport view.
+    result["data_signature"] = overview_key
+    result["source_data_signature"] = source_data_signature
+    result["overview_data_signature"] = overview_key
+    result["request_generation"] = req.request_generation
+    return fast_json(result)
 
 
 class PlotArtifactRequest(BaseModel):

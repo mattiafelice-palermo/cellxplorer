@@ -1,3 +1,5 @@
+import type { TimeCapacitySourcePoint } from "../families/time-capacity/timeCapacityProvenance";
+
 export type SourceExportValue = number | string | null;
 
 export type SourceExportColumn = {
@@ -61,4 +63,20 @@ export function sourceExportColumns(
     { header: "Source file", values: sourceFilename ?? globalCycle.map(() => null) },
     { header: "Source hash", values: sourceHash ?? globalCycle.map(() => null) },
   ];
+}
+
+export function sourceExportColumnsFromPoints(
+  label: string,
+  globalCycle: (number | null)[],
+  localCycle: (number | null)[] | undefined,
+  points: TimeCapacitySourcePoint[],
+): SourceExportColumn[] {
+  return sourceExportColumns(
+    label,
+    globalCycle,
+    localCycle,
+    points.map((point) => point.position),
+    points.map((point) => point.filename),
+    points.map((point) => point.hash),
+  );
 }
