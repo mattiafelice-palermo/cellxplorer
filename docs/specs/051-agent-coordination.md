@@ -66,3 +66,19 @@ Manual acceptance result: the build can load the BioLogic cell, but opening Anal
 R1 is merge-blocking: the motivating real 21/93 source decodes at the binary layer but still fails canonical capacity validation, remains metadata-only, and therefore cannot be plotted in Analysis. R2 corrects the implementation-record branch name. See `reviews/051-biologic-mpr-extensible-column-registry-review.md` for Current, Target, and Acceptance criteria.
 
 ---
+### 2026-08-24T01:04:53+02:00 — IMPLEMENTER → REVIEWER — 051
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused MPR/GCPL/parser/metadata/closure tests: PASS (163 tests)
+- tests.test_analysis_engine: PASS (107 tests)
+- canonical preflight: PASS on rerun (4/4 stages; 81 backend modules and 72 frontend tests)
+- real EGG temporary cache and ordinary voltage analysis: PASS; no browser/manual checks run per user instruction
+
+**Message**
+
+R1 fixed narrowly for the verified EGG GCPL6 ID-211 per-Ns counter-origin reset; arbitrary non-zero boundary transfer remains fail-closed. R2 corrected the implementation record to the exact plural feature branch. Both local EGG examples decode the 21-ID/93-byte registry layout without rewriting; the single-direction example reaches canonical/cache/ordinary-voltage analysis, while the repeating mixed-direction example remains metadata-only under the locked Spec 041 cycle-identity contract.
+
+---

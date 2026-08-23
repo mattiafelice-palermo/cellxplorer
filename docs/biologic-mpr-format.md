@@ -258,6 +258,11 @@ charge and negative canonical current is discharge. ID-211 is converted into non
 phase-specific capacity counters relative to each executed step, and its sign must agree with ID-7
 and the current direction. Capacity counters must remain monotonic; ambiguous boundary ownership,
 error flags, unvalidated counter-increment flags, and unsupported control histories fail closed.
+The supplied EGG GCPL6 source also establishes one narrow reset form at an executed `Ns` boundary:
+the first active row of the new `Ns` has an ID-211 cumulative value near zero and an ID-211 `dQ`
+equal to that same short origin interval (about `1.75e-6 mA.h` in the observed source). The adapter
+accepts only that active-row counter-origin shape and continues to reject arbitrary non-zero
+boundary transfer; per-step capacity output remains relative to each block's first counter value.
 Energy follows Policy C for this layout: no verified vendor energy counter is present, so canonical
 energy columns remain unavailable rather than being fabricated.
 

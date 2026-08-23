@@ -703,6 +703,38 @@ class BiologicGcplMappingTests(unittest.TestCase):
         with self.assertRaises(UnsupportedBiologicGcplError):
             _map_rows(rows)
 
+    def test_gcpl6_per_step_capacity_origin_is_allowed_at_ns_boundary(self) -> None:
+        rows = [
+            _row(
+                0.0,
+                mode=MPR_MODE_REST,
+                ns=0,
+                control=0.0,
+                ns_changed=True,
+            ),
+            _row(
+                1.0,
+                ns=1,
+                control=-15.708,
+                q_mAh=-1.75e-6,
+                dq_mAh=-1.75e-6,
+                ns_changed=True,
+            ),
+            _row(
+                31.0,
+                ns=1,
+                control=-15.708,
+                q_mAh=-0.1309,
+                dq_mAh=-0.13089825,
+            ),
+        ]
+
+        frame = _map_rows(rows)
+
+        canonical_cycling.validate_raw_timeseries(frame)
+        self.assertEqual(frame["status"].tolist(), ["Rest", "CC_DChg", "CC_DChg"])
+        self.assertGreater(float(frame["discharge_capacity_mah"].iloc[-1]), 0.13)
+
     def test_unexplained_ns_changed_flag_fails_closed(self) -> None:
         rows = [
             _row(0.0, ns=0, ns_changed=True),

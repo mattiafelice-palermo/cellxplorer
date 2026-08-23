@@ -250,6 +250,13 @@ general or repeating multi-cycle support, not a Parent 041 merge blocker. This
 boundary is owned by the adapter and is not a BioLogic-specific branch in any
 generic scientific service.
 
+The verified EGG GCPL6 family has a source-local capacity-counter quirk at an executed `Ns`
+boundary: ID-211 starts the new active block at a near-zero cumulative value, and the first `dQ`
+is the same short counter-origin interval. The adapter accepts only this narrow combination of a
+new active `Ns`, near-zero ID-211 origin, and matching `dQ`; arbitrary non-zero capacity transfer at
+a boundary remains rejected. Capacity is then normalized relative to each executed block, which
+preserves the canonical per-step reset semantics without weakening the generic safety check.
+
 The withdrawn `bm:gcpl3:r1` identity is not treated as a reproducible historical scientific
 result. On startup, the scanner performs a bounded database-only reconciliation for persisted MPR
 rows at that identity, changes them to the current `bm:gcpl9:r1` metadata-only registration, and

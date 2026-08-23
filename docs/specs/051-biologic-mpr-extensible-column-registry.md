@@ -348,7 +348,7 @@ Spec 051 is complete only when:
 
 ## Implementation record
 
-Implemented on `feature/biologic-mpr-extensible-column-registry-051` (preflight passed; external
+Implemented on `feature/biologic-mpr-extensible-columns-051` (preflight passed; external
 review pending). The low-level reader now owns the 100-entry storage registry, exact packed-flag
 handling, full encoded-ID preservation, modulo-256 ordinary-base resolution, per-source stride
 calculation, explicit-offset NumPy dtypes, and fail-closed unknown/interleaved versus opaque
@@ -359,10 +359,12 @@ the registry resolver.
 The independent fixture matrix covers the baseline 53-byte layout, the 21-ID/93-byte extended
 layout, optional-column interleaving/omission, high-byte IDs including generic `635 -> 123`,
 unknown suffixes, duplicate bases, stride mismatch, packed flags, canonical parity, metadata
-diagnostics, and parser migration. The two local `Downloads\EGG*` examples were read without
-rewriting: both declare the 21-ID layout, decode with stride 93, and expose the expected ignored
-known IDs. Their existing canonical mapper reaches a separate capacity-boundary validation on full
-parse; that semantic result is outside this binary-layout child.
+diagnostics, parser migration, and the narrow EGG GCPL6 per-step capacity-counter origin at an
+`Ns` boundary. The two local `Downloads\EGG*` examples were read without rewriting: both declare
+the 21-ID layout, decode with stride 93, and expose the expected ignored known IDs. The
+single-direction example now parses through canonical validation with ordinary voltage output;
+the repeating mixed-direction example remains metadata-only under the locked Spec 041 cycle
+identity contract.
 
-Focused MPR/GCPL/metadata/parser/closure checks passed (162 tests), and
+Focused MPR/GCPL/metadata/parser/closure checks passed (163 tests), and
 `python scripts\preflight.py` passed all 4 stages, including all 81 backend test modules.

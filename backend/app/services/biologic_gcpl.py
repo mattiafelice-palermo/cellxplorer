@@ -119,6 +119,12 @@ _SUPPORTED_MODES = frozenset(
 
 _TIME_TOLERANCE_S = 1e-6
 _CAPACITY_TOLERANCE_MAH = 1e-9
+# GCPL6 can emit a short first interval immediately after an Ns transition.
+# In the real 21-ID/93-byte source family that interval is about 1.75e-6 mA.h
+# and is written both as the first cumulative value and as raw dQ. It is the
+# source's per-step counter origin, not an ambiguous transfer from the prior
+# step. Keep this bound narrow relative to the normal 30-second increments.
+_CAPACITY_COUNTER_RESET_TOLERANCE_MAH = 1e-5
 _CURRENT_TOLERANCE_MA = 1e-9
 
 _REQUIRED_RECORD_FIELDS = (
@@ -1351,6 +1357,9 @@ def _validate_capacity_boundaries(
     raw_capacity: np.ndarray,
     raw_dq_mAh: np.ndarray,
     boundaries: np.ndarray,
+    *,
+    ns: np.ndarray | None = None,
+    mode: np.ndarray | None = None,
 ) -> None:
     """Reject ambiguous capacity ownership at an executed-step boundary.
 
@@ -1365,9 +1374,22 @@ def _validate_capacity_boundaries(
         return
     boundary_dq = raw_dq_mAh[starts]
     q_delta = raw_capacity[starts] - raw_capacity[starts - 1]
-    if np.any(np.abs(boundary_dq) > _CAPACITY_TOLERANCE_MAH) or np.any(
+    ambiguous = (np.abs(boundary_dq) > _CAPACITY_TOLERANCE_MAH) | (
         np.abs(q_delta) > _CAPACITY_TOLERANCE_MAH
-    ):
+    )
+    if ns is not None and mode is not None:
+        # The EGG GCPL6 family resets ID 211 at each newly executed active Ns.
+        # Accept only the independently observed shape: an Ns transition into
+        # an active row whose first cumulative value is near zero and whose
+        # dQ is exactly that first-origin interval. All other boundary
+        # transfers remain fail-closed.
+        ns_transition = ns[starts] != ns[starts - 1]
+        active_start = mode[starts] != MPR_MODE_REST
+        counter_origin = np.abs(raw_capacity[starts]) <= _CAPACITY_COUNTER_RESET_TOLERANCE_MAH
+        first_interval = np.abs(raw_capacity[starts] - raw_dq_mAh[starts]) <= _CAPACITY_TOLERANCE_MAH
+        verified_resets = ns_transition & active_start & counter_origin & first_interval
+        ambiguous &= ~verified_resets
+    if np.any(ambiguous):
         raise UnsupportedBiologicGcplError(
             "GCPL capacity transfer is ambiguous at an executed-step boundary; "
             "boundary rows must have zero incremental and cumulative transfer"
@@ -1819,7 +1841,13 @@ def map_gcpl_to_canonical(
         step_time=step_time,
     )
     _validate_step_time_boundaries(step_time, boundaries)
-    _validate_capacity_boundaries(raw_capacity, raw_dq_mAh, boundaries)
+    _validate_capacity_boundaries(
+        raw_capacity,
+        raw_dq_mAh,
+        boundaries,
+        ns=ns,
+        mode=mode,
+    )
     ranges = _block_ranges(boundaries)
     directions = [
         _direction_for_block(
