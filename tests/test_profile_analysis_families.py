@@ -381,6 +381,28 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
                 self.assertGreaterEqual(deep["stages_ms"][name]["calls_p50"], 0.0)
             self.assertEqual(metrics["calls"]["dcir_source_preparation"], 1)
             self.assertEqual(metrics["calls"]["dcir_occurrence_extraction"], 2)
+            direct = deep["direct_compute_reconciliation"]
+            self.assertTrue(direct["all_non_overlapping"])
+            self.assertGreater(
+                direct["p50_scientific_compute_direct_residual_ms"],
+                0.0,
+            )
+            self.assertGreaterEqual(direct["p50_child_sum_ms"], 0.0)
+            for name in (
+                "dcir_compute_setup",
+                "dcir_context_target_resolution",
+                "dcir_source_frame_partition",
+                "dcir_occurrence_concatenation",
+                "dcir_relative_calculation",
+                "dcir_measurement_meta_assembly",
+                "dcir_series_response_assembly",
+                "dcir_final_response_assembly",
+            ):
+                self.assertIn(name, deep["direct_compute_children"])
+                self.assertIsInstance(
+                    deep["direct_compute_stages_ms"][name]["p50"],
+                    float,
+                )
             for reconciliation_name in (
                 "source_preparation_reconciliation",
                 "occurrence_extraction_reconciliation",

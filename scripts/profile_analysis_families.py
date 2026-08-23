@@ -166,13 +166,14 @@ class _Recorder:
         *,
         parent: str | None = None,
         exclusive_ms: float | None = None,
+        calls: int = 1,
     ) -> None:
         actual_parent = self._active[-1]["name"] if self._active else parent
         self.elapsed_ms[name] = self.elapsed_ms.get(name, 0.0) + float(elapsed_ms)
         self.exclusive_ms[name] = self.exclusive_ms.get(name, 0.0) + float(
             exclusive_ms if exclusive_ms is not None else elapsed_ms
         )
-        self.calls[name] = self.calls.get(name, 0) + 1
+        self.calls[name] = self.calls.get(name, 0) + int(calls)
         self.parent_edges.setdefault(name, set()).add(actual_parent)
         self.parents.setdefault(name, actual_parent)
 
@@ -962,6 +963,21 @@ def _profile_route(
         if sql_profile is not None:
             sql_profile.finish(metrics)
 
+    if family == "dcir" and dcir_profile:
+        dcir_profile["scientific_compute_direct_residual_ms"] = recorder.exclusive_ms.get(
+            "scientific_compute",
+            0.0,
+        )
+        direct_stages = dcir_profile.get("direct_stages_ms") or {}
+        direct_calls = dcir_profile.get("direct_stage_calls") or {}
+        for name, elapsed_ms in direct_stages.items():
+            recorder.add(
+                name,
+                float(elapsed_ms),
+                parent="scientific_compute",
+                calls=int(direct_calls.get(name, 0)),
+            )
+
     payload = json.loads(response.body)
     metrics["cache_status"] = payload.get("cache_status")
     metrics["scientific_digest"] = _digest(payload)
@@ -1376,6 +1392,27 @@ DCIR_OCCURRENCE_CHILDREN = (
     "dcir_quantity_calculation",
 )
 
+DCIR_DIRECT_CHILDREN = (
+    "dcir_compute_setup",
+    "dcir_context_metadata_setup",
+    "dcir_protocol_cache_bookkeeping",
+    "dcir_context_target_resolution",
+    "dcir_context_read_plan",
+    "dcir_source_context_bookkeeping",
+    "dcir_source_frame_partition",
+    "dcir_context_assembly",
+    "dcir_series_context_setup",
+    "dcir_series_target_validation",
+    "dcir_occurrence_result_collection",
+    "dcir_occurrence_concatenation",
+    "dcir_relative_calculation",
+    "dcir_output_projection",
+    "dcir_measurement_meta_assembly",
+    "dcir_no_match_badge",
+    "dcir_series_response_assembly",
+    "dcir_final_response_assembly",
+)
+
 DCIR_STAGE_PARENTS = {
     **{
         name: "dcir_source_preparation"
@@ -1423,6 +1460,11 @@ def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
         for profile in profiles
         for name in (profile.get("counts") or {})
     }
+    direct_names = {
+        name
+        for profile in profiles
+        for name in (profile.get("direct_stages_ms") or {})
+    }
     profile_samples = [sample for sample in samples if sample.get("dcir_deep")]
 
     def reconciliation(
@@ -1466,6 +1508,41 @@ def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
             ),
         }
 
+    direct_stages = {}
+    for name in sorted(direct_names):
+        values = [
+            float(profile.get("direct_stages_ms", {}).get(name, 0.0))
+            for profile in profiles
+            if isinstance(profile.get("direct_stages_ms", {}).get(name), (int, float))
+        ]
+        calls = [
+            float(profile.get("direct_stage_calls", {}).get(name, 0))
+            for profile in profiles
+        ]
+        direct_stages[name] = {
+            "p50": _median(values),
+            "calls_p50": _median(calls),
+            "available": bool(values),
+            "parent": "scientific_compute",
+        }
+    direct_reconciliation_samples = []
+    for profile in profiles:
+        parent = profile.get("scientific_compute_direct_residual_ms")
+        if not isinstance(parent, (int, float)):
+            continue
+        child_sum = sum(
+            float(profile.get("direct_stages_ms", {}).get(name, 0.0))
+            for name in direct_names
+        )
+        direct_reconciliation_samples.append(
+            {
+                "scientific_compute_direct_residual_ms": float(parent),
+                "child_sum_ms": child_sum,
+                "residual_ms": max(0.0, float(parent) - child_sum),
+                "overlap_ms": max(0.0, child_sum - float(parent)),
+            }
+        )
+
     return {
         "stages_ms": stages,
         "counts": {
@@ -1487,6 +1564,30 @@ def _dcir_deep_summary(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
             DCIR_OCCURRENCE_CHILDREN,
             "occurrence_extraction",
         ),
+        "direct_compute_children": [
+            name for name in DCIR_DIRECT_CHILDREN if name in direct_stages
+        ],
+        "direct_compute_stages_ms": direct_stages,
+        "direct_compute_reconciliation": {
+            "samples": direct_reconciliation_samples,
+            "p50_scientific_compute_direct_residual_ms": _median([
+                item["scientific_compute_direct_residual_ms"]
+                for item in direct_reconciliation_samples
+            ]),
+            "p50_child_sum_ms": _median([
+                item["child_sum_ms"] for item in direct_reconciliation_samples
+            ]),
+            "p50_residual_ms": _median([
+                item["residual_ms"] for item in direct_reconciliation_samples
+            ]),
+            "p50_overlap_ms": _median([
+                item["overlap_ms"] for item in direct_reconciliation_samples
+            ]),
+            "all_non_overlapping": all(
+                item["overlap_ms"] <= 1.0
+                for item in direct_reconciliation_samples
+            ),
+        },
     }
 
 

@@ -773,8 +773,10 @@ series. This prevents source-frame copies and run preparation from repeating
 across series while retaining record-index gaps, cycle and time resets,
 timestamp/time-s duration precedence, NaN handling, current sign, and
 source-local ordering. The context, prepared frames, and protocol cache are
-request-local only; exact persisted hits still bypass raw access, protocol
-reconstruction, run metadata, and occurrence extraction.
+request-local only; equal immutable header documents may reuse the request-local
+protocol result before the canonical JSON-key fallback, without changing cache
+identity. Exact persisted hits still bypass raw access, protocol reconstruction,
+run metadata, and occurrence extraction.
 
 ## Presentation filters versus computation
 

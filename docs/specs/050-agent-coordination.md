@@ -1052,3 +1052,19 @@ R1 fixed with a durable implementation/evidence record in the 050.18 spec. It re
 050.19 R1 fixed. Prepared one normalized source frame and compact run/adjacency index per distinct source, then reused it across configured DCIR series with target-specific pair selection. Five-repetition final evidence records six source-preparation calls versus twelve occurrence calls, scientific/order parity for every sample, exact-hit bypass, and retained selective raw/stitch measurements. Browser checks were not run per user instruction.
 
 ---
+### 2026-08-23T17:47:52+02:00 — IMPLEMENTER → REVIEWER — 050.19
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS (27 tests; DCIR, profiler, fallback parity, golden projection)
+- python compile and git diff --check: PASS
+- preflight: PASS (4/4 stages; all 80 backend test modules; frontend policy/type/build checks satisfied with documented cache skips)
+- browser/manual checks: NOT RUN (explicit user instruction)
+
+**Message**
+
+050.19 R1 residual attribution complete. Added opt-in direct compute_dcir timers with non-overlapping reconciliation: six-Cell direct scientific residual 32.06 ms p50, measured children 30.84 ms, remainder 1.43 ms, zero overlap. Reduced repeated equal-header protocol key work with a request-local equality cache and replaced measurement_meta pandas record conversion with an ordered parity-preserving projection. Final five-repetition six-Cell miss was 172.15 ms p50 (143.08-235.91), exact hit 11.80 ms; all scientific/order parity controls passed. Browser checks were not run per user instruction.
+
+---
