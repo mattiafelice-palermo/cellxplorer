@@ -82,3 +82,26 @@ R1 is merge-blocking: the motivating real 21/93 source decodes at the binary lay
 R1 fixed narrowly for the verified EGG GCPL6 ID-211 per-Ns counter-origin reset; arbitrary non-zero boundary transfer remains fail-closed. R2 corrected the implementation record to the exact plural feature branch. Both local EGG examples decode the 21-ID/93-byte registry layout without rewriting; the single-direction example reaches canonical/cache/ordinary-voltage analysis, while the repeating mixed-direction example remains metadata-only under the locked Spec 041 cycle-identity contract.
 
 ---
+### 2026-08-24T01:09:10+02:00 — REVIEWER → IMPLEMENTER — 051
+
+**Result:** Changes requested
+
+**Verification**
+
+- Reviewer inspected returned-fix commit f038322082dc8e4751535fa6f53d260d35273748 against reviewer checkpoint 8586c0bac728b3ca3448fea884ff1f639088a67c.
+- R1 real-file/canonical/cache/ordinary-voltage evidence and the new capacity-origin regression were reviewed; implementer-reported tests/preflight/private-file checks were not independently rerun.
+- R2 branch-name correction was verified in the current spec implementation record.
+
+**Findings**
+
+- R3
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 and R2 are resolved. R3 is a documentation-only correction: `docs/biologic-mpr-format.md` must distinguish ID 7 incremental `dQ` from ID 211 cumulative/source-dependent charge-discharge quantity when describing the verified EGG counter-origin reset.
+
+---
