@@ -56,6 +56,9 @@ async def _lifespan(_app: FastAPI):
     if DATABASE_STATUS.compatible:
         sessions.start_runtime_session()
         _start_scientific_service_warmup()
+        from .services import time_capacity_workers
+
+        time_capacity_workers.start_time_capacity_worker_pool()
         source_monitor.start_source_monitor()
         cache_maintenance.start_cache_maintenance()
     try:
@@ -65,6 +68,9 @@ async def _lifespan(_app: FastAPI):
         # threads and closes the session, which the shutdown events did not
         # guarantee.
         if DATABASE_STATUS.compatible:
+            from .services import time_capacity_workers
+
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
             source_monitor.stop_source_monitor()
             cache_maintenance.stop_cache_maintenance()
             sessions.finish_runtime_session("backend_shutdown")

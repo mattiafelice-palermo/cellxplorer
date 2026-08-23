@@ -2,10 +2,10 @@
 
 The harness uses the committed golden fixture and, when available, a read-only
 copy of the saved ``Performance analysis`` database.  It runs only the current
-sequential production router/backend path, keeps five warm repetitions per
-workload, and records an opt-in profiled twin beside each normal unprofiled
-miss.  Disposable database copies and cache-hit controls keep the user's
-application state unchanged.
+production router/backend path, keeps bounded warm repetitions per workload,
+and records an opt-in profiled twin beside each normal unprofiled miss.  The
+``--s25`` mode is the Spec 050.14 route matrix. Disposable database copies and
+cache-hit controls keep the user's application state unchanged.
 """
 from __future__ import annotations
 
@@ -125,6 +125,10 @@ def run_profiled_route_sample(
         "request_sql": profile.get("request_sql"),
         "cache_store_stages_ms": profile.get("cache_store_stages_ms"),
         "engine_timing": profile.get("engine_timing"),
+        "execution": profile.get("execution"),
+        "returned_points": profile.get("returned_points"),
+        "response_bytes": profile.get("response_bytes"),
+        "rendering": payload.get("rendering"),
         "cell_exclusive_stages_ms": profile.get("cell_exclusive_stages_ms"),
         "cell_exclusive_partition_ms": profile.get("cell_exclusive_partition_ms"),
         "raw_read_stages_ms": profile.get("raw_read_stages_ms"),
@@ -252,6 +256,51 @@ def ordinary_workload_matrix(cell_ids: list[int]) -> list[dict[str, object]]:
             }
         )
     return workloads
+
+
+def s25_workload_matrix(cell_ids: list[int]) -> list[dict[str, object]]:
+    """Return the bounded Spec 050.14 production-route workload matrix."""
+
+    if len(cell_ids) < 6:
+        return []
+    return [
+        {
+            "scenario": "s25-1-cycles-1-3-time",
+            "cell_ids": cell_ids[:1],
+            "cycles": [1, 2, 3],
+            "cycle_end": 3,
+            "x_axis": "time",
+            "view": "voltage_current",
+            "range_transition": None,
+        },
+        {
+            "scenario": "s25-3-time",
+            "cell_ids": cell_ids[:3],
+            "cycles": [],
+            "cycle_end": 48,
+            "x_axis": "time",
+            "view": "voltage_current",
+            "range_transition": None,
+        },
+        {
+            "scenario": "s25-6-time",
+            "cell_ids": cell_ids[:6],
+            "cycles": [],
+            "cycle_end": 48,
+            "x_axis": "time",
+            "view": "voltage_current",
+            "range_transition": None,
+        },
+        {
+            "scenario": "s25-6-capacity",
+            "cell_ids": cell_ids[:6],
+            "cycles": [],
+            "cycle_end": 48,
+            "x_axis": "capacity_mah",
+            "view": "voltage_current",
+            "range_transition": None,
+        },
+    ]
 
 
 def profile_workload(
@@ -393,8 +442,9 @@ def run_suite(
     *,
     repetitions: int,
     requested: set[str] | None = None,
+    workload_builder=ordinary_workload_matrix,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    workloads = ordinary_workload_matrix(cell_ids)
+    workloads = workload_builder(cell_ids)
     if requested:
         workloads = [item for item in workloads if item["scenario"] in requested]
     results: list[dict[str, object]] = []
@@ -418,6 +468,11 @@ def main() -> int:
     )
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument(
+        "--s25",
+        action="store_true",
+        help="Run the bounded Spec 050.14 S25 production-route matrix",
+    )
+    parser.add_argument(
         "--scenario",
         action="append",
         help="Run only these scenario names; repeat for multiple focused scenarios",
@@ -434,6 +489,7 @@ def main() -> int:
     }
     fixture_base = load_case_spec(fixture_root, fixture_case)
     requested = set(args.scenario or [])
+    workload_builder = s25_workload_matrix if args.s25 else ordinary_workload_matrix
     suites: dict[str, list[dict[str, object]]] = {}
     controls: dict[str, dict[str, object]] = {}
     skipped: dict[str, str] = {}
@@ -441,7 +497,7 @@ def main() -> int:
     with GoldenFixtureEnvironment.create() as env:
         clone_ids = clone_golden_source_cells(env, 10)
         fixture_cells = [GOLDEN_CELL_ID, *clone_ids]
-        known = {str(item["scenario"]) for item in ordinary_workload_matrix(fixture_cells)}
+        known = {str(item["scenario"]) for item in workload_builder(fixture_cells)}
         if requested:
             unknown = requested - known
             if unknown:
@@ -452,7 +508,16 @@ def main() -> int:
             fixture_cells,
             repetitions=args.repetitions,
             requested=requested or None,
+            workload_builder=workload_builder,
         )
+
+    # The production pool binds imports and cache paths at worker spawn time.
+    # This harness deliberately switches from an isolated fixture root to the
+    # real application root in one interpreter, so close those workers before
+    # the second disposable environment is opened.
+    from app.services import time_capacity_workers
+
+    time_capacity_workers.shutdown_time_capacity_worker_pool()
 
     if not args.fixture_only:
         app_root = args.app_data_root.resolve()
@@ -467,12 +532,13 @@ def main() -> int:
                     app_cells,
                     repetitions=args.repetitions,
                     requested=requested or None,
+                    workload_builder=workload_builder,
                 )
                 for item in suites["application_performance_batch"]:
                     item["dataset"] = metadata
 
     evidence = {
-        "spec": "050.12",
+        "spec": "050.14" if args.s25 else "050.12",
         "status": "PASS"
         if all(
             item.get("samples", [{}])[0].get("status") == "PASS"

@@ -1210,21 +1210,19 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         with time_capacity_profiling.profiled_stage(request_profile, "canonical_capability_guard"):
             _guard_canonical_cycling(db, spec)
         with time_capacity_profiling.profiled_stage(request_profile, "source_data_signature"):
-            source_data_signature = analysis_cache.time_capacity_data_signature(
+            source_data_signature, key = analysis_cache.time_capacity_keys(
                 db,
-                spec,
-                a.provenance,
-                use_current_versions=req.recompute,
-            )
-        with time_capacity_profiling.profiled_stage(request_profile, "render_result_key"):
-            key = analysis_cache.result_key(
-                db,
-                "time_capacity",
                 spec,
                 a.provenance,
                 use_current_versions=req.recompute,
                 request_options=options,
             )
+        # ``time_capacity_keys`` intentionally derives both values from one
+        # owner-side fingerprint pass. Retain the historic profiling stage
+        # name so existing profile consumers remain compatible; its work is
+        # now accounted with the shared signature stage above.
+        with time_capacity_profiling.profiled_stage(request_profile, "render_result_key"):
+            pass
         if not req.recompute:
             with time_capacity_profiling.profiled_stage(request_profile, "result_cache_body_lookup"):
                 stored = analysis_cache.load_result_body("time_capacity", key)

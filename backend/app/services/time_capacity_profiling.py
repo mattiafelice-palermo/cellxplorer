@@ -482,6 +482,31 @@ def build_time_capacity_profile(
                 for key, value in engine_profile.items()
                 if key not in {"private", "paths"}
             }
+        execution = diagnostics.get("execution") if diagnostics else None
+        if isinstance(execution, Mapping):
+            profile["execution"] = {
+                key: value
+                for key, value in execution.items()
+                if key in {
+                    "mode",
+                    "workers",
+                    "reason",
+                    "logical_cpus",
+                    "total_memory_bytes",
+                    "available_memory_bytes",
+                    "selected_rows",
+                    "ipc_input_bytes",
+                    "ipc_output_bytes",
+                    "effective_cores",
+                    "merge_ms",
+                    "parent_rss_before_bytes",
+                    "parent_rss_after_bytes",
+                    "worker_rss_before_bytes",
+                    "worker_rss_after_bytes",
+                    "worker_rss_samples",
+                    "total_backend_rss_after_bytes",
+                }
+            }
 
     if result is not None:
         rendering = result.get("rendering")

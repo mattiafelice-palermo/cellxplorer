@@ -59,8 +59,10 @@ class TimeCapacityTransformNeeds:
         }
         return cls(
             continuous_time=full_response or (normal_view and x_axis == "time"),
-            # The response always emits phase for compact requests and the
-            # derivative/protocol paths also consume it.
+            # The shared transform contract retains phase for the established
+            # engine and all alternate display modes. The narrow production
+            # worker path applies its stricter consecutive-only omission after
+            # resolving this common request shape.
             phase=True,
             phase_capacity=full_response or derivative or capacity_axis,
             specific_capacity=(

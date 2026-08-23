@@ -196,6 +196,7 @@ Cellxplorer/
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
 │           ├── canonical_cycling.py Canonical raw cycling-data contract/validation (Spec 040.1)
 │           ├── time_capacity_derived.py Shared exact Time/Capacity transforms/prepared-row contract (Spec 050.6)
+│           ├── time_capacity_workers.py Owner-resolved ordinary Time/Capacity execution and bounded pool (Spec 050.14)
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR container/data reader (Spec 041.1)
 │           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)
@@ -295,6 +296,7 @@ Cellxplorer/
 │   ├── test_preflight_script.py    Preflight command unit tests
 │   ├── test_profile_test_suite.py  Exhaustive profiler regression tests (Spec 048.2)
 │   ├── test_time_capacity_profiling.py Opt-in Time/Capacity diagnostics tests (Spec 050.4)
+│   ├── test_time_capacity_workers.py Ordinary Time/Capacity worker-boundary and gate tests (Spec 050.14)
 │   ├── test_time_capacity_ablation.py  Spec 050.13 ablation/parity contract tests
 │   └── test_benchmark_test_runners.py Persistent-runner isolation tests (Spec 048.2)
 ├── docs/
@@ -315,7 +317,7 @@ Cellxplorer/
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
-│   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Spec 050.12)
+│   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Specs 050.12/050.14)
 │   ├── profile_time_capacity_composition.py Spec 050.11 execution-strategy composition benchmark
 │   ├── profile_time_capacity_ablation.py Spec 050.13 ordinary-path ablation/composition benchmark
 │   ├── profile_rust_derivative_kernel.py Rust/Rayon derivative-kernel benchmark (Spec 050.10)

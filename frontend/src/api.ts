@@ -1702,6 +1702,29 @@ export interface TimeCapacityBackendProfile {
     phase_rows: Record<string, number>;
     stages_ms: Record<string, number>;
   };
+  execution?: {
+    mode: "serial" | "process";
+    workers: number;
+    reason: string;
+    logical_cpus?: number | null;
+    total_memory_bytes?: number | null;
+    available_memory_bytes?: number | null;
+    selected_rows?: number;
+    ipc_input_bytes?: number;
+    ipc_output_bytes?: number;
+    effective_cores?: number;
+    merge_ms?: number;
+    parent_rss_before_bytes?: number | null;
+    parent_rss_after_bytes?: number | null;
+    worker_rss_before_bytes?: (number | null)[];
+    worker_rss_after_bytes?: (number | null)[];
+    worker_rss_samples?: {
+      pid: number;
+      rss_before_bytes?: number | null;
+      rss_after_bytes?: number | null;
+    }[];
+    total_backend_rss_after_bytes?: number | null;
+  };
   row_groups_read?: number | "full";
   row_groups_total?: number | "full";
   raw_rows_materialized?: number;

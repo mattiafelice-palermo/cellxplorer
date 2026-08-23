@@ -195,25 +195,32 @@ function overlapX(values: number[], cycles: (number | null)[], phases: string[],
 
 function timeCapacityX(trace: TimeCapacityTrace, spec: AnalysisSpec): { x: number[]; title: string } {
   const cfg = timeCapacityConfig(spec);
+  const title =
+    cfg.x_axis === "capacity_mah_g"
+      ? "Specific capacity (mAh/g)"
+      : cfg.x_axis === "capacity_mah_cm2"
+      ? "Areal capacity (mAh/cm²)"
+      : cfg.x_axis === "capacity_mah"
+      ? "Capacity (mAh)"
+      : `Time (${cfg.time_unit})`;
+
+  // Compact ordinary responses make display_x authoritative and may omit the
+  // redundant raw time array. Check it before touching any alternate x source
+  // so rendering, hover and export do not depend on time_s being populated.
+  if (trace.display_x?.length === trace.cycle.length) {
+    return { x: numeric(trace.display_x), title };
+  }
+
   let raw: number[];
-  let title: string;
   if (cfg.x_axis === "capacity_mah_g") {
     raw = numeric(trace.capacity_mah_g);
-    title = "Specific capacity (mAh/g)";
   } else if (cfg.x_axis === "capacity_mah_cm2") {
     raw = numeric(trace.capacity_mah_cm2 ?? []);
-    title = "Areal capacity (mAh/cm²)";
   } else if (cfg.x_axis === "capacity_mah") {
     raw = numeric(trace.capacity_mah);
-    title = "Capacity (mAh)";
   } else {
     const factor = cfg.time_unit === "h" ? 3600 : cfg.time_unit === "min" ? 60 : 1;
     raw = numeric(trace.time_s).map((value) => value / factor);
-    title = `Time (${cfg.time_unit})`;
-  }
-
-  if (trace.display_x?.length === trace.cycle.length) {
-    return { x: numeric(trace.display_x), title };
   }
 
   if (cfg.display_mode === "overlap_reset") {
@@ -250,7 +257,7 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
   };
 
   for (let index = 0; index < x.length; index += 1) {
-    const phase = trace.phase[index] ?? "rest";
+    const phase = cfg.display_mode === "consecutive" ? "consecutive" : trace.phase[index] ?? "rest";
     if (cfg.display_mode !== "consecutive" && phase !== "charge" && phase !== "discharge") {
       flush();
       continue;

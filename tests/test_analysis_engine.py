@@ -26,7 +26,7 @@ from app.routers.library import get_cell_protocol
 from app.services import analysis_cache
 from app.services import analysis_engine as engine
 from app.services import cache, calc, canonical_cycling, parsing, protocol, scanner
-from app.services import time_capacity_profiling
+from app.services import time_capacity_profiling, time_capacity_workers
 
 
 def analysis_protocol_header() -> dict[str, str]:
@@ -1014,6 +1014,7 @@ class AnalysisEngineTests(unittest.TestCase):
             profiled_hit_body["rendering"], profiled_miss_body["rendering"]
         )
         self.assertTrue(compute_options)
+        self.assertEqual(len(compute_options), 2)
         self.assertIsNotNone(compute_options[0]["access_diagnostics"])
         self.assertNotIn("access_diagnostics", compute_options[1])
 
@@ -1359,7 +1360,7 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(trace["capacity_mah"], [])
         self.assertEqual(trace["capacity_mah_g"], [])
         self.assertEqual(trace["capacity_mah_cm2"], [])
-        self.assertTrue(trace["phase"])
+        self.assertEqual(trace["phase"], [])
 
     def test_compact_time_axis_does_not_read_phase_only_prepared_sidecar(self):
         source = self.cells["c1"].tests[0].file_links[0].file
@@ -1387,10 +1388,10 @@ class AnalysisEngineTests(unittest.TestCase):
 
         cell_diagnostics = diagnostics["cells"][0]
         self.assertEqual(cell_diagnostics["derived_access"], "not_needed")
-        self.assertEqual(cell_diagnostics["phase_source"], "computed")
+        self.assertEqual(cell_diagnostics["phase_source"], "not_needed")
         self.assertEqual(cell_diagnostics["phase_capacity_source"], "not_needed")
         self.assertNotIn("prepared_derived_read", cell_diagnostics.get("stages", {}))
-        self.assertTrue(result["cell_traces"][0]["phase"])
+        self.assertEqual(result["cell_traces"][0]["phase"], [])
 
     def test_compact_capacity_axis_skips_unconsumed_continuous_time(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
@@ -1421,7 +1422,11 @@ class AnalysisEngineTests(unittest.TestCase):
             "x_axis": "time",
             "max_points_per_cell": 100,
         }
-        with patch.object(engine, "source_columns", wraps=engine.source_columns) as provenance:
+        with patch.object(
+            time_capacity_workers,
+            "_source_columns",
+            wraps=time_capacity_workers._source_columns,
+        ) as provenance:
             result = engine.compute_time_capacity(
                 self.db,
                 spec,
@@ -1436,6 +1441,110 @@ class AnalysisEngineTests(unittest.TestCase):
         for key in ("source_cycle", "source_position", "source_filename", "source_hash"):
             self.assertEqual(len(trace[key]), len(trace["cycle"]))
         self.assertTrue(all(index < len(trace["cycle"]) for index in trace["source_boundary_indices"]))
+
+    def test_ordinary_worker_process_matches_forced_serial_trace_order(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+                {"kind": "replicate_group", "ref_id": self.group.id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
+        try:
+            serial = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                viewport_width=1200,
+                precision="standard",
+                compact=True,
+                force_serial=True,
+            )
+            process_decision = time_capacity_workers.ExecutionDecision(
+                "process",
+                2,
+                "focused_test",
+                logical_cpus=16,
+                total_memory_bytes=32 * 1024 * 1024 * 1024,
+                available_memory_bytes=16 * 1024 * 1024 * 1024,
+            )
+            with patch.object(
+                time_capacity_workers,
+                "choose_execution",
+                return_value=process_decision,
+            ):
+                process = time_capacity_workers.try_compute_time_capacity(
+                    self.db,
+                    spec,
+                    None,
+                    viewport_width=1200,
+                    precision="standard",
+                    compact=True,
+                )
+            self.assertIsNotNone(serial)
+            self.assertIsNotNone(process)
+            self.assertEqual(process["cell_traces"], serial["cell_traces"])
+            self.assertEqual(process["voltage_channels"], serial["voltage_channels"])
+            self.assertEqual(process["settings"], serial["settings"])
+            self.assertEqual(process["rendering"], serial["rendering"])
+        finally:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+
+    def test_ordinary_worker_process_failure_falls_back_to_exact_serial(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+                {"kind": "replicate_group", "ref_id": self.group.id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
+        serial = time_capacity_workers.try_compute_time_capacity(
+            self.db,
+            spec,
+            None,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+            force_serial=True,
+        )
+        process_decision = time_capacity_workers.ExecutionDecision(
+            "process",
+            2,
+            "focused_test",
+            logical_cpus=16,
+            total_memory_bytes=32 * 1024 * 1024 * 1024,
+            available_memory_bytes=16 * 1024 * 1024 * 1024,
+        )
+        diagnostics: dict = {}
+        with patch.object(
+            time_capacity_workers,
+            "choose_execution",
+            return_value=process_decision,
+        ), patch.object(
+            time_capacity_workers,
+            "_run_process",
+            side_effect=RuntimeError("worker crashed"),
+        ):
+            fallback = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                viewport_width=1200,
+                precision="standard",
+                compact=True,
+                access_diagnostics=diagnostics,
+            )
+        self.assertIsNotNone(serial)
+        self.assertIsNotNone(fallback)
+        self.assertEqual(fallback["cell_traces"], serial["cell_traces"])
+        self.assertEqual(fallback["settings"], serial["settings"])
+        self.assertEqual(fallback["rendering"], serial["rendering"])
+        self.assertEqual(
+            diagnostics["execution"]["reason"],
+            "process_failure_serial_fallback",
+        )
 
     def test_prepared_and_forced_fallback_time_capacity_payloads_match(self):
         source = self.cells["c1"].tests[0].file_links[0].file

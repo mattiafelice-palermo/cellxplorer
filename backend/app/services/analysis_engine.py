@@ -1459,6 +1459,25 @@ def _time_capacity_display_x(
     return output
 
 
+def time_capacity_display_budget(
+    configured_max: int,
+    viewport_width: int,
+    visible_cell_count: int,
+) -> int:
+    """Return the deterministic interactive point budget for one Cell.
+
+    The budget is display-only. Full-resolution and non-compact responses
+    bypass it entirely. Keeping the rule here gives the serial and process
+    implementations one shared production contract.
+    """
+
+    ceiling = max(100, int(configured_max))
+    width = max(320, min(6000, int(viewport_width or 1200)))
+    visible = max(1, int(visible_cell_count))
+    candidate = int((2 * width * 6) // visible)
+    return min(ceiling, max(800, candidate))
+
+
 def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
     """Compatibility wrapper for the shared exact capacity transform."""
 
@@ -2786,6 +2805,27 @@ def compute_time_capacity(
     progress: ProgressCallback | None = None,
     access_diagnostics: dict[str, Any] | None = None,
 ) -> dict:
+    # Spec 050.14: ordinary compact requests may use the owner-resolved
+    # indexed path and bounded persistent process pool. The service returns
+    # ``None`` for every unsupported or unsafe case, leaving this established
+    # implementation as the exact serial/legacy fallback.
+    if precision == "standard" and compact:
+        from . import time_capacity_workers
+
+        optimized = time_capacity_workers.try_compute_time_capacity(
+            db,
+            spec,
+            provenance,
+            use_current_versions=use_current_versions,
+            viewport_width=viewport_width,
+            precision=precision,
+            compact=compact,
+            progress=progress,
+            access_diagnostics=access_diagnostics,
+        )
+        if optimized is not None:
+            return optimized
+
     engine_started = perf_counter()
     ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
@@ -2810,6 +2850,21 @@ def compute_time_capacity(
     configured_max = max(100, settings["max_points_per_cell"])
     width = max(320, min(6000, int(viewport_width or 1200)))
     total_units = len(units)
+    visible_cell_count = sum(
+        1
+        for unit in units
+        if exclusion_for_unit(exclusions, unit) is None
+        and unit["group_id"] not in hidden_group_ids
+    )
+    display_max = (
+        configured_max
+        if precision == "full" or not compact
+        else time_capacity_display_budget(
+            configured_max,
+            width,
+            visible_cell_count,
+        )
+    )
     total_returned_points = 0
     if access_diagnostics is not None:
         access_diagnostics.setdefault("cells", [])
@@ -3150,37 +3205,46 @@ def compute_time_capacity(
                 consumed_by=("provenance_output", "display_downsampling"),
             )
 
-            aligned_prepared = (
-                _aligned_prepared_transform_values(
-                    raw,
-                    prepared_derived,
-                    need_capacity=transform_needs.phase_capacity,
+            if transform_needs.phase:
+                aligned_prepared = (
+                    _aligned_prepared_transform_values(
+                        raw,
+                        prepared_derived,
+                        need_capacity=transform_needs.phase_capacity,
+                    )
+                    if prepared_derived is not None
+                    else None
                 )
-                if prepared_derived is not None
-                else None
-            )
-            if aligned_prepared is not None:
-                phases, prepared_capacity = aligned_prepared
-                phase_source = "prepared"
-                capacity_source = "prepared" if transform_needs.phase_capacity else "not_needed"
-                cell_diagnostics["derived_access"] = "prepared"
+                if aligned_prepared is not None:
+                    phases, prepared_capacity = aligned_prepared
+                    phase_source = "prepared"
+                    capacity_source = "prepared" if transform_needs.phase_capacity else "not_needed"
+                    cell_diagnostics["derived_access"] = "prepared"
+                else:
+                    cell_diagnostics["derived_access"] = (
+                        "fallback" if transform_needs.phase_capacity else "not_needed"
+                    )
+                    with time_capacity_path.timed_stage(
+                        profile_diagnostics, "transform_phase_classification"
+                    ):
+                        phases = _phase_from_raw(raw)
+                    phase_source = "computed"
+                    prepared_capacity = None
+                    capacity_source = "computed" if transform_needs.phase_capacity else "not_needed"
             else:
-                cell_diagnostics["derived_access"] = (
-                    "fallback" if transform_needs.phase_capacity else "not_needed"
-                )
-                with time_capacity_path.timed_stage(
-                    profile_diagnostics, "transform_phase_classification"
-                ):
-                    phases = _phase_from_raw(raw)
-                phase_source = "computed"
+                phases = []
                 prepared_capacity = None
-                capacity_source = "computed" if transform_needs.phase_capacity else "not_needed"
+                phase_source = "not_needed"
+                capacity_source = "not_needed"
+                cell_diagnostics["derived_access"] = "not_needed"
             _record_transform_profile(
                 profile_diagnostics,
                 "phase_classification",
                 input_rows=len(raw),
                 output_rows=len(phases),
-                consumed_by=("phase_output", "display_coordinate", "derivative"),
+                consumed_by=("phase_output", "display_coordinate", "derivative")
+                if transform_needs.phase
+                else (),
             )
 
             if transform_needs.phase_capacity:
@@ -3364,7 +3428,7 @@ def compute_time_capacity(
         # A full, non-compact request is used by scientific data export. It
         # must retain every selected-channel row even when the interactive
         # setting intentionally limits the on-screen point count.
-        if len(raw) > configured_max and not (precision == "full" and not compact):
+        if len(raw) > display_max and not (precision == "full" or not compact):
             envelope_series = (
                 [derivative_x, derivative_y]
                 if settings["view"] != "voltage_current"
@@ -3374,7 +3438,7 @@ def compute_time_capacity(
             visible_values = ~plot_mask & np.isfinite(primary_values)
             with time_capacity_path.timed_stage(cell_diagnostics, "display_downsampling"):
                 take = _downsample_indices(
-                    len(raw), configured_max, visible_values, envelope_series
+                    len(raw), display_max, visible_values, envelope_series
                 )
             with time_capacity_path.timed_stage(
                 profile_diagnostics, "display_post_downsample_materialization"
@@ -3416,6 +3480,12 @@ def compute_time_capacity(
         full_precision = precision == "full" or not compact
         is_derivative = settings["view"] != "voltage_current"
         x_axis = settings["x_axis"]
+        include_time = (
+            not compact
+            or not is_derivative
+            and x_axis == "time"
+            and settings["display_mode"] != "consecutive"
+        )
         total_returned_points += len(raw)
 
         trace_projection_started = perf_counter() if profile_diagnostics is not None else None
@@ -3436,7 +3506,7 @@ def compute_time_capacity(
                 "display_x": _jsonsafe_plot(display_x, None if full_precision else 6),
                 "time_s": (
                     _jsonsafe_plot(raw["time_s"].to_numpy(), None if full_precision else 3)
-                    if (not compact or (not is_derivative and x_axis == "time")) and "time_s" in raw.columns
+                    if include_time and "time_s" in raw.columns
                     else []
                 ),
                 "capacity_mah": (
@@ -3549,7 +3619,7 @@ def compute_time_capacity(
         "rendering": {
             "viewport_width": width,
             "configured_max_points_per_cell": configured_max,
-            "max_points_per_cell": configured_max,
+            "max_points_per_cell": display_max,
             "total_points": total_returned_points,
             "precision": precision,
             "compact": compact,

@@ -277,15 +277,22 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
     }
 
 
-def result_key(
+def _result_fingerprint_payload(
     db: Session,
     kind: str,
     spec: dict,
     provenance: dict | None,
     *,
     use_current_versions: bool,
-    request_options: dict | None = None,
-) -> str:
+) -> dict[str, Any]:
+    """Resolve the authoritative scientific/source identity once.
+
+    The request-specific rendering options are deliberately not included here.
+    Time/Capacity callers derive both the scientific identity and the concrete
+    render key from this one owner-side payload, so the expensive relational
+    and source walk cannot be repeated merely because two related keys are
+    needed.
+    """
     if kind not in _SCIENTIFIC_RESULT_KINDS:
         raise ValueError(f"No scientific cache projection configured for result kind: {kind}")
 
@@ -339,18 +346,59 @@ def result_key(
                 "archived": bool(cell.archived),
             }
         )
-    return _digest(
-        {
-            "cache_version": ANALYSIS_CACHE_VERSION,
-            "result_schema_version": RESULT_SCHEMA_VERSIONS[kind],
-            "kind": kind,
-            "calc_version": calc_version,
-            "spec": _scientific_spec(spec, kind),
-            "units": unit_fingerprints,
-            "missing": missing,
-            "options": request_options or {},
-        }
+    return {
+        "cache_version": ANALYSIS_CACHE_VERSION,
+        "result_schema_version": RESULT_SCHEMA_VERSIONS[kind],
+        "kind": kind,
+        "calc_version": calc_version,
+        "spec": _scientific_spec(spec, kind),
+        "units": unit_fingerprints,
+        "missing": missing,
+    }
+
+
+def result_key(
+    db: Session,
+    kind: str,
+    spec: dict,
+    provenance: dict | None,
+    *,
+    use_current_versions: bool,
+    request_options: dict | None = None,
+) -> str:
+    payload = _result_fingerprint_payload(
+        db,
+        kind,
+        spec,
+        provenance,
+        use_current_versions=use_current_versions,
     )
+    payload["options"] = request_options or {}
+    return _digest(payload)
+
+
+def time_capacity_keys(
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    *,
+    use_current_versions: bool,
+    request_options: dict | None = None,
+) -> tuple[str, str]:
+    """Return ``(scientific_signature, render_key)`` from one owner pass."""
+
+    payload = _result_fingerprint_payload(
+        db,
+        "time_capacity",
+        spec,
+        provenance,
+        use_current_versions=use_current_versions,
+    )
+    scientific = dict(payload)
+    scientific["options"] = {}
+    render = dict(payload)
+    render["options"] = request_options or {}
+    return _digest(scientific), _digest(render)
 
 
 def saved_plot_data_signature(db: Session, analysis: Any, saved_plot: dict) -> str:
@@ -409,14 +457,15 @@ def time_capacity_data_signature(
     precision, and compact/downsampling options are omitted so standard and
     full-resolution renders share one scientific identity.
     """
-    return result_key(
+    payload = _result_fingerprint_payload(
         db,
         "time_capacity",
         spec,
         provenance,
         use_current_versions=use_current_versions,
-        request_options=None,
     )
+    payload["options"] = {}
+    return _digest(payload)
 
 
 def _result_path(kind: str, key: str) -> Path:
