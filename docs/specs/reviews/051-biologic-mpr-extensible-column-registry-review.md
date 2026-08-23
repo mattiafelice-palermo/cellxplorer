@@ -1,6 +1,7 @@
 # Review — Spec 051: BioLogic MPR extensible column registry and required-field decoding
 
-Status: **Review clean — final cumulative review pending**  
+Status: **Complete — ready to merge**  
+Ready to merge: **Yes**  
 Spec: [`../051-biologic-mpr-extensible-column-registry.md`](../051-biologic-mpr-extensible-column-registry.md)  
 Branch: `feature/biologic-mpr-extensible-columns-051`  
 Main / merge base: `706dc0f14880202a8c5e22b35020502bcf3b4dc9`  
@@ -9,27 +10,42 @@ Initial implementation handoff: `09f584f32d095edb70efb18147b8aeb0eeb918eb`
 R1/R2 returned-fix handoff: `f038322082dc8e4751535fa6f53d260d35273748`  
 R3 returned-fix handoff: `868d66c92737609a64b358ebd926bd0b114bc7a2`
 
-## Review summary
+## Final cumulative review
 
-The child review is clean. The low-level MPR reader now resolves ordinary encoded IDs generically through `encoded_id % 256` against the project-owned 100-entry storage registry, while the six packed flag IDs retain exact shared-byte semantics. Record stride is derived from the actual VMP record area, required fields use explicit offsets in a NumPy dtype whose itemsize is the observed stride, known optional columns may be interleaved, and unknown widths fail closed unless they form a trailing opaque suffix after all required fields are located.
+The cumulative branch is clean against current `main` / merge base `706dc0f14880202a8c5e22b35020502bcf3b4dc9`. The branch is ahead only and contains the Spec 051 implementation, its focused tests/documentation, and workflow/review records; there is no unrelated migration, frontend feature, or scientific-cache-version scope.
 
-The previous end-to-end blocker is resolved for the motivating single-direction 21-ID/93-byte EGG source. The GCPL adapter accepts only the source-evidenced per-`Ns` ID-211 counter-origin reset shape and otherwise preserves the existing fail-closed boundary-transfer guard. The implementer reports that the real source now reaches canonical parsing, temporary cache construction, and ordinary voltage analysis. The repeating/mixed-direction EGG example remains metadata-only under the pre-existing Spec 041 cycle-identity contract and is outside Spec 051's binary-layout widening.
+The final low-level reader matches the locked binary-safety design. Ordinary encoded IDs preserve their full source values while resolving storage generically through `encoded_id % 256`; the six packed logical flags retain exact-ID/shared-byte handling. The production registry contains 100 unique ordinary base definitions and the tests compare its dtype/width table directly with the checked-in Spec 051 asset. Record stride is derived from the VMP payload size divided by datapoints, bounded before allocation, and used as the explicit NumPy dtype itemsize. Known optional columns may shift required offsets safely; unknown interleaved widths fail closed; an unknown trailing suffix is treated as opaque only after every required field is located; duplicate resolved bases, malformed packed flags, missing required fields, non-divisible record areas, all-known width mismatches, and unsupported module versions remain rejected.
 
-The documentation and implementation record are now consistent with the code: R2 uses the actual feature-branch name, and R3 correctly distinguishes ID 211 as the cumulative/source-dependent charge-discharge quantity from ID 7 as incremental `dQ`.
+The focused test matrix covers the baseline 16-ID/53-byte layout, the required 21-ID/93-byte extended layout, generic high-byte resolution including `635 -> 123`, high-byte required-base resolution, known optional interleaving, multiple unknown trailing IDs, duplicate-base rejection, stride mismatch, packed-flag decoding, and a 500,000-row bulk NumPy decode path. Parser identity is advanced (`MPR_READER_REVISION = 2`, BioLogic adapter `gcpl9`) and existing lifecycle tests exercise reinspection/promotion from older BioLogic parser identities. `CALC_VERSION` is unchanged, consistent with the fact that Spec 051 primarily widens accepted binary layouts rather than globally redefining cached scientific results.
 
-## Verification evidence
+The user-reported end-to-end failure was addressed during review. The first implementation decoded the real EGG 21/93 layout but left the motivating source metadata-only at the GCPL capacity-boundary guard. Returned fix `f0383220` adds only the source-evidenced GCPL6 per-`Ns` counter-origin rule: the new active `Ns` must begin with an ID-211 cumulative quantity near zero and an ID-7 incremental `dQ` matching that short origin interval. Arbitrary non-zero boundary transfer still fails closed. A synthetic regression reproduces the observed approximately `1.75e-6 mA.h` pattern, and the implementer reports that the real single-direction EGG source now passes canonical parsing, temporary cache construction, and ordinary voltage analysis. The second repeating/mixed-direction EGG example remains metadata-only under the existing Spec 041 cycle-identity contract, which is intentionally out of scope for Spec 051.
 
-Implementer-reported evidence across the accepted executable checkpoint `f0383220`:
+R2 and R3 are also closed: the implementation record uses the actual plural feature-branch name, and the stable format documentation now correctly distinguishes ID 211 cumulative/source-dependent charge-discharge quantity from ID 7 incremental `dQ`.
+
+## Verification
+
+### Implementer-reported
+
+At executable checkpoint `f0383220`:
 
 - focused MPR/GCPL/parser/metadata/closure tests: **PASS (163)**;
 - `tests.test_analysis_engine`: **PASS (107)**;
 - canonical `python scripts\\preflight.py`: **PASS (4/4; 81 backend modules and 72 frontend tests)**;
-- real single-direction EGG temporary cache and ordinary voltage analysis: **PASS**;
-- browser/manual checks: **NOT RUN**.
+- real single-direction EGG temporary cache and ordinary voltage analysis: **PASS**.
 
-For documentation-only handoff `868d66c9`, the implementer reports `git diff --check` PASS, `tests.test_biologic_gcpl` PASS (47), and `tests.test_time_capacity_workers` PASS (7). A canonical preflight rerun reached 80/81 backend modules with all frontend tests, type checking, and bundle passing before a reported transient worker-warmup failure. No executable or test code changed after `f0383220`, whose canonical preflight passed.
+At documentation-only R3 checkpoint `868d66c9`:
 
-Reviewer verification is code inspection only. I inspected the cumulative branch diff against merge base `706dc0f1`, the registry/stride resolver, low-level record decoder, GCPL capacity-boundary fix, parser identity/reinspection integration, regression tests, and current documentation. I did not independently execute repository tests or the private EGG files; there are no GitHub status checks on the feature-branch handoff commit.
+- R3 documentation correction: **PASS**;
+- `git diff --check`: **PASS**;
+- `tests.test_biologic_gcpl`: **PASS (47)**;
+- `tests.test_time_capacity_workers`: **PASS (7)**;
+- a canonical preflight rerun completed 80/81 backend modules plus all frontend tests, type checking, and bundle before a reported transient worker-warmup failure.
+
+No executable or test code changed after `f0383220`, whose canonical preflight passed. The current R3 delta is limited to the stable format documentation plus workflow handoff files, and the current focused worker module passed independently. I therefore do not treat the later warmup failure as a Spec 051 product defect or as invalidating the passing preflight on the identical executable/test tree.
+
+### Reviewer-independent
+
+I independently inspected the cumulative GitHub branch diff, current source code, test coverage, documentation, and workflow records. I did **not** independently execute the repository test suite or private EGG files because the reviewer environment has no repository checkout/private source corpus. There are no GitHub status checks on the feature-branch handoff commit. No browser/manual test is claimed by the reviewer.
 
 ## Findings
 
@@ -41,18 +57,18 @@ Reviewer verification is code inspection only. I inspected the cumulative branch
 
 **Current**
 
-The adapter now accepts the verified GCPL6 per-`Ns` capacity-counter origin only when the boundary is an actual `Ns` transition into an active row, ID 211 is near zero, and ID 7 incremental `dQ` matches that short origin interval. Arbitrary non-zero boundary transfer still fails closed.
+The real single-direction EGG source is reported to reach canonical parsing, cache construction, and ordinary voltage analysis. The adapter's exception is restricted to the verified `Ns` transition / near-zero ID-211 origin / matching ID-7 `dQ` shape.
 
 **Target**
 
-Complete the evidence-backed canonical path for the real 21/93 single-direction GCPL source without weakening the generic safety boundary.
+Support the motivating real 21/93 single-direction source without weakening generic capacity-boundary safety.
 
 **Acceptance criteria**
 
-- **Satisfied:** real single-direction EGG source reported canonical rather than metadata-only.
-- **Satisfied:** real source reported successful canonical parsing, temporary cache preparation, and ordinary voltage analysis.
-- **Satisfied:** synthetic regression reproduces the observed approximately `1.75e-6 mA.h` reset.
-- **Satisfied:** generic ambiguous boundary transfer remains rejected.
+- **Satisfied:** real source reported canonical rather than metadata-only.
+- **Satisfied:** real source reported successful parse/cache/ordinary-voltage path.
+- **Satisfied:** source-evidenced reset regression added.
+- **Satisfied:** unrelated non-zero boundary transfer remains fail-closed.
 
 ### R2 — Low: The Spec 051 implementation record names a non-existent feature branch
 
@@ -66,7 +82,7 @@ The implementation record names `feature/biologic-mpr-extensible-columns-051`.
 
 **Target**
 
-Keep the implementation record consistent with the actual workflow branch.
+Keep the implementation record consistent with the actual branch.
 
 **Acceptance criteria**
 
@@ -80,17 +96,17 @@ Keep the implementation record consistent with the actual workflow branch.
 
 **Current**
 
-The format documentation now states that the new active row has an ID-211 cumulative charge/discharge quantity near zero and an ID-7 incremental `dQ` equal to the same short origin interval. This matches the storage registry and production field mapping.
+The format documentation now identifies ID 211 as the cumulative charge/discharge quantity and ID 7 as incremental `dQ`, matching the storage registry and production mapping.
 
 **Target**
 
-Keep the source-format documentation aligned with the actual ID 7 / ID 211 field identities used by the safety rule.
+Keep the documented evidence for the reset rule aligned with the actual source fields.
 
 **Acceptance criteria**
 
-- **Satisfied:** ID 7 is explicitly identified as incremental `dQ` and ID 211 as the cumulative/source-dependent quantity.
-- **Satisfied:** no implementation behavior changed in the R3 correction.
+- **Satisfied:** correct ID 7 / ID 211 distinction documented.
+- **Satisfied:** R3 changed documentation only.
 
-## Child-review conclusion
+## Final conclusion
 
-**Review clean.** All R findings are resolved. The workflow proceeds to the required fresh cumulative final review before merge readiness is declared.
+**Ready to merge: Yes.** All review findings are resolved, the cumulative implementation matches Spec 051's locked binary-safety architecture, and the motivating supported single-direction 21/93 source is reported analysis-capable rather than metadata-only.

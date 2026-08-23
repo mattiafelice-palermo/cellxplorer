@@ -7,10 +7,10 @@
     "051"
   ],
   "turn": "REVIEWER",
-  "action": "FINAL_REVIEW",
+  "action": "COMPLETE",
   "findings": [],
   "resume_review": null,
   "user_message_seq": 1,
   "pending_user_messages": [],
-  "updated_at": "2026-08-24T01:18:35+02:00"
+  "updated_at": "2026-08-24T01:19:52+02:00"
 }
