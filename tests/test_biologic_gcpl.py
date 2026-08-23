@@ -19,7 +19,7 @@ from backend.app.services.biologic_gcpl import (
     map_gcpl_to_canonical,
     read_gcpl_header_metadata,
 )
-from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE
+from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE, SUPPORTED_GCPL_COLUMN_IDS
 from tests.biologic_mpr_fixture import (
     encode_gcpl_records,
     encode_gcpl_settings,
@@ -118,6 +118,11 @@ def _map_rows(
     )
 
 
+_EXTENDED_COLUMN_IDS = (
+    1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468, 379, 124, 125, 126, 182
+)
+
+
 class BiologicGcplMappingTests(unittest.TestCase):
     def test_direct_identity_is_registered_without_user_extension_admission(self) -> None:
         self.assertEqual(parsing.recognize_source("source.mpr"), parsing.FORMAT_BIOLOGIC_MPR)
@@ -125,12 +130,39 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl8",
+                "adapter_revision": "gcpl9",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl8:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl9:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
+
+    def test_extended_registry_layout_preserves_canonical_output(self) -> None:
+        rows = [
+            _row(0.0, control=1.0, ns_changed=True),
+            _row(1.0, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        settings = encode_gcpl_settings([{"set_i_c": 0, "current": 1.0}])
+        with tempfile.TemporaryDirectory() as temp:
+            baseline = write_gcpl_mpr(
+                Path(temp) / "baseline.mpr",
+                rows,
+                settings_payload=settings,
+                column_ids=SUPPORTED_GCPL_COLUMN_IDS,
+            )
+            extended = write_gcpl_mpr(
+                Path(temp) / "extended.mpr",
+                rows,
+                settings_payload=settings,
+                column_ids=_EXTENDED_COLUMN_IDS,
+            )
+            baseline_frame = parsing.parse_timeseries(baseline)
+            extended_frame = parsing.parse_timeseries(extended)
+
+        self.assertEqual(
+            baseline_frame.to_dict(orient="list"),
+            extended_frame.to_dict(orient="list"),
+        )
 
     def test_single_direction_mpr_infers_cycle_one_without_full_cycle_field(self) -> None:
         rows = [

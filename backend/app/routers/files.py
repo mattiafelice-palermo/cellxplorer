@@ -418,7 +418,7 @@ def _raw_metadata_preview(raw: dict, limit: int = 80) -> dict[str, str]:
         elif key_string == "modules" and isinstance(value, (list, tuple)):
             candidates.append(("modules.count", len(value)))
         elif key_string == "data" and isinstance(value, dict):
-            for name in ("n_datapoints", "n_columns", "record_itemsize"):
+            for name in ("n_datapoints", "n_columns", "record_stride", "record_itemsize"):
                 if name in value and len(candidates) < limit:
                     candidates.append((f"data.{name}", value[name]))
         if len(candidates) >= limit:

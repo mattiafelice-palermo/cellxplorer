@@ -5,11 +5,11 @@ boundary.  GCPL semantics, protocol reconstruction, and user-facing source
 recognition belong to later Spec 041 children.
 
 The supported layout is the one independently observed in the supplied
-GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``: one exact
-16-column sequence with 53-byte records. Two-electrode semantic normalization
-is defined by the GCPL adapter, but no Ece-omitted packed binary layout is
-accepted until project-owned bytes establish its offsets and width. Unknown
-data layouts fail closed instead of being decoded by positional guesswork.
+GCPL6 sample and recorded in ``docs/biologic-mpr-format.md`` plus compatible
+layouts whose ordinary columns can be located from the project-owned storage
+registry. Full source encoded IDs remain evidence; ordinary storage resolves
+through ``encoded_id % 256``. Unknown widths fail closed unless they form a
+strict trailing opaque suffix after every required GCPL field has been found.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from .source_format_errors import (
 )
 
 
-MPR_READER_REVISION = 1
+MPR_READER_REVISION = 2
 MPR_INITIAL_HEADER_SIZE = 52
 MPR_MODULE_HEADER_SIZE = 65
 MPR_MODULE_MARKER = b"MODULE"
@@ -44,13 +44,14 @@ MPR_MAGIC = MPR_MAGIC_PREFIX + (b" " * 25) + (b"\x00" * 4)
 MPR_MAX_FILE_SIZE = 8 * 1024**3
 MPR_MAX_MODULE_COUNT = 32
 MPR_MAX_COLUMNS = 64
+MPR_MAX_RECORD_STRIDE = 1024 * 1024
 
 VMP_SET_VERSION = 10
 VMP_DATA_VERSION = 11
 VMP_LOG_VERSION = 10
 VMP_DATA_HEADER_SIZE = 37
 VMP_DATA_RECORD_OFFSET = 1007
-VMP_DATA_RECORD_ITEMSIZE = 53
+VMP_DATA_RECORD_ITEMSIZE = 53  # independently verified baseline, not a global decoder stride
 
 # These are the encoded column identifiers observed in the supported GCPL6
 # layout.  The byte order is independently established as big-endian uint16.
@@ -86,6 +87,7 @@ REQUIRED_GCPL_COLUMN_IDS = (
     211,
     468,
 )
+REQUIRED_GCPL_BASE_IDS = (131, 4, 7, 5, 6, 211, 212)
 MPR_PHYSICAL_COLUMN_IDS = (1, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468)
 
 
@@ -111,73 +113,284 @@ MPR_FLAG_DEFINITIONS = (
 
 
 @dataclass(frozen=True)
+class MprStorageDefinition:
+    """Project-owned binary storage facts for one ordinary base column."""
+
+    base_id: int
+    dtype: str
+    byte_width: int
+    label: str
+    unit: str | None = None
+    field_name: str | None = None
+    note: str = ""
+
+
+MPR_RECORD_FIELD_NAMES = {
+    4: "elapsed_time_s",
+    5: "raw_control_v_or_mA",
+    6: "raw_ewe_v",
+    7: "raw_dq_mAh",
+    9: "raw_ece_v",
+    13: "raw_q_minus_q0_mAh",
+    39: "raw_current_range_code",
+    131: "raw_sample_index",
+    211: "raw_q_charge_discharge_mAh",
+    212: "raw_half_cycle_index",
+}
+
+
+def _storage(
+    base_id: int,
+    dtype: str,
+    label: str,
+    unit: str | None = None,
+    *,
+    note: str = "",
+) -> MprStorageDefinition:
+    normalized = np.dtype(dtype)
+    return MprStorageDefinition(
+        base_id=base_id,
+        dtype=dtype,
+        byte_width=normalized.itemsize,
+        label=label,
+        unit=unit,
+        field_name=MPR_RECORD_FIELD_NAMES.get(base_id),
+        note=note,
+    )
+
+
+# This is the production copy of the 100 ordinary storage definitions in
+# docs/specs/assets/051-biologic-mpr-column-registry.md.  It intentionally
+# contains storage facts only; labels and units never promote a field into
+# canonical cycling output.
+MPR_STORAGE_REGISTRY = {
+    definition.base_id: definition
+    for definition in (
+        _storage(4, "<f8", "Elapsed time", "s"),
+        _storage(5, "<f4", "Control value", "V or mA"),
+        _storage(6, "<f4", "Working-electrode potential / technique-dependent potential", "V"),
+        _storage(7, "<f8", "Incremental charge", "mA·h"),
+        _storage(8, "<f4", "Current", "mA"),
+        _storage(9, "<f4", "Counter-electrode potential", "V"),
+        _storage(11, "<f8", "Mean current", "mA"),
+        _storage(13, "<f8", "Charge relative to origin", "mA·h"),
+        _storage(15, "<f4", "Phase of Z1", "deg"),
+        _storage(16, "<f4", "Analog input 1", "V"),
+        _storage(17, "<f4", "Analog input 2", "V"),
+        _storage(19, "<f4", "Voltage control value", "V"),
+        _storage(20, "<f4", "Current control value", "mA"),
+        _storage(23, "<f8", "Charge increment", "mA·h"),
+        _storage(24, "<f8", "Cycle number"),
+        _storage(32, "<f4", "Frequency", "Hz"),
+        _storage(33, "<f4", "Working-electrode voltage magnitude", "V"),
+        _storage(34, "<f4", "Current magnitude", "A"),
+        _storage(35, "<f4", "Impedance phase", "deg"),
+        _storage(36, "<f4", "Impedance magnitude", "Ω"),
+        _storage(37, "<f4", "Real impedance", "Ω"),
+        _storage(38, "<f4", "Negative imaginary impedance", "Ω"),
+        _storage(39, "<u2", "Current-range code"),
+        _storage(45, "<f4", "Z1 magnitude", "Ω"),
+        _storage(46, "<f4", "Z2 magnitude", "Ω"),
+        _storage(69, "<f4", "Working-electrode resistance", "Ω"),
+        _storage(70, "<f4", "Working-electrode power", "W"),
+        _storage(74, "<f8", "Energy magnitude", "W·h"),
+        _storage(75, "<f4", "Analog output", "V"),
+        _storage(76, "<f4", "Mean current", "mA"),
+        _storage(77, "<f4", "Mean working-electrode potential", "V"),
+        _storage(78, "<f4", "Inverse-square series capacitance", "µF⁻²"),
+        _storage(96, "<f4", "Counter-electrode voltage magnitude", "V"),
+        _storage(98, "<f4", "Counter-electrode impedance phase", "deg"),
+        _storage(99, "<f4", "Counter-electrode impedance magnitude", "Ω"),
+        _storage(100, "<f4", "Counter-electrode real impedance", "Ω"),
+        _storage(101, "<f4", "Counter-electrode negative imaginary impedance", "Ω"),
+        _storage(105, "<f4", "Negative imaginary Z1", "Ω"),
+        _storage(106, "<f4", "Negative imaginary Z2", "Ω"),
+        _storage(110, "<f8", "Counter-electrode energy", "W·h"),
+        _storage(112, "<f8", "Working-electrode energy", "W·h"),
+        _storage(115, "<f8", "Counter-electrode charge energy", "W·h"),
+        _storage(116, "<f8", "Counter-electrode discharge energy", "W·h"),
+        _storage(123, "<f8", "Working-electrode charge energy", "W·h"),
+        _storage(124, "<f8", "Working-electrode discharge energy", "W·h"),
+        _storage(125, "<f8", "Charge capacitance", "µF"),
+        _storage(126, "<f8", "Discharge capacitance", "µF"),
+        _storage(131, "<u2", "Sequence / Ns index"),
+        _storage(135, "<f4", "Mean E1 potential", "V"),
+        _storage(136, "<f4", "Mean E2 potential", "V"),
+        _storage(163, "<f4", "Stack-voltage magnitude", "V"),
+        _storage(166, "<f4", "Stack-impedance phase", "deg"),
+        _storage(167, "<f4", "Stack-impedance magnitude", "Ω"),
+        _storage(168, "<f4", "Compensation resistance", "Ω"),
+        _storage(169, "<f4", "Series capacitance", "µF"),
+        _storage(172, "<f4", "Parallel capacitance", "µF"),
+        _storage(173, "<f4", "Inverse-square parallel capacitance", "µF⁻²"),
+        _storage(174, "<f4", "Context-dependent mean working potential / impedance phase", "V or deg"),
+        _storage(175, "<f4", "Working-to-counter impedance magnitude", "Ω"),
+        _storage(176, "<f4", "Working-to-counter real impedance", "Ω"),
+        _storage(177, "<f4", "Working-to-counter negative imaginary impedance", "Ω"),
+        _storage(178, "<f4", "Charge relative to origin", "C"),
+        _storage(179, "<f4", "Charge increment", "C"),
+        _storage(182, "<f8", "Step elapsed time", "s"),
+        _storage(185, "<f4", "Mean counter-electrode potential", "V"),
+        _storage(206, "<f4", "Temperature", "°C"),
+        _storage(211, "<f8", "Charge/discharge quantity", "source/technique dependent"),
+        _storage(212, "<u4", "Half-cycle index"),
+        _storage(213, "<u4", "Z-cycle index"),
+        _storage(215, "<f4", "Mean counter-electrode potential", "V"),
+        _storage(217, "<f4", "Working-potential total harmonic distortion", "%"),
+        _storage(218, "<f4", "Current total harmonic distortion", "%"),
+        _storage(219, "<f4", "Counter-potential total harmonic distortion", "%"),
+        _storage(220, "<f4", "Working-potential noise spectral density", "%"),
+        _storage(221, "<f4", "Current noise spectral density", "%"),
+        _storage(222, "<f4", "Counter-potential noise spectral density", "%"),
+        _storage(223, "<f4", "Working-potential noise-to-response ratio", "%"),
+        _storage(224, "<f4", "Current noise-to-response ratio", "%"),
+        _storage(225, "<f4", "Counter-potential noise-to-response ratio", "%"),
+        _storage(230, "<f4", "Working-potential harmonic 2 magnitude", "V"),
+        _storage(231, "<f4", "Working-potential harmonic 3 magnitude", "V"),
+        _storage(232, "<f4", "Working-potential harmonic 4 magnitude", "V"),
+        _storage(233, "<f4", "Working-potential harmonic 5 magnitude", "V"),
+        _storage(234, "<f4", "Working-potential harmonic 6 magnitude", "V"),
+        _storage(235, "<f4", "Working-potential harmonic 7 magnitude", "V"),
+        _storage(236, "<f4", "Current harmonic 2 magnitude", "A"),
+        _storage(237, "<f4", "Current harmonic 3 magnitude", "A"),
+        _storage(238, "<f4", "Current harmonic 4 magnitude", "A"),
+        _storage(239, "<f4", "Current harmonic 5 magnitude", "A"),
+        _storage(240, "<f4", "Current harmonic 6 magnitude", "A"),
+        _storage(241, "<f4", "Current harmonic 7 magnitude", "A"),
+        _storage(242, "<f4", "Counter-potential harmonic 2 magnitude", "V"),
+        _storage(243, "<f4", "Counter-potential harmonic 3 magnitude", "V"),
+        _storage(244, "<f4", "Counter-potential harmonic 4 magnitude", "V"),
+        _storage(245, "<f4", "Counter-potential harmonic 5 magnitude", "V"),
+        _storage(246, "<f4", "Counter-potential harmonic 6 magnitude", "V"),
+        _storage(247, "<f4", "Counter-potential harmonic 7 magnitude", "V"),
+        _storage(248, "<f4", "AC resistance", "Ω"),
+        _storage(249, "<f4", "DC resistance", "Ω"),
+        _storage(253, "<u1", "ACIR/DCIR control code"),
+    )
+}
+
+if len(MPR_STORAGE_REGISTRY) != 100:
+    raise RuntimeError("Spec 051 storage registry must contain exactly 100 unique base IDs")
+for _storage_definition in MPR_STORAGE_REGISTRY.values():
+    if np.dtype(_storage_definition.dtype).itemsize != _storage_definition.byte_width:
+        raise RuntimeError("MPR storage registry dtype/width mismatch")
+
+
+@dataclass(frozen=True)
 class MprColumnDefinition:
-    """Independent description of one accepted encoded data-column ID."""
+    """Description of one encoded ID resolved to a storage definition."""
 
     encoded_id: int
+    base_id: int | None
     raw_name: str
     unit: str | None
     field_name: str | None
     record_offset: int | None
     dtype: str | None
+    byte_width: int
     note: str
     storage_kind: str
     physical_id: int
     flag_names: tuple[str, ...] = ()
 
 
-MPR_COLUMN_DEFINITIONS = {
-    1: MprColumnDefinition(1, "packed record flags / mode", None, "raw_flags", 0, "u1", "one physical byte and the mode logical ID", "packed_flags", 1, ("mode",)),
-    2: MprColumnDefinition(2, "oxidation-reduction/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("oxidation_reduction",)),
-    3: MprColumnDefinition(3, "error/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("error",)),
-    21: MprColumnDefinition(21, "control-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("control_changed",)),
-    31: MprColumnDefinition(31, "Ns-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("ns_changed",)),
-    65: MprColumnDefinition(65, "counter-increment/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("counter_incremented",)),
-    131: MprColumnDefinition(131, "sample sequence number", None, "raw_sample_index", 1, "<u2", "raw integer", "record_field", 131),
-    4: MprColumnDefinition(4, "elapsed time", "s", "elapsed_time_s", 3, "<f8", "raw elapsed time; not canonical step time", "record_field", 4),
-    7: MprColumnDefinition(7, "incremental charge", "mA.h", "raw_dq_mAh", 11, "<f8", "raw charge", "record_field", 7),
-    13: MprColumnDefinition(13, "charge relative to origin", "mA.h", "raw_q_minus_q0_mAh", 19, "<f8", "raw charge", "record_field", 13),
-    5: MprColumnDefinition(5, "control value", "V or mA", "raw_control_v_or_mA", 27, "<f4", "technique-dependent raw control", "record_field", 5),
-    6: MprColumnDefinition(6, "working-electrode potential bytes", "V", "raw_ewe_v", 31, "<f4", "raw Ewe-labeled value; GCPL adapter assigns the source role", "record_field", 6),
-    9: MprColumnDefinition(9, "counter-electrode potential bytes", "V", "raw_ece_v", 35, "<f4", "raw Ece-labeled value; GCPL adapter assigns the source role", "record_field", 9),
-    39: MprColumnDefinition(39, "current range", None, "raw_current_range_code", 39, "<u2", "raw integer code", "record_field", 39),
-    211: MprColumnDefinition(211, "charge/discharge quantity", "mA.h", "raw_q_charge_discharge_mAh", 41, "<f8", "raw charge", "record_field", 211),
-    468: MprColumnDefinition(468, "half-cycle index bytes", None, "raw_half_cycle_index", 49, "<u4", "full encoded ID; do not truncate to 212", "record_field", 468),
+def _column_from_storage(
+    encoded_id: int,
+    storage: MprStorageDefinition,
+    *,
+    note: str | None = None,
+) -> MprColumnDefinition:
+    return MprColumnDefinition(
+        encoded_id=encoded_id,
+        base_id=storage.base_id,
+        raw_name=storage.label,
+        unit=storage.unit,
+        field_name=storage.field_name,
+        record_offset=None,
+        dtype=storage.dtype,
+        byte_width=storage.byte_width,
+        note=note or storage.note,
+        storage_kind="record_field" if storage.field_name else "known_optional",
+        physical_id=storage.base_id,
+    )
+
+
+MPR_COLUMN_DEFINITIONS: dict[int, MprColumnDefinition] = {
+    base_id: _column_from_storage(base_id, storage)
+    for base_id, storage in MPR_STORAGE_REGISTRY.items()
 }
-
-if set(MPR_COLUMN_DEFINITIONS) != set(SUPPORTED_GCPL_COLUMN_IDS):
-    raise RuntimeError("MPR column definitions and supported-ID allowlist diverge")
-MPR_RECORD_DTYPE = np.dtype(
-    [
-        (MPR_COLUMN_DEFINITIONS[column_id].field_name, MPR_COLUMN_DEFINITIONS[column_id].dtype)
-        for column_id in MPR_PHYSICAL_COLUMN_IDS
-    ],
-    align=False,
+MPR_COLUMN_DEFINITIONS.update(
+    {
+        1: MprColumnDefinition(
+            1, None, "packed record flags / mode", None, "raw_flags", None,
+            "<u1", 1, "one physical byte and the mode logical ID", "packed_flags", 1, ("mode",)
+        ),
+        2: MprColumnDefinition(
+            2, None, "oxidation-reduction/flag logical ID", None, "raw_flags", None,
+            "<u1", 1, "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("oxidation_reduction",)
+        ),
+        3: MprColumnDefinition(
+            3, None, "error/flag logical ID", None, "raw_flags", None,
+            "<u1", 1, "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("error",)
+        ),
+        21: MprColumnDefinition(
+            21, None, "control-change/flag logical ID", None, "raw_flags", None,
+            "<u1", 1, "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("control_changed",)
+        ),
+        31: MprColumnDefinition(
+            31, None, "Ns-change/flag logical ID", None, "raw_flags", None,
+            "<u1", 1, "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("ns_changed",)
+        ),
+        65: MprColumnDefinition(
+            65, None, "counter-increment/flag logical ID", None, "raw_flags", None,
+            "<u1", 1, "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("counter_incremented",)
+        ),
+    }
 )
-
-for _column_id in MPR_PHYSICAL_COLUMN_IDS:
-    _definition = MPR_COLUMN_DEFINITIONS[_column_id]
-    assert _definition.field_name is not None
-    assert _definition.dtype is not None
-    assert MPR_RECORD_DTYPE.fields[_definition.field_name][1] == _definition.record_offset
-
-for _column_id in SUPPORTED_GCPL_COLUMN_IDS:
-    _definition = MPR_COLUMN_DEFINITIONS[_column_id]
-    _physical = MPR_COLUMN_DEFINITIONS[_definition.physical_id]
-    assert _definition.field_name == _physical.field_name
-    assert _definition.record_offset == _physical.record_offset
-    assert _definition.dtype == _physical.dtype
+for _alias_id, _base_id in ((379, 123), (468, 212)):
+    MPR_COLUMN_DEFINITIONS[_alias_id] = _column_from_storage(
+        _alias_id,
+        MPR_STORAGE_REGISTRY[_base_id],
+        note=f"full encoded ID resolves through base ID {_base_id}",
+    )
 
 MPR_FLAG_ALIAS_IDS = (2, 3, 21, 31, 65)
-if tuple(
-    column_id
-    for column_id in SUPPORTED_GCPL_COLUMN_IDS
-    if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "packed_flag_alias"
-) != MPR_FLAG_ALIAS_IDS:
-    raise RuntimeError("MPR packed-flag definitions and supported-ID order diverge")
+if tuple(definition.encoded_id for definition in MPR_FLAG_DEFINITIONS) != (1, 2, 3, 21, 31, 65):
+    raise RuntimeError("MPR packed-flag definitions and encoded IDs diverge")
 for _flag_definition in MPR_FLAG_DEFINITIONS:
     if _flag_definition.name not in MPR_COLUMN_DEFINITIONS[_flag_definition.encoded_id].flag_names:
         raise RuntimeError("MPR flag and column-definition metadata diverge")
+
+_MPR_BASELINE_OFFSETS = {
+    1: 0,
+    131: 1,
+    4: 3,
+    7: 11,
+    13: 19,
+    5: 27,
+    6: 31,
+    9: 35,
+    39: 39,
+    211: 41,
+    212: 49,
+}
+MPR_RECORD_DTYPE = np.dtype(
+    {
+        "names": [MPR_COLUMN_DEFINITIONS[base_id].field_name for base_id in MPR_PHYSICAL_COLUMN_IDS],
+        "formats": [MPR_COLUMN_DEFINITIONS[base_id].dtype for base_id in MPR_PHYSICAL_COLUMN_IDS],
+        "offsets": [
+            _MPR_BASELINE_OFFSETS[MPR_COLUMN_DEFINITIONS[base_id].base_id or base_id]
+            for base_id in MPR_PHYSICAL_COLUMN_IDS
+        ],
+        "itemsize": VMP_DATA_RECORD_ITEMSIZE,
+    }
+)
+if MPR_RECORD_DTYPE.itemsize != VMP_DATA_RECORD_ITEMSIZE:
+    raise RuntimeError("MPR baseline dtype itemsize changed")
+for _base_id, _offset in _MPR_BASELINE_OFFSETS.items():
+    _field_name = MPR_COLUMN_DEFINITIONS[_base_id].field_name
+    if _field_name is None or MPR_RECORD_DTYPE.fields[_field_name][1] != _offset:
+        raise RuntimeError("MPR baseline field offsets diverge from verified layout")
 
 
 def _decode_flags(records: np.ndarray) -> dict[str, np.ndarray]:
@@ -192,29 +405,176 @@ def _decode_flags(records: np.ndarray) -> dict[str, np.ndarray]:
     }
 
 
-def _record_dtype_for_columns(column_ids: tuple[int, ...]) -> np.dtype:
-    """Build the packed dtype for one verified column-ID sequence.
+@dataclass(frozen=True)
+class _ResolvedMprLayout:
+    record_dtype: np.dtype
+    resolved_base_ids: tuple[int | None, ...]
+    field_offsets: dict[str, int]
+    ignored_known_column_ids: tuple[int, ...]
+    opaque_trailing_column_ids: tuple[int, ...]
+    opaque_trailing_base_ids: tuple[int, ...]
 
-    Flag aliases share one physical byte. The remaining accepted fields are
-    fixed-width and retain the source header order; no unknown width is ever
-    inferred. The production reader calls this only after the exact observed
-    full sequence has been accepted.
+
+_PACKED_FLAG_IDS = frozenset(definition.encoded_id for definition in MPR_FLAG_DEFINITIONS)
+_REQUIRED_FLAG_IDS = _PACKED_FLAG_IDS
+_REQUIRED_BASE_ID_SET = frozenset(REQUIRED_GCPL_BASE_IDS)
+
+
+def _record_dtype_for_columns(
+    column_ids: tuple[int, ...],
+    *,
+    record_stride: int | None = None,
+) -> np.dtype:
+    """Build an explicit-offset dtype for a resolved source layout.
+
+    ``record_stride`` is required for production decoding.  The optional
+    default keeps this helper useful to focused tests that only need to
+    inspect the baseline field set; it does not permit the reader to infer a
+    stride from selected fields.
     """
 
-    fields: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for column_id in column_ids:
-        definition = MPR_COLUMN_DEFINITIONS[column_id]
-        physical = MPR_COLUMN_DEFINITIONS[definition.physical_id]
-        if physical.field_name is None or physical.dtype is None:
-            raise UnsupportedMprColumn(
-                f"VMP column {column_id} has no verified physical record definition"
-            )
-        if physical.field_name in seen:
+    if record_stride is None:
+        record_stride = VMP_DATA_RECORD_ITEMSIZE
+    return _resolve_column_layout(column_ids, record_stride=record_stride).record_dtype
+
+
+def _resolve_column_layout(
+    column_ids: tuple[int, ...],
+    *,
+    record_stride: int,
+) -> _ResolvedMprLayout:
+    """Resolve one declared column sequence without guessing unknown widths."""
+
+    if record_stride <= 0 or record_stride > MPR_MAX_RECORD_STRIDE:
+        raise InvalidMprError(
+            f"VMP record stride {record_stride} is outside the safe range"
+        )
+
+    cursor = 0
+    seen_flags: set[int] = set()
+    seen_bases: set[int] = set()
+    resolved_base_ids: list[int | None] = []
+    field_offsets: dict[str, int] = {}
+    field_formats: dict[str, str] = {}
+    ignored_known_column_ids: list[int] = []
+    opaque_trailing_column_ids: list[int] = []
+    opaque_trailing_base_ids: list[int] = []
+    opaque_started = False
+
+    def required_fields_located() -> bool:
+        return seen_flags == _REQUIRED_FLAG_IDS and _REQUIRED_BASE_ID_SET.issubset(seen_bases)
+
+    for encoded_id in column_ids:
+        if encoded_id in _PACKED_FLAG_IDS:
+            resolved_base_ids.append(None)
+            if opaque_started:
+                raise UnsupportedMprColumn(
+                    f"VMP packed flag ID {encoded_id} appears after an opaque unknown suffix"
+                )
+            if encoded_id in seen_flags:
+                raise UnsupportedMprColumn(
+                    f"VMP column ID {encoded_id} repeats a packed logical flag"
+                )
+            if encoded_id != 1 and 1 not in seen_flags:
+                raise UnsupportedMprColumn(
+                    f"VMP packed flag alias {encoded_id} appears before physical flag ID 1"
+                )
+            seen_flags.add(encoded_id)
+            if encoded_id == 1:
+                field_offsets["raw_flags"] = cursor
+                field_formats["raw_flags"] = "<u1"
+                cursor += 1
             continue
-        seen.add(physical.field_name)
-        fields.append((physical.field_name, physical.dtype))
-    return np.dtype(fields, align=False)
+
+        base_id = int(encoded_id) % 256
+        resolved_base_ids.append(base_id)
+        if opaque_started:
+            if base_id in _REQUIRED_BASE_ID_SET:
+                raise UnsupportedMprColumn(
+                    f"required VMP base ID {base_id} appears after an opaque unknown suffix"
+                )
+            opaque_trailing_column_ids.append(encoded_id)
+            opaque_trailing_base_ids.append(base_id)
+            continue
+
+        storage = MPR_STORAGE_REGISTRY.get(base_id)
+        if storage is None:
+            if not required_fields_located():
+                raise UnsupportedMprColumn(
+                    f"VMP column ID {encoded_id} resolves to unknown base ID {base_id} "
+                    "before all required GCPL fields are located"
+                )
+            opaque_started = True
+            opaque_trailing_column_ids.append(encoded_id)
+            opaque_trailing_base_ids.append(base_id)
+            continue
+
+        if base_id in seen_bases:
+            raise UnsupportedMprColumn(
+                f"VMP encoded column ID {encoded_id} resolves to duplicate base ID {base_id}"
+            )
+        seen_bases.add(base_id)
+        if storage.field_name is None:
+            ignored_known_column_ids.append(encoded_id)
+        else:
+            if storage.field_name in field_offsets:
+                raise UnsupportedMprColumn(
+                    f"VMP base ID {base_id} would overlap field {storage.field_name!r}"
+                )
+            field_offsets[storage.field_name] = cursor
+            field_formats[storage.field_name] = storage.dtype
+        cursor += storage.byte_width
+
+    missing_flags = sorted(_REQUIRED_FLAG_IDS - seen_flags)
+    if missing_flags:
+        raise UnsupportedMprColumn(
+            f"VMP data is missing required packed GCPL flag IDs: {missing_flags}"
+        )
+    missing_bases = sorted(_REQUIRED_BASE_ID_SET - seen_bases)
+    if missing_bases:
+        raise UnsupportedMprColumn(
+            f"VMP data is missing required GCPL base IDs: {missing_bases}"
+        )
+
+    if opaque_started:
+        if cursor > record_stride:
+            raise InvalidMprError(
+                f"VMP known column prefix is {cursor} bytes but record stride is {record_stride}"
+            )
+        if cursor == record_stride:
+            raise InvalidMprError(
+                "VMP declares an opaque trailing column suffix without any remaining record bytes"
+            )
+    elif cursor != record_stride:
+        raise InvalidMprError(
+            f"VMP registry-derived record width is {cursor} bytes; observed stride is {record_stride}"
+        )
+
+    names = list(field_offsets)
+    formats = [field_formats[name] for name in names]
+    offsets = [field_offsets[name] for name in names]
+    for name, offset, dtype in zip(names, offsets, formats):
+        width = np.dtype(dtype).itemsize
+        if offset < 0 or offset + width > record_stride:
+            raise InvalidMprError(
+                f"VMP field {name!r} at offset {offset} extends beyond record stride {record_stride}"
+            )
+    record_dtype = np.dtype(
+        {
+            "names": names,
+            "formats": formats,
+            "offsets": offsets,
+            "itemsize": record_stride,
+        }
+    )
+    return _ResolvedMprLayout(
+        record_dtype=record_dtype,
+        resolved_base_ids=tuple(resolved_base_ids),
+        field_offsets=dict(field_offsets),
+        ignored_known_column_ids=tuple(ignored_known_column_ids),
+        opaque_trailing_column_ids=tuple(opaque_trailing_column_ids),
+        opaque_trailing_base_ids=tuple(opaque_trailing_base_ids),
+    )
 
 
 class MprError(SourceFormatError):
@@ -300,11 +660,28 @@ class MprDataBlock:
     n_columns: int
     column_ids: tuple[int, ...]
     record_offset: int
-    record_itemsize: int
+    record_stride: int
+    resolved_base_ids: tuple[int | None, ...]
+    field_offsets: dict[str, int]
+    ignored_known_column_ids: tuple[int, ...]
+    opaque_trailing_column_ids: tuple[int, ...]
+    opaque_trailing_base_ids: tuple[int, ...]
     records: np.ndarray | None
     flags: dict[str, np.ndarray]
     _payload_view: memoryview = field(repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def record_itemsize(self) -> int:
+        """Compatibility name for the validated per-source record stride."""
+
+        return self.record_stride
+
+    @property
+    def resolved_base_id_set(self) -> frozenset[int]:
+        """Return ordinary base IDs resolved from the declared sequence."""
+
+        return frozenset(base_id for base_id in self.resolved_base_ids if base_id is not None)
 
     @property
     def payload(self) -> memoryview:
@@ -488,40 +865,25 @@ def _decode_vmp_data(
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP column header")
 
         column_ids = tuple(struct.unpack_from(f">{n_columns}H", payload, 5))
-        unknown_ids = sorted(set(column_ids) - SUPPORTED_GCPL_COLUMN_ID_SET)
-        if unknown_ids:
-            raise UnsupportedMprColumn(
-                f"{_source_label(path)} uses unsupported VMP column IDs: {unknown_ids}"
-            )
         if len(set(column_ids)) != len(column_ids):
             raise UnsupportedMprColumn(f"{_source_label(path)} repeats a VMP column ID")
-        if column_ids != SUPPORTED_GCPL_COLUMN_IDS:
-            raise UnsupportedMprColumn(
-                f"{_source_label(path)} uses an unsupported VMP column ordering/layout; "
-                "only the verified 53-byte three-electrode sequence is supported"
-            )
-        missing_required = sorted(set(REQUIRED_GCPL_COLUMN_IDS) - set(column_ids))
-        if missing_required:
-            raise UnsupportedMprColumn(
-                f"{_source_label(path)} is missing required GCPL column IDs: {missing_required}"
-            )
 
         if len(payload) < VMP_DATA_RECORD_OFFSET:
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP data prefix")
 
-        record_dtype = _record_dtype_for_columns(column_ids)
-        record_itemsize = record_dtype.itemsize
         data_bytes = len(payload) - VMP_DATA_RECORD_OFFSET
-        if n_datapoints > data_bytes // record_itemsize:
+        if data_bytes % n_datapoints != 0:
             raise InvalidMprError(
-                f"{_source_label(path)} declares more VMP datapoints than its record area can hold"
+                f"{_source_label(path)} VMP record area of {data_bytes} bytes is not divisible "
+                f"by {n_datapoints} datapoints"
             )
-        expected_bytes = n_datapoints * record_itemsize
-        if data_bytes != expected_bytes:
+        record_stride = data_bytes // n_datapoints
+        if record_stride <= 0 or record_stride > MPR_MAX_RECORD_STRIDE:
             raise InvalidMprError(
-                f"{_source_label(path)} VMP record area is {data_bytes} bytes; "
-                f"expected {expected_bytes} for {n_datapoints} typed records"
+                f"{_source_label(path)} has unsafe VMP record stride {record_stride}"
             )
+        layout = _resolve_column_layout(column_ids, record_stride=record_stride)
+        record_dtype = layout.record_dtype
 
         records: np.ndarray | None = None
         flags: dict[str, np.ndarray] = {}
@@ -545,7 +907,12 @@ def _decode_vmp_data(
             n_columns=n_columns,
             column_ids=column_ids,
             record_offset=VMP_DATA_RECORD_OFFSET,
-            record_itemsize=record_itemsize,
+            record_stride=record_stride,
+            resolved_base_ids=layout.resolved_base_ids,
+            field_offsets=layout.field_offsets,
+            ignored_known_column_ids=layout.ignored_known_column_ids,
+            opaque_trailing_column_ids=layout.opaque_trailing_column_ids,
+            opaque_trailing_base_ids=layout.opaque_trailing_base_ids,
             records=records,
             flags=flags,
             _payload_view=payload,
@@ -718,13 +1085,17 @@ __all__ = [
     "MPR_MAGIC_PREFIX",
     "MPR_MAX_FILE_SIZE",
     "MPR_MAX_MODULE_COUNT",
+    "MPR_MAX_RECORD_STRIDE",
     "MPR_RECORD_DTYPE",
+    "MPR_STORAGE_REGISTRY",
     "REQUIRED_GCPL_COLUMN_IDS",
+    "REQUIRED_GCPL_BASE_IDS",
     "MprDataBlock",
     "MprDocument",
     "MprError",
     "MprColumnDefinition",
     "MprFlagDefinition",
+    "MprStorageDefinition",
     "MprModule",
     "MPR_READER_REVISION",
     "SUPPORTED_GCPL_COLUMN_IDS",

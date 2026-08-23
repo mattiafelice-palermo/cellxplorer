@@ -425,22 +425,24 @@ RAW_COLUMNS = {
 # before it can receive the new identity. ``gcpl5`` and ``gcpl6`` are previous
 # identities whose MPR fallback output must be re-inspected after the
 # candidate/verified boundary and declared-direction checks changed. ``gcpl7``
-# is also historical now: gcpl8 widened the accepted contract for a
-# header-proven neutral setup/control preamble, so both previously canonical
-# and previously failed gcpl7 rows must pass the current source-reading path
-# before receiving gcpl8.
+# and ``gcpl8`` are also historical now: gcpl8 widened the accepted contract
+# for a header-proven neutral setup/control preamble, and gcpl9 widens the
+# binary column-layout contract. Sources under either identity must pass the
+# current source-reading path before receiving gcpl9.
 # Keep these sets explicit so a later BioLogic revision can add its own
 # bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
 PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl4:r1"})
 LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
-    {"bm:gcpl5:r1", "bm:gcpl6:r1", "bm:gcpl7:r1"}
+    {"bm:gcpl5:r1", "bm:gcpl6:r1", "bm:gcpl7:r1", "bm:gcpl8:r1"}
 )
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
     RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
     | PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES
 )
-BIOLOGIC_MPR_VERIFIED_LAYOUT = "observed_16_id_53_byte"
+# Symbolic migration result: the current value means a registry-resolved
+# layout, not one exact column count or record width.
+BIOLOGIC_MPR_VERIFIED_LAYOUT = "registry_resolved_gcpl_layout"
 BIOLOGIC_MPR_WITHDRAWN_LAYOUT = "withdrawn_15_id_49_byte"
 BIOLOGIC_MPR_UNKNOWN_LAYOUT = "unknown_or_unrecorded"
 RETIRED_BIOLOGIC_MPR_WARNING = (
@@ -449,20 +451,20 @@ RETIRED_BIOLOGIC_MPR_WARNING = (
     "verified; this source is metadata-only."
 )
 BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING = (
-    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current post-R8 "
-    "identity from stored observed 16-ID/53-byte layout evidence; canonical "
+    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl9 "
+    "identity from stored registry-resolved layout evidence; canonical "
     "cycling remains unavailable until logical cycle identity is independently "
     "verified, so this source is metadata-only."
 )
 BIOLOGIC_MPR_REINSPECTION_WARNING = (
-    "This BioLogic MPR was registered under the pre-R8 parser identity, but its "
-    "stored binary-layout evidence does not prove the observed 16-ID/53-byte "
+    "This BioLogic MPR was registered under the pre-gcpl9 parser identity, but "
+    "its stored binary-layout evidence does not prove a safe registry-resolved "
     "layout. Re-inspect the source before using it; it remains metadata-only."
 )
 BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING = (
     "This BioLogic MPR was registered under a previous parser identity before "
-    "the single-direction candidate/verified boundary and declared-direction "
-    "checks were added. Re-inspect the source before using it; it remains "
+    "the current single-direction and extensible-column contracts. Re-inspect "
+    "the source before using it; it remains "
     "metadata-only until the upgrade is verified."
 )
 
@@ -727,11 +729,6 @@ def persisted_biologic_mpr_layout(source: object) -> str | None:
     if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
         return None
     saw_data_header = False
-    withdrawn_column_ids = tuple(
-        column_id
-        for column_id in biologic_mpr.SUPPORTED_GCPL_COLUMN_IDS
-        if column_id != 9
-    )
     for container in _biologic_mpr_header_containers(getattr(source, "header_meta", None)):
         data = container.get("data")
         if not isinstance(data, dict):
@@ -741,23 +738,23 @@ def persisted_biologic_mpr_layout(source: object) -> str | None:
             n_columns = int(data.get("n_columns"))
             column_ids = tuple(int(value) for value in data.get("column_ids") or ())
             record_offset = int(data.get("record_offset"))
-            record_itemsize = int(data.get("record_itemsize"))
+            # ``record_itemsize`` is the historical persisted key and some
+            # pre-gcpl9 reconciliation records only update that field.
+            record_stride = int(data.get("record_itemsize", data.get("record_stride")))
         except (TypeError, ValueError):
             continue
         if (
-            n_columns == len(biologic_mpr.SUPPORTED_GCPL_COLUMN_IDS)
-            and column_ids == biologic_mpr.SUPPORTED_GCPL_COLUMN_IDS
+            n_columns == len(column_ids)
             and record_offset == biologic_mpr.VMP_DATA_RECORD_OFFSET
-            and record_itemsize == biologic_mpr.VMP_DATA_RECORD_ITEMSIZE
         ):
+            try:
+                biologic_mpr._resolve_column_layout(
+                    column_ids,
+                    record_stride=record_stride,
+                )
+            except (biologic_mpr.MprError, TypeError, ValueError):
+                continue
             return BIOLOGIC_MPR_VERIFIED_LAYOUT
-        if (
-            n_columns == len(withdrawn_column_ids)
-            and column_ids == withdrawn_column_ids
-            and record_offset == biologic_mpr.VMP_DATA_RECORD_OFFSET
-            and record_itemsize == 49
-        ):
-            return BIOLOGIC_MPR_WITHDRAWN_LAYOUT
     return BIOLOGIC_MPR_UNKNOWN_LAYOUT if saw_data_header else None
 
 

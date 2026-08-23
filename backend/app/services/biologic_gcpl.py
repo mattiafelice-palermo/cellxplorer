@@ -6,7 +6,7 @@ boundary: turning the supported GCPL record contract into the canonical
 CellXplorer cycling frame consumed by ``calc.py``, ``step_blocks.py`` and the
 cache layer.
 
-Only the verified GCPL layout from Spec 041.1 is accepted.  A source with an
+Only a registry-resolved GCPL layout from Specs 041.1 and 051 is accepted.  A source with an
 ambiguous control mode, direction, elapsed-time sequence, or capacity counter
 is rejected rather than being made to look like a plausible battery test.  A
 declared single-direction run is the one narrow exception to the otherwise
@@ -42,11 +42,12 @@ from .source_format_errors import (
 )
 
 
-# gcpl8 widens the single-direction contract to accept a header-proven
-# zero-current setup/control preamble. Keep this as a new parser identity so
-# registrations that failed under gcpl7 are explicitly re-inspected rather
-# than remaining stranded as current-identity metadata-only rows.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl8"
+# gcpl9 widens the low-level MPR binary contract to resolve ordinary columns
+# through the project-owned modulo-256 storage registry. Keep this as a new
+# parser identity so sources rejected or stored as metadata-only under gcpl8
+# are explicitly re-inspected rather than remaining stranded at the old
+# exact-layout boundary.
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl9"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by
@@ -885,9 +886,9 @@ def _voltage_capabilities_for_document(
     document: MprDocument,
     reference_electrode: str | None,
 ) -> dict[str, Any]:
-    column_ids = set(document.vmp_data.column_ids)
-    working = 6 in column_ids
-    counter = 9 in column_ids
+    resolved_base_ids = document.vmp_data.resolved_base_id_set
+    working = 6 in resolved_base_ids
+    counter = 9 in resolved_base_ids
     if working and counter:
         # The verified three-electrode layout contains Ewe/Ece and no
         # separately decoded Ecell field, so the canonical cell voltage is
@@ -989,8 +990,14 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
         "n_datapoints": document.vmp_data.n_datapoints,
         "n_columns": document.vmp_data.n_columns,
         "column_ids": list(document.vmp_data.column_ids),
+        "resolved_base_ids": list(document.vmp_data.resolved_base_ids),
         "record_offset": document.vmp_data.record_offset,
+        "record_stride": document.vmp_data.record_stride,
         "record_itemsize": document.vmp_data.record_itemsize,
+        "field_offsets": dict(document.vmp_data.field_offsets),
+        "ignored_known_column_ids": list(document.vmp_data.ignored_known_column_ids),
+        "opaque_trailing_column_ids": list(document.vmp_data.opaque_trailing_column_ids),
+        "opaque_trailing_base_ids": list(document.vmp_data.opaque_trailing_base_ids),
     }
     module_headers = [
         {

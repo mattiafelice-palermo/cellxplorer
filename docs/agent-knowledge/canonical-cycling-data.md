@@ -120,14 +120,18 @@ quantity is still `voltage_v`.
 
 `working_potential_v` and `counter_potential_v` are the canonical names for a
 source's synchronized electrode potentials versus a reference. The BioLogic
-GCPL adapter (Spec 041.3, revision `gcpl8`) exposes these roles in bounded header
+GCPL adapter (Spec 041.3, revision `gcpl9`) exposes these roles in bounded header
 metadata when the bounded Ewe/Ece layout is present. It computes the
 signed primary cell voltage as `working_potential_v - counter_potential_v`,
-preserves the source roles, and exposes a measured Ewe-labelled primary only
-if a future reader layout independently verifies an Ece-omitted two-electrode
-source. The current MPR reader accepts only the observed 16-ID/53-byte
-three-electrode binary layout and rejects the unverified 15-ID/49-byte variant.
-It does not fabricate either auxiliary channel when the source does not establish it. The end-to-end path
+preserves the source roles, and exposes a measured Ewe-labelled primary when a
+registry-resolved Ece-omitted two-electrode layout independently verifies that
+source. The current MPR reader resolves ordinary encoded IDs through the Spec 051
+100-entry storage registry, derives and validates each source's actual record stride,
+and requires the GCPL adapter's required storage bases. The observed 16-ID/53-byte
+layout remains the baseline; registry-resolved optional and extended layouts are also
+safe when their declared widths match, while unknown widths fail closed unless they
+form a trailing opaque suffix. It does not fabricate either auxiliary channel when
+the source does not establish it. The end-to-end path
 remains canonical raw frame → Parquet cache → selective raw load →
 `stitch_raw` → Time/Capacity API/UI/export/saved-plot/portable path.
 
@@ -248,12 +252,12 @@ generic scientific service.
 
 The withdrawn `bm:gcpl3:r1` identity is not treated as a reproducible historical scientific
 result. On startup, the scanner performs a bounded database-only reconciliation for persisted MPR
-rows at that identity, changes them to the current `bm:gcpl8:r1` metadata-only registration, and
+rows at that identity, changes them to the current `bm:gcpl9:r1` metadata-only registration, and
 clears their live canonical counters. The same startup pass handles pre-R8 `bm:gcpl4:r1` rows
-without opening source files: stored data-header evidence proving the observed 16-ID/53-byte
-layout is brought to the current `bm:gcpl8:r1` metadata-only identity, while the withdrawn
-15-ID/49-byte layout (or missing/ambiguous evidence) clears the parser identity and marks the
-source as metadata-only with `requires_reinspection=true`. Old identity-keyed caches may remain
+without opening source files: stored data-header evidence proving a registry-resolved layout is
+brought to the current `bm:gcpl9:r1` metadata-only identity, while missing, ambiguous, or
+non-resolvable evidence clears the parser identity and marks the source as metadata-only with
+`requires_reinspection=true`. Old identity-keyed caches may remain
 for later forensic cleanup, but the persisted capability gate blocks saved-artifact reads and
 writes, previews, recompute, warmup, and portable scientific export from consuming them. The
 warmup completion boundary repeats the check so a task admitted before retirement cannot inspect
@@ -267,7 +271,7 @@ transition does not change `CALC_VERSION`. Sources registered under the immediat
 `bm:gcpl5:r1`, `bm:gcpl6:r1`, or `bm:gcpl7:r1` identity are re-inspected through the current
 header/full-parse path
 before they can use the new single-direction capability; offline sources remain blocked until
-relinked. The `gcpl8` candidate/verified boundary is the live contract, so a failed row proof is
+relinked. The `gcpl9` candidate/verified boundary is the live contract, so a failed row proof is
 metadata-only rather than a generic parse error with canonical capability left visible.
 
 ## 8. How a future source format should map into the contract

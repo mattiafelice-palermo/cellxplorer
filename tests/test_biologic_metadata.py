@@ -58,9 +58,31 @@ def _settings(*, reference_electrode: str | None = "Ag/AgCl") -> bytes:
 
 
 _HEADER_ROWS = [{"total_time_s": 0.0}]
+_EXTENDED_COLUMN_IDS = (
+    1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468, 379, 124, 125, 126, 182
+)
 
 
 class BiologicMetadataTests(unittest.TestCase):
+    def test_extended_data_header_persists_layout_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "extended.mpr",
+                _HEADER_ROWS,
+                settings_payload=_settings(),
+                column_ids=_EXTENDED_COLUMN_IDS,
+            )
+            metadata = parsing.read_header_metadata(path)
+
+        data = metadata["raw"]["data"]
+        self.assertEqual(data["column_ids"], list(_EXTENDED_COLUMN_IDS))
+        self.assertEqual(data["record_stride"], 93)
+        self.assertEqual(data["record_itemsize"], 93)
+        self.assertEqual(data["resolved_base_ids"][-5:], [123, 124, 125, 126, 182])
+        self.assertEqual(data["ignored_known_column_ids"], [379, 124, 125, 126, 182])
+        self.assertEqual(data["opaque_trailing_column_ids"], [])
+        self.assertEqual(data["opaque_trailing_base_ids"], [])
+
     def test_modern_settings_log_and_protocol_are_normalized(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(

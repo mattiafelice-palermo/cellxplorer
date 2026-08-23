@@ -17,7 +17,6 @@ from backend.app.services.biologic_mpr import (
     MPR_MODULE_HEADER_SIZE,
     SUPPORTED_GCPL_COLUMN_IDS,
     VMP_DATA_RECORD_OFFSET,
-    VMP_DATA_RECORD_ITEMSIZE,
 )
 
 
@@ -39,12 +38,46 @@ def _module(
     return header + payload
 
 
-def encode_gcpl_records(rows: Sequence[Mapping[str, object]]) -> bytes:
-    """Encode semantic rows into the verified 53-byte physical record area."""
+_FIXTURE_ORDINARY_FIELDS = {
+    131: ("<H", 2, "ns", 1),
+    4: ("<d", 8, "total_time_s", 0.0),
+    7: ("<d", 8, "raw_dq_mAh", 0.0),
+    13: ("<d", 8, "raw_q_minus_q0_mAh", 0.0),
+    5: ("<f", 4, "control", 0.0),
+    6: ("<f", 4, "ewe_v", 3.5),
+    9: ("<f", 4, "ece_v", 0.0),
+    39: ("<H", 2, "current_range_code", 10),
+    211: ("<d", 8, "q_mAh", 0.0),
+    212: ("<I", 4, "half_cycle", 0),
+    123: ("<d", 8, "working_charge_energy", 0.0),
+    124: ("<d", 8, "working_discharge_energy", 0.0),
+    125: ("<d", 8, "charge_capacitance", 0.0),
+    126: ("<d", 8, "discharge_capacitance", 0.0),
+    182: ("<d", 8, "step_elapsed_time_s", 0.0),
+}
+_FIXTURE_FLAG_IDS = {1, 2, 3, 21, 31, 65}
 
-    records = bytearray(len(rows) * VMP_DATA_RECORD_ITEMSIZE)
+
+def encode_gcpl_records(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    column_ids: Sequence[int] = SUPPORTED_GCPL_COLUMN_IDS,
+) -> bytes:
+    """Encode semantic rows into a declared column sequence independently."""
+
+    cursor = 0
+    for encoded_id in column_ids:
+        if encoded_id in _FIXTURE_FLAG_IDS:
+            if encoded_id == 1:
+                cursor += 1
+            continue
+        field = _FIXTURE_ORDINARY_FIELDS.get(int(encoded_id) % 256)
+        if field is None:
+            raise ValueError(f"fixture has no byte definition for column {encoded_id}")
+        cursor += field[1]
+    record_itemsize = cursor
+    records = bytearray(len(rows) * record_itemsize)
     for index, row in enumerate(rows):
-        base = index * VMP_DATA_RECORD_ITEMSIZE
         mode = int(row.get("mode", 1))
         flags = mode & 0x03
         if row.get("oxidation_reduction", False):
@@ -57,22 +90,25 @@ def encode_gcpl_records(rows: Sequence[Mapping[str, object]]) -> bytes:
             flags |= 0x20
         if row.get("counter_incremented", False):
             flags |= 0x80
-
-        field_specs = (
-            (0, "<B", flags),
-            (1, "<H", int(row.get("ns", 1))),
-            (3, "<d", float(row["total_time_s"])),
-            (11, "<d", float(row.get("raw_dq_mAh", 0.0))),
-            (19, "<d", float(row.get("raw_q_minus_q0_mAh", row.get("q_mAh", 0.0)))),
-            (27, "<f", float(row.get("control", 0.0))),
-            (31, "<f", float(row.get("ewe_v", 3.5))),
-            (35, "<f", float(row.get("ece_v", 0.0))),
-            (39, "<H", int(row.get("current_range_code", 10))),
-            (41, "<d", float(row.get("q_mAh", 0.0))),
-            (49, "<I", int(row.get("half_cycle", 0))),
-        )
-        for offset, format_string, value in field_specs:
-            struct.pack_into(format_string, records, base + offset, value)
+        base = index * record_itemsize
+        cursor = 0
+        for encoded_id in column_ids:
+            if encoded_id in _FIXTURE_FLAG_IDS:
+                if encoded_id == 1:
+                    struct.pack_into("<B", records, base + cursor, flags)
+                    cursor += 1
+                continue
+            format_string, width, key, default = _FIXTURE_ORDINARY_FIELDS[int(encoded_id) % 256]
+            value = row.get(key, default)
+            if key == "raw_q_minus_q0_mAh":
+                value = row.get(key, row.get("q_mAh", default))
+            struct.pack_into(
+                format_string,
+                records,
+                base + cursor,
+                int(value) if format_string in {"<H", "<I"} else float(value),
+            )
+            cursor += width
     return bytes(records)
 
 
@@ -180,14 +216,15 @@ def write_gcpl_mpr(
     settings_payload: bytes = b"settings",
     log_payload: bytes = b"log",
     include_log: bool = False,
+    column_ids: Sequence[int] = SUPPORTED_GCPL_COLUMN_IDS,
 ) -> Path:
     """Write a minimal VMP Set + VMP data MPR fixture."""
 
-    records = encode_gcpl_records(rows)
+    records = encode_gcpl_records(rows, column_ids=column_ids)
     data_payload = (
         struct.pack("<I", len(rows))
-        + bytes([len(SUPPORTED_GCPL_COLUMN_IDS)])
-        + struct.pack(f">{len(SUPPORTED_GCPL_COLUMN_IDS)}H", *SUPPORTED_GCPL_COLUMN_IDS)
+        + bytes([len(column_ids)])
+        + struct.pack(f">{len(column_ids)}H", *column_ids)
     )
     data_payload = data_payload.ljust(VMP_DATA_RECORD_OFFSET, b"\x00") + records
     modules = (

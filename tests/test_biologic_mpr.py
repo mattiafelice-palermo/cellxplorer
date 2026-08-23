@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import struct
 import tempfile
 import time
@@ -24,7 +25,9 @@ from backend.app.services.biologic_mpr import (
     MPR_FLAG_ALIAS_IDS,
     MPR_PHYSICAL_COLUMN_IDS,
     MPR_FLAG_DEFINITIONS,
+    MPR_STORAGE_REGISTRY,
     MPR_RECORD_DTYPE,
+    REQUIRED_GCPL_BASE_IDS,
     SUPPORTED_GCPL_COLUMN_IDS,
     UnsupportedMprColumn,
     UnsupportedMprError,
@@ -35,6 +38,29 @@ from backend.app.services.biologic_mpr import (
 
 
 _MAGIC_HEADER = MPR_MAGIC
+_EXTENDED_COLUMN_IDS = (
+    1,
+    2,
+    3,
+    21,
+    31,
+    65,
+    131,
+    4,
+    7,
+    13,
+    5,
+    6,
+    9,
+    39,
+    211,
+    468,
+    379,
+    124,
+    125,
+    126,
+    182,
+)
 
 
 def _module(
@@ -219,21 +245,24 @@ class BiologicMprReaderTests(unittest.TestCase):
             with read_mpr(path) as document:
                 self.assertIsNone(document.vmp_log)
 
-    def test_rejects_unverified_ece_omitted_binary_layout(self) -> None:
-        column_ids = tuple(column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id != 9)
+    def test_accepts_layout_with_optional_ece_and_range_omitted(self) -> None:
+        column_ids = tuple(
+            column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id not in {9, 39}
+        )
         with tempfile.TemporaryDirectory() as temp:
             payload = _data_payload(
                 n_datapoints=1,
                 column_ids=column_ids,
-                record_itemsize=49,
-                record_bytes=bytes(49),
+                record_itemsize=47,
+                record_bytes=bytes(47),
             )
             path = _write_fixture(Path(temp), data_payload=payload)
-            with self.assertRaisesRegex(
-                UnsupportedMprColumn,
-                "only the verified 53-byte three-electrode sequence is supported",
-            ):
-                read_mpr(path)
+            with read_mpr(path) as document:
+                self.assertEqual(document.vmp_data.record_stride, 47)
+                self.assertNotIn("raw_ece_v", document.vmp_data.records.dtype.names)
+                self.assertNotIn(
+                    "raw_current_range_code", document.vmp_data.records.dtype.names
+                )
 
     def test_rejects_bad_magic(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -303,11 +332,21 @@ class BiologicMprReaderTests(unittest.TestCase):
             with self.assertRaises(UnsupportedMprModuleVersion):
                 read_mpr(path)
 
-    def test_column_definitions_cover_exact_layout_and_storage_roles(self) -> None:
-        self.assertEqual(
-            tuple(MPR_COLUMN_DEFINITIONS[column_id].encoded_id for column_id in SUPPORTED_GCPL_COLUMN_IDS),
-            SUPPORTED_GCPL_COLUMN_IDS,
-        )
+    def test_column_definitions_cover_registry_and_baseline_storage_roles(self) -> None:
+        self.assertEqual(len(MPR_STORAGE_REGISTRY), 100)
+        for column_id in SUPPORTED_GCPL_COLUMN_IDS:
+            definition = MPR_COLUMN_DEFINITIONS[column_id]
+            if column_id in {1, 2, 3, 21, 31, 65}:
+                self.assertIsNone(definition.base_id)
+                self.assertEqual(definition.storage_kind, "packed_flags" if column_id == 1 else "packed_flag_alias")
+            else:
+                self.assertEqual(definition.base_id, column_id % 256)
+                self.assertEqual(
+                    definition.dtype,
+                    MPR_STORAGE_REGISTRY[definition.base_id].dtype,
+                )
+                self.assertEqual(definition.record_offset, None)
+                self.assertEqual(definition.byte_width, np.dtype(definition.dtype).itemsize)
         self.assertEqual(
             tuple(
                 column_id
@@ -316,21 +355,13 @@ class BiologicMprReaderTests(unittest.TestCase):
             ),
             MPR_FLAG_ALIAS_IDS,
         )
-        self.assertEqual(
-            MPR_COLUMN_DEFINITIONS[1].flag_names,
-            ("mode",),
-        )
-        for column_id in SUPPORTED_GCPL_COLUMN_IDS:
-            definition = MPR_COLUMN_DEFINITIONS[column_id]
-            physical = MPR_COLUMN_DEFINITIONS[definition.physical_id]
-            self.assertEqual(definition.field_name, physical.field_name)
-            self.assertEqual(definition.record_offset, physical.record_offset)
-            self.assertEqual(definition.dtype, physical.dtype)
+        self.assertEqual(MPR_COLUMN_DEFINITIONS[1].flag_names, ("mode",))
         for column_id in MPR_PHYSICAL_COLUMN_IDS:
             definition = MPR_COLUMN_DEFINITIONS[column_id]
+            base_id = definition.base_id or column_id
             self.assertEqual(
                 biologic_mpr.MPR_RECORD_DTYPE.fields[definition.field_name][1],
-                definition.record_offset,
+                biologic_mpr._MPR_BASELINE_OFFSETS[base_id],
             )
         self.assertEqual(
             [(definition.name, definition.mask, definition.shift, definition.boolean) for definition in MPR_FLAG_DEFINITIONS],
@@ -370,6 +401,31 @@ class BiologicMprReaderTests(unittest.TestCase):
             (1, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468),
         )
 
+    def test_registry_matches_the_spec_051_asset(self) -> None:
+        asset = Path("docs/specs/assets/051-biologic-mpr-column-registry.md").read_text(
+            encoding="utf-8"
+        )
+        table = asset.split("## Encoded-ID resolution examples", 1)[0]
+        rows = re.findall(
+            r"^\|\s*(\d+)\s*\|\s*(float64|float32|uint32|uint16|uint8)\s*\|\s*(\d+)\s*\|",
+            table,
+            flags=re.MULTILINE,
+        )
+        self.assertEqual(len(rows), 100)
+        expected_dtype = {
+            "float64": "<f8",
+            "float32": "<f4",
+            "uint32": "<u4",
+            "uint16": "<u2",
+            "uint8": "<u1",
+        }
+        for base_text, storage_text, width_text in rows:
+            base_id = int(base_text)
+            definition = MPR_STORAGE_REGISTRY.get(base_id)
+            self.assertIsNotNone(definition, base_id)
+            self.assertEqual(definition.dtype, expected_dtype[storage_text])
+            self.assertEqual(definition.byte_width, int(width_text))
+
     def test_public_exports_are_defined_and_star_importable(self) -> None:
         self.assertTrue(all(hasattr(biologic_mpr, name) for name in biologic_mpr.__all__))
         namespace: dict[str, object] = {}
@@ -379,9 +435,9 @@ class BiologicMprReaderTests(unittest.TestCase):
     def test_rejects_unknown_column_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             ids = list(SUPPORTED_GCPL_COLUMN_IDS)
-            ids[-1] = 999
+            ids[8] = 10
             path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=tuple(ids)))
-            with self.assertRaises(UnsupportedMprColumn):
+            with self.assertRaisesRegex(UnsupportedMprColumn, "unknown base ID 10"):
                 read_mpr(path)
 
     def test_rejects_unverified_column_order(self) -> None:
@@ -391,16 +447,191 @@ class BiologicMprReaderTests(unittest.TestCase):
             with self.assertRaises(UnsupportedMprColumn):
                 read_mpr(path)
 
-    def test_rejects_unverified_column_omission(self) -> None:
+    def test_rejects_required_column_omission(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             ids = tuple(
                 column_id
                 for column_id in SUPPORTED_GCPL_COLUMN_IDS
-                if column_id not in {9, 39}
+                if column_id != 7
             )
-            path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=ids))
-            with self.assertRaises(UnsupportedMprColumn):
+            path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=1,
+                    column_ids=ids,
+                    record_itemsize=45,
+                    record_bytes=bytes(45),
+                ),
+            )
+            with self.assertRaisesRegex(UnsupportedMprColumn, "required GCPL base IDs"):
                 read_mpr(path)
+
+    def test_extended_layout_preserves_baseline_values_and_records_diagnostics(self) -> None:
+        baseline_records = _literal_record_bytes(
+            flags=(0xB5, 0x08),
+            raw_sample_index=(17, 18),
+            elapsed_time_s=(1.25, 2.5),
+            raw_dq_mAh=(-0.125, 0.25),
+            raw_q_minus_q0_mAh=(-1.5, -1.25),
+            raw_control_v_or_mA=(-7.69, 0.5),
+            raw_ewe_v=(1.4368, 1.2),
+            raw_ece_v=(-0.00015, 0.0002),
+            raw_current_range_code=(10, 11),
+            raw_q_charge_discharge_mAh=(-0.125, 0.25),
+            raw_half_cycle_index=(0, 4),
+        )
+        extended_records = bytearray()
+        for index in range(2):
+            start = index * MPR_RECORD_DTYPE.itemsize
+            extended_records.extend(baseline_records[start : start + MPR_RECORD_DTYPE.itemsize])
+            for value in (100.0 + index, 200.0 + index, 300.0 + index, 400.0 + index, 500.0 + index):
+                extended_records.extend(struct.pack("<d", value))
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=2,
+                    column_ids=_EXTENDED_COLUMN_IDS,
+                    record_itemsize=93,
+                    record_bytes=bytes(extended_records),
+                ),
+            )
+            with read_mpr(path) as document:
+                data = document.vmp_data
+                self.assertEqual(data.column_ids, _EXTENDED_COLUMN_IDS)
+                self.assertEqual(data.record_stride, 93)
+                self.assertEqual(data.records.dtype.itemsize, 93)
+                self.assertEqual(
+                    data.resolved_base_ids,
+                    (None, None, None, None, None, None, 131, 4, 7, 13, 5, 6, 9, 39, 211, 212, 123, 124, 125, 126, 182),
+                )
+                self.assertEqual(
+                    data.ignored_known_column_ids,
+                    (379, 124, 125, 126, 182),
+                )
+                self.assertEqual(data.opaque_trailing_column_ids, ())
+                self.assertEqual(data.opaque_trailing_base_ids, ())
+                np.testing.assert_allclose(data.records["elapsed_time_s"], (1.25, 2.5))
+                np.testing.assert_allclose(data.records["raw_ewe_v"], (1.4368, 1.2))
+                self.assertEqual(data.records["raw_half_cycle_index"].tolist(), [0, 4])
+
+    def test_interleaved_known_optional_columns_shift_offsets_without_guessing(self) -> None:
+        column_ids = (
+            1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 379, 9, 124, 39, 211, 468, 125, 126, 182
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=1,
+                    column_ids=column_ids,
+                    record_itemsize=93,
+                    record_bytes=bytes(93),
+                ),
+            )
+            with read_mpr(path) as document:
+                data = document.vmp_data
+                self.assertEqual(data.field_offsets["raw_ece_v"], 43)
+                self.assertEqual(data.field_offsets["raw_current_range_code"], 55)
+                self.assertEqual(data.field_offsets["raw_q_charge_discharge_mAh"], 57)
+                self.assertEqual(data.field_offsets["raw_half_cycle_index"], 65)
+                self.assertEqual(data.ignored_known_column_ids, (379, 124, 125, 126, 182))
+
+    def test_high_byte_ids_resolve_to_base_storage_while_full_ids_are_retained(self) -> None:
+        column_ids = tuple(
+            262 if column_id == 6 else 724 if column_id == 468 else column_id
+            for column_id in SUPPORTED_GCPL_COLUMN_IDS
+        )
+        record_bytes = _literal_record_bytes(
+            flags=(0x05,),
+            raw_sample_index=(7,),
+            elapsed_time_s=(1.0,),
+            raw_dq_mAh=(2.0,),
+            raw_q_minus_q0_mAh=(3.0,),
+            raw_control_v_or_mA=(4.0,),
+            raw_ewe_v=(5.0,),
+            raw_ece_v=(6.0,),
+            raw_current_range_code=(7,),
+            raw_q_charge_discharge_mAh=(8.0,),
+            raw_half_cycle_index=(9,),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=1,
+                    column_ids=column_ids,
+                    record_itemsize=53,
+                    record_bytes=record_bytes,
+                ),
+            )
+            with read_mpr(path) as document:
+                data = document.vmp_data
+                self.assertIn(262, data.column_ids)
+                self.assertIn(724, data.column_ids)
+                self.assertIn(6, data.resolved_base_id_set)
+                self.assertIn(212, data.resolved_base_id_set)
+                np.testing.assert_allclose(data.records["raw_ewe_v"], [5.0])
+                self.assertEqual(data.records["raw_half_cycle_index"].tolist(), [9])
+
+    def test_future_high_byte_id_635_resolves_to_known_base_123(self) -> None:
+        column_ids = tuple(635 if column_id == 379 else column_id for column_id in _EXTENDED_COLUMN_IDS)
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=1,
+                    column_ids=column_ids,
+                    record_itemsize=93,
+                    record_bytes=bytes(93),
+                ),
+            )
+            with read_mpr(path) as document:
+                data = document.vmp_data
+                self.assertIn(635, data.column_ids)
+                self.assertIn(123, data.resolved_base_id_set)
+                self.assertEqual(data.ignored_known_column_ids[0], 635)
+
+    def test_unknown_suffix_is_opaque_after_all_required_fields(self) -> None:
+        column_ids = SUPPORTED_GCPL_COLUMN_IDS + (10, 522)
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=1,
+                    column_ids=column_ids,
+                    record_itemsize=55,
+                    record_bytes=bytes(55),
+                ),
+            )
+            with read_mpr(path) as document:
+                data = document.vmp_data
+                self.assertEqual(data.record_stride, 55)
+                self.assertEqual(data.opaque_trailing_column_ids, (10, 522))
+                self.assertEqual(data.opaque_trailing_base_ids, (10, 10))
+
+    def test_duplicate_resolved_base_and_bad_extended_stride_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            duplicate_ids = SUPPORTED_GCPL_COLUMN_IDS + (724,)
+            duplicate_path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(column_ids=duplicate_ids),
+            )
+            with self.assertRaisesRegex(UnsupportedMprColumn, "duplicate base ID 212"):
+                read_mpr(duplicate_path)
+
+            bad_stride_path = _write_fixture(
+                Path(temp),
+                data_payload=_data_payload(
+                    n_datapoints=1,
+                    column_ids=_EXTENDED_COLUMN_IDS,
+                    record_itemsize=92,
+                    record_bytes=bytes(92),
+                ),
+            )
+            with self.assertRaisesRegex(InvalidMprError, "registry-derived record width"):
+                read_mpr(bad_stride_path)
 
     def test_required_module_names_use_exact_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

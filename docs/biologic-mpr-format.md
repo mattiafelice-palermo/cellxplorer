@@ -60,7 +60,7 @@ For the supported VMP data version 11 layout:
 | 4 | 1 | uint8 | number of columns: 16 in the sample |
 | 5 | `2 * n_columns` | big-endian uint16 | encoded column identifiers |
 | 37 | 970 | opaque layout prefix | reserved/format-specific bytes for this layout |
-| 1,007 | `n_datapoints * 53` | opaque records | 53-byte packed record area |
+| 1,007 | `n_datapoints * actual_stride` | typed records | registry-resolved packed record area |
 
 The sample's encoded column identifiers, in order, are:
 
@@ -68,29 +68,37 @@ The sample's encoded column identifiers, in order, are:
 1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468
 ```
 
-The production reader accepts exactly this independently observed identifier ordering and 53-byte
-record layout. Unknown IDs, reordered fields, duplicate physical fields, and any omission fail
-closed. A 15-ID/49-byte Ece-omitted arrangement was used by an earlier synthetic regression test,
-but no project-owned or privacy-approved binary evidence establishes its offsets or packed width;
-the reader therefore rejects it until such evidence exists. The reader
-validates the record-area multiplication and uses one NumPy structured dtype from the memory-mapped
-payload; it does not decode records with a Python per-row loop. The first six IDs, `1, 2, 3, 21, 31,
-65`, are logical flags sharing the one physical byte at offset 0. The remaining physical fields
-follow as `131` (sample sequence), `4` (elapsed time), `7` (incremental charge), `13` (charge
-relative to origin), `5` (control), `6` (Ewe-labeled potential), `9` (Ece-labeled potential),
-`39` (current range), `211` (charge/discharge quantity), and `468` (half-cycle index).
-The five flag IDs after the physical byte are validated as packed-flag aliases; they do not create
+The production reader resolves each full encoded ordinary ID through `encoded_id % 256` against
+the project-owned 100-entry storage registry. The full encoded IDs remain in diagnostics; the
+modulo operation selects only the storage definition and never rewrites source evidence. The
+first six IDs, `1, 2, 3, 21, 31, 65`, are exact logical flag IDs sharing one physical byte at
+offset 0. Required GCPL storage bases are `131`, `4`, `7`, `5`, `6`, `211`, and `212` (the
+baseline source uses encoded ID `468` for base `212`). Other registry-known columns may appear in
+any order and are either decoded into a named raw field or retained as a known-but-ignored
+diagnostic column. The reader derives the actual record stride from the payload and requires the
+sum of all known widths to equal it. An unknown width before every required field is located fails
+closed; unknown IDs are accepted only as an opaque suffix after the required fields, with no
+inferred offsets. The reader uses one explicit-offset NumPy structured dtype from the payload; it
+does not decode records with a Python per-row loop.
+
+The observed baseline sequence remains 53 bytes and is decoded with the physical fields `131`
+(sample sequence), `4` (elapsed time), `7` (incremental charge), `13` (charge relative to origin),
+`5` (control), `6` (Ewe-labeled potential), `9` (Ece-labeled potential), `39` (current range),
+`211` (charge/discharge quantity), and `468` (half-cycle index). The Spec 051 extended sequence
+adds `379 -> 123`, `124`, `125`, `126`, and `182`, producing a 93-byte stride while preserving
+the baseline offsets. Encoded IDs such as `262 -> 6`, `635 -> 123`, and `724 -> 212` exercise the
+same rule. The five flag IDs after the physical byte are packed aliases; they do not create
 synthetic duplicate byte ranges.
 
 The names `Ns`, `Ewe`, and `Ece` are source-label interpretations at the low-level boundary. The
 GCPL adapter in 041.3 assigns the canonical roles only after the source configuration is resolved:
-Ewe/Ece together are a synchronized three-electrode pair. The adapter also retains a semantic
-two-electrode contract for a future reader layout that independently verifies a primary Ewe channel,
-but the current binary reader does not claim or decode an Ece-omitted layout.
+Ewe/Ece together are a synchronized three-electrode pair. If the registry-resolved source omits
+Ece, the adapter does not fabricate a counter potential; it may still expose a directly measured
+primary voltage when that field is independently present.
 
-## Typed 53-byte record
+## Typed registry-resolved record
 
-The physical record dtype is little-endian where applicable and has `itemsize == 53`:
+The observed baseline physical dtype is little-endian where applicable and has `itemsize == 53`.
 
 | Encoded ID(s) | Offset | Size | Dtype | Field | Raw meaning | Unit |
 | ---: | ---: | ---: | --- | --- | --- | --- |
@@ -106,8 +114,12 @@ The physical record dtype is little-endian where applicable and has `itemsize ==
 | `211` | 41 | 8 | `<f8` | `raw_q_charge_discharge_mAh` | raw charge/discharge quantity | mA.h |
 | `468` | 49 | 4 | `<u4` | `raw_half_cycle_index` | raw half-cycle index | — |
 
-The full encoded ID `468` is required for the final field. It is not normalized with `% 256` and is
-not silently replaced with the low-byte value `212`.
+The full encoded ID `468` is retained in the source column list and resolves to registry base `212`
+for storage. The same decoder accepts future high-byte encodings such as `724` for that base,
+without treating the full IDs as interchangeable evidence. Registry-known fields without a
+canonical raw field name remain in `ignored_known_column_ids`; they do not create guessed output
+columns. Complete layout diagnostics include the full encoded IDs, resolved base IDs, actual
+record stride, named field offsets, known ignored IDs, and any opaque trailing IDs/base IDs.
 
 The first private-sample record begins at absolute offset `8,142` (`7,070 + 65 + 1,007`). The
 privacy-safe direct-byte observation below records the exact raw slices used to establish the
@@ -233,7 +245,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl8`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl9`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -309,8 +321,9 @@ future byte layout that establishes that field independently.
 
 The reader rejects files above 8 GiB, walks at most 32 declared modules, and rejects data headers
 above 64 columns before decoding. It validates declared module ends, exact record-area size, and the
-`n_datapoints * verified_record_itemsize` multiplication before calling `np.frombuffer`. An unknown
-optional module is preserved as a descriptor and skipped by its declared length.
+`n_datapoints * actual_record_stride` multiplication before calling `np.frombuffer`. The stride is
+bounded independently, and every named field must fit inside it. An unknown optional module is
+preserved as a descriptor and skipped by its declared length.
 
 `read_mpr()` owns a read-only memory map. `MprDocument`/`MprDataBlock` are context managers. Typed
 records are copied into an owning NumPy array before return, so ordinary record consumption remains
@@ -323,11 +336,13 @@ retry. `read_mpr_header()` walks and validates the same container/data-column bo
 
 The reader rejects a source when the complete magic header, module marker, declared length, next
 boundary, required module count, old/current module versions, column identifiers, required GCPL
-fields, source order, record offset, or record-area size is not verified. It also rejects duplicate
-VMP data/Set/LOG modules and repeated column identifiers. It does not silently truncate unknown
-identifiers, infer unknown record widths, or accept a partial final record. An unrelated file is
-classified as unsupported; a file with the full MPR signature but a truncated/corrupt header is
-classified as invalid.
+fields, record offset, or record-area size is not verified. It also rejects duplicate VMP
+data/Set/LOG modules, repeated encoded IDs, duplicate resolved known bases, packed aliases before
+physical flag ID 1, and required fields after an opaque suffix. It does not silently infer unknown
+widths or offsets, or accept a partial final record. An unknown suffix is retained only as opaque
+diagnostic evidence after all required fields are located. An unrelated file is classified as
+unsupported; a file with the full MPR signature but a truncated/corrupt header is classified as
+invalid.
 
 ## Header-only performance evidence
 
@@ -349,10 +364,12 @@ fail if the header path attempts a full decode.
 ## Provenance and licensing
 
 The implementation is independently authored. The physical offsets and dtypes were rederived from
-project-owned bytes: the observed record-area boundary is offset 1,007, the exact module remainder
-is `5,483 * 53`, and a direct-byte probe records the 53-byte partition, little-endian encodings, and
-the first-record values listed below. The first six encoded IDs are recorded as logical flags sharing
-the packed byte; the remaining IDs are recorded in their physical field order. No duplicate byte
+project-owned bytes: the observed record-area boundary is offset 1,007, the baseline module
+remainder is `5,483 * 53`, and a direct-byte probe records the baseline partition, little-endian
+encodings, and the first-record values listed below. Spec 051 adds the project-owned storage
+registry, modulo-256 ID resolution, explicit per-source stride validation, and independent
+extended-layout fixtures. The first six encoded IDs are recorded as logical flags sharing the
+packed byte; the remaining IDs are recorded in their declared physical order. No duplicate byte
 ranges are invented. Raw field names are descriptive labels
 authored for this reader, not canonical CellXplorer semantics. Literal `struct.pack_into` fixture
 bytes independently test every field offset and endian choice.
@@ -367,6 +384,9 @@ sample entered the repository or runtime. Static tests audit the reader, require
 production entry-point files for prohibited parser dependencies. No MPT file was available, so no
 MPT-derived claim is made here.
 
-No project-owned two-electrode MPR bytes are available. Consequently, the 15-ID/49-byte Ece-omitted
-layout is explicitly a future evidence target rather than a supported production format; only the
-observed 16-ID/53-byte three-electrode layout is decoded today.
+The low-level reader now accepts any registry-resolved GCPL layout that supplies the required bases,
+has a stride matching the declared known widths, or ends with a bounded opaque suffix. The baseline
+16-ID/53-byte three-electrode sequence and the Spec 051 21-ID/93-byte extended sequence are covered
+by independent byte fixtures. An Ece-omitted layout is safe only when its own declared sequence and
+observed stride satisfy that same registry contract; the adapter then reports the missing counter
+potential rather than fabricating one.
