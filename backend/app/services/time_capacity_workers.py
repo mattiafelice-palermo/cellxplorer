@@ -69,6 +69,10 @@ class PoolNotReadyError(RuntimeError):
         self.reason = reason
 
 
+class RefinementUnavailable(RuntimeError):
+    """The bounded indexed facts required for a safe refinement are absent."""
+
+
 @dataclass(frozen=True)
 class ResolvedCellDescriptor:
     """Immutable per-Cell state resolved before a worker is submitted."""
@@ -128,6 +132,8 @@ class ReadJob:
     plan_diagnostics: dict[str, Any]
     descriptor: ResolvedCellDescriptor
     estimated_rows: int
+    time_origin_prefix_s: float | None = None
+    display_origin_time_s: float | None = None
 
 
 @dataclass
@@ -651,6 +657,12 @@ def _cell_result(
         if needs.continuous_time:
             with time_capacity_path.timed_stage(diagnostics, "transform_continuous_time"):
                 raw = analysis_engine._continuous_time(raw)
+        if request.refinement and job.time_origin_prefix_s is not None and "time_s" in raw.columns:
+            with time_capacity_path.timed_stage(diagnostics, "transform_refinement_time_origin"):
+                raw = raw.assign(
+                    time_s=raw["time_s"].to_numpy(dtype="float64")
+                    + float(job.time_origin_prefix_s)
+                )
         analysis_engine._record_transform_profile(
             diagnostics,
             "continuous_time",
@@ -796,6 +808,7 @@ def _cell_result(
         capacity_area,
         settings,
         origin_cycle_start=request.display_origin_cycle_start,
+        origin_time_s=job.display_origin_time_s,
     )
     if (
         request.refinement
@@ -1068,6 +1081,8 @@ def _build_jobs(
     protocol_context, protocol_badges = analysis_engine._protocol_filter_context(spec)
     if protocol_context["active"]:
         return None
+    if refinement and settings["cycles"]:
+        return None
     units, missing_refs = analysis_engine.resolve_selection(db, spec)
     cells = [unit["cell"] for unit in units]
     analysis_engine.preload_cell_sources(db, cells)
@@ -1097,6 +1112,17 @@ def _build_jobs(
             cycle_start=settings["cycle_start"],
             cycle_end=settings["cycle_end"],
         )
+        time_origin_prefix_s: float | None = None
+        display_origin_time_s: float | None = None
+        if refinement and requested_cycles:
+            time_facts = time_capacity_path.consecutive_time_request_facts(
+                plan,
+                requested_cycles,
+                display_origin_cycle_start,
+            )
+            if time_facts is None:
+                return None
+            time_origin_prefix_s, display_origin_time_s = time_facts
         available = {
             column
             for source in plan.sources
@@ -1178,6 +1204,8 @@ def _build_jobs(
                 plan_diagnostics=deepcopy(plan_diagnostics),
                 descriptor=descriptor,
                 estimated_rows=_estimated_rows(plan, tuple(requested_cycles)),
+                time_origin_prefix_s=time_origin_prefix_s,
+                display_origin_time_s=display_origin_time_s,
             )
         )
     visible_count = sum(1 for job in jobs if not job.descriptor.excluded)
@@ -1265,7 +1293,9 @@ def try_compute_time_capacity(
         settings.get("x_axis") != "time"
         or settings.get("display_mode") != "consecutive"
     ):
-        return None
+        raise RefinementUnavailable("refinement requires ordinary consecutive Time")
+    if refinement and settings.get("cycles"):
+        raise RefinementUnavailable("refinement does not broaden explicit sparse cycles")
     started = perf_counter()
     try:
         analysis_engine.ensure_canonical_cycling_available(db, spec)
@@ -1283,6 +1313,8 @@ def try_compute_time_capacity(
             refinement_viewport_x_max=refinement_viewport_x_max,
         )
         if built is None:
+            if refinement:
+                raise RefinementUnavailable("indexed consecutive-time facts are unavailable")
             return None
         jobs, request, missing_refs = built
         selected_rows = sum(job.estimated_rows for job in jobs)
@@ -1392,5 +1424,7 @@ def try_compute_time_capacity(
             }
         return result
     except Exception:
+        if refinement:
+            raise
         logger.exception("Optimized Time/Capacity path failed; using serial engine fallback")
         return None

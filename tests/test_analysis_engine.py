@@ -1454,14 +1454,32 @@ class AnalysisEngineTests(unittest.TestCase):
     def test_time_capacity_refinement_keeps_canonical_consecutive_origin(self):
         overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         overview_spec["computation"]["time_capacity"] = {
-            "cycle_start": 2,
-            "cycle_end": 3,
+            "cycle_start": 1,
+            "cycle_end": 50,
             "x_axis": "time",
             "display_mode": "consecutive",
             "max_points_per_cell": 4000,
         }
         candidate_spec = deepcopy(overview_spec)
-        candidate_spec["computation"]["time_capacity"]["cycle_start"] = 1
+        candidate_spec["computation"]["time_capacity"]["cycle_start"] = 28
+        candidate_spec["computation"]["time_capacity"]["cycle_end"] = 30
+
+        overview = engine.compute_time_capacity(
+            self.db,
+            overview_spec,
+            None,
+            precision="standard",
+            compact=True,
+        )
+        overview_trace = overview["cell_traces"][0]
+        overview_cycle_29 = [
+            value
+            for value, cycle in zip(overview_trace["display_x"], overview_trace["cycle"])
+            if cycle == 29
+        ]
+        self.assertTrue(overview_cycle_29)
+        viewport_min = min(overview_cycle_29) - 1.0
+        viewport_max = max(overview_cycle_29) + 1.0
 
         refined = engine.compute_time_capacity(
             self.db,
@@ -1469,16 +1487,109 @@ class AnalysisEngineTests(unittest.TestCase):
             None,
             precision="standard",
             compact=True,
-            display_origin_cycle_start=2,
+            display_origin_cycle_start=1,
             refinement=True,
-            refinement_viewport_x_min=-1_000_000,
-            refinement_viewport_x_max=1_000_000,
+            refinement_viewport_x_min=viewport_min,
+            refinement_viewport_x_max=viewport_max,
         )
         trace = refined["cell_traces"][0]
-        cycle_two = next(index for index, cycle in enumerate(trace["cycle"]) if cycle == 2)
-        self.assertAlmostEqual(trace["display_x"][cycle_two], 0.0, places=6)
+        refined_cycle_29 = [
+            value for value, cycle in zip(trace["display_x"], trace["cycle"]) if cycle == 29
+        ]
+        self.assertTrue(refined_cycle_29)
+        self.assertEqual(refined_cycle_29, overview_cycle_29)
+        self.assertTrue(all(viewport_min <= value <= viewport_max for value in trace["display_x"]))
         self.assertEqual(len(trace["source_index"]), len(trace["cycle"]))
         self.assertEqual(len(trace["sources"]), 1)
+
+    def test_time_capacity_refinement_process_matches_forced_serial(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 18,
+            "cycle_end": 24,
+            "x_axis": "time",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+        kwargs = {
+            "viewport_width": 1200,
+            "precision": "standard",
+            "compact": True,
+            "display_origin_cycle_start": 1,
+            "refinement": True,
+            "refinement_viewport_x_min": 60_000.0,
+            "refinement_viewport_x_max": 90_000.0,
+        }
+        pool = None
+        published = False
+        try:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            pool = time_capacity_workers._new_pool(2)
+            time_capacity_workers._warm_pool(pool, 2)
+            with time_capacity_workers._POOL_LOCK:
+                time_capacity_workers._POOL = pool
+                time_capacity_workers._POOL_WORKERS = 2
+                time_capacity_workers._POOL_STATE = "ready"
+            published = True
+            serial = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                force_serial=True,
+                **kwargs,
+            )
+            process_decision = time_capacity_workers.ExecutionDecision(
+                "process",
+                2,
+                "focused_test",
+                logical_cpus=16,
+                total_memory_bytes=32 * 1024 * 1024 * 1024,
+                available_memory_bytes=16 * 1024 * 1024 * 1024,
+            )
+            with patch.object(time_capacity_workers, "choose_execution", return_value=process_decision):
+                process = time_capacity_workers.try_compute_time_capacity(
+                    self.db,
+                    spec,
+                    None,
+                    **kwargs,
+                )
+            self.assertIsNotNone(serial)
+            self.assertIsNotNone(process)
+            self.assertEqual(process["cell_traces"], serial["cell_traces"])
+            self.assertEqual(process["settings"], serial["settings"])
+            self.assertEqual(process["rendering"], serial["rendering"])
+        finally:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            if pool is not None and not published:
+                pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_time_capacity_refinement_rejects_explicit_sparse_cycles(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycles": [1, 10, 20],
+            "x_axis": "time",
+            "display_mode": "consecutive",
+        }
+        analysis = Analysis(title="Sparse refinement", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        request = analyses_router.TimeCapacityRefinementRequest(
+            spec=spec,
+            viewport_x_min=0.0,
+            viewport_x_max=10.0,
+            viewport_width=1200,
+            cycle_start=1,
+            cycle_end=20,
+            request_generation="sparse",
+        )
+        with self.assertRaises(analyses_router.HTTPException) as raised:
+            analyses_router.refine_time_capacity_analysis(analysis.id, request, self.db)
+        self.assertEqual(raised.exception.status_code, 422)
 
     def test_time_capacity_refinement_is_ephemeral_and_returns_identity(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

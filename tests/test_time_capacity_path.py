@@ -224,6 +224,18 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertEqual(reader.call_args.args[0], second.file_hash)
         self.assertEqual(reader.call_args.args[2], (7,))
 
+    def test_indexed_consecutive_time_facts_preserve_later_cycle_origin(self) -> None:
+        ref = self._publish("8" * 64, "parser-a", [1, 2, 3, 4])
+        plan = time_capacity_path.build_time_capacity_stitch_plan([ref])
+
+        facts = time_capacity_path.consecutive_time_cycle_facts(plan)
+        self.assertEqual(facts[1], (0.0, 0.0))
+        self.assertEqual(facts[2], (2.0, 0.0))
+        self.assertEqual(
+            time_capacity_path.consecutive_time_request_facts(plan, [3, 4], 1),
+            (4.0, 0.0),
+        )
+
     def test_benchmark_can_wait_for_the_layout_boundary_without_changing_default(self) -> None:
         ref = self._publish("7" * 64, "parser-a", [1, 2])
         plan = time_capacity_path.build_time_capacity_stitch_plan([ref])

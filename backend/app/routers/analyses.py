@@ -1370,8 +1370,14 @@ def refine_time_capacity_analysis(
         settings["view"] == "voltage_current"
         and settings["x_axis"] == "time"
         and settings["display_mode"] == "consecutive"
+        and not settings["stacked"]
     ):
         raise HTTPException(422, "viewport refinement is only available for ordinary Time/Capacity")
+    if settings["cycles"]:
+        raise HTTPException(
+            422,
+            "viewport refinement is unavailable for explicit sparse cycle selections",
+        )
     _guard_canonical_cycling(db, spec)
 
     source_data_signature, overview_key = analysis_cache.time_capacity_keys(
@@ -1386,9 +1392,7 @@ def refine_time_capacity_analysis(
         },
     )
     origin_cycle_start = (
-        min(settings["cycles"])
-        if settings["cycles"]
-        else int(settings["cycle_start"])
+        int(settings["cycle_start"])
         if settings["cycle_start"] is not None
         else None
     )
@@ -1397,19 +1401,24 @@ def refine_time_capacity_analysis(
     candidate_time_capacity["cycle_start"] = req.cycle_start
     candidate_time_capacity["cycle_end"] = req.cycle_end
     spec.setdefault("computation", {})["time_capacity"] = candidate_time_capacity
-    result = engine.compute_time_capacity(
-        db,
-        spec,
-        analysis.provenance,
-        use_current_versions=False,
-        viewport_width=req.viewport_width,
-        precision="standard",
-        compact=True,
-        display_origin_cycle_start=origin_cycle_start,
-        refinement=True,
-        refinement_viewport_x_min=req.viewport_x_min,
-        refinement_viewport_x_max=req.viewport_x_max,
-    )
+    from ..services import time_capacity_workers
+
+    try:
+        result = engine.compute_time_capacity(
+            db,
+            spec,
+            analysis.provenance,
+            use_current_versions=False,
+            viewport_width=req.viewport_width,
+            precision="standard",
+            compact=True,
+            display_origin_cycle_start=origin_cycle_start,
+            refinement=True,
+            refinement_viewport_x_min=req.viewport_x_min,
+            refinement_viewport_x_max=req.viewport_x_max,
+        )
+    except time_capacity_workers.RefinementUnavailable as exc:
+        raise HTTPException(409, str(exc)) from exc
     # Deliberately do not call analysis_cache.store_result and do not mutate
     # Analysis.spec/provenance: this response is an ephemeral viewport view.
     result["data_signature"] = overview_key

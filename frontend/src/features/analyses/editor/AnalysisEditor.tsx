@@ -4189,6 +4189,7 @@ function AnalysisEditorView({
                     subtitle={plotSubtitle("time_capacity", undefined, spec)}
                     spec={spec}
                     update={update}
+                    active={activeTab === "time_capacity"}
                     onReadyChange={setTimeCapacityReady}
                     onVoltageChannelsChange={setTimeCapacityVoltageChannels}
                     edited={activePlotDirty && activePlot?.tab === "time_capacity"}

@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+import math
 from time import perf_counter
 from typing import Any
 
@@ -340,6 +341,93 @@ def requested_global_cycles(
     if upper < lower:
         return ()
     return tuple(range(lower, upper + 1))
+
+
+def consecutive_time_cycle_facts(
+    plan: TimeCapacityStitchPlan,
+) -> dict[int, tuple[float, float]]:
+    """Return global cycle coordinates and raw starts from indexed facts.
+
+    The first tuple value is the canonical cumulative Time at the first row
+    of the global cycle; the second is that cycle's source-local raw Time.
+    This is owner-side metadata only, so a refinement can compute its prefix
+    offset without loading preceding cycle rows.
+    """
+
+    if plan.path != "indexed" or not plan.complete:
+        return {}
+
+    facts: dict[int, tuple[float, float]] = {}
+    running_reset_offset = 0.0
+    previous_last_raw: float | None = None
+    for source in plan.sources:
+        metadata = source.index.get("consecutive_time")
+        if not isinstance(metadata, dict):
+            return {}
+        first_raw = metadata.get("first_raw_time_s")
+        last_raw = metadata.get("last_raw_time_s")
+        reset_total = metadata.get("reset_total_s")
+        starts = metadata.get("cycle_starts")
+        if (
+            not isinstance(first_raw, (int, float))
+            or isinstance(first_raw, bool)
+            or not math.isfinite(float(first_raw))
+            or not isinstance(last_raw, (int, float))
+            or isinstance(last_raw, bool)
+            or not math.isfinite(float(last_raw))
+            or not isinstance(reset_total, (int, float))
+            or isinstance(reset_total, bool)
+            or not math.isfinite(float(reset_total))
+            or not isinstance(starts, dict)
+        ):
+            return {}
+
+        if previous_last_raw is not None and float(first_raw) < previous_last_raw:
+            running_reset_offset += previous_last_raw
+
+        for local_cycle, global_cycle in source.cycle_map.items():
+            start = starts.get(str(local_cycle))
+            if not isinstance(start, dict):
+                return {}
+            raw_time = start.get("raw_time_s")
+            reset_offset = start.get("reset_offset_s")
+            if (
+                not isinstance(raw_time, (int, float))
+                or isinstance(raw_time, bool)
+                or not math.isfinite(float(raw_time))
+                or not isinstance(reset_offset, (int, float))
+                or isinstance(reset_offset, bool)
+                or not math.isfinite(float(reset_offset))
+            ):
+                return {}
+            facts[int(global_cycle)] = (
+                float(raw_time) + running_reset_offset + float(reset_offset),
+                float(raw_time),
+            )
+
+        running_reset_offset += float(reset_total)
+        previous_last_raw = float(last_raw)
+    return facts
+
+
+def consecutive_time_request_facts(
+    plan: TimeCapacityStitchPlan,
+    requested_cycles: Iterable[int],
+    origin_cycle: int | None,
+) -> tuple[float, float] | None:
+    """Resolve the bounded-read prefix and canonical origin for a refinement."""
+
+    requested = tuple(sorted({int(value) for value in requested_cycles}))
+    if not requested or origin_cycle is None:
+        return None
+    facts = consecutive_time_cycle_facts(plan)
+    candidate = facts.get(requested[0])
+    origin = facts.get(int(origin_cycle))
+    if candidate is None or origin is None:
+        return None
+    candidate_coordinate, candidate_raw_time = candidate
+    origin_coordinate, _origin_raw_time = origin
+    return candidate_coordinate - candidate_raw_time, origin_coordinate
 
 
 def _empty_raw_frame(

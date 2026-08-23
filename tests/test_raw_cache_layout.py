@@ -86,6 +86,11 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertFalse(index["voltage_data_availability"]["counter_potential_v"])
         self.assertEqual(index["timestamp_start"], "2026-01-01T00:00:00")
         self.assertEqual(index["timestamp_end"], "2026-01-01T00:00:11")
+        self.assertEqual(index["consecutive_time"]["reset_total_s"], 0.0)
+        self.assertEqual(
+            index["consecutive_time"]["cycle_starts"]["2"],
+            {"raw_time_s": 5.0, "reset_offset_s": 0.0},
+        )
         self.assertEqual(cache.raw_layout_status(self.FILE_HASH, self.PARSER), "ready")
 
     def test_new_cache_build_writes_indexed_raw_without_changing_calc_content(self) -> None:

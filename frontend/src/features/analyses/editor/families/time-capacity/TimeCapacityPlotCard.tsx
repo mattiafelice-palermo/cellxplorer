@@ -108,7 +108,7 @@ import {
 import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
-  timeCapacityRefinementEligible,
+  timeCapacityRefinementCanSchedule,
   timeCapacityRefinementRequestIsCurrent,
   timeCapacityRefinementWorthwhile,
   type TimeCapacityViewport,
@@ -1134,6 +1134,7 @@ function TimeCapacityPlotCardView({
   onUpdatePlot,
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
+  active = true,
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -1152,6 +1153,8 @@ function TimeCapacityPlotCardView({
   onUpdatePlot?: () => void;
   updatePlotEnabled?: boolean;
   updatePlotLabel?: string;
+  /** The parent keeps this expensive card mounted after first visit. */
+  active?: boolean;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -1388,6 +1391,9 @@ function TimeCapacityPlotCardView({
   useEffect(() => {
     cancelRefinement();
   }, [cancelRefinement, currentResult?.data_signature, dataSignature]);
+  useEffect(() => {
+    if (!active) cancelRefinement();
+  }, [active, cancelRefinement]);
   useEffect(() => cancelRefinement, [cancelRefinement]);
   const selectedVoltageUnavailable = voltageChannelUnavailable(
     cfg.voltage_channel,
@@ -1545,7 +1551,7 @@ function TimeCapacityPlotCardView({
     };
     if (axisPrefixes.some((prefix) => relayout[`${prefix}.autorange`] === true)) {
       cancelRefinement();
-    } else if (timeCapacityRefinementEligible(spec)) {
+    } else if (timeCapacityRefinementCanSchedule(active, spec)) {
       const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
       const previousViewport = refinementViewportRef.current;
       const sameViewport =

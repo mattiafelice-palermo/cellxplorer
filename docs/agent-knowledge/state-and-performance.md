@@ -369,7 +369,9 @@ row-group/index format; it is independent of `CANONICAL_RAW_VERSION`, parser ide
 `CALC_VERSION`, and analysis-result generations. The sidecar records exact observed source-local
 cycle labels, row-group membership (including cycles spanning multiple groups), raw schema/shape
 metadata, finite full-source availability for each canonical voltage quantity, and bounded timestamp
-start/end facts. It never stores source paths. `cache.load_raw_cycles()` returns exact requested
+start/end facts. For ordinary consecutive Time refinement, the sidecar also stores per-cycle raw
+start times and cumulative reset offsets so an indexed later-cycle read can retain the canonical
+Time origin without loading preceding rows. It never stores source paths. `cache.load_raw_cycles()` returns exact requested
 cycle rows after filtering the selected groups and exposes deterministic group/row/column
 diagnostics; a missing or invalid sidecar is a layout fallback, not a scientifically missing raw
 cache. Existing `load_raw()` and `load_raw_columns()` remain the compatibility readers.

@@ -316,6 +316,7 @@ Cellxplorer/
 │   ├── preflight.py                Canonical local verification command
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
+│   ├── profile_time_capacity_refinement.py Focused adaptive-refinement S25 measurement (Spec 050.15)
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
 │   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Specs 050.12/050.14)
 │   ├── profile_time_capacity_composition.py Spec 050.11 execution-strategy composition benchmark

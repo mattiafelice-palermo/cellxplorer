@@ -885,3 +885,21 @@ R1 fixed: worker pool now has explicit stopped/warming/ready/failed states; back
 050.15 implementation complete. A4 compact provenance retained: repeated route measurements stayed within the 5%/5 ms gate while response bytes fell 72.1% on fixture cases and 73.5-73.6% on application Performance cases. Overview density remains multiplier 12 because visual validation was not run. Ephemeral adaptive refinement preserves canonical time origin, is abortable/stale-safe, and leaves export/cache identity on the overview. Worker tuning across fixture and application 10/11-Cell Time-All cases kept production at 4 workers; 6/8 did not meet the promotion speed gate (8 also exceeded the RSS gate).
 
 ---
+### 2026-08-23T12:28:32+02:00 — IMPLEMENTER → REVIEWER — 050.15
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1-R3 focused backend tests: PASS (29 tests)
+- R2-R3 focused frontend tests: PASS (16 tests)
+- focused refinement S25 benchmark: PASS (16.49 s; 25/10/2 percent; 3 warm repetitions)
+- frontend type check and Vite build: PASS
+- canonical preflight: PASS (4/4 stages; 151 backend/frontend modules; 84.24 s)
+- browser/manual checks: NOT RUN (user requested no browser)
+
+**Message**
+
+R1-R4 fixed. Later-cycle refinement now uses indexed cumulative reset facts to retain the overview Time coordinate while reading only bounded candidate cycles; explicit sparse cycles are rejected rather than broadened. Refinement is gated off for stacked Time and cancels/invalidates transient work when the keep-mounted tab becomes inactive. Focused S25 refinement measurement recorded 25/10/2 percent visible-resolution gains and the implementation record reuses prior A/B/D evidence. Browser/manual checks remain NOT RUN by user request.
+
+---

@@ -87,6 +87,15 @@ export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {
   return (
     (cfg?.view ?? "voltage_current") === "voltage_current" &&
     (cfg?.x_axis ?? "time") === "time" &&
-    (cfg?.display_mode ?? "consecutive") === "consecutive"
+    (cfg?.display_mode ?? "consecutive") === "consecutive" &&
+    cfg?.stacked !== true &&
+    !(cfg?.cycles?.length)
   );
+}
+
+export function timeCapacityRefinementCanSchedule(
+  active: boolean,
+  spec: AnalysisSpec,
+): boolean {
+  return active && timeCapacityRefinementEligible(spec);
 }

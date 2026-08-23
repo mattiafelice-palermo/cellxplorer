@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # This is a physical access-layout generation, not a scientific meaning or
 # calculation version.  A current raw file without this sidecar remains a
 # valid legacy cache and uses the existing full-read API.
-RAW_CACHE_LAYOUT_VERSION = 1
+RAW_CACHE_LAYOUT_VERSION = 2
 
 # Chosen from the Spec 050.2 profiling pass on the approved golden source
 # `cycles_time_steps.ndax` (71,190 rows, 193 observed cycles) under the pinned
@@ -523,6 +523,49 @@ def _timestamp_bounds(frame: pd.DataFrame) -> tuple[str | None, str | None]:
     return pd.Timestamp(start).isoformat(), pd.Timestamp(end).isoformat()
 
 
+def _consecutive_time_metadata(frame: pd.DataFrame) -> dict[str, Any]:
+    """Capture bounded facts needed to continue Time across selective reads.
+
+    ``analysis_engine._continuous_time`` adds the raw time at every negative
+    step reset.  Keeping the cumulative reset offset at each source-local
+    cycle start lets a later indexed refinement reproduce the same coordinate
+    without reading all preceding rows.
+    """
+
+    values = pd.to_numeric(frame["time_s"], errors="coerce").to_numpy(dtype="float64")
+    cycles = pd.to_numeric(frame["cycle"], errors="coerce").to_numpy(dtype="float64")
+    offsets = np.zeros(len(values), dtype="float64")
+    if len(values) >= 2:
+        differences = np.diff(values)
+        resets = np.flatnonzero(~np.isnan(differences) & (differences < 0))
+        offsets[resets + 1] = values[resets]
+    cumulative = np.cumsum(offsets)
+
+    def finite_or_none(value: float) -> float | None:
+        return float(value) if math.isfinite(float(value)) else None
+
+    cycle_starts: dict[str, dict[str, float | None]] = {}
+    seen: set[int] = set()
+    for index, cycle_value in enumerate(cycles):
+        if not math.isfinite(float(cycle_value)) or not float(cycle_value).is_integer():
+            continue
+        cycle = int(cycle_value)
+        if cycle in seen:
+            continue
+        seen.add(cycle)
+        cycle_starts[str(cycle)] = {
+            "raw_time_s": finite_or_none(values[index]),
+            "reset_offset_s": finite_or_none(cumulative[index]),
+        }
+
+    return {
+        "first_raw_time_s": finite_or_none(values[0]) if len(values) else None,
+        "last_raw_time_s": finite_or_none(values[-1]) if len(values) else None,
+        "reset_total_s": finite_or_none(cumulative[-1]) if len(values) else 0.0,
+        "cycle_starts": cycle_starts,
+    }
+
+
 def _build_raw_layout_index(
     frame: pd.DataFrame,
     parquet_path: Path,
@@ -583,6 +626,7 @@ def _build_raw_layout_index(
 
     raw_file_size = parquet_path.stat().st_size
     timestamp_start, timestamp_end = _timestamp_bounds(frame)
+    consecutive_time = _consecutive_time_metadata(frame)
     voltage_availability = {
         column: _finite_column_available(frame, column)
         for column in canonical_cycling.VOLTAGE_QUANTITIES.values()
@@ -600,6 +644,7 @@ def _build_raw_layout_index(
         "voltage_data_availability": voltage_availability,
         "timestamp_start": timestamp_start,
         "timestamp_end": timestamp_end,
+        "consecutive_time": consecutive_time,
         "raw_file_size": raw_file_size,
         "raw_shape_fingerprint": _raw_shape_fingerprint(
             raw_row_count=len(frame),
@@ -703,6 +748,61 @@ def _validate_raw_layout_index(
     if observed_cycles != sorted(expected_cycle_to_groups):
         raise RawLayoutError("raw layout index observed cycles disagree with row groups")
 
+    consecutive_time_value = index.get("consecutive_time")
+    if not isinstance(consecutive_time_value, dict):
+        raise RawLayoutError("raw layout index has invalid consecutive-time metadata")
+
+    def finite_index_float(value: object, name: str, *, allow_none: bool = True) -> float | None:
+        if value is None and allow_none:
+            return None
+        if isinstance(value, bool):
+            raise RawLayoutError(f"raw layout index {name} contains a boolean time value")
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise RawLayoutError(f"raw layout index {name} contains an invalid time value") from exc
+        if not math.isfinite(numeric):
+            raise RawLayoutError(f"raw layout index {name} contains a non-finite time value")
+        return numeric
+
+    cycle_starts_value = consecutive_time_value.get("cycle_starts")
+    if not isinstance(cycle_starts_value, dict):
+        raise RawLayoutError("raw layout index has invalid cycle-start time metadata")
+    expected_cycle_keys = {str(cycle) for cycle in observed_cycles}
+    if set(cycle_starts_value) != expected_cycle_keys:
+        raise RawLayoutError("raw layout index cycle-start time metadata disagrees with cycles")
+    consecutive_time = {
+        "first_raw_time_s": finite_index_float(
+            consecutive_time_value.get("first_raw_time_s"),
+            "consecutive_time.first_raw_time_s",
+        ),
+        "last_raw_time_s": finite_index_float(
+            consecutive_time_value.get("last_raw_time_s"),
+            "consecutive_time.last_raw_time_s",
+        ),
+        "reset_total_s": finite_index_float(
+            consecutive_time_value.get("reset_total_s"),
+            "consecutive_time.reset_total_s",
+            allow_none=False,
+        ),
+        "cycle_starts": {},
+    }
+    for cycle in observed_cycles:
+        raw_start = cycle_starts_value[str(cycle)]
+        if not isinstance(raw_start, dict):
+            raise RawLayoutError(f"raw layout index cycle {cycle} has malformed time metadata")
+        consecutive_time["cycle_starts"][str(cycle)] = {
+            "raw_time_s": finite_index_float(
+                raw_start.get("raw_time_s"),
+                f"consecutive_time.cycle_starts[{cycle}].raw_time_s",
+            ),
+            "reset_offset_s": finite_index_float(
+                raw_start.get("reset_offset_s"),
+                f"consecutive_time.cycle_starts[{cycle}].reset_offset_s",
+                allow_none=False,
+            ),
+        }
+
     cycle_mapping_value = index.get("cycle_to_row_groups")
     if not isinstance(cycle_mapping_value, dict):
         raise RawLayoutError("raw layout index has invalid cycle mapping")
@@ -778,6 +878,7 @@ def _validate_raw_layout_index(
     normalized["row_groups"] = row_groups
     normalized["observed_source_cycles"] = observed_cycles
     normalized["cycle_to_row_groups"] = cycle_mapping
+    normalized["consecutive_time"] = consecutive_time
     return normalized
 
 

@@ -1474,6 +1474,7 @@ def _time_capacity_display_x(
     settings: dict,
     *,
     origin_cycle_start: int | None = None,
+    origin_time_s: float | None = None,
 ) -> np.ndarray:
     if settings["x_axis"] == "capacity_mah_g":
         values = capacity_g.copy() if capacity_g is not None else np.full(len(raw), np.nan)
@@ -1489,6 +1490,15 @@ def _time_capacity_display_x(
             else np.full(len(raw), np.nan)
         )
     if settings["display_mode"] == "consecutive":
+        if origin_time_s is not None:
+            time_factor = (
+                3600.0
+                if settings["time_unit"] == "h"
+                else 60.0
+                if settings["time_unit"] == "min"
+                else 1.0
+            )
+            return values - float(origin_time_s) / time_factor
         finite_mask = np.isfinite(values)
         if origin_cycle_start is not None and "cycle" in raw.columns:
             finite_mask &= raw["cycle"].to_numpy() >= int(origin_cycle_start)
@@ -2884,6 +2894,10 @@ def compute_time_capacity(
         )
         if optimized is not None:
             return optimized
+        if refinement:
+            raise time_capacity_workers.RefinementUnavailable(
+                "refinement is unavailable for this request"
+            )
 
     engine_started = perf_counter()
     ensure_canonical_cycling_available(db, spec)

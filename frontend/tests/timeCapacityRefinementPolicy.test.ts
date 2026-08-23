@@ -5,6 +5,7 @@ import type { TimeCapacityRefinementResult, TimeCapacityResult } from "../src/ap
 import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
+  timeCapacityRefinementCanSchedule,
   timeCapacityRefinementEligible,
   timeCapacityRefinementRequestIsCurrent,
   timeCapacityRefinementWorthwhile,
@@ -99,7 +100,7 @@ test("stale refinement identity and generation are rejected", () => {
   assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g1"), false);
 });
 
-test("ordinary default spec is eligible and alternate display modes are not", () => {
+test("ordinary default spec is eligible and unsafe refinement modes are not", () => {
   const base = { computation: { time_capacity: undefined } } as never;
   assert.equal(timeCapacityRefinementEligible(base), true);
   assert.equal(
@@ -108,4 +109,36 @@ test("ordinary default spec is eligible and alternate display modes are not", ()
     } as never),
     false,
   );
+  assert.equal(
+    timeCapacityRefinementEligible({
+      computation: { time_capacity: { view: "voltage_current", x_axis: "time", stacked: true } },
+    } as never),
+    false,
+  );
+  assert.equal(
+    timeCapacityRefinementEligible({
+      computation: { time_capacity: { view: "voltage_current", x_axis: "time", cycles: [1, 10] } },
+    } as never),
+    false,
+  );
+});
+
+test("inactive keep-mounted Time/Capacity cannot schedule refinement", () => {
+  const base = { computation: { time_capacity: undefined } } as never;
+  assert.equal(timeCapacityRefinementCanSchedule(true, base), true);
+  assert.equal(timeCapacityRefinementCanSchedule(false, base), false);
+});
+
+test("tab-change generation invalidates a pending in-flight response", () => {
+  const current = result();
+  const response = {
+    ...current,
+    data_signature: "overview",
+    overview_data_signature: "overview",
+    request_generation: "g1",
+  } as TimeCapacityRefinementResult;
+  assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g1"), true);
+  // cancelRefinement advances the generation when the keep-mounted card goes
+  // inactive; a late response from the old timer/request cannot replace it.
+  assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g2"), false);
 });
