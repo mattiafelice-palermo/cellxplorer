@@ -903,3 +903,18 @@ R1 fixed: worker pool now has explicit stopped/warming/ready/failed states; back
 R1-R4 fixed. Later-cycle refinement now uses indexed cumulative reset facts to retain the overview Time coordinate while reading only bounded candidate cycles; explicit sparse cycles are rejected rather than broadened. Refinement is gated off for stacked Time and cancels/invalidates transient work when the keep-mounted tab becomes inactive. Focused S25 refinement measurement recorded 25/10/2 percent visible-resolution gains and the implementation record reuses prior A/B/D evidence. Browser/manual checks remain NOT RUN by user request.
 
 ---
+### 2026-08-23T12:48:51+02:00 — IMPLEMENTER → REVIEWER — 050.15
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- documentation-only R1 closure: PASS (git diff --check)
+- broader tests/benchmarks/preflight: NOT RERUN (reviewer directed documentation-only validation)
+- browser/manual checks: NOT RUN (user requested no browser)
+
+**Message**
+
+Parent review R1 fixed as documentation-only. The parent roadmap now records 050.1-050.7 and 050.9-050.15 as review-clean/completed with concise 050.12-050.15 outcomes; 050.8 remains withdrawn. P4 now states that its bounded ordinary non-stacked consecutive-Time on-demand refinement subset was promoted by 050.15 while fixed-density, reservoir, Plotly-timing, stacked/other-mode and hybrid experiments remain planning-only. 050.15 is marked review-clean. git diff --check passes; no broader verification was rerun per the reviewer finding.
+
+---

@@ -1,6 +1,6 @@
 # Spec 050: runtime performance optimization
 
-Status: **Plan — extensible parent; 050.1-050.7 review-clean; 050.9 active; 050.10-050.11 scheduled**  
+Status: **Final review — documentation closure pending; 050.1-050.7 and 050.9-050.15 review-clean**
 Type: **runtime performance / analysis responsiveness**  
 Branch: `feature/runtime-performance-optimization`  
 Repository baseline / merge base: `main` at `1dc3525ec42571504ed6d9bdb9a0668d35df309b`  
@@ -43,7 +43,7 @@ The former cross-family indexed-detail topic is retained only as planning proto-
 
 A prior 050.8 implementation exists at commit `f76acebf6f8dcf9b2d1a214c9a40e4c0911afc89` and on `backup/spec-0508-demotion-20260822`. It is intentionally absent from the active feature branch. Treat it as historical prototype evidence, not current implementation. If P7 is later promoted, re-inspect current code and do not blindly cherry-pick it.
 
-## Current priority: cross-Cell execution
+## Completed numeric workstream: cross-Cell execution
 
 The user's real workload can include roughly **10 large Cells** in one Time/Capacity plot. After 050.6/050.7 removed major unnecessary transforms, the next question is how the necessary remaining independent per-Cell work should execute.
 
@@ -54,7 +54,7 @@ The original broad `050.P3` was split on 2026-08-22 into three narrower proto de
 File: [`050.9-current-path-profiling-and-python-concurrency-benchmark.md`](050.9-current-path-profiling-and-python-concurrency-benchmark.md)  
 Promoted from: **050.P3**
 
-**Active child.** Measure the post-050.7 production path, then compare:
+**Review-clean; completed.** Measured the post-050.7 production path, then compared:
 
 - sequential baseline;
 - concurrent per-Cell read/decode only, with 2 and 4 threads;
@@ -67,6 +67,8 @@ It does not install a production executor. Its output is current stage decomposi
 File: [`050.10-rust-rayon-kernel-benchmark.md`](050.10-rust-rayon-kernel-benchmark.md)  
 Promoted from: **050.P5**  
 Depends on: **050.9 review-clean**
+
+Status: **Review-clean; completed**
 
 Isolate:
 
@@ -82,16 +84,56 @@ File: [`050.11-execution-strategy-composition-and-decision.md`](050.11-execution
 Promoted from: **050.P6**  
 Depends on: **050.9 and 050.10 review-clean**
 
+Status: **Review-clean; completed**
+
 Combine only mechanisms that proved useful independently, classify whether their gains are additive/sub-additive/neutral/negative, optionally benchmark persistent Python processes only when still justified, and choose one production architecture.
 
-050.11 still does not ship the winner. A later 050.12+ child owns production lifecycle/fallback/packaging/tests.
+050.11 selected the architecture that was productionized by 050.12-050.14. Its benchmark
+mechanisms remain evidence, while the later numeric children own production lifecycle,
+fallback, packaging and tests.
+
+## Completed production and presentation children
+
+The following numeric children are implemented and review-clean on this branch:
+
+### 050.12 — ordinary Time/Capacity warm-interaction latency
+
+File: [`050.12-ordinary-time-capacity-latency.md`](050.12-ordinary-time-capacity-latency.md)
+
+**Review-clean; completed.** Established the reconciled warm-route latency boundary and
+profiling evidence for ordinary Time/Capacity work, preserving scientific and transport parity.
+
+### 050.13 — ordinary Time/Capacity optimization ablation and composition
+
+File: [`050.13-ordinary-time-capacity-optimization-ablation-and-composition.md`](050.13-ordinary-time-capacity-optimization-ablation-and-composition.md)
+
+**Review-clean; completed.** Isolated the evidence-backed indexed/selective and execution
+composition choices that were suitable for productionization; benchmark-only alternatives did
+not become production dependencies.
+
+### 050.14 — ordinary Time/Capacity production integration
+
+File: [`050.14-ordinary-time-capacity-production-integration.md`](050.14-ordinary-time-capacity-production-integration.md)
+
+**Review-clean; completed.** Productionized the indexed selective-read path, dependency-aware
+ordinary Time transforms, bounded four-worker process execution with exact serial fallback,
+deterministic merge, cache-hit bypass and scientific/provenance parity.
+
+### 050.15 — ordinary Time overview transport and adaptive zoom
+
+File: [`050.15-time-overview-transport-and-adaptive-zoom.md`](050.15-time-overview-transport-and-adaptive-zoom.md)
+
+**Review-clean; completed.** Compacted ordinary Time provenance, retained overview density
+multiplier 12 because browser validation was not run, and added ephemeral indexed adaptive
+refinement for eligible ordinary non-stacked consecutive Time while retaining four production
+workers. Capacity optimization remains out of scope.
 
 ## Planning-only proto-children
 
 Proto-children are non-implementable and excluded from workflow state until explicitly promoted.
 
 - `050.P2` — progressive Time/Capacity series streaming. The earlier experiment was rolled back; do not revive it implicitly.
-- [`050.P4-interactive-plot-density-and-adaptive-zoom-benchmark.md`](050.P4-interactive-plot-density-and-adaptive-zoom-benchmark.md) — keep the sufficient ~4k/Cell overview and investigate higher local detail on zoom, with an approximately 200 ms Plotly-update target for the representative 10-Cell workload.
+- [`050.P4-interactive-plot-density-and-adaptive-zoom-benchmark.md`](050.P4-interactive-plot-density-and-adaptive-zoom-benchmark.md) — the bounded on-demand ordinary Time refinement portion was promoted and implemented by 050.15; fixed higher-density, client-reservoir, Plotly-timing and other unimplemented variants remain planning-only.
 - [`050.P7-cross-family-indexed-detail-performance.md`](050.P7-cross-family-indexed-detail-performance.md) — demoted former 050.8 cross-family selective-detail work.
 
 Proto IDs P1/P2/P3/P4/P5/P6/P7 are historically reserved as applicable and must not be reused even after promotion/demotion/removal.
