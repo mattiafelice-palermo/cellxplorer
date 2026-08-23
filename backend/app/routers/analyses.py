@@ -507,6 +507,7 @@ def _profiled_time_capacity_response(
     badges: list[dict] | None = None,
     cache_extra_fields: dict[str, object] | None = None,
     backend_compute_ms: float | None = None,
+    request_profile: dict[str, object] | None = None,
 ) -> Response:
     """Return a normal result plus a profiling-only diagnostic namespace.
 
@@ -516,12 +517,25 @@ def _profiled_time_capacity_response(
     parsed or re-encoded to converge self-referential timing/byte fields.
     """
 
+    if request_profile is not None:
+        request_profile.setdefault("stages_ms", {}).setdefault(
+            "response_preparation_serialization", 0.0
+        )
+        request_profile.setdefault("stages_ms", {}).setdefault(
+            "response_object_construction", 0.0
+        )
+        request_profile.setdefault("stages_ms", {}).setdefault(
+            "response_profile_patch_and_body_assignment", 0.0
+        )
+        request_profile.setdefault("response_serialization_ms", 0.0)
+    response_started = perf_counter()
     profile = time_capacity_profiling.build_time_capacity_profile(
         request_id=request_id,
         result_cache=result_cache,
         diagnostics=diagnostics,
         backend_compute_ms=backend_compute_ms,
         result=result,
+        request_profile=request_profile,
     )
 
     # These placeholders are patched in the final bytes after the one normal
@@ -547,22 +561,74 @@ def _profiled_time_capacity_response(
         scientific_body = fast_json(result).body
         content = _append_json_object_field(scientific_body, "profiling", profile)
     serialize_ms = (perf_counter() - serialize_started) * 1000.0
+    if not isinstance(serialize_ms, (int, float)):
+        serialize_ms = 0.0
+    if request_profile is not None:
+        request_profile["response_serialization_ms"] = float(serialize_ms)
     content = _replace_json_number(content, "backend_serialize_ms", serialize_ms)
-    content = _replace_json_number(
-        content,
-        "backend_total_ms",
-        (perf_counter() - request_started) * 1000.0,
-    )
+    if request_profile is not None:
+        content = _replace_json_number(content, "response_serialization_ms", serialize_ms)
     content = _settle_profile_response_bytes(content)
     # Include the final small byte-patch preparation in the total boundary;
     # this is still byte surgery, not another scientific JSON serialization.
-    content = _replace_json_number(
-        content,
-        "backend_total_ms",
-        (perf_counter() - request_started) * 1000.0,
-    )
-    content = _settle_profile_response_bytes(content)
-    return Response(content=content, media_type="application/json")
+    request_total_ms = (perf_counter() - request_started) * 1000.0
+    if request_profile is not None:
+        response_full_ms = (perf_counter() - response_started) * 1000.0
+        request_profile["stages_ms"]["response_preparation_serialization"] = response_full_ms
+        content = _replace_json_number(
+            content,
+            "response_preparation_serialization",
+            response_full_ms,
+        )
+    response_construct_started = perf_counter()
+    response = Response(content=content, media_type="application/json")
+    response_construct_ms = (perf_counter() - response_construct_started) * 1000.0
+    if request_profile is not None:
+        request_profile["stages_ms"]["response_object_construction"] = response_construct_ms
+        final_started = perf_counter()
+        content = _replace_json_number(
+            content,
+            "response_object_construction",
+            response_construct_ms,
+        )
+
+        def patch_final_totals() -> None:
+            total_ms = (perf_counter() - request_started) * 1000.0
+            request_stages = request_profile.get("stages_ms", {})
+            stage_total = sum(
+                float(value)
+                for value in request_stages.values()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            )
+            nonlocal content
+            content = _replace_json_number(content, "request_total_ms", total_ms)
+            content = _replace_json_number(
+                content,
+                "request_residual_ms",
+                max(0.0, total_ms - stage_total),
+            )
+            content = _replace_json_number(content, "backend_total_ms", total_ms)
+            content = _settle_profile_response_bytes(content)
+
+        # The large-body byte patches below are part of the complete route
+        # boundary. Keep them visible as one final exclusive stage rather than
+        # silently leaving them in residual time.
+        patch_final_totals()
+        response.body = content
+        if "content-length" in response.headers:
+            response.headers["content-length"] = str(len(content))
+        final_ms = (perf_counter() - final_started) * 1000.0
+        request_profile["stages_ms"]["response_profile_patch_and_body_assignment"] = final_ms
+        content = _replace_json_number(
+            content,
+            "response_profile_patch_and_body_assignment",
+            final_ms,
+        )
+        patch_final_totals()
+        response.body = content
+        if "content-length" in response.headers:
+            response.headers["content-length"] = str(len(content))
+    return response
 
 
 def _progress_callback(job_id: int | None):
@@ -1120,99 +1186,142 @@ def compute_rate_capability_analysis(
 @router.post("/analyses/{analysis_id}/time-capacity")
 def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
     request_started = perf_counter()
-    a = db.get(Analysis, analysis_id)
-    if a is None:
-        raise HTTPException(404, "No such analysis")
-    spec = req.spec or a.spec
-    _guard_canonical_cycling(db, spec)
-    options = {
-        "viewport_width": req.viewport_width or 1200,
-        "precision": req.precision,
-        "compact": req.compact,
-    }
-    source_data_signature = analysis_cache.time_capacity_data_signature(
-        db,
-        spec,
-        a.provenance,
-        use_current_versions=req.recompute,
-    )
-    key = analysis_cache.result_key(
-        db,
-        "time_capacity",
-        spec,
-        a.provenance,
-        use_current_versions=req.recompute,
-        request_options=options,
-    )
-    if not req.recompute:
-        stored = analysis_cache.load_result_body("time_capacity", key)
-        if stored is not None:
-            body, kept = stored
-            _finish_job(req.job_id, cached=True)
-            if req.profile:
-                return _profiled_time_capacity_response(
-                    request_started=request_started,
-                    request_id=_profile_request_id(req),
-                    result_cache="hit",
-                    diagnostics=None,
-                    stored_body=body,
-                    badges=kept + engine.availability_badges(db, spec),
-                    cache_extra_fields={
-                        "data_signature": key,
-                        "source_data_signature": source_data_signature,
-                    },
-                )
-            return Response(
-                content=analysis_cache.splice_result_body(
-                    body,
-                    kept + engine.availability_badges(db, spec),
-                    "hit",
-                    {
-                        "data_signature": key,
-                        "source_data_signature": source_data_signature,
-                    },
-                ),
-                media_type="application/json",
-            )
-    result = None if req.recompute else analysis_cache.load_result("time_capacity", key)
-    cached = result is not None
-    if cached:
-        analysis_cache.upgrade_result_format("time_capacity", key, result)
+    request_profile = time_capacity_profiling.new_request_profile() if req.profile else None
+    sql_profile = time_capacity_profiling.SQLProfile(db) if req.profile else None
     job_id = req.job_id
-    access_diagnostics = {} if req.profile else None
-    backend_compute_ms: float | None = None
-    try:
-        if result is None:
-            from ..services.process_priority import background_thread_priority
 
-            if job_id is None and req.job_token:
-                job_id = _open_compute_job(db, a, spec, "time_capacity", req.job_token)
-            compute_started = perf_counter()
-            compute_options = {
-                "use_current_versions": req.recompute,
-                "viewport_width": req.viewport_width,
+    def finish_request_profile() -> None:
+        if sql_profile is not None:
+            sql_profile.finish(request_profile)
+
+    try:
+        with time_capacity_profiling.profiled_stage(request_profile, "analysis_lookup"):
+            a = db.get(Analysis, analysis_id)
+        if a is None:
+            finish_request_profile()
+            raise HTTPException(404, "No such analysis")
+        with time_capacity_profiling.profiled_stage(request_profile, "request_spec_setup"):
+            spec = req.spec or a.spec
+            options = {
+                "viewport_width": req.viewport_width or 1200,
                 "precision": req.precision,
                 "compact": req.compact,
-                "progress": _progress_callback(job_id),
             }
-            if req.profile:
-                compute_options["access_diagnostics"] = access_diagnostics
-            with background_thread_priority(req.background):
-                result = engine.compute_time_capacity(
-                    db,
-                    spec,
-                    a.provenance,
-                    **compute_options,
+        with time_capacity_profiling.profiled_stage(request_profile, "canonical_capability_guard"):
+            _guard_canonical_cycling(db, spec)
+        with time_capacity_profiling.profiled_stage(request_profile, "source_data_signature"):
+            source_data_signature = analysis_cache.time_capacity_data_signature(
+                db,
+                spec,
+                a.provenance,
+                use_current_versions=req.recompute,
+            )
+        with time_capacity_profiling.profiled_stage(request_profile, "render_result_key"):
+            key = analysis_cache.result_key(
+                db,
+                "time_capacity",
+                spec,
+                a.provenance,
+                use_current_versions=req.recompute,
+                request_options=options,
+            )
+        if not req.recompute:
+            with time_capacity_profiling.profiled_stage(request_profile, "result_cache_body_lookup"):
+                stored = analysis_cache.load_result_body("time_capacity", key)
+            if stored is not None:
+                body, kept = stored
+                with time_capacity_profiling.profiled_stage(request_profile, "activity_finalize"):
+                    _finish_job(req.job_id, cached=True)
+                with time_capacity_profiling.profiled_stage(request_profile, "availability_badges"):
+                    badges = kept + engine.availability_badges(db, spec)
+                if req.profile:
+                    with time_capacity_profiling.profiled_stage(
+                        request_profile, "request_profile_finalization"
+                    ):
+                        finish_request_profile()
+                    return _profiled_time_capacity_response(
+                        request_started=request_started,
+                        request_id=_profile_request_id(req),
+                        result_cache="hit",
+                        diagnostics=None,
+                        stored_body=body,
+                        badges=badges,
+                        cache_extra_fields={
+                            "data_signature": key,
+                            "source_data_signature": source_data_signature,
+                        },
+                        request_profile=request_profile,
+                    )
+                return Response(
+                    content=analysis_cache.splice_result_body(
+                        body,
+                        badges,
+                        "hit",
+                        {
+                            "data_signature": key,
+                            "source_data_signature": source_data_signature,
+                        },
+                    ),
+                    media_type="application/json",
                 )
+        if req.recompute:
+            result = None
+        else:
+            with time_capacity_profiling.profiled_stage(request_profile, "result_cache_legacy_lookup"):
+                result = analysis_cache.load_result("time_capacity", key)
+        cached = result is not None
+        if cached:
+            with time_capacity_profiling.profiled_stage(request_profile, "result_cache_legacy_upgrade"):
+                analysis_cache.upgrade_result_format("time_capacity", key, result)
+        access_diagnostics = {} if req.profile else None
+        backend_compute_ms: float | None = None
+        if result is None:
+            with time_capacity_profiling.profiled_stage(request_profile, "compute_request_setup"):
+                from ..services.process_priority import background_thread_priority
+
+            if job_id is None and req.job_token:
+                with time_capacity_profiling.profiled_stage(request_profile, "activity_setup"):
+                    job_id = _open_compute_job(db, a, spec, "time_capacity", req.job_token)
+            with time_capacity_profiling.profiled_stage(request_profile, "compute_request_setup"):
+                compute_options = {
+                    "use_current_versions": req.recompute,
+                    "viewport_width": req.viewport_width,
+                    "precision": req.precision,
+                    "compact": req.compact,
+                    "progress": _progress_callback(job_id),
+                }
+                if req.profile:
+                    compute_options["access_diagnostics"] = access_diagnostics
+            compute_started = perf_counter()
+            with time_capacity_profiling.profiled_stage(request_profile, "engine_compute"):
+                with background_thread_priority(req.background):
+                    result = engine.compute_time_capacity(
+                        db,
+                        spec,
+                        a.provenance,
+                        **compute_options,
+                    )
             backend_compute_ms = (perf_counter() - compute_started) * 1000.0
             result["cache_status"] = "miss"
             result["data_signature"] = key
             result["source_data_signature"] = source_data_signature
-            analysis_cache.store_result("time_capacity", key, result)
-        result["data_signature"] = key
-        result["source_data_signature"] = source_data_signature
-        _finish_job(job_id, cached=cached)
+            with time_capacity_profiling.profiled_stage(request_profile, "result_cache_persistence"):
+                store_result = analysis_cache.store_result
+                if request_profile is not None and getattr(store_result, "__name__", None) == "store_result":
+                    store_result("time_capacity", key, result, profile=request_profile)
+                else:
+                    # Keep the route compatible with focused tests that
+                    # replace persistence with a three-argument spy.
+                    store_result("time_capacity", key, result)
+        with time_capacity_profiling.profiled_stage(request_profile, "owner_finalization"):
+            result["data_signature"] = key
+            result["source_data_signature"] = source_data_signature
+            _finish_job(job_id, cached=cached)
         if req.profile:
+            with time_capacity_profiling.profiled_stage(
+                request_profile, "request_profile_finalization"
+            ):
+                finish_request_profile()
             return _profiled_time_capacity_response(
                 request_started=request_started,
                 request_id=_profile_request_id(req),
@@ -1220,9 +1329,11 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                 diagnostics=access_diagnostics,
                 result=result,
                 backend_compute_ms=backend_compute_ms,
+                request_profile=request_profile,
             )
         return fast_json(result)
     except Exception as exc:
+        finish_request_profile()
         _finish_job(job_id, error=str(exc))
         raise
 

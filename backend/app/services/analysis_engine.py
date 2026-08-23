@@ -2659,6 +2659,121 @@ def compute_dcir(
     }
 
 
+_TIME_CAPACITY_EXCLUSIVE_CELL_STAGES = (
+    "relational_selection_source_resolution",
+    "protocol_target_resolution",
+    "index_stitch_plan",
+    "indexed_raw_access",
+    "legacy_full_raw_read",
+    "voltage_capability_context",
+    "source_descriptors",
+    "prepared_derived_read",
+    "exact_cycle_filter_and_sort",
+    "continuous_time_phase_capacity",
+    "derivative",
+    "protocol_masking",
+    "display_coordinate",
+    "display_downsampling",
+    "display_post_downsample_materialization",
+    "transform_source_provenance",
+    "compact_trace_object_projection",
+)
+
+
+def _finish_time_capacity_cell_profile(
+    diagnostics: dict[str, Any] | None,
+    started: float | None,
+) -> None:
+    """Close one cell's exclusive partition without summing nested timers."""
+
+    if diagnostics is None or started is None:
+        return
+    wall_ms = (perf_counter() - started) * 1000.0
+    diagnostics["cell_job_wall_ms"] = wall_ms
+    stages = diagnostics.get("stages") or {}
+    exclusive: dict[str, float] = {}
+    for name in _TIME_CAPACITY_EXCLUSIVE_CELL_STAGES:
+        value = stages.get(name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            exclusive[name] = max(0.0, float(value) * 1000.0)
+    residual = max(0.0, wall_ms - sum(exclusive.values()))
+    exclusive["cell_residual"] = residual
+    diagnostics["exclusive_stages_ms"] = exclusive
+
+    def stage_ms(name: str) -> float:
+        value = stages.get(name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return max(0.0, float(value) * 1000.0)
+        return 0.0
+
+    detailed: dict[str, float] = {}
+    for name in (
+        "relational_selection_source_resolution",
+        "protocol_target_resolution",
+        "voltage_capability_context",
+        "source_descriptors",
+        "prepared_derived_read",
+        "exact_cycle_filter_and_sort",
+        "derivative",
+        "protocol_masking",
+        "display_coordinate",
+        "display_downsampling",
+        "display_post_downsample_materialization",
+        "transform_source_provenance",
+        "transform_plot_array_materialization",
+        "compact_trace_object_projection",
+        "legacy_full_raw_read",
+    ):
+        value = stage_ms(name)
+        if value:
+            detailed[name] = value
+
+    plan_validation = stage_ms("raw_index_plan_validation")
+    if plan_validation:
+        detailed["raw_index_plan_validation"] = plan_validation
+    detailed["index_stitch_plan_residual"] = max(
+        0.0,
+        stage_ms("index_stitch_plan") - plan_validation,
+    )
+
+    raw_children: dict[str, float] = {}
+    raw_read_stages = diagnostics.get("raw_read_stages_ms")
+    if isinstance(raw_read_stages, dict):
+        for name, value in raw_read_stages.items():
+            if isinstance(name, str) and isinstance(value, (int, float)):
+                raw_children[name] = max(0.0, float(value))
+    for name in ("raw_record_index_sort", "raw_cycle_mapping", "raw_frame_concat"):
+        value = stage_ms(name)
+        if value:
+            raw_children[name] = value
+    detailed.update(raw_children)
+    detailed["indexed_raw_access_residual"] = max(
+        0.0,
+        stage_ms("indexed_raw_access") - sum(raw_children.values()),
+    )
+
+    transform_children = {
+        name: stage_ms(name)
+        for name in (
+            "transform_continuous_time",
+            "transform_source_boundaries",
+            "transform_phase_classification",
+            "transform_phase_capacity",
+            "transform_capacity_metadata",
+            "transform_specific_capacity",
+            "transform_areal_capacity",
+        )
+        if stage_ms(name)
+    }
+    detailed.update(transform_children)
+    detailed["continuous_time_phase_capacity_residual"] = max(
+        0.0,
+        stage_ms("continuous_time_phase_capacity") - sum(transform_children.values()),
+    )
+    detailed["cell_residual"] = max(0.0, wall_ms - sum(detailed.values()))
+    diagnostics["exclusive_partition_ms"] = detailed
+
+
 def compute_time_capacity(
     db: Session,
     spec: dict,
@@ -2671,6 +2786,7 @@ def compute_time_capacity(
     progress: ProgressCallback | None = None,
     access_diagnostics: dict[str, Any] | None = None,
 ) -> dict:
+    engine_started = perf_counter()
     ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
@@ -2716,11 +2832,14 @@ def compute_time_capacity(
         quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
     }
 
+    owner_setup_ms = (perf_counter() - engine_started) * 1000.0
+
     for unit_index, unit in enumerate(units, start=1):
         if previous_cell_diagnostics is not None and previous_cell_started is not None:
-            previous_cell_diagnostics["cell_job_wall_ms"] = (
-                perf_counter() - previous_cell_started
-            ) * 1000.0
+            _finish_time_capacity_cell_profile(
+                previous_cell_diagnostics,
+                previous_cell_started,
+            )
         cell: Cell = unit["cell"]
         cell_started = perf_counter() if access_diagnostics is not None else None
         cell_diagnostics: dict[str, Any] = {
@@ -3257,20 +3376,23 @@ def compute_time_capacity(
                 take = _downsample_indices(
                     len(raw), configured_max, visible_values, envelope_series
                 )
-            take = np.unique(np.concatenate((take, source_boundary_indices)))
-            raw = raw.iloc[take]
-            display_x = display_x[take]
-            phases = np.asarray(phases)[take].tolist()
-            voltage = voltage[take]
-            current = current[take]
-            capacity = capacity[take] if capacity is not None else None
-            capacity_g = capacity_g[take] if capacity_g is not None else None
-            capacity_area = capacity_area[take] if capacity_area is not None else None
-            derivative_x = derivative_x[take]
-            derivative_y = derivative_y[take]
-            source_boundary_indices = np.flatnonzero(
-                raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
-            ) + 1
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "display_post_downsample_materialization"
+            ):
+                take = np.unique(np.concatenate((take, source_boundary_indices)))
+                raw = raw.iloc[take]
+                display_x = display_x[take]
+                phases = np.asarray(phases)[take].tolist()
+                voltage = voltage[take]
+                current = current[take]
+                capacity = capacity[take] if capacity is not None else None
+                capacity_g = capacity_g[take] if capacity_g is not None else None
+                capacity_area = capacity_area[take] if capacity_area is not None else None
+                derivative_x = derivative_x[take]
+                derivative_y = derivative_y[take]
+                source_boundary_indices = np.flatnonzero(
+                    raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
+                ) + 1
         else:
             source_boundary_indices = np.flatnonzero(
                 raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
@@ -3296,6 +3418,7 @@ def compute_time_capacity(
         x_axis = settings["x_axis"]
         total_returned_points += len(raw)
 
+        trace_projection_started = perf_counter() if profile_diagnostics is not None else None
         exclusion = exclusion_for_unit(exclusions, unit)
         group_hidden = unit["group_id"] in hidden_group_ids
         traces.append(
@@ -3343,6 +3466,13 @@ def compute_time_capacity(
                 "source_boundary_indices": [int(index) for index in source_boundary_indices],
             }
         )
+        if trace_projection_started is not None:
+            profile_diagnostics.setdefault("stages", {})["compact_trace_object_projection"] = (
+                profile_diagnostics.setdefault("stages", {}).get(
+                    "compact_trace_object_projection", 0.0
+                )
+                + perf_counter() - trace_projection_started
+            )
         if progress:
             progress(
                 unit_index,
@@ -3352,10 +3482,12 @@ def compute_time_capacity(
             )
 
     if previous_cell_diagnostics is not None and previous_cell_started is not None:
-        previous_cell_diagnostics["cell_job_wall_ms"] = (
-            perf_counter() - previous_cell_started
-        ) * 1000.0
+        _finish_time_capacity_cell_profile(
+            previous_cell_diagnostics,
+            previous_cell_started,
+        )
 
+    finalization_started = perf_counter()
     _append_unmatched_protocol_badges(protocol_context, badges)
 
     for miss in missing_refs:
@@ -3399,7 +3531,7 @@ def compute_time_capacity(
             item["reference_electrode"] = reference
         voltage_channels[quantity] = item
 
-    return {
+    result = {
         "computed_at": now_iso(),
         "type": spec.get("type", "cycling"),
         "parser_version": display_parser_version(all_pinned_versions),
@@ -3423,6 +3555,28 @@ def compute_time_capacity(
             "compact": compact,
         },
     }
+    global_finalization_ms = (perf_counter() - finalization_started) * 1000.0
+    if access_diagnostics is not None:
+        cell_jobs_ms = sum(
+            float(cell.get("cell_job_wall_ms", 0.0))
+            for cell in access_diagnostics.get("cells", [])
+            if isinstance(cell, dict)
+            and isinstance(cell.get("cell_job_wall_ms"), (int, float))
+            and not isinstance(cell.get("cell_job_wall_ms"), bool)
+        )
+        engine_total_ms = (perf_counter() - engine_started) * 1000.0
+        residual_ms = max(
+            0.0,
+            engine_total_ms - owner_setup_ms - cell_jobs_ms - global_finalization_ms,
+        )
+        access_diagnostics["engine"] = {
+            "total_ms": engine_total_ms,
+            "owner_setup_ms": owner_setup_ms,
+            "cell_jobs_ms": cell_jobs_ms,
+            "global_finalization_ms": global_finalization_ms,
+            "residual_ms": residual_ms,
+        }
+    return result
 
 
 def build_provenance(result: dict) -> dict:

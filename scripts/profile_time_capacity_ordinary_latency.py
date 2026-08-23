@@ -2,18 +2,21 @@
 
 The harness uses the committed golden fixture and, when available, a read-only
 copy of the saved ``Performance analysis`` database.  It runs only the current
-sequential production executor (A0), keeps five warm repetitions per workload,
-and records the existing opt-in backend stage profile.  Disposable database
-copies and cache-hit controls keep the user's application state unchanged.
+sequential production router/backend path, keeps five warm repetitions per
+workload, and records an opt-in profiled twin beside each normal unprofiled
+miss.  Disposable database copies and cache-hit controls keep the user's
+application state unchanged.
 """
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import statistics
 import sys
 import tempfile
+from time import perf_counter
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +30,7 @@ from profile_time_capacity_concurrency import (  # noqa: E402
     discover_application_dataset,
     make_spec,
     native_thread_settings,
-    run_production_sample,
+    result_order,
     scientific_digest,
 )
 from profile_time_capacity_transforms import clone_golden_source_cells  # noqa: E402
@@ -40,6 +43,145 @@ GOLDEN_CELL_ID = 101
 def _median(values: list[object]) -> float | None:
     finite = [float(value) for value in values if isinstance(value, (int, float))]
     return statistics.median(finite) if finite else None
+
+
+def _profile_result_payload(body: dict[str, object]) -> dict:
+    payload = dict(body)
+    payload.pop("profiling", None)
+    return payload
+
+
+def run_profiled_route_sample(
+    env: object,
+    analysis_id: int,
+    reference: dict | None,
+    *,
+    scenario: str,
+) -> tuple[dict[str, object], dict]:
+    """Measure the complete production router boundary on a disposable cache."""
+
+    from app.routers import analyses as analyses_router
+    from app.services import analysis_cache
+
+    with tempfile.TemporaryDirectory(prefix="cellxplorer-05012-route-cache-") as root:
+        cache_root = Path(root)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(analysis_cache, "_ROOT", cache_root))
+            stack.enter_context(patch.object(analysis_cache, "_RESULTS", cache_root / "results"))
+            stack.enter_context(patch.object(analysis_cache, "_ARTIFACTS", cache_root / "artifacts"))
+            stack.enter_context(patch.object(analysis_cache, "_THUMBNAILS", cache_root / "thumbnails"))
+            stack.enter_context(
+                patch.object(analysis_cache, "_THUMBNAIL_INDEXES", cache_root / "thumbnail-index")
+            )
+            stack.enter_context(patch.object(analysis_cache, "_PREPARED", cache_root / "prepared"))
+            stack.enter_context(patch.object(analysis_cache, "_budget_total", None))
+            started = perf_counter()
+            response = analyses_router.compute_time_capacity_analysis(
+                analysis_id,
+                analyses_router.ComputeRequest(
+                    recompute=False,
+                    profile=True,
+                    profile_request_id=f"050.12-route-{scenario}",
+                    viewport_width=1200,
+                    precision="standard",
+                    compact=True,
+                ),
+                env.db,
+            )
+            complete_wall_ms = (perf_counter() - started) * 1000.0
+    body = json.loads(response.body)
+    payload = _profile_result_payload(body)
+    profile = body.get("profiling") if isinstance(body.get("profiling"), dict) else {}
+    if reference is None:
+        reference = payload
+    reference_digest = scientific_digest(reference)
+    candidate_digest = scientific_digest(payload)
+    reference_order = result_order(reference)
+    candidate_order = result_order(payload)
+    partition = profile.get("request_stages_ms") if isinstance(profile, dict) else {}
+    partition_sum = (
+        sum(float(value) for value in partition.values() if isinstance(value, (int, float)))
+        if isinstance(partition, dict)
+        else None
+    )
+    row: dict[str, object] = {
+        "candidate": "ROUTE",
+        "workers": 1,
+        "scenario": scenario,
+        "cell_count": len(candidate_order),
+        "selection_count": len(candidate_order),
+        "backend_wall_ms": complete_wall_ms,
+        "profile_backend_total_ms": profile.get("backend_total_ms"),
+        "profiler_boundary_overhead_ms": (
+            complete_wall_ms - float(profile["backend_total_ms"])
+            if isinstance(profile.get("backend_total_ms"), (int, float))
+            else None
+        ),
+        "request_total_ms": profile.get("request_total_ms"),
+        "response_serialization_ms": profile.get("response_serialization_ms"),
+        "request_partition_sum_ms": partition_sum,
+        "request_partition_residual_ms": profile.get("request_residual_ms"),
+        "request_stages_ms": partition,
+        "request_sql": profile.get("request_sql"),
+        "cache_store_stages_ms": profile.get("cache_store_stages_ms"),
+        "engine_timing": profile.get("engine_timing"),
+        "cell_exclusive_stages_ms": profile.get("cell_exclusive_stages_ms"),
+        "cell_exclusive_partition_ms": profile.get("cell_exclusive_partition_ms"),
+        "raw_read_stages_ms": profile.get("raw_read_stages_ms"),
+        "scientific_parity": {
+            "equal": reference_digest == candidate_digest,
+            "reference_digest": reference_digest,
+            "candidate_digest": candidate_digest,
+            "ordering_equal": reference_order == candidate_order,
+        },
+        "status": "PASS"
+        if reference_digest == candidate_digest and reference_order == candidate_order
+        else "REJECTED",
+    }
+    return row, payload
+
+
+def run_unprofiled_route_sample(
+    env: object,
+    analysis_id: int,
+    reference: dict,
+    *,
+    scenario: str,
+) -> tuple[float, dict]:
+    """Measure the same complete route miss without opt-in profiling overhead."""
+
+    from app.routers import analyses as analyses_router
+    from app.services import analysis_cache
+
+    with tempfile.TemporaryDirectory(prefix="cellxplorer-05012-route-cache-plain-") as root:
+        cache_root = Path(root)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(analysis_cache, "_ROOT", cache_root))
+            stack.enter_context(patch.object(analysis_cache, "_RESULTS", cache_root / "results"))
+            stack.enter_context(patch.object(analysis_cache, "_ARTIFACTS", cache_root / "artifacts"))
+            stack.enter_context(patch.object(analysis_cache, "_THUMBNAILS", cache_root / "thumbnails"))
+            stack.enter_context(
+                patch.object(analysis_cache, "_THUMBNAIL_INDEXES", cache_root / "thumbnail-index")
+            )
+            stack.enter_context(patch.object(analysis_cache, "_PREPARED", cache_root / "prepared"))
+            stack.enter_context(patch.object(analysis_cache, "_budget_total", None))
+            started = perf_counter()
+            response = analyses_router.compute_time_capacity_analysis(
+                analysis_id,
+                analyses_router.ComputeRequest(
+                    recompute=False,
+                    profile=False,
+                    viewport_width=1200,
+                    precision="standard",
+                    compact=True,
+                ),
+                env.db,
+            )
+            wall_ms = (perf_counter() - started) * 1000.0
+    payload = _profile_result_payload(json.loads(response.body))
+    if scientific_digest(payload) != scientific_digest(reference) or result_order(payload) != result_order(reference):
+        raise RuntimeError(f"Unprofiled scientific parity failed in {scenario}")
+    return wall_ms, payload
 
 
 def ordinary_workload_matrix(cell_ids: list[int]) -> list[dict[str, object]]:
@@ -129,20 +271,35 @@ def profile_workload(
         x_axis=str(workload["x_axis"]),
         view=str(workload["view"]),
     )
-    _, reference = run_production_sample(
+    from app.models import Analysis
+
+    analysis = Analysis(title=f"050.12 route profiler {scenario}", spec=spec)
+    env.db.add(analysis)
+    env.db.commit()
+    _, reference = run_profiled_route_sample(
         env,
-        spec,
+        analysis.id,
         None,
         scenario=f"{scenario}-warmup",
     )
     samples: list[dict[str, object]] = []
     for _ in range(repetitions):
-        row, _result = run_production_sample(
+        row, _result = run_profiled_route_sample(
             env,
-            spec,
+            analysis.id,
             reference,
             scenario=scenario,
         )
+        plain_wall_ms, _plain_result = run_unprofiled_route_sample(
+            env,
+            analysis.id,
+            reference,
+            scenario=scenario,
+        )
+        profiled_wall_ms = float(row["backend_wall_ms"])
+        row["profiled_route_wall_ms"] = profiled_wall_ms
+        row["profiling_overhead_ms"] = profiled_wall_ms - plain_wall_ms
+        row["backend_wall_ms"] = plain_wall_ms
         samples.append(row)
     if any(row.get("status") != "PASS" for row in samples):
         raise RuntimeError(f"Scientific parity failed in {scenario}")
@@ -150,7 +307,7 @@ def profile_workload(
         **{key: value for key, value in workload.items() if key != "cell_ids"},
         "cell_count": len(cell_ids),
         "repetitions": repetitions,
-        "warmup": "one sequential production request, not recorded",
+        "warmup": "one complete router/backend request, not recorded",
         "samples": samples,
         "backend_median_ms": _median([row.get("backend_wall_ms") for row in samples]),
         "backend_range_ms": {
@@ -329,7 +486,10 @@ def main() -> int:
             "precision": "standard",
             "compact": True,
             "viewport_width": 1200,
-            "executor": "current sequential Python production path",
+            "executor": "complete synchronous /analyses/{id}/time-capacity router/backend path",
+            "wall_boundary": "paired unprofiled direct router call from request start through final Response construction",
+            "profile_boundary": "profile=True twin of each reported miss; profiling overhead is recorded separately",
+            "partition_rule": "request_stages_ms are exclusive top-level scopes; engine/cell/raw detail tables are labelled separately",
         },
         "accepted_050_11_baseline_ms": {
             "application_performance_batch/normal-6-all-time": 586,
@@ -352,6 +512,35 @@ def main() -> int:
             "transform_plot_array_materialization",
             "display_coordinate",
             "display_downsampling",
+            "display_post_downsample_materialization",
+            "compact_trace_object_projection",
+            "raw_index_plan_validation",
+            "raw_index_read_validation",
+            "raw_parquet_footer_schema",
+            "raw_row_group_decode_arrow_to_pandas",
+            "raw_exact_cycle_filter",
+            "raw_record_index_sort",
+            "raw_cycle_mapping",
+            "raw_frame_concat",
+            "analysis_lookup",
+            "canonical_capability_guard",
+            "source_data_signature",
+            "render_result_key",
+            "result_cache_body_lookup",
+            "result_cache_legacy_lookup",
+            "engine_compute",
+            "compute_request_setup",
+            "result_cache_persistence",
+            "request_profile_finalization",
+            "response_preparation_serialization",
+            "response_object_construction",
+            "response_profile_patch_and_body_assignment",
+            "response_serialization_ms (profiled child of response preparation)",
+            "cache_store_json_encode",
+            "cache_store_gzip_compress",
+            "cache_store_atomic_write_replace",
+            "cache_store_sidecar_write",
+            "cache_store_sidecar_prune",
         ],
         "suites": suites,
         "exact_cache_controls": controls,

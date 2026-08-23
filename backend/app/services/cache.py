@@ -22,7 +22,7 @@ import time
 import uuid
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +68,7 @@ class RawCycleReadDiagnostics:
     rows_returned: int = 0
     columns_read: tuple[str, ...] = ()
     columns_returned: tuple[str, ...] = ()
+    stages_ms: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -1333,7 +1334,12 @@ def load_raw_cycles(
         diagnostics.requested_cycles = requested_cycles
         diagnostics.columns_returned = tuple(requested_columns)
 
+    wait_started = time.perf_counter()
     _wait_for_pending(file_hash)
+    if diagnostics is not None:
+        diagnostics.stages_ms["raw_layout_wait_and_lock"] = (
+            time.perf_counter() - wait_started
+        ) * 1000.0
     parquet_path = raw_path(file_hash, parser_version)
     index_path = raw_index_path(file_hash, parser_version)
     with _raw_layout_access(wait=wait_for_layout) as acquired:
@@ -1350,8 +1356,17 @@ def load_raw_cycles(
                 diagnostics.status = "layout_unavailable"
             return None
         try:
+            index_started = time.perf_counter()
             index = _load_raw_layout_index_unlocked(file_hash, parser_version)
+            if diagnostics is not None:
+                diagnostics.stages_ms["raw_index_read_validation"] = (
+                    time.perf_counter() - index_started
+                ) * 1000.0
         except RawLayoutError:
+            if diagnostics is not None:
+                diagnostics.stages_ms["raw_index_read_validation"] = (
+                    time.perf_counter() - index_started
+                ) * 1000.0
             if diagnostics is not None:
                 diagnostics.status = "invalid_index"
             return None
@@ -1389,19 +1404,35 @@ def load_raw_cycles(
         try:
             import pyarrow.parquet as pq
 
-            loaded = pq.ParquetFile(parquet_path).read_row_groups(
+            footer_started = time.perf_counter()
+            parquet = pq.ParquetFile(parquet_path)
+            if diagnostics is not None:
+                diagnostics.stages_ms["raw_parquet_footer_schema"] = (
+                    time.perf_counter() - footer_started
+                ) * 1000.0
+            decode_started = time.perf_counter()
+            loaded = parquet.read_row_groups(
                 row_groups,
                 columns=read_columns,
             ).to_pandas()
+            if diagnostics is not None:
+                diagnostics.stages_ms["raw_row_group_decode_arrow_to_pandas"] = (
+                    time.perf_counter() - decode_started
+                ) * 1000.0
         except Exception:
             logger.warning("Could not read indexed raw row groups for %s", file_hash[:12], exc_info=True)
             if diagnostics is not None:
                 diagnostics.status = "invalid_raw"
             return None
 
+        filter_started = time.perf_counter()
         numeric_cycles = pd.to_numeric(loaded["cycle"], errors="coerce")
         mask = numeric_cycles.isin(requested_cycles)
         result = loaded.loc[mask, requested_columns].reset_index(drop=True)
+        if diagnostics is not None:
+            diagnostics.stages_ms["raw_exact_cycle_filter"] = (
+                time.perf_counter() - filter_started
+            ) * 1000.0
         if diagnostics is not None:
             diagnostics.rows_returned = len(result)
         return result

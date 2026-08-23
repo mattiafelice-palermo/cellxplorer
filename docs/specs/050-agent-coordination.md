@@ -782,3 +782,20 @@ R1-R3 fixes are complete. The corrected mains-power matrix uses the same A0/cand
 050.12 implemented: request-aware compact indexed projection and bounded post-downsample provenance; 050.12 mains benchmark records real Time medians 323/554/591 ms for 6/10/11 Cells and capacity-6 median 514 ms, with no browser timing claimed.
 
 ---
+### 2026-08-23T02:28:25+02:00 — IMPLEMENTER → REVIEWER — 050.12
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused Time/Capacity/path/profiling/engine tests: PASS (114 tests)
+- powered paired ordinary matrix: PASS (26 workloads x 5 profiled/unprofiled pairs; fixture + real Performance analysis)
+- exact result-cache miss/hit control: PASS
+- preflight: PASS 4/4 (77 backend modules; frontend unchanged-cache skips)
+- browser checks: NOT RUN
+
+**Message**
+
+R1 fixes are ready. The production router is now profiled at reconciled request and engine levels, with SQL/header-load counts, raw-reader children, cache-store sub-stages, post-downsample/compact projection timing, and explicit residuals. The powered report pairs each profiled miss with an unprofiled miss so diagnostic overhead is quantified rather than included in the ordinary latency headline. Raw decode is not labeled dominant by the reconciled exclusive evidence.
+
+---

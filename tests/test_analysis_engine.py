@@ -992,10 +992,17 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(miss_profile["selected_rows_before_transforms"], 36)
         self.assertEqual(miss_profile["returned_points"], 24)
         self.assertEqual(miss_profile["resolved_cell_count"], 1)
+        self.assertIn("request_stages_ms", miss_profile)
+        self.assertIn("source_data_signature", miss_profile["request_stages_ms"])
+        self.assertIn("render_result_key", miss_profile["request_stages_ms"])
+        self.assertIn("request_sql", miss_profile)
+        self.assertGreaterEqual(miss_profile["request_residual_ms"], 0)
         self.assertNotIn("trace_count", miss_profile)
         self.assertEqual(hit_profile["request_id"], "profile-hit")
         self.assertEqual(hit_profile["result_cache"], "hit")
         self.assertEqual(hit_profile["raw_access"], "not_applicable")
+        self.assertIn("result_cache_body_lookup", hit_profile["request_stages_ms"])
+        self.assertNotIn("engine_timing", hit_profile)
         self.assertNotIn("profiling", ordinary_miss_body)
         self.assertEqual(
             profiled_miss_body["cell_traces"], ordinary_miss_body["cell_traces"]

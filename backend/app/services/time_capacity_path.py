@@ -231,7 +231,8 @@ def build_time_capacity_stitch_plan(
         # A plot request must not wait for an in-flight 050.2 conversion.  The
         # probe validates the raw/index pair only when the consistency boundary
         # is immediately available; a busy boundary takes the legacy path.
-        index = cache.try_load_raw_layout_index(ref.file_hash, ref.parser_version)
+        with timed_stage(diagnostics, "raw_index_plan_validation"):
+            index = cache.try_load_raw_layout_index(ref.file_hash, ref.parser_version)
         if index is None:
             if not cache.raw_path(ref.file_hash, ref.parser_version).is_file():
                 missing.append(ref.file_hash)
@@ -439,16 +440,24 @@ def load_indexed_time_capacity_raw(
             )
             return None
 
+        raw_read_stages = read_diagnostics.stages_ms
+        if diagnostics is not None and raw_read_stages:
+            aggregate = diagnostics.setdefault("raw_read_stages_ms", {})
+            for name, elapsed in raw_read_stages.items():
+                aggregate[name] = aggregate.get(name, 0.0) + float(elapsed)
+
         with timed_stage(diagnostics, "exact_cycle_filter_global_mapping_concatenation"):
             if "record_index" in loaded.columns:
-                loaded = loaded.sort_values("record_index", kind="stable").reset_index(drop=True)
-            mapped = stitch.apply_cycle_mapping(
-                loaded,
-                segment=source.segment,
-                source_hash=source.ref.file_hash,
-                local_labels=list(source.observed_source_cycles),
-                cycle_map=source.cycle_map,
-            )
+                with timed_stage(diagnostics, "raw_record_index_sort"):
+                    loaded = loaded.sort_values("record_index", kind="stable").reset_index(drop=True)
+            with timed_stage(diagnostics, "raw_cycle_mapping"):
+                mapped = stitch.apply_cycle_mapping(
+                    loaded,
+                    segment=source.segment,
+                    source_hash=source.ref.file_hash,
+                    local_labels=list(source.observed_source_cycles),
+                    cycle_map=source.cycle_map,
+                )
         frames.append(mapped)
         selected_rows += len(mapped)
         materialized_rows += int(read_diagnostics.rows_read)
@@ -470,7 +479,8 @@ def load_indexed_time_capacity_raw(
 
     with timed_stage(diagnostics, "exact_cycle_filter_global_mapping_concatenation"):
         if frames:
-            result = pd.concat(frames, ignore_index=True)
+            with timed_stage(diagnostics, "raw_frame_concat"):
+                result = pd.concat(frames, ignore_index=True)
             for column in projection_union:
                 if column not in result.columns:
                     result[column] = pd.Series([float("nan")] * len(result), index=result.index)

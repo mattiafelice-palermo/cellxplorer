@@ -502,6 +502,10 @@ def _stage_summary(profile: dict[str, Any], diagnostics: dict[str, Any]) -> dict
         "selected_rows": profile.get("selected_rows_before_transforms"),
         "prepared_rows_materialized": profile.get("prepared_rows_materialized"),
         "columns_read": _column_count(diagnostics),
+        "cell_exclusive_stages_ms": profile.get("cell_exclusive_stages_ms"),
+        "cell_exclusive_partition_ms": profile.get("cell_exclusive_partition_ms"),
+        "raw_read_stages_ms": profile.get("raw_read_stages_ms"),
+        "engine_timing": profile.get("engine_timing"),
     }
 
 
@@ -569,6 +573,10 @@ def _measurement_row(
         "stages": stage,
         "backend_stages_ms": profile.get("backend_stages_ms"),
         "transform_stages": profile.get("transform_stages"),
+        "cell_exclusive_stages_ms": profile.get("cell_exclusive_stages_ms"),
+        "cell_exclusive_partition_ms": profile.get("cell_exclusive_partition_ms"),
+        "raw_read_stages_ms": profile.get("raw_read_stages_ms"),
+        "engine_timing": profile.get("engine_timing"),
         "scientific_parity": parity_result,
         "status": "PASS" if parity_result["equal"] and parity_result["ordering_equal"] else "REJECTED",
     }

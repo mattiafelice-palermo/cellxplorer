@@ -96,6 +96,55 @@ class TimeCapacityProfilingTests(unittest.TestCase):
         self.assertEqual(profile["row_groups_read"], "full")
         self.assertEqual(profile["row_groups_total"], "full")
 
+    def test_request_and_engine_accounting_exposes_exclusive_partitions(self):
+        profile = build_time_capacity_profile(
+            request_id="accounting",
+            result_cache="miss",
+            diagnostics={
+                "engine": {
+                    "total_ms": 20.0,
+                    "owner_setup_ms": 2.0,
+                    "cell_jobs_ms": 16.0,
+                    "global_finalization_ms": 1.0,
+                    "residual_ms": 1.0,
+                },
+                "cells": [
+                    {
+                        "cell_id": 1,
+                        "cell_job_wall_ms": 16.0,
+                        "exclusive_partition_ms": {
+                            "relational_selection_source_resolution": 1.0,
+                            "raw_row_group_decode_arrow_to_pandas": 5.0,
+                            "compact_trace_object_projection": 3.0,
+                            "cell_residual": 7.0,
+                        },
+                    }
+                ],
+            },
+            request_profile={
+                "stages_ms": {
+                    "analysis_lookup": 1.0,
+                    "engine_compute": 20.0,
+                },
+                "sql": {
+                    "statement_count": 4,
+                    "cumulative_sql_ms": 0.5,
+                    "source_header_lazy_loads": 1,
+                },
+            },
+        )
+
+        self.assertEqual(profile["request_stages_ms"]["analysis_lookup"], 1.0)
+        self.assertEqual(profile["response_serialization_ms"], 0.0)
+        self.assertEqual(profile["request_sql"]["statement_count"], 4)
+        self.assertEqual(profile["engine_timing"]["residual_ms"], 1.0)
+        self.assertEqual(
+            profile["cell_exclusive_partition_ms"]["raw_row_group_decode_arrow_to_pandas"],
+            5.0,
+        )
+        self.assertNotIn("cell_id", profile)
+        self.assertNotIn("paths", str(profile))
+
     def test_aggregates_transform_and_derivative_profiles_without_private_fields(self):
         profile = build_time_capacity_profile(
             request_id="request-transform",

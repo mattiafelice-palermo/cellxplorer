@@ -88,13 +88,36 @@ def _digest(value: object) -> str:
     return hashlib.sha256(_json_bytes(value)).hexdigest()
 
 
-def _atomic_gzip(path: Path, data: bytes) -> None:
+def _profile_ms(profile: dict[str, Any] | None, name: str, elapsed_ms: float) -> None:
+    if profile is None:
+        return
+    stages = profile.setdefault("cache_store_stages_ms", {})
+    stages[name] = stages.get(name, 0.0) + elapsed_ms
+
+
+def _atomic_gzip(
+    path: Path,
+    data: bytes,
+    profile: dict[str, Any] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
     try:
+        compress_started = time.perf_counter()
         with gzip.open(temporary, "wb", compresslevel=3) as target:
             target.write(data)
+        _profile_ms(
+            profile,
+            "cache_store_gzip_compress",
+            (time.perf_counter() - compress_started) * 1000.0,
+        )
+        replace_started = time.perf_counter()
         os.replace(temporary, path)
+        _profile_ms(
+            profile,
+            "cache_store_atomic_write_replace",
+            (time.perf_counter() - replace_started) * 1000.0,
+        )
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -136,11 +159,15 @@ def _file_size(path: Path) -> int:
         return 0
 
 
-def _store_budgeted(path: Path, data: bytes) -> None:
+def _store_budgeted(
+    path: Path,
+    data: bytes,
+    profile: dict[str, Any] | None = None,
+) -> None:
     """Write one results/artifacts file and keep the running total current."""
     global _budget_total
     previous = _file_size(path)
-    _atomic_gzip(path, data)
+    _atomic_gzip(path, data, profile)
     if _budget_total is not None:
         _budget_total += _file_size(path) - previous
 
@@ -430,17 +457,25 @@ def _sidecar_path(kind: str, key: str) -> Path:
     return path.with_name(path.name[: -len(".json.gz")] + ".meta.json")
 
 
-def _write_sidecar(path: Path, value: dict) -> None:
+def _write_sidecar(path: Path, value: dict, profile: dict[str, Any] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
     try:
+        started = time.perf_counter()
         temporary.write_bytes(_json_bytes(value))
         os.replace(temporary, path)
+        _profile_ms(profile, "cache_store_sidecar_write", (time.perf_counter() - started) * 1000.0)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def store_result(kind: str, key: str, result: dict) -> None:
+def store_result(
+    kind: str,
+    key: str,
+    result: dict,
+    *,
+    profile: dict[str, Any] | None = None,
+) -> None:
     """Persist a result split into a big immutable body and a tiny header.
 
     ``badges`` and ``cache_status`` are the only parts of a cached result that
@@ -458,9 +493,14 @@ def store_result(kind: str, key: str, result: dict) -> None:
         if badge.get("kind") not in engine_availability_kinds()
     ]
     with _lock:
-        _store_budgeted(_result_path(kind, key), _json_bytes(value))
-        _write_sidecar(_sidecar_path(kind, key), {"badges": kept})
+        encode_started = time.perf_counter()
+        body = _json_bytes(value)
+        _profile_ms(profile, "cache_store_json_encode", (time.perf_counter() - encode_started) * 1000.0)
+        _store_budgeted(_result_path(kind, key), body, profile)
+        _write_sidecar(_sidecar_path(kind, key), {"badges": kept}, profile)
+        prune_started = time.perf_counter()
         _prune_locked()
+        _profile_ms(profile, "cache_store_sidecar_prune", (time.perf_counter() - prune_started) * 1000.0)
 
 
 def engine_availability_kinds() -> set[str]:
