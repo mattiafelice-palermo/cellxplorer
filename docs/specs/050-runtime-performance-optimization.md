@@ -1,6 +1,6 @@
 # Spec 050: runtime performance optimization
 
-Status: **Active — 050.18 Rate Capability end-to-end performance optimization**  
+Status: **Active — 050.21 Steps end-to-end performance optimization**  
 Type: **runtime performance / analysis responsiveness**  
 Branch: `feature/runtime-performance-optimization`  
 Repository baseline / merge base: `main` at `1dc3525ec42571504ed6d9bdb9a0668d35df309b`  
@@ -15,6 +15,8 @@ Spec 050 is an extensible performance workstream. Add a child only after a concr
 > Measure the current boundary, remove meaningful unnecessary cost, preserve the scientific contract, then measure again because the bottleneck may have moved.
 
 A later user decision strengthens this rule for the post-050.17 family work: each family child must address **all measured elements that can plausibly deliver meaningful end-to-end improvement**, not only the single dominant stage. Micro-optimizations and speculative architecture remain out of scope.
+
+A further user decision on 2026-08-23 adds one final concurrency child after the five family optimizations. 050.23 does not reopen family algorithms; it asks whether the aggregate independent work of **4/8/12/16 Cell** requests justifies using the already-resident Python process infrastructure with four or eight workers.
 
 ## Accepted work through 050.7
 
@@ -110,47 +112,54 @@ Rate Capability is further localized to roughly 658 ms phase-row filtering and 2
 
 Time/Capacity is reference-only and must not be reintroduced into this ranking.
 
-## Active optimization sequence: 050.18-050.22
+## Active optimization sequence: 050.18-050.23
 
-The user explicitly requested one numeric child per family and directed that each child optimize the **whole meaningful family path**, not only the largest measured stage. The sequence is ordered by removable absolute latency and confidence of attribution.
+The user explicitly requested one numeric child per family and directed that each child optimize the **whole meaningful family path**, not only the largest measured stage. After those five serial family optimizations are review-clean, 050.23 performs one controlled cross-family persistent-worker scaling study and integrates only measured winners.
 
 ### 050.18 — Rate Capability end-to-end performance optimization
 
 File: [`050.18-rate-capability-end-to-end-performance-optimization.md`](050.18-rate-capability-end-to-end-performance-optimization.md)
 
-**Active.** First address repeated phase/measurement DataFrame scanning, then re-profile and continue through every secondary Rate cost with a meaningful route-level opportunity.
+**Review-clean; completed.** Removed repeated execution scans and retained the final serial/vectorized/indexed Rate path after complete-route profiling.
 
 ### 050.19 — DCIR end-to-end performance optimization
 
 File: [`050.19-dcir-end-to-end-performance-optimization.md`](050.19-dcir-end-to-end-performance-optimization.md)  
 Depends on: **050.18 review-clean**
 
-Optimize occurrence/run extraction first, then re-profile selective raw, protocol and assembly costs.
+**Review-clean; completed.** Reduced source/series preparation duplication and attributed the remaining direct scientific residual while preserving the optimized serial route.
 
 ### 050.20 — Chargeability end-to-end performance optimization
 
 File: [`050.20-chargeability-end-to-end-performance-optimization.md`](050.20-chargeability-end-to-end-performance-optimization.md)  
 Depends on: **050.19 review-clean**
 
-Resolve protocol-reconstruction ownership/reuse first, then re-profile occurrence/raw/expression/assembly costs.
+**Review-clean; completed.** Added request-local protocol reconstruction reuse and safe indexed candidate/reference raw reads, reducing the six-Cell complete route materially without changing science or exact hits.
 
 ### 050.21 — Steps end-to-end performance optimization
 
 File: [`050.21-steps-end-to-end-performance-optimization.md`](050.21-steps-end-to-end-performance-optimization.md)  
 Depends on: **050.20 review-clean**
 
-Reduce repeated block/group aggregation work, then re-profile secondary selective-read/CV/assembly costs.
+**Active.** Reduce repeated block/group aggregation work, then re-profile secondary selective-read/CV/assembly costs.
 
 ### 050.22 — Cycles profiling closure and end-to-end performance optimization
 
 File: [`050.22-cycles-profiling-and-end-to-end-performance-optimization.md`](050.22-cycles-profiling-and-end-to-end-performance-optimization.md)  
 Depends on: **050.21 review-clean**
 
-First decompose the current ~73.5 ms / 43% direct scientific residual into non-overlapping named stages. Only then optimize the measured meaningful Cycles costs.
+First decompose the current direct scientific residual into non-overlapping named stages. Only then optimize the measured meaningful Cycles costs.
+
+### 050.23 — cross-family persistent-worker scaling and integration
+
+File: [`050.23-cross-family-persistent-worker-scaling-and-integration.md`](050.23-cross-family-persistent-worker-scaling-and-integration.md)  
+Depends on: **050.22 review-clean**
+
+Benchmark the final review-clean Rate Capability, DCIR, Chargeability, Steps and Cycles routes at **4, 8, 12 and 16 Cells** using the current serial implementation, four already-warm Python workers and eight already-warm Python workers. Count complete-route IPC/queue/merge costs, preserve owner-side request/protocol reuse, and integrate only family/count thresholds that show a controlled meaningful win. Time/Capacity remains out of the benchmark matrix; its existing resident pool lifecycle may be generalized only if at least one non-Time family earns production multiprocessing.
 
 ## Common post-050.17 optimization rules
 
-Every child 050.18-050.22 must:
+Every family child 050.18-050.22 must:
 
 1. capture the family baseline on its implementation head;
 2. preserve scientific digest/order/provenance and exact-hit behavior;
@@ -160,10 +169,12 @@ Every child 050.18-050.22 must:
 6. re-profile after every retained tranche because the bottleneck can move;
 7. continue through secondary costs while meaningful gains remain;
 8. record rejected experiments so they are not repeated later;
-9. avoid concurrency/native code unless cleaned serial work still justifies its lifecycle/IPC/RSS cost;
+9. avoid concurrency/native code inside the family child unless a correctness/architecture requirement forces it; aggregate multi-Cell concurrency is evaluated systematically by 050.23 after all five serial routes are final;
 10. stop before low-value micro-optimization or disproportionate architectural complexity.
 
 As a default investigation heuristic, a stage is worth examining when it is about >=5% of the representative multi-Cell miss or >=10 ms p50, or when repeated related work plausibly combines above that level. This is a decision aid, not a permission to change scientific semantics.
+
+050.23 has its own promotion gates because a modest per-Cell cost can still become material across 8-16 Cells. It must compare complete serial/P4/P8 routes at 4/8/12/16 Cells and must not infer process value from one-Cell latency alone.
 
 ## Planning-only proto-children
 
@@ -187,7 +198,8 @@ Proto IDs P1/P2/P3/P4/P5/P6/P7 are historically reserved as applicable and must 
 8. Do not pickle complete DataFrames merely to gain process parallelism.
 9. Display-only downsampling/refinement never becomes the scientific/full-resolution export source.
 10. Never modify, reset or discard unrelated branch work.
-11. Do not alter Time/Capacity in 050.18-050.22.
+11. Do not alter Time/Capacity scientific/performance behavior in 050.18-050.23. 050.23 may minimally generalize the already-established resident worker lifecycle only when a non-Time family passes its production promotion gate; Time/Capacity must retain its four-active-worker policy and scientific path.
+12. 050.23 must not create per-family permanent worker pools. If concurrency is promoted, use one application-level resident pool with bounded family-specific active-worker limits and serial fallback.
 
 ## Cache, migration and version policy
 
@@ -208,7 +220,7 @@ python scripts\preflight.py
 
 at final handoff. Do not repeat successful full suites for confidence. Performance comparisons must use identical scientific inputs/settings and report median plus range/tail where meaningful. Browser/manual measurements are required only for user-visible claims; backend-only evidence must be labelled backend-only.
 
-The final Parent 050 review must compare the complete branch against the correct merge base, enumerate every implemented numeric child and measured boundary, confirm required scientific regression evidence, reconcile cache/version/build consequences, record manual checks actually run, and state explicitly whether the branch is ready to merge.
+The final Parent 050 review must compare the complete branch against the correct merge base, enumerate every implemented numeric child through **050.23** and measured boundary, confirm required scientific regression evidence, reconcile cache/version/build consequences, record manual checks actually run, and state explicitly whether the branch is ready to merge.
 
 ## Project-context maintenance
 
