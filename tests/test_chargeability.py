@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -111,6 +112,65 @@ class CandidateDetectionTests(unittest.TestCase):
         )
 
         self.assertEqual(chargeability.detect_candidates(protocol), [])
+
+    def test_request_protocol_cache_reuses_only_exact_parser_header_and_nominal(self):
+        first = SourceFile(
+            id=1,
+            hash="a" * 64,
+            path="first.ndax",
+            filename="first.ndax",
+            size=1,
+            ext="ndax",
+            header_meta={"Step": {"one": "charge"}},
+        )
+        equivalent = SourceFile(
+            id=2,
+            hash="b" * 64,
+            path="equivalent.ndax",
+            filename="equivalent.ndax",
+            size=1,
+            ext="ndax",
+            header_meta={"Step": {"one": "charge"}},
+        )
+        changed_header = SourceFile(
+            id=3,
+            hash="c" * 64,
+            path="changed.ndax",
+            filename="changed.ndax",
+            size=1,
+            ext="ndax",
+            header_meta={"Step": {"one": "discharge"}},
+        )
+        entries = []
+        with patch.object(
+            chargeability.protocol,
+            "reconstruct_protocol",
+            side_effect=lambda header, nominal: {
+                "header": header,
+                "nominal": nominal,
+            },
+        ) as reconstruct:
+            first_result = chargeability._reconstruct_protocol_for_request(
+                first, 100.0, "parser-a", entries
+            )
+            equivalent_result = chargeability._reconstruct_protocol_for_request(
+                equivalent, 100.0, "parser-a", entries
+            )
+            changed_result = chargeability._reconstruct_protocol_for_request(
+                changed_header, 100.0, "parser-a", entries
+            )
+            different_parser_result = chargeability._reconstruct_protocol_for_request(
+                equivalent, 100.0, "parser-b", entries
+            )
+            different_nominal_result = chargeability._reconstruct_protocol_for_request(
+                equivalent, 200.0, "parser-a", entries
+            )
+
+        self.assertIs(first_result, equivalent_result)
+        self.assertIsNot(first_result, changed_result)
+        self.assertIsNot(first_result, different_parser_result)
+        self.assertIsNot(first_result, different_nominal_result)
+        self.assertEqual(reconstruct.call_count, 4)
 
 
 class RawExtractionTests(unittest.TestCase):

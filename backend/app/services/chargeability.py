@@ -28,6 +28,18 @@ from ..models import Cell, SourceFile
 from . import cache, protocol
 
 ProgressCallback = Callable[[int, int, str, str], None]
+ProtocolCacheEntry = tuple[str, float | None, dict, dict]
+CHARGEABILITY_RAW_COLUMNS = (
+    "record_index",
+    "cycle",
+    "step",
+    "step_index",
+    "time_s",
+    "timestamp",
+    "current_ma",
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+)
 
 
 @dataclass(frozen=True)
@@ -462,6 +474,63 @@ def _matches(candidate: dict, filters: dict) -> bool:
     )
 
 
+def _reconstruct_protocol_for_request(
+    source: SourceFile,
+    nominal_capacity_mah: float | None,
+    parser_version: str,
+    cache_entries: list[ProtocolCacheEntry],
+) -> dict:
+    """Reuse an exact protocol reconstruction within one compute request.
+
+    ``reconstruct_protocol`` is determined by the pinned parser identity,
+    immutable header metadata, and nominal capacity.  The source hash is not a
+    scientific input to that function, so equal header documents from distinct
+    source files may share the result; a changed header, parser identity, or
+    nominal capacity never does.  The list is owned by one ``compute`` call and
+    is therefore neither process-global nor persistent cache state.
+    """
+
+    header_meta = source.header_meta or {}
+    for (
+        cached_parser_version,
+        cached_nominal_capacity,
+        cached_header_meta,
+        cached_protocol,
+    ) in cache_entries:
+        if (
+            cached_parser_version == parser_version
+            and cached_nominal_capacity == nominal_capacity_mah
+            and cached_header_meta == header_meta
+        ):
+            return cached_protocol
+    reconstructed = protocol.reconstruct_protocol(header_meta, nominal_capacity_mah)
+    cache_entries.append(
+        (
+            parser_version,
+            nominal_capacity_mah,
+            header_meta,
+            reconstructed,
+        )
+    )
+    return reconstructed
+
+
+def _load_candidate_rows(
+    source: SourceFile,
+    parser_version: str,
+    step_indices: set[int],
+) -> pd.DataFrame | None:
+    """Read only candidate/reference steps when the raw sidecar permits it."""
+
+    selected = cache.load_raw_step_rows(
+        source.hash,
+        parser_version,
+        step_indices,
+        CHARGEABILITY_RAW_COLUMNS,
+    )
+    return selected if selected is not None else cache.load_raw(source.hash, parser_version)
+
+
 def compute(
     db: Session,
     spec: dict,
@@ -506,6 +575,7 @@ def compute(
 
     stages_per_cell = 3
     total_units = max(1, len(cells) * stages_per_cell)
+    protocol_cache_entries: list[ProtocolCacheEntry] = []
 
     for cell_index, cell in enumerate(cells, start=1):
         base = (cell_index - 1) * stages_per_cell
@@ -538,10 +608,34 @@ def compute(
                 and Path(source.path).exists()
             ):
                 scanner.parse_file(db, source)
-            raw = cache.load_raw(source.hash, parser_version)
-            reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
+            reconstructed = _reconstruct_protocol_for_request(
+                source,
+                nominal,
+                parser_version,
+                protocol_cache_entries,
+            )
             signature = str(reconstructed.get("signature") or "")
             detected = detect_candidates(reconstructed)
+            matching_candidates = [
+                candidate for candidate in detected if _matches(candidate, filters)
+            ]
+            raw = (
+                _load_candidate_rows(
+                    source,
+                    parser_version,
+                    {
+                        step_index
+                        for candidate in matching_candidates
+                        for step_index in (
+                            candidate.get("step_index"),
+                            candidate.get("reference_step_index"),
+                        )
+                        if step_index is not None
+                    },
+                )
+                if matching_candidates
+                else None
+            )
             for candidate in detected:
                 candidate = {
                     **candidate,

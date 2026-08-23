@@ -785,6 +785,17 @@ around every stage. Keep the profiled stage names and non-overlapping residual
 reconciliation stable so route comparisons can distinguish instrumentation cost
 from scientific work.
 
+Spec 050.20 Chargeability keeps protocol reconstruction request-local. The
+cache key is the pinned parser identity, nominal capacity, and exact immutable
+header metadata used by `protocol.reconstruct_protocol`; the source hash is not
+an input to that pure reconstruction, so content-identical source headers may
+reuse one result only within the active `chargeability.compute()` call. Changed
+header state, parser identity, or nominal capacity misses the cache. Chargeability
+then uses `cache.load_raw_step_rows` for the detected candidate/reference steps
+and falls back to `cache.load_raw` when the optional sidecar cannot prove a safe
+selective read. Request/protocol caches must remain local to the compute request,
+and exact persisted result hits must not invoke either path.
+
 ## Presentation filters versus computation
 
 `computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute

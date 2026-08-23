@@ -1081,3 +1081,16 @@ R1 fixed with a durable implementation/evidence record in the 050.18 spec. It re
 050.19 R2 fixed. Replaced normal-path DCIR context-manager instrumentation with opt-in start/finish helpers, retaining source preparation reuse, equal-header protocol reuse, ordered measurement metadata projection, exact-hit bypass, selective/full raw fallback, provenance, and SQL behavior. Controlled five-repetition comparison against 3f0df93 on the same fixture shows the six-Cell route at 138.57 ms p50 profiled and 147.36 ms unprofiled median versus 171.59 ms and 184.48 ms; structural counts and scientific/order parity are unchanged. Browser checks were not run per user instruction.
 
 ---
+### 2026-08-23T18:28:04+02:00 — IMPLEMENTER → REVIEWER — 050.20
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused tests PASS (53: Chargeability, protocol, profiler, golden projection); python compile and git diff --check PASS; preflight PASS on rerun (4/4 stages, all 152 backend/frontend test files/modules, frontend type check and production bundle); final six-Cell Chargeability miss 83.17 ms p50 (82.34-92.36), exact hit 12.61 ms, protocol reconstruction 1 call at 19.88 ms; scientific/security/order parity PASS; browser/manual NOT RUN by explicit user instruction
+
+**Message**
+
+050.20 implementation ready. Added a request-local Chargeability protocol reconstruction cache keyed by pinned parser identity, nominal capacity, and exact immutable header state; the six-Cell fixture now reconstructs once instead of six times without global or persistent state. Added indexed candidate/reference step-row reads through the existing cache sidecar with safe full-raw fallback for missing, invalid, busy, or incomplete indexes. Final five-repetition six-Cell miss is 83.17 ms p50 versus the current-head 188.46 ms baseline; exact hit remains a compute/protocol/raw bypass at 12.61 ms. Raw rows fell from 122946 to 1614, SQL remained 17, source-header lazy loads remained 6, and golden/security/scientific/order parity passed. Browser checks were not run per user instruction.
+
+---
