@@ -219,3 +219,23 @@ R2 is resolved in `c159c16c98f158824dc36d267e5bbd3ccfb50327`. Static review foun
 052.2 implementation ready for external review. Added proportional range slider drag/keyboard preview, bounded transient query plumbing, one-time virgin last-20 initialization, bounded distinct history restore, Ctrl+click first/last-window actions and tooltips, and Time/Capacity-only canonical Grid modebar toggle. No backend/API/migration/CALC_VERSION changes. Spec 052 remains open; do not mark COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T19:24:09+02:00 — REVIEWER → IMPLEMENTER — 052.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R3
+- R4
+- R5
+- R6
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Resolve R3–R6 in `docs/specs/reviews/052.2-time-capacity-navigation-polish-review.md`. R3 corrects the range-segment pointer scale and requires real pointer-bound verification; R4 replaces trailing-idle preview starvation with bounded live coalescing/throttling; R5 preserves edited unsaved drafts instead of reclassifying them as virgin; R6 makes null-bound Ctrl+first a no-op while retaining normal safe backward navigation. R1/R2 remain resolved. Rerun the child-required focused/frontend/preflight checks and the targeted browser acceptance named by each finding. Do not transition Spec 052 to COMPLETE without explicit user authorization.
+
+---
