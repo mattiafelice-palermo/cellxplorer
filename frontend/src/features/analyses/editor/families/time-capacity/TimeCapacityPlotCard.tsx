@@ -139,6 +139,7 @@ import {
   bufferNeedsRefill,
   bufferRangeForWindow,
   timeCapacityPanningEnabled,
+  yDataOutsideRange,
   TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
 } from "./timeCapacityViewportBuffer";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
@@ -156,6 +157,13 @@ export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_c
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
 export type TimeCapacityVoltageChannel = VoltageChannel;
+
+// Vertical double-headed arrow: "expand the y axis to fit".
+const TIME_CAPACITY_FIT_Y_MODEBAR_ICON = {
+  width: 512,
+  height: 512,
+  path: "M256 24 L336 128 H288 V384 H336 L256 488 L176 384 H224 V128 H176 Z",
+};
 
 const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   width: 512,
@@ -1368,18 +1376,19 @@ function TimeCapacityPlotCardView({
   // than be replaced. `timeCapacityPanningEnabled()` falls back to the
   // per-window model, which remains intact.
   const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
+  // The live pointer position, not the admitted request. `previewRequest` only
+  // advances when the scheduler admits a fetch, so binding the viewport to it
+  // made the pan jump between requests instead of tracking the finger.
   const panWindow =
-    panningEnabled && previewRequest?.resolution === "moving" && maxAvailableCycle
-      ? previewRequest.range
-      : null;
+    panningEnabled && cyclePreviewRange && maxAvailableCycle ? cyclePreviewRange : null;
   // Resolved during render, not in an effect. An effect would leave the first
   // render after each pointer move with no buffer, so the per-window request
   // would be issued and then immediately aborted when the buffer arrived one
   // render later -- two requests per step, the first one pure waste.
   const panBufferRef = useRef<TimeCapacityCycleRange | null>(null);
-  if (!previewRequest) {
+  if (!panWindow) {
     panBufferRef.current = null;
-  } else if (panWindow && maxAvailableCycle) {
+  } else if (maxAvailableCycle) {
     if (bufferNeedsRefill(panBufferRef.current, panWindow, maxAvailableCycle)) {
       panBufferRef.current = bufferRangeForWindow(panWindow, maxAvailableCycle);
     }
@@ -1388,17 +1397,17 @@ function TimeCapacityPlotCardView({
   const panActive = Boolean(panWindow && panBuffer && bufferCoversWindowSafe(panBuffer, panWindow));
 
   const requestSpec = useMemo(() => {
-    if (!previewRequest) return spec;
     if (panActive && panBuffer && panWindow) {
       const configured = timeCapacityConfig(spec).max_points_per_cell;
       const windowPoints = timeCapacityPreviewMaxPoints(configured, "moving");
       return timeCapacitySpecWithPreview(
         spec,
         panBuffer,
-        previewRequest.resolution,
+        "moving",
         bufferMaxPoints(windowPoints, panWindow, panBuffer),
       );
     }
+    if (!previewRequest) return spec;
     return timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution);
   }, [panActive, panBuffer, panWindow, previewRequest, spec]);
   const previewQueryRange = previewRequest?.range ?? null;
@@ -1850,24 +1859,106 @@ function TimeCapacityPlotCardView({
   );
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
-  // Spec 052.7: the visible slice of the loaded buffer. Recomputed per pointer
-  // move, but only over data already in memory -- this is the pan itself.
+  // Spec 052.8: the visible slice of the loaded buffer, recomputed per pointer
+  // move over data already in memory. Held in a ref rather than driving the
+  // React layout: rebuilding `layout` every move made react-plotly.js run a
+  // full Plotly.react diff per frame, which is what made the pan step rather
+  // than glide. React keeps a stable layout; the axis moves imperatively below.
   const panXRange = useMemo(() => {
     if (!panActive || !panWindow) return null;
     return absoluteXRangeForCycles(plotResult?.cell_traces, panWindow.start, panWindow.end);
   }, [panActive, panWindow, plotResult]);
+  const panLiveXRef = useRef<[number, number] | null>(null);
+  if (panXRange) panLiveXRef.current = panXRange;
+  if (!panActive) panLiveXRef.current = null;
+
+  // Spec 052.8: y is frozen for the duration of one drag. Letting Plotly
+  // reautoscale y as each buffer landed made the whole plot rescale and blink
+  // mid-pan. Captured from the live axis when panning begins.
+  const [frozenY, setFrozenY] = useState<[number, number] | null>(null);
+  const panFrozenYRef = useRef<[number, number] | null>(null);
+  panFrozenYRef.current = frozenY;
+  const panWasActiveRef = useRef(false);
+  useEffect(() => {
+    const wasActive = panWasActiveRef.current;
+    panWasActiveRef.current = panActive;
+    if (!panActive || wasActive) return;
+    // Freeze at the axis the user is looking at as the drag begins, and keep
+    // it after release: rescaling on release would reintroduce the blink.
+    const range = (
+      plotDivRef.current as unknown as { _fullLayout?: { yaxis?: { range?: number[] } } } | null
+    )?._fullLayout?.yaxis?.range;
+    if (Array.isArray(range) && range.length === 2 && range.every((v) => Number.isFinite(v))) {
+      setFrozenY([range[0], range[1]]);
+    }
+  }, [panActive]);
+  // A change that redefines the y quantity makes a retained window meaningless.
+  useEffect(() => {
+    setFrozenY(null);
+  }, [cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.stacked, cfg.display_mode]);
+  const fitYAxis = useCallback(() => setFrozenY(null), []);
+
   const layout = useMemo(() => {
     const base = zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces));
-    if (!panXRange) return base;
-    // Applied after the zoom memory so a stored zoom cannot pin the axis while
-    // the user is dragging; releasing the drag restores the normal path.
-    return {
-      ...base,
-      xaxis: { ...(base.xaxis ?? {}), range: [...panXRange], autorange: false },
-    } as typeof base;
+    const retainedY = panFrozenYRef.current;
+    if (!panActive) {
+      if (!retainedY) return base;
+      return {
+        ...base,
+        yaxis: { ...(base.yaxis ?? {}), range: [...retainedY], autorange: false },
+      } as typeof base;
+    }
+    // Read through refs so a buffer landing mid-drag rebuilds the layout at the
+    // axis position the pointer is actually at, instead of snapping back.
+    const liveX = panLiveXRef.current;
+    const frozenY = panFrozenYRef.current;
+    const next = { ...base } as Record<string, unknown>;
+    if (liveX) next.xaxis = { ...(base.xaxis ?? {}), range: [...liveX], autorange: false };
+    if (frozenY) next.yaxis = { ...(base.yaxis ?? {}), range: [...frozenY], autorange: false };
+    return next as typeof base;
   },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plotResult, renderSpec, viewSignature, plotTraces, panXRange]
+    [plotResult, renderSpec, viewSignature, plotTraces, panActive, frozenY]
+  );
+
+  // Spec 052.8: the pan itself -- one relayout per animation frame, coalescing
+  // whatever pointer moves arrived since the last, straight to Plotly.
+  const panFrameRef = useRef<number | null>(null);
+  const panPendingRef = useRef<[number, number] | null>(null);
+  useEffect(() => {
+    if (!panActive || !panXRange) return;
+    panPendingRef.current = panXRange;
+    if (panFrameRef.current !== null) return;
+    panFrameRef.current = window.requestAnimationFrame(() => {
+      panFrameRef.current = null;
+      const target = panPendingRef.current;
+      const div = plotDivRef.current;
+      if (!target || !div) return;
+      const update: Record<string, unknown> = {
+        "xaxis.range": [...target],
+        "xaxis.autorange": false,
+      };
+      const frozenY = panFrozenYRef.current;
+      if (frozenY) {
+        update["yaxis.range"] = [...frozenY];
+        update["yaxis.autorange"] = false;
+      }
+      try {
+        const result = PlotlyLib.relayout(div as never, update as never) as unknown;
+        if (result && typeof (result as Promise<unknown>).catch === "function") {
+          void (result as Promise<unknown>).catch(() => {});
+        }
+      } catch {
+        // A relayout can land after the plot is torn down or remounted; the
+        // next render restores the axis from `layout`, so this is not fatal.
+      }
+    });
+  }, [panActive, panXRange]);
+  useEffect(
+    () => () => {
+      if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current);
+    },
+    [],
   );
   const profileResultIsCurrent = Boolean(
     timeCapacityProfileResultIsCurrent(
@@ -1895,6 +1986,23 @@ function TimeCapacityPlotCardView({
       update((s) => writeScopedStyle(s, "time_capacity", fn));
     },
     [update],
+  );
+  // Spec 052.8: with y frozen, the position the user settles on may hold data
+  // above or below the retained window. Rather than silently clipping it, the
+  // modebar is pinned open and a highlighted control offers to refit.
+  const yOutOfView = useMemo(
+    () => yDataOutsideRange(plotTraces as never, panLiveXRef.current, frozenY),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plotTraces, frozenY, panActive],
+  );
+  const fitYModebarButton = useMemo<Plotly.ModeBarButton>(
+    () => ({
+      name: "time-capacity-fit-y",
+      title: "Fit Y axis to visible data",
+      icon: TIME_CAPACITY_FIT_Y_MODEBAR_ICON,
+      click: () => fitYAxis(),
+    }),
+    [fitYAxis],
   );
   const gridModebarButton = useMemo<Plotly.ModeBarButton>(
     () => ({
@@ -2288,11 +2396,56 @@ function TimeCapacityPlotCardView({
           <Box
             ref={containerRef}
             onPointerDownCapture={zoom.armOnPointerDown}
+            data-tc-fit-y-hint={yOutOfView ? "on" : undefined}
             style={{
               width: "100%",
               minWidth: 0,
+              position: "relative",
             }}
           >
+            {yOutOfView && (
+              <>
+                {/* Plotly owns the modebar DOM, so the highlight is applied by
+                    selector rather than by prop. Scoped to this card. */}
+                <style>{`
+                  [data-tc-fit-y-hint="on"] .modebar { opacity: 1 !important; }
+                  [data-tc-fit-y-hint="on"] .modebar-btn[data-title="Fit Y axis to visible data"] {
+                    background: var(--mantine-color-yellow-light, rgba(250, 176, 5, 0.15));
+                    border-radius: 4px;
+                  }
+                  [data-tc-fit-y-hint="on"] .modebar-btn[data-title="Fit Y axis to visible data"] .icon path {
+                    fill: var(--mantine-color-yellow-6, #fab005) !important;
+                  }
+                `}</style>
+                <Paper
+                  withBorder
+                  shadow="sm"
+                  radius="md"
+                  px="sm"
+                  py={6}
+                  role="status"
+                  style={{
+                    position: "absolute",
+                    top: 34,
+                    right: 8,
+                    zIndex: 5,
+                    maxWidth: 260,
+                    pointerEvents: "auto",
+                    borderColor: "var(--mantine-color-yellow-6, #fab005)",
+                  }}
+                >
+                  <Group gap={6} wrap="nowrap" align="flex-start">
+                    <Text size="xs" style={{ lineHeight: 1.35 }}>
+                      Some data is outside the current Y range. Use{" "}
+                      <Text span size="xs" fw={600} c="yellow.6">
+                        Fit Y axis
+                      </Text>{" "}
+                      in the toolbar above to show it all.
+                    </Text>
+                  </Group>
+                </Paper>
+              </>
+            )}
             <Plot
               // remount at the stacked↔flat boundary: diffing a matched-axes
               // subplot layout into a single-axis one is Plotly's slowest
@@ -2303,7 +2456,10 @@ function TimeCapacityPlotCardView({
               config={{
                 displaylogo: false,
                 edits: { legendPosition: style.legend_mode !== "outside" },
-                modeBarButtonsToAdd: [gridModebarButton],
+                displayModeBar: yOutOfView ? true : undefined,
+                modeBarButtonsToAdd: yOutOfView
+                  ? [fitYModebarButton, gridModebarButton]
+                  : [gridModebarButton],
               }}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}

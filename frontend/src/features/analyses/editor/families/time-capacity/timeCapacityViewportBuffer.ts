@@ -186,3 +186,47 @@ export function timeCapacityPanningEnabled(): boolean {
 }
 
 export const TIME_CAPACITY_PANNING_DEFAULT = true;
+
+export interface TimeCapacityPlottedTrace {
+  x?: unknown;
+  y?: unknown;
+  yaxis?: string;
+}
+
+/**
+ * Spec 052.8: does anything visible in `xRange` fall outside `yRange`?
+ *
+ * Panning freezes y so the plot does not rescale and blink on every buffer,
+ * but that means the position the user settles on may hold data above or below
+ * the frozen window. This is what decides whether to offer the "fit" control.
+ *
+ * Only the primary y axis is considered: secondary-axis traces (the current
+ * overlay) have their own scale and are not what the control would refit.
+ */
+export function yDataOutsideRange(
+  traces: readonly TimeCapacityPlottedTrace[] | undefined,
+  xRange: readonly [number, number] | null,
+  yRange: readonly [number, number] | null,
+): boolean {
+  if (!traces || !xRange || !yRange) return false;
+  const [xLo, xHi] = xRange;
+  const [yLo, yHi] = yRange;
+  if (!Number.isFinite(yLo) || !Number.isFinite(yHi)) return false;
+
+  for (const trace of traces) {
+    if (trace.yaxis && trace.yaxis !== "y") continue;
+    const xs = trace.x;
+    const ys = trace.y;
+    if (!Array.isArray(xs) || !Array.isArray(ys)) continue;
+    const length = Math.min(xs.length, ys.length);
+    for (let index = 0; index < length; index += 1) {
+      const x = xs[index];
+      const y = ys[index];
+      if (typeof x !== "number" || !Number.isFinite(x)) continue;
+      if (x < xLo || x > xHi) continue;
+      if (typeof y !== "number" || !Number.isFinite(y)) continue;
+      if (y < yLo || y > yHi) return true;
+    }
+  }
+  return false;
+}

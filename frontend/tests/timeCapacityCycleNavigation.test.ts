@@ -8,6 +8,7 @@ import {
   bufferMaxPoints,
   bufferNeedsRefill,
   bufferRangeForWindow,
+  yDataOutsideRange,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityViewportBuffer.ts";
 import {
   appendTimeCapacityCycleHistory,
@@ -533,5 +534,35 @@ test("the visible x span is read from loaded traces and tolerates short cells", 
   assert.deepEqual(
     absoluteXRangeForCycles([{ cycle: [5, 5, 5], display_x: [null, 7, 9] }], 5, 5),
     [7, 9],
+  );
+});
+
+// ---- Spec 052.8: frozen Y and the out-of-view affordance -------------------
+
+test("out-of-view detection only considers what is inside the visible x window", () => {
+  const traces = [
+    { x: [0, 10, 20, 30], y: [3.0, 3.5, 9.9, 3.4] },
+  ];
+  // The 9.9 spike sits at x=20, outside the window: nothing to report.
+  assert.equal(yDataOutsideRange(traces, [0, 15], [2.8, 3.7]), false);
+  // Bring it into view and it must be reported.
+  assert.equal(yDataOutsideRange(traces, [0, 25], [2.8, 3.7]), true);
+});
+
+test("out-of-view detection ignores the secondary axis and missing inputs", () => {
+  // The current overlay has its own scale; refitting y would not address it.
+  const secondary = [{ x: [0, 10], y: [500, 900], yaxis: "y2" }];
+  assert.equal(yDataOutsideRange(secondary, [0, 10], [2.8, 3.7]), false);
+
+  const primary = [{ x: [0, 10], y: [500, 900], yaxis: "y" }];
+  assert.equal(yDataOutsideRange(primary, [0, 10], [2.8, 3.7]), true);
+
+  assert.equal(yDataOutsideRange(undefined, [0, 10], [2.8, 3.7]), false);
+  assert.equal(yDataOutsideRange(primary, null, [2.8, 3.7]), false);
+  assert.equal(yDataOutsideRange(primary, [0, 10], null), false);
+  // Non-finite points are skipped rather than counted as out of range.
+  assert.equal(
+    yDataOutsideRange([{ x: [0, 1], y: [Number.NaN, 3.2] }], [0, 1], [2.8, 3.7]),
+    false,
   );
 });
