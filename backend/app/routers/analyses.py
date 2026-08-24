@@ -441,6 +441,12 @@ class ComputeRequest(BaseModel):
     # reusable entries through the LRU budget. Transient requests still *read*
     # the cache; they only decline to populate it.
     persist: bool = True
+    # Spec 052.7: place ordinary time-axis results on one continuous timeline
+    # anchored at this cycle instead of re-zeroing each response at its own
+    # first point. This is what lets consecutive cycle windows be panned
+    # through as views onto a single axis. It changes the returned coordinates,
+    # so it is part of the render cache identity below.
+    absolute_time_origin_cycle: int | None = Field(default=None, ge=1)
 
 
 class TimeCapacityRefinementRequest(BaseModel):
@@ -1527,6 +1533,10 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                 "precision": req.precision,
                 "compact": req.compact,
             }
+            if req.absolute_time_origin_cycle is not None:
+                # Part of the render key: two responses for the same cycles
+                # differ in their x coordinates when anchored differently.
+                options["absolute_time_origin_cycle"] = req.absolute_time_origin_cycle
         # Spec 052.5: resolve the owner-side request state once and share it.
         # The selection walk, source preload and scalar-metadata load are
         # needed to compute the cache key at all, and the guard and the
@@ -1637,6 +1647,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                     "compact": req.compact,
                     "progress": _progress_callback(job_id),
                     "request_context": request_context,
+                    "display_origin_cycle_start": req.absolute_time_origin_cycle,
                 }
                 if req.profile:
                     compute_options["access_diagnostics"] = access_diagnostics

@@ -133,6 +133,14 @@ import {
   type TimeCapacityPreviewRequest,
   type TimeCapacityPreviewSchedulerState,
 } from "./timeCapacityCycleNavigationPolicy";
+import {
+  absoluteXRangeForCycles,
+  bufferMaxPoints,
+  bufferNeedsRefill,
+  bufferRangeForWindow,
+  timeCapacityPanningEnabled,
+  TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
+} from "./timeCapacityViewportBuffer";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
@@ -155,10 +163,18 @@ const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   path: "M64 64h144v144H64zM304 64h144v144H304zM64 304h144v144H64zM304 304h144v144H304z",
 };
 
+function bufferCoversWindowSafe(
+  buffer: TimeCapacityCycleRange,
+  window: TimeCapacityCycleRange,
+): boolean {
+  return buffer.start <= window.start && buffer.end >= window.end;
+}
+
 function timeCapacitySpecWithPreview(
   spec: AnalysisSpec,
   range: TimeCapacityCycleRange,
   resolution: TimeCapacityPreviewRequest["resolution"],
+  maxPointsOverride?: number,
 ): AnalysisSpec {
   const config = timeCapacityConfig(spec);
   return {
@@ -169,7 +185,9 @@ function timeCapacitySpecWithPreview(
         ...config,
         cycle_start: range.start,
         cycle_end: range.end,
-        max_points_per_cell: timeCapacityPreviewMaxPoints(config.max_points_per_cell, resolution),
+        max_points_per_cell:
+          maxPointsOverride ??
+          timeCapacityPreviewMaxPoints(config.max_points_per_cell, resolution),
       },
     },
   };
@@ -1342,13 +1360,47 @@ function TimeCapacityPlotCardView({
     scheduleIdlePreviewPromotion,
     scheduleMovingPreviewFlush,
   ]);
-  const requestSpec = useMemo(
-    () =>
-      previewRequest
-        ? timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution)
-        : spec,
-    [previewRequest, spec],
-  );
+  // ---- Spec 052.7: buffered viewport panning -------------------------------
+  // A moving preview fetches a *buffer* several windows wide, anchored on one
+  // absolute timeline, and the plot shows only the window inside it. Pointer
+  // movement then moves the x-range through data already held instead of
+  // issuing a request per step, which is what makes the curve translate rather
+  // than be replaced. `timeCapacityPanningEnabled()` falls back to the
+  // per-window model, which remains intact.
+  const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
+  const panWindow =
+    panningEnabled && previewRequest?.resolution === "moving" && maxAvailableCycle
+      ? previewRequest.range
+      : null;
+  // Resolved during render, not in an effect. An effect would leave the first
+  // render after each pointer move with no buffer, so the per-window request
+  // would be issued and then immediately aborted when the buffer arrived one
+  // render later -- two requests per step, the first one pure waste.
+  const panBufferRef = useRef<TimeCapacityCycleRange | null>(null);
+  if (!previewRequest) {
+    panBufferRef.current = null;
+  } else if (panWindow && maxAvailableCycle) {
+    if (bufferNeedsRefill(panBufferRef.current, panWindow, maxAvailableCycle)) {
+      panBufferRef.current = bufferRangeForWindow(panWindow, maxAvailableCycle);
+    }
+  }
+  const panBuffer = panBufferRef.current;
+  const panActive = Boolean(panWindow && panBuffer && bufferCoversWindowSafe(panBuffer, panWindow));
+
+  const requestSpec = useMemo(() => {
+    if (!previewRequest) return spec;
+    if (panActive && panBuffer && panWindow) {
+      const configured = timeCapacityConfig(spec).max_points_per_cell;
+      const windowPoints = timeCapacityPreviewMaxPoints(configured, "moving");
+      return timeCapacitySpecWithPreview(
+        spec,
+        panBuffer,
+        previewRequest.resolution,
+        bufferMaxPoints(windowPoints, panWindow, panBuffer),
+      );
+    }
+    return timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution);
+  }, [panActive, panBuffer, panWindow, previewRequest, spec]);
   const previewQueryRange = previewRequest?.range ?? null;
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
@@ -1365,7 +1417,7 @@ function TimeCapacityPlotCardView({
   refinementLifecycle.setStacked(cfg.stacked);
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
-  const viewportWidth = 1200;
+  const viewportWidth = panActive ? TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH : 1200;
   // Keep this separate from dataSignature. Range and point-density changes
   // may retain the old compact result while the replacement is fetched, but
   // a semantic/display change must never relabel that result temporarily.
@@ -1494,6 +1546,9 @@ function TimeCapacityPlotCardView({
           // committed ranges persist exactly as before. Reads are unaffected:
           // a moving preview that happens to hit an entry still serves it.
           ...(previewResolution === "moving" ? { persist: false } : {}),
+          // Spec 052.7: anchor the buffer on one timeline so consecutive
+          // windows share an x axis and can be panned between.
+          ...(panActive ? { absolute_time_origin_cycle: 1 } : {}),
           ...(profileRequest
             ? {
                 profile: true,
@@ -1795,10 +1850,24 @@ function TimeCapacityPlotCardView({
   );
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
-  const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces)),
+  // Spec 052.7: the visible slice of the loaded buffer. Recomputed per pointer
+  // move, but only over data already in memory -- this is the pan itself.
+  const panXRange = useMemo(() => {
+    if (!panActive || !panWindow) return null;
+    return absoluteXRangeForCycles(plotResult?.cell_traces, panWindow.start, panWindow.end);
+  }, [panActive, panWindow, plotResult]);
+  const layout = useMemo(() => {
+    const base = zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces));
+    if (!panXRange) return base;
+    // Applied after the zoom memory so a stored zoom cannot pin the axis while
+    // the user is dragging; releasing the drag restores the normal path.
+    return {
+      ...base,
+      xaxis: { ...(base.xaxis ?? {}), range: [...panXRange], autorange: false },
+    } as typeof base;
+  },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plotResult, renderSpec, viewSignature, plotTraces]
+    [plotResult, renderSpec, viewSignature, plotTraces, panXRange]
   );
   const profileResultIsCurrent = Boolean(
     timeCapacityProfileResultIsCurrent(

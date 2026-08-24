@@ -4,6 +4,12 @@ import test from "node:test";
 
 import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 import {
+  absoluteXRangeForCycles,
+  bufferMaxPoints,
+  bufferNeedsRefill,
+  bufferRangeForWindow,
+} from "../src/features/analyses/editor/families/time-capacity/timeCapacityViewportBuffer.ts";
+import {
   appendTimeCapacityCycleHistory,
   centerTimeCapacityCycleRange,
   cycleRangeWidth,
@@ -468,4 +474,64 @@ test("a realistic drag supersedes at most one admitted request", () => {
     `expected at most one superseded request per drag, got ${superseded}`,
   );
   assert.ok(completed >= 1);
+});
+
+// ---- Spec 052.7: buffered viewport panning ---------------------------------
+
+test("a buffer spans a useful slice of the range, not just a multiple of a narrow window", () => {
+  // Three cycles out of 324: a pure window multiple would give ~15 cycles of
+  // context, which a moving pointer leaves immediately. The extent floor is
+  // what makes panning survive an actual drag.
+  const buffer = bufferRangeForWindow({ start: 100, end: 102 }, 324);
+  assert.ok(buffer.end - buffer.start + 1 >= 60, `buffer too narrow: ${JSON.stringify(buffer)}`);
+  assert.ok(buffer.start <= 100 && buffer.end >= 102);
+
+  // Clamped at the extents rather than running past the data.
+  const atStart = bufferRangeForWindow({ start: 1, end: 3 }, 324);
+  assert.equal(atStart.start, 1);
+  const atEnd = bufferRangeForWindow({ start: 322, end: 324 }, 324);
+  assert.equal(atEnd.end, 324);
+});
+
+test("refill triggers before the viewport reaches the buffer edge, but not at the data extents", () => {
+  const buffer = { start: 50, end: 150 };
+  assert.equal(bufferNeedsRefill(null, { start: 100, end: 102 }, 324), true);
+  // Comfortably inside: no refill.
+  assert.equal(bufferNeedsRefill(buffer, { start: 100, end: 102 }, 324), false);
+  // Outside the buffer entirely: refill.
+  assert.equal(bufferNeedsRefill(buffer, { start: 200, end: 202 }, 324), true);
+  // Near the upper edge: refill before the data runs out.
+  assert.equal(bufferNeedsRefill(buffer, { start: 149, end: 150 }, 324), true);
+  // A buffer already clamped to the extent is not "near an edge" there --
+  // otherwise it would refetch the same range forever.
+  assert.equal(bufferNeedsRefill({ start: 1, end: 100 }, { start: 1, end: 3 }, 324), false);
+  assert.equal(bufferNeedsRefill({ start: 200, end: 324 }, { start: 322, end: 324 }, 324), false);
+});
+
+test("buffer point budget scales so the visible window keeps its density", () => {
+  const window = { start: 100, end: 102 };
+  const buffer = { start: 70, end: 132 };
+  const scaled = bufferMaxPoints(1000, window, buffer);
+  // 63 cycles of buffer against 3 visible: ~21x the points.
+  assert.ok(scaled >= 20000, `expected ~21x scaling, got ${scaled}`);
+  // A buffer equal to the window asks for no more than the window would.
+  assert.equal(bufferMaxPoints(1000, window, window), 1000);
+});
+
+test("the visible x span is read from loaded traces and tolerates short cells", () => {
+  const traces = [
+    { cycle: [1, 1, 2, 2, 3, 3], display_x: [0, 10, 20, 30, 40, 50] },
+    // A shorter cell that never reaches cycle 3.
+    { cycle: [1, 1, 2, 2], display_x: [0, 12, 22, 33] },
+  ];
+  assert.deepEqual(absoluteXRangeForCycles(traces, 2, 2), [20, 33]);
+  assert.deepEqual(absoluteXRangeForCycles(traces, 1, 3), [0, 50]);
+  // Cycles present in no trace leave the axis alone rather than pinning it.
+  assert.equal(absoluteXRangeForCycles(traces, 90, 95), null);
+  assert.equal(absoluteXRangeForCycles(undefined, 1, 3), null);
+  // Nulls and non-finite values are skipped, not plotted as zero.
+  assert.deepEqual(
+    absoluteXRangeForCycles([{ cycle: [5, 5, 5], display_x: [null, 7, 9] }], 5, 5),
+    [7, 9],
+  );
 });

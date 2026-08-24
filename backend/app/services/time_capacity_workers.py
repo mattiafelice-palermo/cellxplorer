@@ -714,7 +714,10 @@ def _cell_result(
         if needs.continuous_time:
             with time_capacity_path.timed_stage(diagnostics, "transform_continuous_time"):
                 raw = analysis_engine._continuous_time(raw)
-        if request.refinement and job.time_origin_prefix_s is not None and "time_s" in raw.columns:
+        # Spec 052.7: the prefix is set only when an origin was resolved, for a
+        # refinement or an explicitly requested absolute origin, so the guard
+        # is the prefix itself rather than the refinement flag.
+        if job.time_origin_prefix_s is not None and "time_s" in raw.columns:
             with time_capacity_path.timed_stage(diagnostics, "transform_refinement_time_origin"):
                 raw = raw.assign(
                     time_s=raw["time_s"].to_numpy(dtype="float64")
@@ -1213,7 +1216,19 @@ def _build_jobs(
         )
         time_origin_prefix_s: float | None = None
         display_origin_time_s: float | None = None
-        if refinement and requested_cycles and settings["x_axis"] == "time":
+        # Spec 052.7: ordinary requests may also ask for absolute positioning.
+        # Without an origin, `_time_capacity_display_x` zeroes each response at
+        # its own first finite point, so every cycle window comes back starting
+        # at x=0 and cannot be panned through -- consecutive windows are
+        # separate coordinate systems rather than views onto one timeline.
+        # Supplying `display_origin_cycle_start` reuses the refinement origin
+        # machinery to place the window at its true coordinate. Opt-in: when no
+        # origin is requested this is unreachable and the per-window behaviour
+        # is byte-identical.
+        wants_absolute_origin = (
+            refinement or display_origin_cycle_start is not None
+        )
+        if wants_absolute_origin and requested_cycles and settings["x_axis"] == "time":
             time_facts = time_capacity_path.consecutive_time_request_facts(
                 plan,
                 requested_cycles,
