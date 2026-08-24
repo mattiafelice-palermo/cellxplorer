@@ -792,6 +792,22 @@ def compact_source_columns(
     }
 
 
+# NOTE (Spec 052.5): reading `header_meta` here defeats the deliberate
+# `defer(SourceFile.header_meta)` in `preload_cell_sources` -- it fires a lazy
+# load and a full JSON decode per source file, once per request, to retrieve
+# one small dict. That costs roughly 4-5 ms on a six-Cell request.
+#
+# Memoizing the extracted value across requests was tried and REJECTED: there
+# is no safe key. `header_meta` is rewritten in place by
+# `parsing.py` (see `source.header_meta = header` near the BioLogic MPR cycle
+# verification helpers) WITHOUT changing `parser_version`, `hash`, or any other
+# observable column, so no available token proves freshness. Serving a stale
+# capability would mis-resolve voltage roles and references -- a scientific
+# labelling error, which is not worth 4 ms.
+#
+# The safe fix is to persist the small capabilities dict in its own column,
+# written wherever `header_meta` is written, leaving the deferral intact. That
+# needs a migration and is deliberately left for a separate child.
 def _persisted_voltage_capabilities(source_file: SourceFile) -> dict:
     header = source_file.header_meta
     if not isinstance(header, dict):
@@ -3720,6 +3736,7 @@ def compute_time_capacity(
     refinement: bool = False,
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
+    request_context: AnalysisRequestContext | None = None,
 ) -> dict:
     # Capacity-axis refinement is display-only and must remain bounded to the
     # requested cycle window.  The exact per-cycle origin is supplied by the
@@ -3762,6 +3779,7 @@ def compute_time_capacity(
             refinement=refinement,
             refinement_viewport_x_min=refinement_viewport_x_min,
             refinement_viewport_x_max=refinement_viewport_x_max,
+            request_context=request_context,
         )
         if optimized is not None:
             return optimized

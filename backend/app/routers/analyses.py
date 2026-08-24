@@ -1527,8 +1527,22 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                 "precision": req.precision,
                 "compact": req.compact,
             }
+        # Spec 052.5: resolve the owner-side request state once and share it.
+        # The selection walk, source preload and scalar-metadata load are
+        # needed to compute the cache key at all, and the guard and the
+        # compute path both need exactly the same resolution. Without this the
+        # Time/Capacity route repeated `resolve_selection` four times and
+        # `preload_cell_sources` four times per request. The context is
+        # request-local and never reaches a worker process.
+        with time_capacity_profiling.profiled_stage(request_profile, "owner_request_context"):
+            request_context = engine.build_analysis_request_context(
+                db,
+                spec,
+                a.provenance,
+                use_current_versions=req.recompute,
+            )
         with time_capacity_profiling.profiled_stage(request_profile, "canonical_capability_guard"):
-            _guard_canonical_cycling(db, spec)
+            _guard_canonical_cycling(db, spec, request_context=request_context)
         with time_capacity_profiling.profiled_stage(request_profile, "source_data_signature"):
             source_data_signature, key = analysis_cache.time_capacity_keys(
                 db,
@@ -1536,6 +1550,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                 a.provenance,
                 use_current_versions=req.recompute,
                 request_options=options,
+                request_context=request_context,
             )
         # ``time_capacity_keys`` intentionally derives both values from one
         # owner-side fingerprint pass. Retain the historic profiling stage
@@ -1607,6 +1622,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                     "precision": req.precision,
                     "compact": req.compact,
                     "progress": _progress_callback(job_id),
+                    "request_context": request_context,
                 }
                 if req.profile:
                     compute_options["access_diagnostics"] = access_diagnostics

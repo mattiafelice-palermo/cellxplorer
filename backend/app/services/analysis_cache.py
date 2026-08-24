@@ -401,6 +401,7 @@ def time_capacity_keys(
     *,
     use_current_versions: bool,
     request_options: dict | None = None,
+    request_context: Any | None = None,
 ) -> tuple[str, str]:
     """Return ``(scientific_signature, render_key)`` from one owner pass."""
 
@@ -410,6 +411,7 @@ def time_capacity_keys(
         spec,
         provenance,
         use_current_versions=use_current_versions,
+        request_context=request_context,
     )
     scientific = dict(payload)
     scientific["options"] = {}

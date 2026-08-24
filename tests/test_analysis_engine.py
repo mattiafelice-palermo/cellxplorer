@@ -977,6 +977,55 @@ class AnalysisEngineTests(unittest.TestCase):
                 f"{key} restore",
             )
 
+    def test_time_capacity_route_resolves_owner_state_once_per_request(self):
+        """Spec 052.5: the route shares one AnalysisRequestContext.
+
+        Keying, the canonical guard and the compute path all need the same
+        selection expansion, source chain and scalar metadata. Before this the
+        Time/Capacity route resolved it four times per request. Pin the counts
+        so a future edit cannot quietly reintroduce the duplication.
+        """
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Owner context", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+
+        calls: dict[str, int] = {}
+
+        def counting(name):
+            original = getattr(engine, name)
+
+            def spy(*args, **kwargs):
+                calls[name] = calls.get(name, 0) + 1
+                return original(*args, **kwargs)
+
+            return patch.object(engine, name, side_effect=spy)
+
+        with counting("resolve_selection"), counting("preload_cell_sources"), counting(
+            "load_scalar_metadata"
+        ), patch.object(
+            analyses_router.engine,
+            "compute_time_capacity",
+            side_effect=lambda *a, **k: {"cell_traces": [], "rendering": {}},
+        ), patch.object(
+            analysis_cache, "load_result_body", return_value=None
+        ), patch.object(
+            analysis_cache, "load_result", return_value=None
+        ), patch.object(
+            analysis_cache, "store_result"
+        ), patch.object(
+            analyses_router.engine, "availability_badges", return_value=[]
+        ):
+            analyses_router.compute_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(precision="standard", compact=True),
+                self.db,
+            )
+
+        self.assertEqual(calls.get("resolve_selection"), 1, calls)
+        self.assertEqual(calls.get("preload_cell_sources"), 1, calls)
+        self.assertEqual(calls.get("load_scalar_metadata"), 1, calls)
+
     def test_transient_time_capacity_requests_read_the_cache_but_never_populate_it(self):
         """Spec 052.3 Stage 3: moving previews must not write to the result cache."""
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

@@ -1138,6 +1138,7 @@ def _build_jobs(
     refinement: bool = False,
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
+    request_context: Any | None = None,
 ) -> tuple[list[ReadJob], ResolvedRequest, list[dict[str, Any]]] | None:
     from . import analysis_engine, canonical_cycling, time_capacity_derived, time_capacity_path
     from .stitch import CachedSourceRef
@@ -1148,10 +1149,19 @@ def _build_jobs(
         return None
     if refinement and settings["cycles"]:
         return None
-    units, missing_refs = analysis_engine.resolve_selection(db, spec)
-    cells = [unit["cell"] for unit in units]
-    analysis_engine.preload_cell_sources(db, cells)
-    scalar_metadata = analysis_engine.load_scalar_metadata(db, cells)
+    # Spec 052.5: reuse the owner-side resolution the route already performed
+    # for the cache key rather than repeating the selection walk, the source
+    # preload and the metadata load. The context is request-local and is never
+    # passed to a worker -- only the immutable descriptors built below are.
+    if request_context is not None:
+        units = list(request_context.units)
+        missing_refs = list(request_context.missing_refs)
+        scalar_metadata = request_context.scalar_metadata
+    else:
+        units, missing_refs = analysis_engine.resolve_selection(db, spec)
+        cells = [unit["cell"] for unit in units]
+        analysis_engine.preload_cell_sources(db, cells)
+        scalar_metadata = analysis_engine.load_scalar_metadata(db, cells)
     exclusions = spec.get("selection", {}).get("exclusions", [])
     hidden_group_ids = set(spec.get("selection", {}).get("hidden_replicate_group_ids", []))
     needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
@@ -1162,10 +1172,15 @@ def _build_jobs(
     jobs: list[ReadJob] = []
     for index, unit in enumerate(units):
         cell = unit["cell"]
-        hashes, files = analysis_engine.cell_ordered_hashes(db, cell)
-        versions = analysis_engine.resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
+        if request_context is not None and cell.id in request_context.files_by_cell:
+            files = list(request_context.files_by_cell[cell.id])
+            hashes = list(request_context.hashes_by_cell[cell.id])
+            versions = request_context.parser_versions_by_cell[cell.id]
+        else:
+            hashes, files = analysis_engine.cell_ordered_hashes(db, cell)
+            versions = analysis_engine.resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
         refs = tuple(CachedSourceRef(file.hash, versions[file.hash]) for file in files)
         plan_diagnostics: dict[str, Any] = {}
         plan = time_capacity_path.build_time_capacity_stitch_plan(refs, diagnostics=plan_diagnostics)
@@ -1373,6 +1388,7 @@ def try_compute_time_capacity(
     refinement: bool = False,
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
+    request_context: Any | None = None,
 ) -> dict[str, Any] | None:
     """Compute an eligible ordinary request or return ``None`` for fallback."""
 
@@ -1391,7 +1407,9 @@ def try_compute_time_capacity(
         raise RefinementUnavailable("refinement does not broaden explicit sparse cycles")
     started = perf_counter()
     try:
-        analysis_engine.ensure_canonical_cycling_available(db, spec)
+        analysis_engine.ensure_canonical_cycling_available(
+            db, spec, request_context=request_context
+        )
         built = _build_jobs(
             db,
             spec,
@@ -1405,6 +1423,7 @@ def try_compute_time_capacity(
             refinement=refinement,
             refinement_viewport_x_min=refinement_viewport_x_min,
             refinement_viewport_x_max=refinement_viewport_x_max,
+            request_context=request_context,
         )
         if built is None:
             if refinement:
