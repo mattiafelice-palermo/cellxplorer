@@ -235,3 +235,63 @@ Separately, reproduce `display_mode=consecutive` with a capacity X-axis on a kno
 R4 real-file investigation complete for reviewer decision. Read-only tracing used Cell 135 and the original EGG files without modifying the user database or committing private bytes. The 49,308-row position-1 source decodes exactly three executed Ns steps: canonical Ns 1 Rest, 2 Charge, 3 Discharge, with one repeated backward edge 3 -> 1 and raw half-cycle 0..3257. That is 1,629 complete charge/discharge iterations, not an inner protocol segment. Representative source-level evidence: cycle 1 charge raw ID-211 0.000001742 -> 29.052448 mAh and ID-7 sum 29.052449 mAh, canonical end 29.052447 and calc.per_cycle 29.052447; discharge raw ID-211 -0.000001742 -> -29.081205 and ID-7 sum -29.081205, canonical/calc 29.081203. Cycle 813: charge 0.000001696 -> 0.179934, canonical/calc 0.179932; discharge -0.000001535 -> -0.038740, canonical/calc 0.038738. Cycle 1629: charge 0.000001680 -> 0.118199, canonical/calc 0.118198; discharge -0.000001521 -> -0.013519, canonical/calc 0.013518. Raw source capacity itself collapses, and adapter ownership matches ID-211/ID-7 at early, middle, and late points; no BioLogic or generic calc formula change is scientifically justified by this evidence. The users 58.163428 mAh first plot point is the separate preceding position-0 456-row single-discharge source in the same Cell; Cell-level stitching therefore begins with that cycle and then the 1,629-cycle source. I also reproduced the capacity-X plot: consecutive mode currently subtracts only the first finite phase-capacity value in _time_capacity_display_x, while phase capacity resets for every cycle/phase; the EGG trace has 3,258 backward display-X transitions at phase/cycle boundaries. This is an existing generic Time/Capacity display-coordinate issue, also present before Spec 050, and is separate from the BioLogic adapter. Per R4 instructions it is diagnosed and should be handled by a follow-up spec/branch rather than expanded into 051.1. Private EGG remains uncommitted.
 
 ---
+### 2026-08-24T09:39:28+02:00 — REVIEWER — 051.1
+
+**Result:** Child review clean; entering final parent review
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1-R4 were judged resolved from code, tests, and real-source trace evidence. Browser verification had not been run at this point.
+
+---
+### 2026-08-24T09:40:39+02:00 — REVIEWER — 051.1
+
+**Result:** Cumulative parent review clean; workflow complete
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Cumulative review was marked clean based on the returned source-level evidence and implementation inspection. This completion was subsequently invalidated by user browser acceptance U2 below.
+
+---
+### 2026-08-24T09:41:48+02:00 — USER → REVIEWER — 051.1
+
+**Result:** User input U2
+
+**Message**
+
+The user retested the current build in the real application and Voltage vs Capacity still renders as a scrambled trace in Consecutive mode. The user explicitly approves browser verification for this issue and asks the implementer to use it.
+
+---
+### 2026-08-24T09:42:30+02:00 — REVIEWER → IMPLEMENTER — 051.1
+
+**Result:** Post-completion acceptance failure; changes/verification required
+
+**Findings**
+
+- R5
+
+**User messages considered**
+
+- U2
+
+**Message**
+
+The workflow is exceptionally reopened after COMPLETE because the user supplied new real-browser acceptance evidence and explicitly authorized further verification. The helper has no post-COMPLETE reopen transition, so this reopen is documented as a user-authorized exception. R5 is now the only active blocker. Browser verification is REQUIRED and explicitly user-approved: open the actual Cell 135 Analysis page, reproduce Voltage vs Capacity in Consecutive mode, compare Time/Consecutive and the other capacity display modes, inspect the request/response or plotted-series X values, and repeat the same Consecutive + Capacity check on a known Neware cell. If the defect is BioLogic-specific, fix it in this branch and demonstrate the corrected plot in browser. If it is the previously diagnosed generic Time/Capacity coordinate defect, report the exact owner and browser evidence; do not claim the visible issue resolved merely because raw/canonical capacities are correct. See R5 in the canonical 051.1 review.
+
+---
