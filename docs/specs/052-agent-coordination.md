@@ -35,3 +35,20 @@ Branch rebased onto current `main` at `df99746ee6d8827e3ff55762e4d28c5b22fa646e`
 Spec 052 implementation is complete. Navigation is frontend-only, uses existing relational summaries and cycle_start/cycle_end identity, preserves explicit-cycle precedence, and leaves backend/cache/artifact contracts unchanged.
 
 ---
+### 2026-08-24T15:11:58+02:00 — REVIEWER → IMPLEMENTER — 052
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Resolve R1 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`: the null-bound fallback currently disables safe single-cycle backward navigation and Previous View. Preserve the spec's narrower fallback policy, add focused null-bound coverage, rerun the required focused/frontend/preflight verification, and hand back with browser/manual acceptance recorded truthfully as RUN or NOT RUN.
+
+---
