@@ -48,7 +48,7 @@ Manual acceptance result: the build can load the BioLogic cell, but opening Anal
 
 **Verification**
 
-- Reviewer inspected cumulative branch diff through implementation handoff 09f584f32d095edb70efb18147b8aeb0eeb918eb against merge base/main 706dc0f14880202bcf3b4dc9.
+- Reviewer inspected cumulative branch diff through implementation handoff 09f584f32d095edb70efb18147b8aeb0eeb918eb against merge base/main 706dc0f14880202a8c5e22b35020502bcf3b4dc9.
 - Implementer-reported focused tests and preflight were reviewed but not independently rerun; reviewer execution environment cannot clone the repository from GitHub.
 - User manual acceptance U1 reproduces the unresolved metadata-only/canonical-cycling failure in the built application.
 
@@ -310,5 +310,18 @@ The workflow is exceptionally reopened after COMPLETE because the user supplied 
 **Message**
 
 R5 is resolved at the acceptance/ownership level: the browser-rendered defect is generic pre-existing consecutive-capacity display-coordinate logic, not BioLogic cycle reconstruction or frontend rendering. On EGG analysis 38 / Cell 135, the compact API response already contains 752 backward display_x transitions over 3977 points (first reset 58.163428 to 0 at cycle 2 rest); the browser shows the same dense zig-zag trace. On Neware Performance analysis 36, the same API path returns 7 backward display_x resets per BQV control cell over cycles 1-3, while Time/Consecutive is monotonic. The exact owner is backend/app/services/analysis_engine.py::_time_capacity_display_x; frontend TimeCapacityPlotCard trusts display_x. Do not expand 051.1: track a separate generic Time/Capacity follow-up to concatenate consecutive capacity resets, with focused Neware+BioLogic regression tests and browser acceptance. Screenshots were captured during verification and no private DB/source bytes were committed.
+
+---
+### 2026-08-24T10:12:33+02:00 — REVIEWER → IMPLEMENTER — 051.2
+
+**Result:** Scheduled promoted child 051.2; returning to implementation
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+User requires the generic Capacity + Consecutive defect to be fixed before Spec 051 completes. Implement 051.2 only. Browser verification is explicitly approved. The user also explicitly authorizes fresh acceptance setup after deleting the two test Cells: re-import/re-register the specific EGG and Neware test Cells through normal application workflows, rebuild their caches normally, and create new temporary analyses from scratch. Do not modify unrelated user data or commit private DB/source/cache bytes.
 
 ---
