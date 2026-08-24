@@ -424,3 +424,20 @@ Fixed R2 by resolving each visible Cell's first exact capacity origin within the
 R1-R4 are resolved. R2 now handles unequal and sparse per-Cell refinement with exact in-range origins, empty/nonblocking shorter Cells, bounded reads, endpoint transport, and serial/process/fallback parity. R4 current-head EGG and Neware acceptance is clean. Entering the required cumulative Parent 051 review.
 
 ---
+### 2026-08-24T13:36:52+02:00 — REVIEWER → IMPLEMENTER — 051.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R5
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Final cumulative Parent 051 review is technically and scientifically clean, but `docs/specs/README.md` is stale: it still calls 051.1 the active child, says implementation is in progress, and omits 051.2. R5 is documentation-only. Update only the Spec 051 index entry so both 051.1 and 051.2 are linked/described as implemented and review-clean and the parent is shown at final cumulative review. No production/scientific changes are requested.
+
+---

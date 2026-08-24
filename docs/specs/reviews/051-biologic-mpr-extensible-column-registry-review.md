@@ -1,44 +1,50 @@
 # Review — Spec 051: BioLogic MPR extensible column registry and required-field decoding
 
-Status: **Reopened — 051.2 implementation pending**  
+Status: **Final cumulative review — changes requested**  
 Ready to merge: **No**  
 Spec: [`../051-biologic-mpr-extensible-column-registry.md`](../051-biologic-mpr-extensible-column-registry.md)  
 Children: [`../051.1-biologic-mpr-cycle-reconstruction.md`](../051.1-biologic-mpr-cycle-reconstruction.md), [`../051.2-time-capacity-consecutive-capacity-axis.md`](../051.2-time-capacity-consecutive-capacity-axis.md)  
 Branch: `feature/biologic-mpr-extensible-columns-051`  
-Main / merge base: `706dc0f14880202a8c5e22b35020502bcf3b4dc9`
+Main / merge base: `706dc0f14880202a8c5e22b35020502bcf3b4dc9`  
+Implementation head reviewed: `cbd2ab95f88bc16829e203f8e303a652689ae388`  
+051.2 clean-review checkpoint: `22a90f40f09e6f349cd62f2b96b070fa7b11e17d`
 
-## Current cumulative status
+## Cumulative review conclusion
 
-Parent 051 and Child 051.1 are review-clean at the BioLogic parser/cycle/capacity level. The real EGG source was traced successfully from raw ID-211 / ID-7 quantities through canonical phase capacities and `calc.per_cycle(...)`, and the 1,629-cycle repeating source is supported by the observed Rest/Charge/Discharge execution pattern.
+The cumulative implementation is technically and scientifically clean across Parent 051, Child 051.1, and Child 051.2. The branch remains based directly on current `main` / merge base `706dc0f14880202a8c5e22b35020502bcf3b4dc9`; the cumulative changed-file set is coherent with the feature and its promoted children, and no unrelated implementation scope was identified.
 
-The later real-browser acceptance exposed a separate generic Time/Capacity defect: `display_mode=consecutive` with a capacity X-axis restarts the backend `display_x` coordinate at phase/cycle boundaries. Browser/API verification reproduced the same defect on Neware, proving that it is not BioLogic-specific and predates Spec 051.
+The final repository state establishes:
 
-The user now explicitly requires that visible defect to be fixed before this workflow completes. It has therefore been promoted into Child **051.2 — Time/Capacity consecutive capacity-axis concatenation** on the same branch/workflow rather than leaving the branch merge-ready with a known broken interaction.
+- `MPR_READER_REVISION = 2` for registry-resolved ordinary MPR columns with fail-closed unknown/ambiguous layout handling;
+- BioLogic GCPL adapter revision `gcpl10` for the bounded explicit/declared/observed-execution logical-cycle contract;
+- preserved raw/canonical/per-cycle scientific capacity semantics, including the real EGG ID-211 / ID-7 source-level validation;
+- backend-owned acquisition-order Consecutive capacity display coordinates for mAh, mAh/g, and mAh/cm²;
+- exact pre-downsample per-Cell origins for bounded Time/Capacity refinement, including unequal and sparse Cell coverage;
+- `RESULT_SCHEMA_VERSIONS["time_capacity"] = 7` so stale persisted display-coordinate payloads cannot survive the changed response meaning;
+- no migration and no global `CALC_VERSION` change for the display-only 051.2 correction.
 
-051.2 is format-neutral and owns only the display-coordinate correction. It must not redefine canonical capacities, `calc.per_cycle(...)`, BioLogic cycle reconstruction, or parser behavior. The current required design is backend-owned acquisition-order capacity concatenation, with rest rows holding the current coordinate, stable overview/refinement coordinates, a Time/Capacity result-schema cache-generation bump, focused Neware + BioLogic regressions, canonical preflight, and real browser acceptance.
+The current-head implementer handoff reports canonical preflight PASS, the focused 194-test R2 matrix PASS, frontend policy/build PASS, and real EGG/Neware browser/API acceptance PASS. Reviewer inspection confirms the code/test ownership and versioning contracts; those commands and browser checks were not independently executed in this reviewer environment. GitHub exposes no combined status checks for implementation commit `cbd2ab95f88bc16829e203f8e303a652689ae388`.
 
-## User-authorized acceptance setup for 051.2
+One final documentation-index defect remains before the workflow can complete.
 
-The user explicitly authorizes the implementer to recreate the two acceptance cases from scratch after the user deletes the test Cells from the local database. The implementer may re-import/re-register the specific EGG and Neware test Cells through normal CellXplorer workflows, allow caches to rebuild normally, and create/delete temporary analyses for browser verification.
+## Findings
 
-This authorization is limited to those test Cells/analyses and their normal cache lifecycle. It does not authorize modification, clearing, migration, reseeding, or manual SQLite editing of unrelated user data. Private database/source/cache bytes must not be committed.
+### R5 — Low — `docs/specs/README.md` still describes the pre-051.2 workflow state
 
-## Historical verification through 051.1
+**Affected file:** `docs/specs/README.md`
 
-Implementer-reported verification before promotion of 051.2 includes:
+**Current:** The Spec 051 index entry says that 051.1 is the active child, describes the branch as "Implementation in progress", and lists only `051.1-biologic-mpr-cycle-reconstruction.md`. It does not link or describe `051.2-time-capacity-consecutive-capacity-axis.md`, even though 051.2 has been promoted, implemented, reviewed clean, and is now part of the required cumulative Parent 051 scope.
 
-- focused BioLogic regressions: PASS;
-- canonical preflight: PASS;
-- real EGG source/canonical/per-cycle trace: PASS;
-- browser diagnosis: RUN with user approval;
-- Cell 135 Capacity + Consecutive: malformed backend `display_x` reproduced;
-- Neware control Capacity + Consecutive: same generic reset behavior reproduced;
-- Time + Consecutive: monotonic/unchanged in the diagnosis.
+**Target:** Make the Spec 051 index entry match the current repository/workflow: list both numeric children, describe 051.1 as review-clean cycle reconstruction, describe 051.2 as the review-clean generic Consecutive-capacity display/refinement correction, and state that the cumulative parent review is pending only this final documentation fix. Do not rewrite unrelated spec-index entries.
 
-Reviewer inspection confirmed the generic owner is `backend/app/services/analysis_engine.py::_time_capacity_display_x(...)`, whose Consecutive path performs a single-origin subtraction rather than concatenating capacity resets. The same logic exists at the branch merge base.
+**Acceptance criteria:**
+
+- The 051 entry links both `051.1-biologic-mpr-cycle-reconstruction.md` and `051.2-time-capacity-consecutive-capacity-axis.md`.
+- It no longer calls 051.1 the active child.
+- The status text reflects that 051.1 and 051.2 are implemented/review-clean and that Parent 051 is at final cumulative review.
+- No unrelated documentation or production files are changed.
+- Run the normal workflow verification required for the handoff and report exactly what ran.
 
 ## Merge readiness
 
-**Ready to merge: No.**
-
-The authoritative workflow is now `051.2 -> IMPLEMENTER / IMPLEMENT`. A fresh 051.2 review and a fresh cumulative Parent 051 review are required before merge readiness can be restored.
+**Not ready to merge solely because of R5.** No production/scientific defect remains in the cumulative review. After the narrow spec-index correction returns cleanly, the reviewer should resume `FINAL_REVIEW`, confirm the documentation delta, and complete the Spec 051 workflow.
