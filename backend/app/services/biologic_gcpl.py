@@ -1624,7 +1624,7 @@ def _protocol_cycle_candidate(settings: Mapping[str, Any]) -> dict[str, Any]:
 def _infer_execution_loop_structure(
     step_indices: list[int],
     directions: list[int],
-    settings: Mapping[str, Any] | None,
+    settings: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     """Infer one effective loop from a repeated, validated Ns progression.
 
@@ -1652,39 +1652,28 @@ def _infer_execution_loop_structure(
             "GCPL execution contains an invalid backward Ns loop edge"
         )
     body_steps = list(range(start_step, control_step + 1))
-    if settings is not None:
-        by_step = {
-            int(sequence["step_index"]): sequence
-            for sequence in settings.get("sequences") or []
-        }
-        if any(step not in by_step for step in body_steps):
-            raise UnsupportedBiologicGcplError(
-                "GCPL observed loop edge does not match declared sequence structure"
-            )
-        body = [by_step[step] for step in body_steps]
-        if any(
-            sequence.get("direction") not in {"charge", "discharge", "rest", "control"}
-            for sequence in body
-        ):
-            raise UnsupportedBiologicGcplError(
-                "GCPL observed loop body contains an unresolved declared direction"
-            )
-        if not any(sequence.get("direction") == "charge" for sequence in body) or not any(
-            sequence.get("direction") == "discharge" for sequence in body
-        ):
-            raise UnsupportedBiologicGcplError(
-                "GCPL observed repeated loop does not contain both charge and discharge"
-            )
-    else:
-        body_directions = [
-            direction
-            for step, direction in zip(step_indices, directions, strict=True)
-            if start_step <= step <= control_step
-        ]
-        if 1 not in body_directions or -1 not in body_directions:
-            raise UnsupportedBiologicGcplError(
-                "GCPL observed repeated loop does not contain both charge and discharge"
-            )
+    by_step = {
+        int(sequence["step_index"]): sequence
+        for sequence in settings.get("sequences") or []
+    }
+    if any(step not in by_step for step in body_steps):
+        raise UnsupportedBiologicGcplError(
+            "GCPL observed loop edge does not match declared sequence structure"
+        )
+    body = [by_step[step] for step in body_steps]
+    if any(
+        sequence.get("direction") not in {"charge", "discharge", "rest", "control"}
+        for sequence in body
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL observed loop body contains an unresolved declared direction"
+        )
+    if not any(sequence.get("direction") == "charge" for sequence in body) or not any(
+        sequence.get("direction") == "discharge" for sequence in body
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL observed repeated loop does not contain both charge and discharge"
+        )
     return {
         "start_step": start_step,
         "control_step": control_step,
@@ -1726,6 +1715,10 @@ def _reconstruct_loop_cycles(
                     )
                 cycles.append(current_cycle)
                 continue
+            if step_index != start_step:
+                raise UnsupportedBiologicGcplError(
+                    "GCPL reconstructed loop does not begin at its validated loop start"
+                )
             body_seen = True
             previous_step = step_index
             cycles.append(current_cycle)
@@ -2141,11 +2134,13 @@ def map_gcpl_to_canonical(
     ]
     block_step_indices = [int(ns[start]) for start, _ in ranges]
     if cycle is None:
-        loop = declared_loop or _infer_execution_loop_structure(
-            block_step_indices,
-            directions,
-            declared_settings,
-        )
+        loop = declared_loop
+        if loop is None and declared_settings is not None:
+            loop = _infer_execution_loop_structure(
+                block_step_indices,
+                directions,
+                declared_settings,
+            )
         if loop is not None:
             cycle_by_block = _reconstruct_loop_cycles(
                 block_step_indices,

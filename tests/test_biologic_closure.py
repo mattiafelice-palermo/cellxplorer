@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -193,6 +194,104 @@ def _single_discharge_neutral_setup_settings() -> bytes:
     )
 
 
+def _cache_provenance_frame(
+    cycles: list[int],
+    cycle_source: str,
+) -> pd.DataFrame:
+    frame = pd.DataFrame(
+        {
+            "record_index": range(1, len(cycles) + 1),
+            "cycle": cycles,
+            "step_index": [1] * len(cycles),
+            "step": [1] * len(cycles),
+            "status": ["CC_Chg"] * len(cycles),
+            "time_s": [float(index) for index in range(len(cycles))],
+            "voltage_v": [3.5 + index / 100.0 for index in range(len(cycles))],
+            "current_ma": [1.0] * len(cycles),
+            "charge_capacity_mah": [float(index % 2) for index in range(len(cycles))],
+            "discharge_capacity_mah": [0.0] * len(cycles),
+            "timestamp": pd.date_range("2026-01-01", periods=len(cycles), freq="s"),
+        }
+    )
+    frame.attrs["biologic_gcpl"] = {"cycle_source": cycle_source}
+    return frame
+
+
+def _observed_mixed_loop_rows(iterations: int = 2) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    time_s = 0.0
+    carry_capacity = 0.0
+    for _ in range(iterations):
+        rows.extend(
+            [
+                {
+                    "total_time_s": time_s,
+                    "ns": 0,
+                    "mode": 3,
+                    "control": 0.0,
+                    "q_mAh": carry_capacity,
+                    "ewe_v": 3.6,
+                    "ece_v": 0.1,
+                    "ns_changed": True,
+                },
+                {
+                    "total_time_s": time_s + 1.0,
+                    "ns": 1,
+                    "mode": 1,
+                    "control": 1.0,
+                    "q_mAh": 0.0,
+                    "ewe_v": 3.7,
+                    "ece_v": 0.1,
+                    "ns_changed": True,
+                },
+                {
+                    "total_time_s": time_s + 2.0,
+                    "ns": 1,
+                    "mode": 1,
+                    "control": 1.0,
+                    "q_mAh": 1.0,
+                    "raw_dq_mAh": 1.0,
+                    "ewe_v": 3.8,
+                    "ece_v": 0.1,
+                },
+                {
+                    "total_time_s": time_s + 3.0,
+                    "ns": 2,
+                    "mode": 1,
+                    "control": -1.0,
+                    "q_mAh": 0.0,
+                    "ewe_v": 3.8,
+                    "ece_v": 0.1,
+                    "ns_changed": True,
+                },
+                {
+                    "total_time_s": time_s + 4.0,
+                    "ns": 2,
+                    "mode": 1,
+                    "control": -1.0,
+                    "q_mAh": -1.0,
+                    "raw_dq_mAh": -1.0,
+                    "ewe_v": 3.5,
+                    "ece_v": 0.1,
+                },
+            ]
+        )
+        carry_capacity = -1.0
+        time_s += 5.0
+    return rows
+
+
+def _observed_mixed_loop_settings() -> bytes:
+    return encode_gcpl_settings(
+        [
+            {"set_i_c": 0, "current": 0.0, "rest_duration_s": 1.0},
+            {"set_i_c": 0, "current": 1.0},
+            {"set_i_c": 0, "current": -1.0},
+        ],
+        reference_electrode="Ag/AgCl",
+    )
+
+
 class BiologicClosureIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -256,6 +355,49 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         )
         self.assertIsNotNone(cycles)
         self.assertEqual(cycles["cycle"].tolist(), [1])
+
+    def test_biologic_cache_hit_preserves_exact_cycle_identity_provenance(self) -> None:
+        cases = (
+            ("loop-one-cycle.mpr", [1, 1], "protocol_loop_reconstruction"),
+            ("explicit-two-cycle.mpr", [1, 1, 2, 2], "explicit_full_cycle"),
+        )
+        for filename, cycles, cycle_source in cases:
+            path = self.root / filename
+            path.write_bytes(filename.encode("ascii"))
+            file_hash = parsing.compute_hash(path)
+            frame = _cache_provenance_frame(cycles, cycle_source)
+            with patch.object(parsing, "parse_timeseries", return_value=frame):
+                fresh = cache.build(file_hash, path)
+                cached = cache.build(file_hash, path)
+
+            self.assertEqual(fresh["cycle_identity_source"], cycle_source)
+            self.assertEqual(cached["cycle_identity_source"], cycle_source)
+            index = cache.load_raw_layout_index(file_hash, "bm:gcpl10:r1")
+            self.assertIsNotNone(index)
+            self.assertEqual(index["biologic_cycle_identity_source"], cycle_source)
+
+    def test_observed_mixed_loop_promotion_does_not_claim_single_direction(self) -> None:
+        path = write_gcpl_mpr(
+            self.root / "observed-mixed-loop.mpr",
+            _observed_mixed_loop_rows(),
+            settings_payload=_observed_mixed_loop_settings(),
+            log_payload=encode_gcpl_log(ole_timestamp=45000.0),
+            include_log=True,
+        )
+
+        source = scanner.ingest_path(self.db, path, parse_now=True)
+
+        self.assertEqual(source.parse_status, "parsed")
+        self.assertEqual(source.cycle_count, 2)
+        capabilities = source.header_meta["capabilities"]
+        self.assertEqual(
+            capabilities["cycle_identity_source"],
+            "protocol_loop_reconstruction",
+        )
+        self.assertEqual(
+            capabilities["single_direction_cycle_verification"],
+            "unavailable",
+        )
 
     def test_legacy_gcpl5_source_is_reinspected_under_the_new_cycle_contract(self) -> None:
         path = write_gcpl_mpr(

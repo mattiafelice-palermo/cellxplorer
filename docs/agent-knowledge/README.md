@@ -29,7 +29,8 @@ that matches the change, then follow its links to the authoritative implementati
 
 The independently authored BioLogic MPR/GCPL reader contract is documented in
 [`../biologic-mpr-format.md`](../biologic-mpr-format.md), including the bounded metadata contract,
-the fail-closed cycle-identity rule, and format/provenance evidence limits (Specs 041.1-041.6).
+the explicit/declared-loop/execution-evidenced cycle-identity boundary, the fail-closed rules for
+ambiguous restarts, and format/provenance evidence limits (Specs 041.1-041.6 and 051.1).
 
 Existing specialist references:
 

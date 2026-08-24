@@ -46,6 +46,16 @@ RAW_CACHE_LAYOUT_VERSION = 2
 # not a scientific constant and not part of any analysis cache key.
 RAW_CACHE_ROW_GROUP_SIZE = 4096
 
+# These are adapter-owned scientific provenance values. They are persisted in
+# the raw-layout sidecar so a cache hit never has to guess from cycle count.
+BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
+    {
+        "explicit_full_cycle",
+        "protocol_loop_reconstruction",
+        "non_repeating_cycle_1",
+    }
+)
+
 # This is a regenerable prepared-derived representation generation, not a
 # scientific calculation version.  Its identity is validated against the
 # parser, CALC_VERSION, canonical raw contract and active raw physical layout.
@@ -690,6 +700,14 @@ def _build_raw_layout_index(
             raw_file_size=raw_file_size,
         ),
     }
+    biologic_attrs = frame.attrs.get("biologic_gcpl") if hasattr(frame, "attrs") else None
+    biologic_cycle_source = (
+        str(biologic_attrs.get("cycle_source"))
+        if isinstance(biologic_attrs, dict) and biologic_attrs.get("cycle_source")
+        else None
+    )
+    if biologic_cycle_source in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
+        result["biologic_cycle_identity_source"] = biologic_cycle_source
     step_column = next(
         (column for column in ("step_index", "step") if column in frame.columns),
         None,
@@ -845,6 +863,9 @@ def _validate_raw_layout_index(
         raise RawLayoutError("raw layout index parser identity does not match")
     if index.get("canonical_raw_version") != canonical_cycling.CANONICAL_RAW_VERSION:
         raise RawLayoutError("raw layout index canonical version does not match")
+    biologic_cycle_source = index.get("biologic_cycle_identity_source")
+    if biologic_cycle_source is not None and biologic_cycle_source not in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
+        raise RawLayoutError("raw layout index has invalid BioLogic cycle provenance")
 
     try:
         raw_row_count = int(index["raw_row_count"])
@@ -2083,6 +2104,7 @@ def build(
     parser_identity = parsing.parser_identity(source_path)
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     rp, cp = raw_path(file_hash, parser_identity), cycles_path(file_hash, parser_identity)
+    reparse_for_biologic_provenance = False
     if not force and rp.exists() and cp.exists():
         _require_source_fingerprint(source_path, expected_source_fingerprint)
         import pyarrow.parquet as pq
@@ -2102,33 +2124,29 @@ def build(
             logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
         cached_cycle_identity_source = None
         if Path(source_path).suffix.casefold() == ".mpr":
-            try:
-                cached_cycles = pd.read_parquet(cp, columns=["cycle"])
-                cached_cycle_identity_source = (
-                    "protocol_loop_reconstruction"
-                    if cached_cycles["cycle"].nunique(dropna=True) > 1
-                    else "non_repeating_cycle_1"
-                )
-            except Exception:
-                logger.debug(
-                    "could not recover BioLogic cycle provenance from cached cycles %s",
-                    cp,
-                    exc_info=True,
-                )
-        return {
-            "rows": pq.read_metadata(rp).num_rows,
-            "cycles": pq.read_metadata(cp).num_rows,
-            "parser_version": parser_identity,
-            "calc_version": CALC_VERSION,
-            "cached": True,
-            "cycle_identity_source": cached_cycle_identity_source,
-            **totals,
-        }
+            index = load_raw_layout_index(file_hash, parser_identity)
+            if index is not None:
+                cached_cycle_identity_source = index.get("biologic_cycle_identity_source")
+            if cached_cycle_identity_source is None:
+                # A gcpl10 cache created before provenance was persisted is
+                # scientifically usable but cannot safely promote a pending
+                # candidate. Reparse once to publish exact adapter evidence.
+                reparse_for_biologic_provenance = True
+        if not reparse_for_biologic_provenance:
+            return {
+                "rows": pq.read_metadata(rp).num_rows,
+                "cycles": pq.read_metadata(cp).num_rows,
+                "parser_version": parser_identity,
+                "calc_version": CALC_VERSION,
+                "cached": True,
+                "cycle_identity_source": cached_cycle_identity_source,
+                **totals,
+            }
 
     # A calculation-version bump does not require rereading the source file:
     # reuse the parser-identity-versioned raw cache and derive only the new
     # cycle cache.
-    parsed_from_source = not (rp.exists() and not force)
+    parsed_from_source = reparse_for_biologic_provenance or not (rp.exists() and not force)
     if parsed_from_source:
         _require_source_fingerprint(source_path, expected_source_fingerprint)
         raw = parsing.parse_timeseries(source_path)

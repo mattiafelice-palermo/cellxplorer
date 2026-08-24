@@ -272,12 +272,16 @@ record-decode-free and marks a bounded candidate when settings establish either 
 cycling episode or a simple mixed-direction loop. Full parsing validates the declared per-`Ns`
 direction, executed block progression, capacity ownership, and loop wraps before promotion. A
 declared loop must contain both charge and discharge sequences; a single-direction repeated loop
-is not treated as a sequence of full cycles. When no explicit loop fields are present, the adapter
-may accept one stable observed backward `Ns` edge only when the complete forward body and resolved
-charge/discharge semantics corroborate that one effective loop. Active preconditioning, branching,
-contradictory direction, unresolved controls, and other restarts remain metadata-only with a precise
-reason. A valid loop wrap increments the source-local cycle exactly once; an interrupted final
-prefix is retained without fabricating its missing phase.
+is not treated as a sequence of full cycles. When no usable loop fields are present, the
+execution-evidenced fallback is narrower: the full settings must establish one contiguous observed
+body with resolved charge and discharge directions, acquisition may contain only one unique
+backward `Ns` edge, that edge must be `control_step -> loop_start_step`, the first body row must
+start at `loop_start_step`, and all later progression must stay within the body with no second
+restart. Every completed iteration must contain both decoded directions; only a valid final prefix
+may be partial. Active preconditioning, branching, contradictory direction, unresolved controls,
+and other restarts remain metadata-only with a precise reason. A valid loop wrap increments the
+source-local cycle exactly once; an interrupted final prefix is retained without fabricating its
+missing phase.
 
 The ID-468 half-cycle remains decoded diagnostic evidence only. It must be finite, integer, and
 non-negative, but its starting value, parity, progression, and resets are not converted with an

@@ -226,6 +226,21 @@ def _repeating_loop_settings(
     return encode_gcpl_settings(sequences)
 
 
+def _observed_loop_settings(*, single_direction: bool = False) -> bytes:
+    """Encode settings for an execution-evidenced loop with no goto fields."""
+
+    return encode_gcpl_settings(
+        [
+            {"set_i_c": 0, "current": 0.0, "rest_duration_s": 1.0},
+            {"set_i_c": 0, "current": 1.0},
+            {
+                "set_i_c": 0,
+                "current": 1.0 if single_direction else -1.0,
+            },
+        ]
+    )
+
+
 class BiologicGcplMappingTests(unittest.TestCase):
     def test_direct_identity_is_registered_without_user_extension_admission(self) -> None:
         self.assertEqual(parsing.recognize_source("source.mpr"), parsing.FORMAT_BIOLOGIC_MPR)
@@ -759,6 +774,60 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertEqual(frame["cycle"].iloc[-1], 3)
         self.assertNotIn("CC_DChg", frame.loc[frame["cycle"] == 3, "status"].tolist())
 
+    def test_observed_mixed_loop_reconstructs_without_declared_goto_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "observed-loop.mpr",
+                _repeating_loop_rows(),
+                settings_payload=_observed_loop_settings(),
+            )
+            capabilities = read_gcpl_header_metadata(path)["capabilities"]
+            self.assertTrue(capabilities["canonical_cycling_pending"])
+            self.assertTrue(capabilities["non_repeating_cycle_candidate"])
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame["cycle"].unique().tolist(), [1, 2, 3])
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["cycle_source"],
+            "protocol_loop_reconstruction",
+        )
+
+    def test_observed_loop_rejects_multiple_backward_edges(self) -> None:
+        rows = [
+            _row(0.0, ns=0, mode=MPR_MODE_REST, control=0.0, ns_changed=True),
+            _row(1.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+            _row(2.0, ns=1, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+            _row(3.0, ns=2, control=-1.0, q_mAh=0.0, ns_changed=True),
+            _row(4.0, ns=2, control=-1.0, q_mAh=-1.0, dq_mAh=-1.0),
+            _row(5.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+            _row(6.0, ns=0, mode=MPR_MODE_REST, control=0.0, q_mAh=0.0, ns_changed=True),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "ambiguous-observed-loop.mpr",
+                rows,
+                settings_payload=_observed_loop_settings(),
+            )
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "more than one backward"):
+                parsing.parse_timeseries(path)
+
+    def test_observed_single_direction_restart_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, ns=0, mode=MPR_MODE_REST, control=0.0, ns_changed=True),
+            _row(1.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+            _row(2.0, ns=2, control=1.0, q_mAh=0.0, ns_changed=True),
+            _row(3.0, ns=2, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+            _row(4.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "single-direction-restart.mpr",
+                rows,
+                settings_payload=_observed_loop_settings(single_direction=True),
+            )
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "both charge and discharge"):
+                parsing.parse_timeseries(path)
+
     def test_loop_execution_rejects_a_backward_edge_other_than_declared_start(self) -> None:
         rows = [
             _row(0.0, ns=0, mode=MPR_MODE_REST, control=0.0, q_mAh=0.0, ns_changed=True),
@@ -1134,10 +1203,13 @@ class BiologicGcplMappingTests(unittest.TestCase):
             canonical_cycling.validate_raw_timeseries(malformed)
 
     def test_calc_per_cycle_consumes_reconstructed_multi_cycle_frame(self) -> None:
-        frame = _map_rows(
-            _repeating_loop_rows(),
-            explicit_cycle=False,
-        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "calc-observed-loop.mpr",
+                _repeating_loop_rows(),
+                settings_payload=_observed_loop_settings(),
+            )
+            frame = parsing.parse_timeseries(path)
         cycles = calc.per_cycle(frame)
         self.assertEqual(cycles["cycle"].tolist(), [1, 2, 3])
         np.testing.assert_allclose(cycles["charge_capacity_mah"], [1.0, 1.0, 1.0])

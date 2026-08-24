@@ -474,6 +474,13 @@ BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING = (
     "the source before using it; it remains "
     "metadata-only until the upgrade is verified."
 )
+BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
+    {
+        "explicit_full_cycle",
+        "protocol_loop_reconstruction",
+        "non_repeating_cycle_1",
+    }
+)
 
 
 def compute_hash(path: str | Path) -> str:
@@ -947,11 +954,24 @@ def mark_biologic_mpr_canonical(
         capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
         pending_source = str(capabilities.get("cycle_identity_source") or "")
         if cycle_identity_source:
+            if cycle_identity_source not in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
+                raise ValueError(
+                    "BioLogic canonical promotion received unknown cycle identity "
+                    f"{cycle_identity_source!r}"
+                )
             verified_source = cycle_identity_source
         elif pending_source == "protocol_loop_pending":
             verified_source = "protocol_loop_reconstruction"
-        else:
+        elif pending_source == "single_direction_pending":
             verified_source = "non_repeating_cycle_1"
+        else:
+            raise ValueError(
+                "BioLogic canonical promotion requires exact adapter cycle provenance"
+            )
+        single_direction_verified = (
+            verified_source == "non_repeating_cycle_1"
+            and bool(capabilities.get("single_direction_cycle_candidate"))
+        )
         capabilities.update(
             {
                 "cycling_rows": True,
@@ -960,7 +980,9 @@ def mark_biologic_mpr_canonical(
                 "canonical_cycling_verified": True,
                 "metadata_only": False,
                 "single_direction_cycle_candidate": False,
-                "single_direction_cycle_verification": "verified",
+                "single_direction_cycle_verification": (
+                    "verified" if single_direction_verified else "unavailable"
+                ),
                 "cycle_reconstruction_candidate": False,
                 "cycle_reconstruction_verification": "verified",
                 "protocol_loop_cycle_candidate": False,
@@ -991,11 +1013,24 @@ def mark_biologic_mpr_canonical(
                 declared_capabilities.get("cycle_identity_source") or ""
             )
             if cycle_identity_source:
+                if cycle_identity_source not in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
+                    raise ValueError(
+                        "BioLogic canonical promotion received unknown cycle identity "
+                        f"{cycle_identity_source!r}"
+                    )
                 declared_verified_source = cycle_identity_source
             elif declared_pending_source == "protocol_loop_pending":
                 declared_verified_source = "protocol_loop_reconstruction"
-            else:
+            elif declared_pending_source == "single_direction_pending":
                 declared_verified_source = "non_repeating_cycle_1"
+            else:
+                raise ValueError(
+                    "BioLogic canonical promotion requires exact adapter cycle provenance"
+                )
+            declared_single_direction_verified = (
+                declared_verified_source == "non_repeating_cycle_1"
+                and bool(declared_capabilities.get("single_direction_cycle_candidate"))
+            )
             declared_capabilities.update(
                 {
                     "cycling_rows": True,
@@ -1004,7 +1039,9 @@ def mark_biologic_mpr_canonical(
                     "canonical_cycling_verified": True,
                     "metadata_only": False,
                     "single_direction_cycle_candidate": False,
-                    "single_direction_cycle_verification": "verified",
+                    "single_direction_cycle_verification": (
+                        "verified" if declared_single_direction_verified else "unavailable"
+                    ),
                     "cycle_reconstruction_candidate": False,
                     "cycle_reconstruction_verification": "verified",
                     "protocol_loop_cycle_candidate": False,

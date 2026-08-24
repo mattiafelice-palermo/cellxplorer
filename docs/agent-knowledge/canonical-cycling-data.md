@@ -238,9 +238,13 @@ code — never to the validator.
 ### BioLogic GCPL cycle convention (Spec 041 / 051.1)
 
 The verified BioLogic GCPL MPR layout may provide no separate full-cycle column. Cycle identity is
-resolved in descending strength: an explicit decoded cycle field, a validated top-level loop whose
-observed `Ns` progression returns only from its control step to its loop start, or one bounded
-non-repeating cycling episode assigned source-local cycle 1. Each completed loop iteration must
+resolved in descending strength: an explicit decoded cycle field, a validated declared top-level
+loop whose observed `Ns` progression returns only from its control step to its loop start, a
+bounded execution-evidenced loop for sources with no usable loop fields, or one bounded
+non-repeating cycling episode assigned source-local cycle 1. The execution-evidenced path requires
+decoded settings, one contiguous observed body, exactly one unique backward edge establishing
+`control_step -> loop_start_step`, a first body row at the inferred start, forward-only progression
+inside that body, and resolved charge/discharge semantics. Each completed loop iteration must
 contain decoded positive charge and negative discharge execution; a single-direction repeated loop,
 active preconditioning, an unresolved control, a contradictory direction, a second branch/restart,
 or an invalid backward edge remains metadata-only. A partial final loop prefix is allowed only when

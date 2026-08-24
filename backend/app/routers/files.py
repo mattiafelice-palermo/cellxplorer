@@ -892,7 +892,10 @@ def apply_import_cache_results(
             sf.cycle_count = result["cycles"]
             scanner.apply_capacity_summary(sf, result)
             if pending_biologic_candidate:
-                parsing.mark_biologic_mpr_canonical(sf)
+                parsing.mark_biologic_mpr_canonical(
+                    sf,
+                    cycle_identity_source=result.get("cycle_identity_source"),
+                )
         else:
             error = result.get("error") or "Cache build failed"
             if pending_biologic_candidate:
