@@ -373,3 +373,21 @@ Review found R1-R3 in 051.2. Fix same-phase cycle/source concatenation, make cap
 Fixed R1-R3: consecutive capacity now keys boundaries by cycle/reset identity, refinement uses exact pre-downsample per-cycle origins with bounded requested-cycle reads, and the required fixture/execution matrix is covered. Normalized the invalid reviewer resume_review value to REVIEW in the preceding recovery commit so the workflow helper could validate this handoff.
 
 ---
+### 2026-08-24T11:55:51+02:00 — REVIEWER → IMPLEMENTER — 051.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+- R4
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 and R3 are resolved. R2 remains open: exact pre-downsample origins and bounded reads fix the original drift/prefix problem, but capacity refinement still requires req.cycle_start to exist for every visible Cell. A shorter Cell or a Cell missing that exact cycle can therefore block a valid late refinement of other Cells with HTTP 409. Resolve the origin per Cell from that Cell's first actually available requested cycle; Cells with no rows in the requested range must remain empty/nonblocking. Add unequal-length and missing-start-cycle regressions and preserve bounded serial/process/fallback parity. R4 is verification-only: rerun the mandatory real EGG browser/API acceptance on the current head because the prior EGG acceptance predates the R1/R2 semantic changes; keep the current-head Neware evidence.
+
+---
