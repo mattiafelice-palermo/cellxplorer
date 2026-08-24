@@ -1,118 +1,92 @@
 # Spec 052 Implementation Review — Time/Capacity Cycle Navigation
 
 **Branch:** `feature/time-capacity-cycle-navigation`  
-**Reviewed implementation commit:** `c159c16c98f158824dc36d267e5bbd3ccfb50327`  
-**Previous reviewer transition commit:** `7364556715de85ffedfa877dd3d8ecc99d966949`  
-**Merge base:** `df99746ee6d8827e3ff55762e4d28c5b22fa646e`  
-**Review round:** 6 — child 052.1 R2 fix review  
-**Status:** Child 052.1 review clean; follow-up child 052.2 scheduled  
+**Reviewed branch head:** `5558d33289e1b3816cc1c8a009c2f4a0ccb351a3`  
+**Merge base / current main:** `df99746ee6d8827e3ff55762e4d28c5b22fa646e`  
+**Review round:** 7 — cumulative final parent review after child 052.2  
+**Status:** Cumulative code review clean; blocked on external browser acceptance and explicit user authorization  
 **Ready to merge:** No
 
-## Review status
+## Final review scope
 
-R1 remains resolved. R2 is resolved by implementer commit `c159c16c98f158824dc36d267e5bbd3ccfb50327`.
+This is a fresh cumulative review of Spec 052, 052.1 and 052.2 against the exact merge base `df99746ee6d8827e3ff55762e4d28c5b22fa646e`.
 
-The R2 fix replaces the equal one-third desktop grid with a center `max-content` column and makes the central navigation group `wrap="nowrap"`. When the measured navigation strip is narrower than the desktop-fit threshold, the side zones move to a top row and the **whole** center cluster occupies a separate centered row instead of splitting its own controls. This matches the 052.1 acceptance target and the user's explicit requirement that the main navigation controls stay on one horizontal line.
+At review time the feature branch is 21 commits ahead and 0 behind `main`. The cumulative branch scope is limited to the Spec 052 specifications/reviews/workflow records plus the expected Time/Capacity frontend owners:
 
-The implementer also reports that the previously untested pointer-drag path was exercised successfully: the pointer moved from trigger into the callout, the slider drag changed the cycle window, and one Previous View step restored the pre-drag range.
+- `frontend/src/features/analyses/editor/AnalysisEditor.tsx`;
+- `frontend/src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx`;
+- `frontend/src/features/analyses/editor/families/time-capacity/timeCapacityCycleNavigationPolicy.ts`;
+- `frontend/src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx`;
+- `frontend/tests/timeCapacityCycleNavigation.test.ts`.
 
-No new implementation defect was found in the R2 patch by static review.
+No backend endpoint, scientific calculation, parser, database migration, cache version, or `CALC_VERSION` change is present in the feature scope.
 
-The workflow is nevertheless **not merge-ready** because the user has explicitly authorized another refinement round. New child `052.2-time-capacity-navigation-polish.md` captures that follow-up scope. Spec 052 must still not be marked `COMPLETE` without explicit user authorization.
+## Cumulative findings status
 
-## Findings
+- **R1 — Resolved.** Null-bound behavior preserves safe one-cycle backward movement and Previous View while keeping upper-bound-dependent navigation disabled until the selected maximum is reliable.
+- **R2 — Resolved.** The desktop navigation center cluster stays on one row; narrow layouts move the whole cluster rather than wrapping its internal controls.
+- **R3 — Resolved.** Full-window slider pointer mapping uses the segment's legal travel and reaches both range boundaries with fixed width.
+- **R4 — Resolved in code.** The final implementation uses completion-aware low-resolution moving preview backpressure: at most one moving request is in flight, only the newest pending range is retained, completion admits the newest pending request, 50 ms idle promotes the latest transient range to full resolution, renewed movement invalidates full-resolution idle work, and release/cancel return to canonical full-resolution state.
+- **R5 — Resolved.** Reopening an edited unsaved Time/Capacity draft does not reactivate virgin last-20 initialization.
+- **R6 — Resolved.** Ctrl+first is a no-op without a reliable maximum while ordinary safe backward movement remains available.
 
-### R1 — Medium — Resolved — Null-bound fallback disables safe backward/history navigation
+No new cumulative implementation defect was found by static review.
 
-**Affected files:**
+## Locked behavior preserved
 
-- `frontend/src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx`
-- `frontend/src/features/analyses/editor/families/time-capacity/timeCapacityCycleNavigationPolicy.ts`
-- `frontend/tests/timeCapacityCycleNavigation.test.ts`
+The cumulative branch retains the repository's existing scientific/data ownership boundaries:
 
-**Resolution:** Commit `c19913e9bebd5bfc0e80c016afef41ea2909e440` narrowed the null-bound disable policy. Single-cycle backward navigation remains usable and lower-clamped at cycle 1; Previous View remains available when history exists; upper-bound-dependent actions remain disabled until a reliable maximum is available. Non-empty Specific cycles still disables the continuous navigator.
+- one canonical continuous scientific range remains `spec.computation.time_capacity.cycle_start/end`;
+- Specific cycles retains precedence over continuous navigation;
+- selected maximum is derived from already-loaded relational Cell summaries, independent of plot visibility;
+- transient slider preview does not mutate saved plots, drafts, autosave state, presets, or the canonical `max_points_per_cell` setting;
+- moving previews use a request-only `min(configuredMaxPoints, 1000)` cap;
+- full-resolution requests use the user's configured point budget (4000 by default when unchanged);
+- query identity includes range and point budget, so moving/full results are distinct cache identities;
+- the existing compatible-placeholder behavior keeps the last compatible plot visible while replacement data is pending;
+- scientific calculations remain backend-owned;
+- no source-file/Parquet read is added merely to render navigation;
+- saved-plot, style, export and refinement semantics are not broadened by the navigation feature;
+- fresh Time/Capacity views use the one-time last-20 default and existing line-only base style without overwriting restored/edited state;
+- the Time/Capacity-only Plotly Grid action writes canonical scoped `style.show_grid` through the existing plot-style path.
 
-**Status:** Resolved.
+## Final verification record
 
-### R2 — Medium — Resolved — Normal desktop navigation cluster wraps onto two lines
+### Implementer-reported latest handoff (`5558d33289e1b3816cc1c8a009c2f4a0ccb351a3`)
 
-**Affected files:**
+- Focused cycle-navigation / preview-state tests: **PASS (23/23)**.
+- Simulated 100 ms moving-request latency with faster-than-40 ms pointer updates: **PASS**; one moving request in flight, newest-only pending retention, multiple completions before release, immediate newest admission on completion.
+- Time/Capacity query-policy tests: **PASS (6/6)**.
+- TypeScript: **PASS**.
+- Production frontend build: **PASS** with existing repository warnings.
+- Canonical preflight: **PASS (4/4 stages; all 155 backend/frontend test files/modules)**.
+- Latest R4 browser/manual acceptance: **NOT RUN**.
 
-- `frontend/src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx`
-- `docs/specs/052.1-cycle-navigation-visual-refinements.md`
-
-**Previous Current:** The first 052.1 implementation used three equal grid columns and a wrapping center `Group`, allowing the forward `› | »` group to drop below the rest of the center navigator at the user's normal desktop geometry.
-
-**Target:** Keep the center cluster as one continuous horizontal row at normal desktop width; if a narrower supported width requires another row, move the center cluster as a whole rather than wrapping its internal controls.
-
-**Resolution:** Commit `c159c16c98f158824dc36d267e5bbd3ccfb50327`:
-
-- measures the navigation strip with `useElementSize()`;
-- uses `minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr)` for desktop-fit geometry;
-- sets the center `Group` to `wrap="nowrap"`;
-- switches below the fit threshold to a two-row zone layout where left/right occupy the first row and the whole center cluster occupies the second row;
-- retains horizontal overflow only as a narrow-layout fallback rather than internally wrapping the center controls.
-
-**Acceptance criteria status:**
-
-- Center-cluster controls stay on one horizontal line: **satisfied by code inspection; implementer browser rerun reported PASS**.
-- Forward arrow group remains directly after To: **satisfied by no-wrap group structure**.
-- Previous/Home remain left and Jump remains right: **preserved**.
-- Plot Style open geometry: **implementer reported PASS**.
-- Narrow fallback moves cluster as a unit: **satisfied by grid-area structure**.
-- Focused tests/TypeScript/build/preflight rerun: **implementer reported PASS**.
-- Pointer-drag slider path: **implementer reported RUN/PASS**.
-
-**Status:** Resolved.
-
-## Child 052.1 end-state inspection
-
-Static review of the live branch confirms the accepted 052.1 structure remains intact:
-
-- Previous View and Home are in the left zone.
-- Jump to remains in the right zone.
-- The main navigation cluster is nowrap and centered.
-- Segmented arrow buttons use the same `xs` height contract as the adjacent numeric inputs.
-- The slider trigger remains a stable ref-capable `UnstyledButton` target.
-- The callout remains a Mantine Popover above the trigger with a centered arrow, modest radius and delayed hover handoff.
-- Existing range/history/query/cache/scientific semantics were not broadened by the R2 patch.
-
-## Follow-up child 052.2
-
-The user explicitly requested a new refinement round after 052.1. The newly authored `docs/specs/052.2-time-capacity-navigation-polish.md` locks the following follow-up scope:
-
-- range-shaped/full-window slider segment;
-- live transient From/To **and plot** feedback while dragging, with one canonical commit on release and no query-per-pointer-event flood;
-- ArrowLeft/ArrowRight movement while the slider has focus;
-- Previous View recent-history dropdown;
-- Ctrl+click on either left arrow -> first window and on either right arrow -> last window, with tooltip disclosure;
-- fresh Time/Capacity default -> last 20 available cycles;
-- fresh Time/Capacity default -> line-only rendering;
-- Time/Capacity Plotly modebar Grid on/off action backed by canonical scoped `show_grid` state.
-
-These items are **not** regressions in the reviewed 052.1 R2 patch. They are user-authorized new implementation scope for child 052.2.
-
-## Verification
-
-### Implementer-reported for `c159c16c98f158824dc36d267e5bbd3ccfb50327`
-
-- `node --test frontend\tests\timeCapacityCycleNavigation.test.ts`: **PASS (13/13)**.
-- TypeScript (`npx.cmd tsc --noEmit`): **PASS**.
-- Production build (`npm.cmd run build`): **PASS**.
-- Canonical preflight (`python scripts\preflight.py`): **PASS (4/4 stages; 155 backend/frontend test files/modules)**.
-- Browser failing-width geometry: **PASS**.
-- Browser Plot Style open geometry: **PASS**.
-- Pointer-drag slider gesture: **RUN/PASS**; one Previous View step restored the pre-drag range.
+Earlier accepted/manual evidence still supports the 052.1 geometry, anchored callout, real segment-bound dragging, Previous View behavior and edited-draft preservation. It does **not** prove the final backpressured R4 implementation, because the live-preview request architecture changed afterwards.
 
 ### Reviewer-independent
 
-- Confirmed current `main` remains `df99746ee6d8827e3ff55762e4d28c5b22fa646e` and is still the exact merge base.
-- Inspected live workflow state and implementer handoff before reviewer action; no pending workflow `U*` messages were present.
-- Inspected the actual R2 implementation diff and live `TimeCapacityCycleNavigation.tsx` end state.
-- Inspected the 052.1 manual acceptance record updated by the implementer.
-- Confirmed GitHub reports no combined status checks for `c159c16c98f158824dc36d267e5bbd3ccfb50327`.
+- Confirmed `main` is `df99746ee6d8827e3ff55762e4d28c5b22fa646e` and remains the exact merge base.
+- Confirmed the feature branch is ahead only, with no cumulative backend/migration/cache-version scope.
+- Read current workflow state and coordination before review; active child is `052.2`, `REVIEWER + REVIEW`, with no pending workflow `U*` messages.
+- Inspected the final R4 diff/end state, including React Query request identity/cancellation, completion-aware scheduler state, navigator preview/commit boundaries, and focused tests.
+- Confirmed GitHub exposes no combined status checks for the latest implementation commit.
 - Repository test commands and browser checks were **not independently executed** by the reviewer.
+
+## External acceptance gate
+
+The cumulative code review is clean, but the feature is not ready to merge because required external acceptance is still unavailable.
+
+The user previously observed the exact failure this final R4 architecture is intended to remove. Therefore the latest implementation needs a real browser/manual pass that confirms at minimum:
+
+1. while the slider is held and moved continuously, the plot visibly advances before release rather than remaining static;
+2. moving previews are responsive enough to be useful and do not create an obvious request backlog/storm;
+3. after roughly 50 ms stationary while still held, the current transient range sharpens to the configured full resolution;
+4. if movement resumes, stale full-resolution idle work does not replace the newer moving preview;
+5. release produces one canonical/history step at full resolution and Previous View returns to the pre-drag range.
+
+The user has also explicitly required that Spec 052 must **not** transition to `COMPLETE` until they authorize it.
 
 ## Merge readiness
 
-**Not ready to merge because child 052.2 is now scheduled.** R1 and R2 are resolved, but the user has explicitly requested the additional 052.2 refinement round and has also explicitly prohibited a `COMPLETE` transition until they approve it.
+**BLOCKED — not ready to merge.** There are no remaining implementer findings, but the required user/browser acceptance for the final live-scrubbing implementation has not been supplied, and explicit user authorization to complete is still outstanding. Resume final review only after that acceptance input is available.

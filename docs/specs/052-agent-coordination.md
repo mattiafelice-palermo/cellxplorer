@@ -151,7 +151,7 @@ The user manually exercised the implemented navigation and requested a focused v
 
 **Message**
 
-Resolve R2 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`. The equal one-third grid plus wrapping center Group allows the normal-desktop center navigator to split across rows; the user's screenshot shows the forward `› | »` group below the rest of the controls. Keep Previous View + Home left, Jump to right, and the main cluster geometrically centered, but make the center cluster an indivisible single horizontal row at normal desktop width. If a narrower breakpoint needs wrapping, move the cluster as a whole rather than splitting its controls. Re-run the focused/frontend/preflight checks and the browser geometry check at the failing width; also exercise the pointer-drag slider gesture that was NOT RUN in the handoff. Do not implement the separately queued next-round enhancements as part of this R2 fix, and do not mark Spec 052 COMPLETE without explicit user authorization.
+Resolve R2 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`. The equal one-third desktop grid plus wrapping center Group allows the normal-desktop center navigator to split across rows; the user's screenshot shows the forward `› | »` group below the rest of the controls. Keep Previous View + Home left, Jump to right, and the main cluster geometrically centered, but make the center cluster an indivisible single horizontal row at normal desktop width. If a narrower breakpoint needs wrapping, move the cluster as a whole rather than splitting its controls. Re-run the focused/frontend/preflight checks and the browser geometry check at the failing width; also exercise the pointer-drag slider gesture that was NOT RUN in the handoff. Do not implement the separately queued next-round enhancements as part of this R2 fix, and do not mark Spec 052 COMPLETE without explicit user authorization.
 
 ---
 ### 2026-08-24T18:08:15+02:00 — IMPLEMENTER → REVIEWER — 052.1
@@ -293,5 +293,39 @@ R4 resolved exactly: replaced the single 120 ms preview throttle with a generati
 **Message**
 
 R4 backpressure resolved exactly: moving mode now holds at most one low-resolution query in flight, retains only the newest pending range, does not replace the active low query at the 40 ms target, and admits the newest pending range when the active request settles. Idle promotion still requests the same range at full configured resolution, and renewed movement immediately obsoletes full work and resumes low-resolution preview. Browser acceptance is explicitly NOT RUN per user instruction. Spec 052 remains open; do not transition to COMPLETE without explicit user authorization.
+
+---
+### 2026-08-24T20:32:00+02:00 — REVIEWER — 052.2
+
+**Result:** Child review clean; entering final parent review
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R4's implementation defect is resolved in `5558d33289e1b3816cc1c8a009c2f4a0ccb351a3`. Static inspection confirms one moving low-resolution request remains observed until it settles, only the newest pending range is retained, and completion admits that newest pending range instead of cancelling every request on the 40 ms cadence. The implementer-reported focused tests, TypeScript, build and canonical preflight are green. The latest browser acceptance is still NOT RUN, so the workflow proceeds to cumulative final review with that external acceptance gate preserved.
+
+---
+### 2026-08-24T20:32:30+02:00 — REVIEWER — 052.2
+
+**Result:** Final review blocked on external dependency
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Cumulative static review is clean and there are no remaining implementer findings. Final completion is blocked pending the user's real browser/manual acceptance of the latest backpressured live-scrubbing path: sustained held movement must visibly advance the plot, idle must sharpen to full resolution, renewed movement must obsolete stale full-resolution work, and release must settle one canonical full-resolution history step. The user has also explicitly required authorization before any `COMPLETE` transition. Stop workflow activity until that acceptance input is supplied.
 
 ---

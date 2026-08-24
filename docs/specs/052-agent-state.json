@@ -9,12 +9,10 @@
     "052.2"
   ],
   "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R4"
-  ],
-  "resume_review": "REVIEW",
+  "action": "BLOCKED",
+  "findings": [],
+  "resume_review": null,
   "user_message_seq": 0,
   "pending_user_messages": [],
-  "updated_at": "2026-08-24T20:27:14+02:00"
+  "updated_at": "2026-08-24T20:32:30+02:00"
 }
