@@ -449,6 +449,53 @@ class TimeCapacityRefinementRequest(BaseModel):
     request_generation: str = Field(min_length=1, max_length=200)
 
 
+def _capacity_refinement_origins(
+    overview: dict,
+    cycle_start: int,
+    cycle_end: int,
+) -> dict[int, float] | None:
+    """Resolve each visible Cell's first available requested-cycle origin.
+
+    The overview origin map is computed from exact transformed rows before
+    downsampling.  A Cell may legitimately have no rows in the requested
+    window, or may begin at a later cycle when the requested range is sparse;
+    neither case should block refinement for the other Cells.
+    """
+
+    traces = overview.get("cell_traces") if isinstance(overview, dict) else None
+    if not isinstance(traces, list):
+        return None
+    origins_by_cell: dict[int, float] = {}
+    lower = int(cycle_start)
+    upper = int(cycle_end)
+    for trace in traces:
+        if not isinstance(trace, dict) or trace.get("excluded"):
+            continue
+        try:
+            cell_id = int(trace["cell_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        origins = trace.get("display_x_cycle_origins")
+        if not isinstance(origins, dict):
+            return None
+        candidate_cycle: int | None = None
+        candidate_value: float | None = None
+        for raw_cycle, raw_value in origins.items():
+            try:
+                cycle = int(raw_cycle)
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if cycle < lower or cycle > upper or not math.isfinite(value):
+                continue
+            if candidate_cycle is None or cycle < candidate_cycle:
+                candidate_cycle = cycle
+                candidate_value = value
+        if candidate_value is not None:
+            origins_by_cell[cell_id] = candidate_value
+    return origins_by_cell
+
+
 class DcirProtocolRequest(BaseModel):
     spec: dict | None = None
     min_rest_s: float = Field(default=600, ge=1, le=86400)
@@ -1650,33 +1697,17 @@ def refine_time_capacity_analysis(
     display_origin_capacity_by_cell: dict[int, float] | None = None
     if settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}:
         overview = analysis_cache.load_result("time_capacity", overview_key)
-        # The refined indexed read begins at ``req.cycle_start``. Use the
-        # exact cycle-origin map emitted before overview downsampling so a
-        # retained mid-cycle envelope point (or an absent retained cycle)
-        # cannot shift the refined display coordinate.
-        origin_cycle = int(req.cycle_start)
         if overview is not None:
-            candidates: dict[int, float] = {}
-            for trace in overview.get("cell_traces", []):
-                try:
-                    cell_id = int(trace["cell_id"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                origins = trace.get("display_x_cycle_origins")
-                if not isinstance(origins, dict):
-                    continue
-                value = origins.get(str(origin_cycle), origins.get(origin_cycle))
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    continue
-                if math.isfinite(float(value)):
-                    candidates[cell_id] = float(value)
-            visible_traces = [
-                trace for trace in overview.get("cell_traces", []) if not trace.get("excluded")
-            ]
-            if visible_traces and all(
-                int(trace.get("cell_id")) in candidates for trace in visible_traces
-            ):
-                display_origin_capacity_by_cell = candidates
+            # The refined indexed read begins at the requested cycle window.
+            # Use each Cell's first exact origin in that window, rather than
+            # requiring the window's lower bound to exist for every Cell.
+            # This preserves sparse/unequal Cell coverage without shifting a
+            # later Cell to zero or blocking refinement for other Cells.
+            display_origin_capacity_by_cell = _capacity_refinement_origins(
+                overview,
+                req.cycle_start,
+                req.cycle_end,
+            )
         if display_origin_capacity_by_cell is None and overview is not None:
             raise HTTPException(
                 409,

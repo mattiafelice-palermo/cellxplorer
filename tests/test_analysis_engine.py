@@ -183,6 +183,32 @@ class AnalysisEngineTests(unittest.TestCase):
         spec["computation"].update(comp)
         return spec
 
+    def _add_cached_cell(self, name: str, source_hash: str, frame: pd.DataFrame) -> Cell:
+        self.FRAMES[source_hash] = frame
+        shutil.rmtree(cache.raw_path(source_hash).parent, ignore_errors=True)
+        cache.build(source_hash, f"{source_hash}.ndax")
+        cell = Cell(name=name)
+        self.db.add(cell)
+        self.db.flush()
+        source = SourceFile(
+            hash=source_hash,
+            path=source_hash,
+            filename=f"{name}.ndax",
+            size=1,
+            ext="ndax",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            header_meta=analysis_protocol_header(),
+            nominal_capacity_mah=2.0,
+        )
+        self.db.add(source)
+        test = Test(cell_id=cell.id, name="t")
+        self.db.add(test)
+        self.db.flush()
+        self.db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        self.db.commit()
+        return cell
+
     def spec_with_protocol_mode(self, mode: str) -> dict:
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         signature = protocol.reconstruct_protocol(
@@ -1779,6 +1805,242 @@ class AnalysisEngineTests(unittest.TestCase):
             diagnostics["cells"][0]["raw_rows_loaded_before_filter"],
             len(self.FRAMES[self.HASHES["c1"]]),
         )
+
+    def test_capacity_refinement_resolves_first_available_origin_per_cell(self):
+        overview = {
+            "cell_traces": [
+                {
+                    "cell_id": 11,
+                    "excluded": False,
+                    "display_x_cycle_origins": {"27": 40.0, "29": 58.0, "30": 60.0},
+                },
+                {
+                    "cell_id": 12,
+                    "excluded": False,
+                    "display_x_cycle_origins": {"1": 0.0, "25": 50.0},
+                },
+                {
+                    "cell_id": 13,
+                    "excluded": False,
+                    "display_x_cycle_origins": {"1": 0.0, "28": 56.0},
+                },
+            ]
+        }
+        self.assertEqual(
+            analyses_router._capacity_refinement_origins(overview, 28, 30),
+            {11: 58.0, 13: 56.0},
+        )
+
+    def test_capacity_refinement_handles_unequal_and_sparse_cell_ranges(self):
+        short_hash = "c3" * 32
+        sparse_hash = "d4" * 32
+        sparse_frame = synth_raw(30, 2.0, 0.005)
+        sparse_frame.loc[
+            sparse_frame["cycle"] == 28,
+            [
+                "charge_capacity_mah",
+                "discharge_capacity_mah",
+                "charge_energy_mwh",
+                "discharge_energy_mwh",
+            ],
+        ] = np.nan
+        try:
+            short = self._add_cached_cell("short", short_hash, synth_raw(25, 2.0, 0.005))
+            sparse = self._add_cached_cell("sparse", sparse_hash, sparse_frame)
+            entries = [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": short.id},
+                {"kind": "cell", "ref_id": sparse.id},
+            ]
+            overview_spec = self.spec_with(entries)
+            overview_spec["computation"]["time_capacity"] = {
+                "cycle_start": 1,
+                "cycle_end": 50,
+                "x_axis": "capacity_mah",
+                "display_mode": "consecutive",
+                "max_points_per_cell": 4000,
+            }
+            overview = engine.compute_time_capacity(
+                self.db,
+                overview_spec,
+                None,
+                precision="standard",
+                compact=True,
+            )
+            traces = {trace["cell_id"]: trace for trace in overview["cell_traces"]}
+            long_trace = traces[self.cells["c1"].id]
+            short_trace = traces[short.id]
+            sparse_trace = traces[sparse.id]
+            long_origin = long_trace["display_x_cycle_origins"]["28"]
+            sparse_origin = sparse_trace["display_x_cycle_origins"]["29"]
+            self.assertNotIn("28", short_trace["display_x_cycle_origins"])
+            self.assertNotIn("28", sparse_trace["display_x_cycle_origins"])
+
+            candidate_spec = deepcopy(overview_spec)
+            candidate_spec["computation"]["time_capacity"]["cycle_start"] = 28
+            candidate_spec["computation"]["time_capacity"]["cycle_end"] = 30
+            viewport_min = min(long_origin, sparse_origin) - 0.01
+            viewport_max = max(long_origin, sparse_origin) + 5.0
+            origin_by_cell = {
+                self.cells["c1"].id: long_origin,
+                sparse.id: sparse_origin,
+            }
+            diagnostics: dict = {}
+            refined = engine.compute_time_capacity(
+                self.db,
+                candidate_spec,
+                None,
+                viewport_width=320,
+                precision="standard",
+                compact=True,
+                access_diagnostics=diagnostics,
+                display_origin_cycle_start=1,
+                display_origin_capacity_by_cell=origin_by_cell,
+                refinement=True,
+                refinement_viewport_x_min=viewport_min,
+                refinement_viewport_x_max=viewport_max,
+            )
+            refined_traces = {
+                trace["cell_id"]: trace for trace in refined["cell_traces"]
+            }
+            self.assertTrue(refined_traces[self.cells["c1"].id]["display_x"])
+            self.assertEqual(refined_traces[short.id]["display_x"], [])
+            self.assertTrue(refined_traces[sparse.id]["display_x"])
+            self.assertAlmostEqual(
+                refined_traces[sparse.id]["display_x_cycle_origins"]["29"],
+                sparse_origin,
+                places=6,
+            )
+            cell_diagnostics = {
+                item["cell_id"]: item for item in diagnostics["cells"]
+            }
+            self.assertEqual(cell_diagnostics[short.id]["raw_rows_loaded_before_filter"], 0)
+            self.assertLess(
+                cell_diagnostics[self.cells["c1"].id]["raw_rows_loaded_before_filter"],
+                len(self.FRAMES[self.HASHES["c1"]]),
+            )
+            self.assertLess(
+                cell_diagnostics[sparse.id]["raw_rows_loaded_before_filter"],
+                len(sparse_frame),
+            )
+
+            worker_kwargs = {
+                "viewport_width": 320,
+                "precision": "standard",
+                "compact": True,
+                "display_origin_cycle_start": 1,
+                "display_origin_capacity_by_cell": origin_by_cell,
+                "refinement": True,
+                "refinement_viewport_x_min": viewport_min,
+                "refinement_viewport_x_max": viewport_max,
+            }
+            worker_serial = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                deepcopy(candidate_spec),
+                None,
+                force_serial=True,
+                **worker_kwargs,
+            )
+            pool = None
+            published = False
+            try:
+                time_capacity_workers.shutdown_time_capacity_worker_pool()
+                pool = time_capacity_workers._new_pool(2)
+                time_capacity_workers._warm_pool(pool, 2)
+                with time_capacity_workers._POOL_LOCK:
+                    time_capacity_workers._POOL = pool
+                    time_capacity_workers._POOL_WORKERS = 2
+                    time_capacity_workers._POOL_STATE = "ready"
+                published = True
+                process_decision = time_capacity_workers.ExecutionDecision(
+                    "process",
+                    2,
+                    "focused_test",
+                    logical_cpus=16,
+                    total_memory_bytes=32 * 1024 * 1024 * 1024,
+                    available_memory_bytes=16 * 1024 * 1024 * 1024,
+                )
+                with patch.object(
+                    time_capacity_workers,
+                    "choose_execution",
+                    return_value=process_decision,
+                ):
+                    worker_process = time_capacity_workers.try_compute_time_capacity(
+                        self.db,
+                        deepcopy(candidate_spec),
+                        None,
+                        **worker_kwargs,
+                    )
+                with patch.object(
+                    time_capacity_workers,
+                    "choose_execution",
+                    return_value=process_decision,
+                ), patch.object(
+                    time_capacity_workers,
+                    "_run_process",
+                    side_effect=RuntimeError("focused process failure"),
+                ):
+                    worker_fallback = time_capacity_workers.try_compute_time_capacity(
+                        self.db,
+                        deepcopy(candidate_spec),
+                        None,
+                        **worker_kwargs,
+                    )
+            finally:
+                time_capacity_workers.shutdown_time_capacity_worker_pool()
+                if pool is not None and not published:
+                    pool.shutdown(wait=True, cancel_futures=True)
+            self.assertIsNotNone(worker_serial)
+            self.assertIsNotNone(worker_process)
+            self.assertIsNotNone(worker_fallback)
+            self.assertEqual(worker_process["cell_traces"], worker_serial["cell_traces"])
+            self.assertEqual(worker_fallback["cell_traces"], worker_serial["cell_traces"])
+
+            analysis = Analysis(title="Unequal capacity refinement", spec=overview_spec)
+            self.db.add(analysis)
+            self.db.commit()
+            request = analyses_router.TimeCapacityRefinementRequest(
+                spec=overview_spec,
+                viewport_x_min=viewport_min,
+                viewport_x_max=viewport_max,
+                viewport_width=320,
+                cycle_start=28,
+                cycle_end=30,
+                request_generation="unequal-r2",
+            )
+            with patch.object(
+                analysis_cache,
+                "time_capacity_keys",
+                return_value=("source-signature", "overview-signature"),
+            ), patch.object(
+                analysis_cache,
+                "load_result",
+                return_value=overview,
+            ), patch.object(
+                engine,
+                "compute_time_capacity",
+                wraps=engine.compute_time_capacity,
+            ) as compute:
+                response = analyses_router.refine_time_capacity_analysis(
+                    analysis.id,
+                    request,
+                    self.db,
+                )
+            body = json.loads(response.body)
+            self.assertEqual(body["request_generation"], "unequal-r2")
+            self.assertEqual(
+                compute.call_args.kwargs["display_origin_capacity_by_cell"],
+                origin_by_cell,
+            )
+            response_traces = {trace["cell_id"]: trace for trace in body["cell_traces"]}
+            self.assertEqual(response_traces[short.id]["display_x"], [])
+            self.assertTrue(response_traces[self.cells["c1"].id]["display_x"])
+            self.assertTrue(response_traces[sparse.id]["display_x"])
+        finally:
+            self.FRAMES.pop(short_hash, None)
+            self.FRAMES.pop(sparse_hash, None)
+            shutil.rmtree(cache.raw_path(short_hash).parent, ignore_errors=True)
+            shutil.rmtree(cache.raw_path(sparse_hash).parent, ignore_errors=True)
 
     def test_capacity_refinement_fallback_reads_only_requested_cycles(self):
         overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

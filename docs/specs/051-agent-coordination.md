@@ -391,3 +391,19 @@ Fixed R1-R3: consecutive capacity now keys boundaries by cycle/reset identity, r
 R1 and R3 are resolved. R2 remains open: exact pre-downsample origins and bounded reads fix the original drift/prefix problem, but capacity refinement still requires req.cycle_start to exist for every visible Cell. A shorter Cell or a Cell missing that exact cycle can therefore block a valid late refinement of other Cells with HTTP 409. Resolve the origin per Cell from that Cell's first actually available requested cycle; Cells with no rows in the requested range must remain empty/nonblocking. Add unequal-length and missing-start-cycle regressions and preserve bounded serial/process/fallback parity. R4 is verification-only: rerun the mandatory real EGG browser/API acceptance on the current head because the prior EGG acceptance predates the R1/R2 semantic changes; keep the current-head Neware evidence.
 
 ---
+### 2026-08-24T13:19:41+02:00 — IMPLEMENTER → REVIEWER — 051.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R2 focused matrix: PASS (194 tests; unequal/sparse multi-Cell refinement, router origin transport, indexed diagnostics, serial/process/fallback parity)
+- Backend compileall: PASS; frontend policy tests: PASS (664); frontend production build: PASS
+- Canonical preflight: PASS (4/4 stages; all 82 backend modules)
+- Current-head EGG browser/API: PASS (Capacity+Consecutive rendered; 1,370 points, 0 backward/boundary drops; cycle-2 origin 58.163428 matched in refinement; Time+Consecutive and overlap_reset/overlap_mirror rechecked); current Neware API: PASS (five cells, flat and stacked Capacity+Consecutive, 0 backward/boundary drops)
+
+**Message**
+
+Fixed R2 by resolving each visible Cell's first exact capacity origin within the requested refinement range; Cells with no requested rows now return empty without blocking other Cells. Added unequal/sparse engine, router, diagnostics, and optimized serial/process/fallback regressions. Re-ran current-head EGG browser/API acceptance and concise Neware recheck for R4; no private source/database/cache bytes added.
+
+---
