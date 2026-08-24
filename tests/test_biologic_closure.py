@@ -1,11 +1,8 @@
-"""Spec 041.6 closure regressions for the verified MPR source lifecycle.
+"""BioLogic MPR header, registration, and cache lifecycle regressions.
 
-The supported binary layout does not independently establish logical cycle
-identity without a paired EC-Lab text export for general multi-phase runs.
-The user-requested single-direction exception is covered here as a complete
-header-inspection, registration and cache lifecycle. Array-level canonical
-mapper behavior with an explicit cycle field is covered separately by
-``test_biologic_gcpl``.
+Array-level canonical cycle reconstruction is covered separately by
+``test_biologic_gcpl``; these tests keep the persisted candidate/promotion and
+fail-closed lifecycle boundaries exercised as parser identities evolve.
 """
 
 from __future__ import annotations
@@ -244,7 +241,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         source = scanner.ingest_path(self.db, path, parse_now=True)
 
         self.assertEqual(source.parse_status, "parsed")
-        self.assertEqual(source.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl10:r1")
         self.assertEqual(source.row_count, 4)
         self.assertEqual(source.cycle_count, 1)
         self.assertEqual(source.capacity_summary_status, "ready")
@@ -280,10 +277,34 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.cycle_count, 1)
         self.assertFalse(parsing.source_record_metadata_only(refreshed))
+
+    def test_gcpl9_source_is_reinspected_after_cycle_identity_revision_bump(self) -> None:
+        path = write_gcpl_mpr(
+            self.root / "legacy-gcpl9.mpr",
+            _single_discharge_rows(),
+            settings_payload=_single_discharge_settings(),
+            log_payload=encode_gcpl_log(ole_timestamp=45000.0),
+            include_log=True,
+        )
+        source = scanner.ingest_path(self.db, path, parse_now=True)
+        source.parser_version = "bm:gcpl9:r1"
+        source.parse_status = "metadata_only"
+        source.parse_error = "gcpl9 metadata-only registration"
+        source.row_count = None
+        source.cycle_count = None
+        source.capacity_summary_status = "unavailable"
+        self.db.commit()
+
+        self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
+        self.db.expire_all()
+        refreshed = self.db.get(SourceFile, source.id)
+        self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
+        self.assertEqual(refreshed.parse_status, "parsed")
+        self.assertEqual(refreshed.cycle_count, 1)
 
     def test_previous_gcpl7_neutral_preamble_registration_is_reinspected_online(self) -> None:
         path = write_gcpl_mpr(
@@ -295,7 +316,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         )
 
         source = scanner.ingest_path(self.db, path, parse_now=True)
-        self.assertEqual(source.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl10:r1")
         self.assertEqual(source.parse_status, "parsed")
 
         # Recreate the persisted state produced when gcpl7 rejected this
@@ -319,15 +340,15 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.row_count, 4)
         self.assertEqual(refreshed.cycle_count, 1)
         self.assertEqual(refreshed.capacity_summary_status, "ready")
         self.assertFalse(parsing.source_record_metadata_only(refreshed))
-        self.assertTrue(cache.raw_path(refreshed.hash, "bm:gcpl9:r1").exists())
+        self.assertTrue(cache.raw_path(refreshed.hash, "bm:gcpl10:r1").exists())
         self.assertTrue(
-            cache.has_cycles(refreshed.hash, "bm:gcpl9:r1", cache.CALC_VERSION)
+            cache.has_cycles(refreshed.hash, "bm:gcpl10:r1", cache.CALC_VERSION)
         )
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
@@ -362,9 +383,9 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
-        self.assertFalse(cache.raw_path(refreshed.hash, "bm:gcpl9:r1").exists())
+        self.assertFalse(cache.raw_path(refreshed.hash, "bm:gcpl10:r1").exists())
         self.assertFalse(
-            cache.cycles_path(refreshed.hash, "bm:gcpl9:r1", cache.CALC_VERSION).exists()
+            cache.cycles_path(refreshed.hash, "bm:gcpl10:r1", cache.CALC_VERSION).exists()
         )
 
     def _add_retired_source(
@@ -510,7 +531,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_scanner_registers_single_direction_and_builds_a_cache(self) -> None:
         self.assertEqual(self.source.parse_status, "parsed")
-        self.assertEqual(self.source.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(self.source.parser_version, "bm:gcpl10:r1")
         self.assertEqual(self.source.row_count, 4)
         self.assertEqual(self.source.cycle_count, 1)
         self.assertEqual(self.source.capacity_summary_status, "ready")
@@ -534,7 +555,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_parser_revision_invalidates_the_previous_canonical_identity(self) -> None:
         current_identity = parsing.parser_identity(self.mpr_path)
-        self.assertEqual(current_identity, "bm:gcpl9:r1")
+        self.assertEqual(current_identity, "bm:gcpl10:r1")
         file_hash = parsing.capture_source_fingerprint(self.mpr_path).hash
         old_identity = "bm:gcpl3:r1"
         old_raw = cache.raw_path(file_hash, old_identity)
@@ -565,7 +586,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         for source in (online, offline):
             refreshed = self.db.get(SourceFile, source.id)
-            self.assertEqual(refreshed.parser_version, "bm:gcpl9:r1")
+            self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
             self.assertEqual(refreshed.parse_status, "metadata_only")
             self.assertEqual(refreshed.capacity_summary_status, "unavailable")
             self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -597,7 +618,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
         self.assertEqual(refreshed.parse_status, "metadata_only")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -623,7 +644,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
         self.assertEqual(refreshed.parse_status, "metadata_only")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -976,7 +997,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
         self.assertEqual(refreshed.parse_status, "metadata_only")
-        self.assertEqual(refreshed.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl10:r1")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertEqual(background_jobs.get_job(job_id)["counters"]["failed"], 1)
 
@@ -995,7 +1016,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         source = scanner.ingest_path(self.db, path, parse_now=True)
 
         self.assertEqual(source.parse_status, "metadata_only")
-        self.assertEqual(source.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl10:r1")
         self.assertTrue(parsing.source_record_metadata_only(source))
         self.assertEqual(source.capacity_summary_status, "unavailable")
         self.assertIn("declared charge", source.parse_error or "")
@@ -1009,7 +1030,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
             "single_direction_inferred",
         )
         self.assertFalse(
-            cache.raw_path(source.hash, "bm:gcpl9:r1").exists()
+            cache.raw_path(source.hash, "bm:gcpl10:r1").exists()
         )
         capability = parsing.source_record_capability(source)
         self.assertEqual(capability["status"], "metadata_only")
@@ -1059,7 +1080,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         refreshed_online = self.db.get(SourceFile, online.id)
         refreshed_offline = self.db.get(SourceFile, offline.id)
-        self.assertEqual(refreshed_online.parser_version, "bm:gcpl9:r1")
+        self.assertEqual(refreshed_online.parser_version, "bm:gcpl10:r1")
         self.assertEqual(refreshed_online.parse_status, "parsed")
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())

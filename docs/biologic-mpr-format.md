@@ -245,7 +245,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl9`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl10`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -267,21 +267,24 @@ boundary transfer; per-step capacity output remains relative to each block's fir
 Energy follows Policy C for this layout: no verified vendor energy counter is present, so canonical
 energy columns remain unavailable rather than being fabricated.
 
-The supplied sample's ID-468 half-cycle is constant zero, and the verified record layout does not
-expose a separate full-cycle field. Header inspection remains bounded and record-decode-free: a
-declared non-repeating single-direction run is recorded as a candidate only. Full parsing must
-confirm the declared per-`Ns` charge/discharge/rest semantics, constant-zero half-cycle,
-monotonic `Ns`, and one signed active direction before it promotes the source to canonical cycle
-1. A candidate that fails that proof is persisted as metadata-only with no live canonical cache;
-general multi-phase or repeated runs remain metadata-only. The inferred `1` is a source-local
-plotting label and does not claim an absolute experiment cycle number. A
-header-proven zero-current setup/control preamble is ignored before the active
-single-direction sequence; unresolved or non-zero control steps remain
-fail-closed. This bounded fallback does not claim MPR/MPT semantic parity.
-Paired evidence remains future validation for general or repeating multi-cycle
-support, but the user-deferred parity gate is not a Parent 041 merge blocker.
-Synthetic tests may exercise either the explicit-cycle mapper behavior or the
-single-direction fallback.
+The verified record layout does not expose a separate full-cycle field. Header inspection remains
+record-decode-free and marks a bounded candidate when settings establish either a non-repeating
+cycling episode or a simple mixed-direction loop. Full parsing validates the declared per-`Ns`
+direction, executed block progression, capacity ownership, and loop wraps before promotion. A
+declared loop must contain both charge and discharge sequences; a single-direction repeated loop
+is not treated as a sequence of full cycles. When no explicit loop fields are present, the adapter
+may accept one stable observed backward `Ns` edge only when the complete forward body and resolved
+charge/discharge semantics corroborate that one effective loop. Active preconditioning, branching,
+contradictory direction, unresolved controls, and other restarts remain metadata-only with a precise
+reason. A valid loop wrap increments the source-local cycle exactly once; an interrupted final
+prefix is retained without fabricating its missing phase.
+
+The ID-468 half-cycle remains decoded diagnostic evidence only. It must be finite, integer, and
+non-negative, but its starting value, parity, progression, and resets are not converted with an
+arithmetic formula and are not a sole step/cycle boundary. Explicit `raw_cycle_index` remains the
+strongest identity, followed by protocol/execution loop reconstruction and the bounded
+non-repeating cycle-1 convention. The inferred cycle labels are source-local and do not claim an
+absolute experiment cycle number or MPR/MPT semantic parity.
 
 ### Electrode roles and primary voltage
 
@@ -312,7 +315,9 @@ does not contain a verified timezone offset. If the log is absent or unreliable,
 present with `NaT` values and `absolute_timestamps` is false. File modification time is never used.
 
 An executed `step` is a one-based source-local occurrence. Occurrence boundaries are established by
-validated zero-based Ns/cycle/half-cycle changes, explicit step-time resets, and entry/exit from Rest. A
+validated zero-based Ns changes, explicit cycle changes when supplied, explicit step-time resets,
+and entry/exit from Rest. Half-cycle changes are retained as diagnostic evidence and are not a sole
+boundary signal. A
 galvanostatic-to-potentiostatic transition within one occurrence stays one step and is classified as
 CCCV when the canonical vocabulary supports it. Current, voltage, capacity, rest, loop, and timestamp
 settings are retained in the normalized protocol metadata; unsupported Neware condition expressions

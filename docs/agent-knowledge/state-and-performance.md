@@ -580,9 +580,9 @@ still rendering from its own older-identity cache.
 One exception is an adapter identity that has been scientifically withdrawn. Before the ordinary
 parsed-source work set is selected, startup reconciles persisted BioLogic `bm:gcpl3:r1` and
 pre-R8 `bm:gcpl4:r1` rows in one bounded extension-plus-identity query. It does not open source or
-cache files, and it includes offline rows. A gcpl3 row becomes current `bm:gcpl9:r1`
+cache files, and it includes offline rows. A gcpl3 row becomes current `bm:gcpl10:r1`
 metadata-only state, with live cycle and capacity fields cleared. A gcpl4 row becomes current
-`bm:gcpl9:r1` only when its stored data header proves a registry-resolved layout; an unrecorded,
+`bm:gcpl10:r1` only when its stored data header proves a registry-resolved layout; an unrecorded,
 ambiguous, or non-resolvable layout instead clears the parser identity and marks the row
 metadata-only with `requires_reinspection=true`. Old caches remain non-live forensic material. The
 same retired/pre-R8 capability check is part of the shared source boundary, which

@@ -69,6 +69,15 @@
   Part B reclaims cache directories whose hash the database no longer knows (779 dirs / 1.64 GB
   measured on a real library) plus superseded parser-identity generations, without ever deleting a
   cache pinned by a saved analysis or belonging to an offline source. **Plan.**
+- [`051-biologic-mpr-extensible-column-registry.md`](051-biologic-mpr-extensible-column-registry.md)
+  extends the BioLogic MPR reader with registry-resolved required/optional columns while preserving
+  canonical scientific safety. The active 051.1 child adds deterministic protocol/execution cycle
+  reconstruction for supported GCPL sources without an explicit full-cycle field. **Implementation
+  in progress** on `feature/biologic-mpr-extensible-columns-051`; state is authoritative in
+  [`051-agent-state.json`](051-agent-state.json).
+  - [`051.1-biologic-mpr-cycle-reconstruction.md`](051.1-biologic-mpr-cycle-reconstruction.md)
+    — source-local loop and bounded non-repeating cycle reconstruction, half-cycle diagnostic policy,
+    parser reinspection, and closure regressions.
 - [`041-biologic-mpr-gcpl-support.md`](041-biologic-mpr-gcpl-support.md)
   adds independently authored BioLogic EC-Lab `.mpr` support for the verified GCPL/GCPL6 family,
   mapping into the canonical cycling, protocol, per-source cache/provenance, import, packaged-runtime,

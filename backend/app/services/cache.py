@@ -2100,12 +2100,28 @@ def build(
             # with valid raw/cycle caches must remain scientifically usable
             # when its sidecar cannot be published.
             logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
+        cached_cycle_identity_source = None
+        if Path(source_path).suffix.casefold() == ".mpr":
+            try:
+                cached_cycles = pd.read_parquet(cp, columns=["cycle"])
+                cached_cycle_identity_source = (
+                    "protocol_loop_reconstruction"
+                    if cached_cycles["cycle"].nunique(dropna=True) > 1
+                    else "non_repeating_cycle_1"
+                )
+            except Exception:
+                logger.debug(
+                    "could not recover BioLogic cycle provenance from cached cycles %s",
+                    cp,
+                    exc_info=True,
+                )
         return {
             "rows": pq.read_metadata(rp).num_rows,
             "cycles": pq.read_metadata(cp).num_rows,
             "parser_version": parser_identity,
             "calc_version": CALC_VERSION,
             "cached": True,
+            "cycle_identity_source": cached_cycle_identity_source,
             **totals,
         }
 
@@ -2151,12 +2167,19 @@ def build(
         if not cycles_was_present:
             cp.unlink(missing_ok=True)
         raise
+    biologic_attrs = raw.attrs.get("biologic_gcpl") if hasattr(raw, "attrs") else None
+    cycle_identity_source = (
+        str(biologic_attrs.get("cycle_source"))
+        if isinstance(biologic_attrs, dict) and biologic_attrs.get("cycle_source")
+        else None
+    )
     return {
         "rows": len(raw),
         "cycles": len(cycles),
         "parser_version": parser_identity,
         "calc_version": CALC_VERSION,
         "cached": False,
+        "cycle_identity_source": cycle_identity_source,
         **capacity_totals(cycles),
     }
 

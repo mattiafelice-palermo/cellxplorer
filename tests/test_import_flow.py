@@ -110,17 +110,19 @@ def _write_importable_biologic_mpr(path: Path) -> None:
 
 
 def _write_metadata_only_biologic_mpr(path: Path) -> None:
-    """Write a mixed-direction MPR that still lacks a verified cycle field."""
+    """Write an ambiguous repeating-shaped MPR that lacks a verified loop."""
     write_gcpl_mpr(
         path,
         [
             {"total_time_s": 0.0, "ns": 0, "control": 1.0},
             {"total_time_s": 1.0, "ns": 1, "control": -1.0},
+            {"total_time_s": 2.0, "ns": 2, "control": 1.0},
         ],
         settings_payload=encode_gcpl_settings(
             [
                 {"set_i_c": 0, "current": 1.0},
                 {"set_i_c": 0, "current": -1.0},
+                {"set_i_c": 0, "current": 1.0},
             ],
             reference_electrode="Ag/AgCl",
         ),
@@ -291,7 +293,7 @@ class ImportFlowTests(unittest.TestCase):
                 )
 
         self.assertIsNone(preview)
-        self.assertIn("logical cycle identity", error)
+        self.assertIn("logical cycle reconstruction", error)
         build.assert_not_called()
         self.assertEqual(
             parsing.current_parser_identity_for_extension("mpr"),
@@ -2097,7 +2099,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 422)
         self.assertEqual(raised.exception.detail["code"], "continuation_preview_unavailable")
         self.assertEqual(raised.exception.detail["sources"][0]["kind"], "metadata_only")
-        self.assertIn("single-direction cycle-1 contract", raised.exception.detail["sources"][0]["reason"])
+        self.assertIn("logical-cycle reconstruction contract", raised.exception.detail["sources"][0]["reason"])
 
     def test_continuation_preview_requires_reinspection_after_source_change(self):
         with tempfile.TemporaryDirectory() as tmp:

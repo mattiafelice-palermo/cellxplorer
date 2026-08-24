@@ -120,7 +120,7 @@ quantity is still `voltage_v`.
 
 `working_potential_v` and `counter_potential_v` are the canonical names for a
 source's synchronized electrode potentials versus a reference. The BioLogic
-GCPL adapter (Spec 041.3, revision `gcpl9`) exposes these roles in bounded header
+GCPL adapter (Spec 041.3, revision `gcpl10`) exposes these roles in bounded header
 metadata when the bounded Ewe/Ece layout is present. It computes the
 signed primary cell voltage as `working_potential_v - counter_potential_v`,
 preserves the source roles, and exposes a measured Ewe-labelled primary when a
@@ -235,20 +235,24 @@ If a check would require inferring, reconstructing, or computing a value
 capacity, a fabricated timestamp), it belongs to the adapter or to scientific
 code — never to the validator.
 
-### BioLogic GCPL cycle convention (Spec 041)
+### BioLogic GCPL cycle convention (Spec 041 / 051.1)
 
-The verified BioLogic GCPL MPR layout may provide no separate full-cycle column. Header inspection
-can establish only a bounded single-direction candidate: declared charge/rest-only or
-discharge/rest-only, non-repeating settings. The full adapter parse must then prove the declared
-per-`Ns` execution direction, constant-zero half-cycle, monotonic `Ns`, and one signed observed
-current direction before promoting rows to source-local cycle 1. A failed proof persists a
-non-canonical metadata-only capability and blocks cache-backed scientific consumers. No
-unvalidated half-cycle progression, mixed direction, loop, ambiguous direction, or non-monotonic
-execution is used to invent logical cycles. The inferred `1` is not an absolute experiment cycle
-number. The user-deferred MPR/MPT parity gate remains future validation for
-general or repeating multi-cycle support, not a Parent 041 merge blocker. This
-boundary is owned by the adapter and is not a BioLogic-specific branch in any
-generic scientific service.
+The verified BioLogic GCPL MPR layout may provide no separate full-cycle column. Cycle identity is
+resolved in descending strength: an explicit decoded cycle field, a validated top-level loop whose
+observed `Ns` progression returns only from its control step to its loop start, or one bounded
+non-repeating cycling episode assigned source-local cycle 1. Each completed loop iteration must
+contain decoded positive charge and negative discharge execution; a single-direction repeated loop,
+active preconditioning, an unresolved control, a contradictory direction, a second branch/restart,
+or an invalid backward edge remains metadata-only. A partial final loop prefix is allowed only when
+it is a valid continuation of the same loop and no missing phase is fabricated. This boundary is
+owned by the adapter and is not a BioLogic-specific branch in generic scientific services.
+
+The decoded half-cycle field is diagnostic-only for this reconstruction. It must be a finite,
+integer, non-negative value, but its starting value, parity, progression, and resets are never
+converted with `floor`, parity, or another arithmetic formula and are not a sole executed-step or
+cycle boundary. The inferred cycle labels are source-local, not absolute experiment numbers. A
+failed row proof persists a non-canonical metadata-only capability and blocks cache-backed
+scientific consumers.
 
 The verified EGG GCPL6 family has a source-local capacity-counter quirk at an executed `Ns`
 boundary: ID-211 starts the new active block at a near-zero cumulative value, and the first `dQ`
@@ -259,10 +263,10 @@ preserves the canonical per-step reset semantics without weakening the generic s
 
 The withdrawn `bm:gcpl3:r1` identity is not treated as a reproducible historical scientific
 result. On startup, the scanner performs a bounded database-only reconciliation for persisted MPR
-rows at that identity, changes them to the current `bm:gcpl9:r1` metadata-only registration, and
+rows at that identity, changes them to the current `bm:gcpl10:r1` metadata-only registration, and
 clears their live canonical counters. The same startup pass handles pre-R8 `bm:gcpl4:r1` rows
 without opening source files: stored data-header evidence proving a registry-resolved layout is
-brought to the current `bm:gcpl9:r1` metadata-only identity, while missing, ambiguous, or
+brought to the current `bm:gcpl10:r1` metadata-only identity, while missing, ambiguous, or
 non-resolvable evidence clears the parser identity and marks the source as metadata-only with
 `requires_reinspection=true`. Old identity-keyed caches may remain
 for later forensic cleanup, but the persisted capability gate blocks saved-artifact reads and
@@ -275,10 +279,10 @@ gate applies before startup
 reconciliation, so an offline or interrupted upgrade cannot briefly expose an old cache through a
 pinned provenance. List/request capability checks do not reread every source, and this identity
 transition does not change `CALC_VERSION`. Sources registered under the immediately prior
-`bm:gcpl5:r1`, `bm:gcpl6:r1`, or `bm:gcpl7:r1` identity are re-inspected through the current
+`bm:gcpl5:r1`, `bm:gcpl6:r1`, `bm:gcpl7:r1`, `bm:gcpl8:r1`, or `bm:gcpl9:r1` identity are re-inspected through the current
 header/full-parse path
-before they can use the new single-direction capability; offline sources remain blocked until
-relinked. The `gcpl9` candidate/verified boundary is the live contract, so a failed row proof is
+before they can use the new cycle-reconstruction capability; offline sources remain blocked until
+relinked. The `gcpl10` candidate/verified boundary is the live contract, so a failed row proof is
 metadata-only rather than a generic parse error with canonical capability left visible.
 
 ## 8. How a future source format should map into the contract

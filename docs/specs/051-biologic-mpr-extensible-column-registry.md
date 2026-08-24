@@ -1,9 +1,10 @@
 # 051 — BioLogic MPR extensible column registry and required-field decoding
 
-**Status:** Plan  
+**Status:** Active implementation — child 051.1
 **Branch:** `feature/biologic-mpr-extensible-columns-051`  
 **Depends on:** existing BioLogic MPR/GCPL support from Parent 041  
 **Review document:** `reviews/051-biologic-mpr-extensible-column-registry-review.md`  
+**Active child:** [`051.1-biologic-mpr-cycle-reconstruction.md`](051.1-biologic-mpr-cycle-reconstruction.md)
 **Registry asset:** [`assets/051-biologic-mpr-column-registry.md`](assets/051-biologic-mpr-column-registry.md)
 
 ## Goal
@@ -353,7 +354,7 @@ review pending). The low-level reader now owns the 100-entry storage registry, e
 handling, full encoded-ID preservation, modulo-256 ordinary-base resolution, per-source stride
 calculation, explicit-offset NumPy dtypes, and fail-closed unknown/interleaved versus opaque
 trailing-column rules. GCPL metadata persists resolved IDs, stride, named offsets, ignored known
-IDs, and opaque suffix diagnostics; the adapter identity is `gcpl9` and legacy reinspection uses
+IDs, and opaque suffix diagnostics; the adapter identity is `gcpl10` and legacy reinspection uses
 the registry resolver.
 
 The independent fixture matrix covers the baseline 53-byte layout, the 21-ID/93-byte extended
@@ -362,9 +363,10 @@ unknown suffixes, duplicate bases, stride mismatch, packed flags, canonical pari
 diagnostics, parser migration, and the narrow EGG GCPL6 per-step capacity-counter origin at an
 `Ns` boundary. The two local `Downloads\EGG*` examples were read without rewriting: both declare
 the 21-ID layout, decode with stride 93, and expose the expected ignored known IDs. The
-single-direction example now parses through canonical validation with ordinary voltage output;
-the repeating mixed-direction example remains metadata-only under the locked Spec 041 cycle
-identity contract.
+single-direction example now parses through canonical validation with ordinary voltage output.
+Child 051.1 reopens the cycle-identity boundary: supported mixed/repeating GCPL execution is
+now reconstructed from validated protocol/observed `Ns` structure, while ambiguous restarts and
+single-direction repeated loops remain metadata-only.
 
 Focused MPR/GCPL/metadata/parser/closure checks passed (163 tests), and
 `python scripts\preflight.py` passed all 4 stages, including all 81 backend test modules.

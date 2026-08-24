@@ -426,15 +426,22 @@ RAW_COLUMNS = {
 # identities whose MPR fallback output must be re-inspected after the
 # candidate/verified boundary and declared-direction checks changed. ``gcpl7``
 # and ``gcpl8`` are also historical now: gcpl8 widened the accepted contract
-# for a header-proven neutral setup/control preamble, and gcpl9 widens the
-# binary column-layout contract. Sources under either identity must pass the
-# current source-reading path before receiving gcpl9.
+# for a header-proven neutral setup/control preamble, gcpl9 widened the
+# binary column-layout contract, and gcpl10 widens logical-cycle
+# reconstruction. Sources under each prior identity must pass the current
+# source-reading path before receiving gcpl10.
 # Keep these sets explicit so a later BioLogic revision can add its own
 # bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
 PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl4:r1"})
 LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
-    {"bm:gcpl5:r1", "bm:gcpl6:r1", "bm:gcpl7:r1", "bm:gcpl8:r1"}
+    {
+        "bm:gcpl5:r1",
+        "bm:gcpl6:r1",
+        "bm:gcpl7:r1",
+        "bm:gcpl8:r1",
+        "bm:gcpl9:r1",
+    }
 )
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
     RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
@@ -451,13 +458,13 @@ RETIRED_BIOLOGIC_MPR_WARNING = (
     "verified; this source is metadata-only."
 )
 BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING = (
-    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl9 "
+    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl10 "
     "identity from stored registry-resolved layout evidence; canonical "
     "cycling remains unavailable until logical cycle identity is independently "
     "verified, so this source is metadata-only."
 )
 BIOLOGIC_MPR_REINSPECTION_WARNING = (
-    "This BioLogic MPR was registered under the pre-gcpl9 parser identity, but "
+    "This BioLogic MPR was registered under a pre-gcpl10 parser identity, but "
     "its stored binary-layout evidence does not prove a safe registry-resolved "
     "layout. Re-inspect the source before using it; it remains metadata-only."
 )
@@ -569,6 +576,10 @@ def source_metadata_cycling_pending(metadata: dict | None) -> bool:
         capabilities.get("canonical_cycling_pending")
         or capabilities.get("single_direction_cycle_candidate")
         or capabilities.get("single_direction_cycle_verification") == "pending"
+        or capabilities.get("cycle_reconstruction_candidate")
+        or capabilities.get("cycle_reconstruction_verification") == "pending"
+        or capabilities.get("protocol_loop_cycle_candidate")
+        or capabilities.get("non_repeating_cycle_candidate")
     )
 
 
@@ -852,6 +863,10 @@ def _mark_biologic_source_metadata_only(
                 "metadata_only": True,
                 "single_direction_cycle_candidate": False,
                 "single_direction_cycle_verification": "failed",
+                "cycle_reconstruction_candidate": False,
+                "cycle_reconstruction_verification": "failed",
+                "protocol_loop_cycle_candidate": False,
+                "non_repeating_cycle_candidate": False,
                 "requires_reinspection": requires_reinspection,
             }
         )
@@ -882,6 +897,10 @@ def _mark_biologic_source_metadata_only(
                     "metadata_only": True,
                     "single_direction_cycle_candidate": False,
                     "single_direction_cycle_verification": "failed",
+                    "cycle_reconstruction_candidate": False,
+                    "cycle_reconstruction_verification": "failed",
+                    "protocol_loop_cycle_candidate": False,
+                    "non_repeating_cycle_candidate": False,
                     "requires_reinspection": requires_reinspection,
                 }
             )
@@ -911,7 +930,11 @@ def _mark_biologic_source_metadata_only(
     source.max_discharge_capacity_mah = None
 
 
-def mark_biologic_mpr_canonical(source: object) -> bool:
+def mark_biologic_mpr_canonical(
+    source: object,
+    *,
+    cycle_identity_source: str | None = None,
+) -> bool:
     """Promote a settings-only MPR candidate after a successful full parse."""
 
     if not source_has_pending_biologic_cycle_verification(source):
@@ -922,6 +945,13 @@ def mark_biologic_mpr_canonical(source: object) -> bool:
     for container in containers:
         capabilities = container.get("capabilities")
         capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        pending_source = str(capabilities.get("cycle_identity_source") or "")
+        if cycle_identity_source:
+            verified_source = cycle_identity_source
+        elif pending_source == "protocol_loop_pending":
+            verified_source = "protocol_loop_reconstruction"
+        else:
+            verified_source = "non_repeating_cycle_1"
         capabilities.update(
             {
                 "cycling_rows": True,
@@ -931,7 +961,11 @@ def mark_biologic_mpr_canonical(source: object) -> bool:
                 "metadata_only": False,
                 "single_direction_cycle_candidate": False,
                 "single_direction_cycle_verification": "verified",
-                "cycle_identity_source": "single_direction_inferred",
+                "cycle_reconstruction_candidate": False,
+                "cycle_reconstruction_verification": "verified",
+                "protocol_loop_cycle_candidate": False,
+                "non_repeating_cycle_candidate": False,
+                "cycle_identity_source": verified_source,
             }
         )
         container["capabilities"] = capabilities
@@ -953,6 +987,15 @@ def mark_biologic_mpr_canonical(source: object) -> bool:
                 if isinstance(declared_capabilities, dict)
                 else {}
             )
+            declared_pending_source = str(
+                declared_capabilities.get("cycle_identity_source") or ""
+            )
+            if cycle_identity_source:
+                declared_verified_source = cycle_identity_source
+            elif declared_pending_source == "protocol_loop_pending":
+                declared_verified_source = "protocol_loop_reconstruction"
+            else:
+                declared_verified_source = "non_repeating_cycle_1"
             declared_capabilities.update(
                 {
                     "cycling_rows": True,
@@ -962,7 +1005,11 @@ def mark_biologic_mpr_canonical(source: object) -> bool:
                     "metadata_only": False,
                     "single_direction_cycle_candidate": False,
                     "single_direction_cycle_verification": "verified",
-                    "cycle_identity_source": "single_direction_inferred",
+                    "cycle_reconstruction_candidate": False,
+                    "cycle_reconstruction_verification": "verified",
+                    "protocol_loop_cycle_candidate": False,
+                    "non_repeating_cycle_candidate": False,
+                    "cycle_identity_source": declared_verified_source,
                 }
             )
             declared_copy["capabilities"] = declared_capabilities
@@ -988,8 +1035,8 @@ def mark_biologic_mpr_cycle_verification_failed(
 
     detail_text = str(detail or "decoded rows did not satisfy the fallback contract").strip()
     warning = (
-        "BioLogic MPR decoded rows did not verify the declared single-direction "
-        "cycle-1 contract; this source is metadata-only."
+        "BioLogic MPR decoded rows did not verify a deterministic logical-cycle "
+        "reconstruction contract; this source is metadata-only."
     )
     _mark_biologic_source_metadata_only(
         source,

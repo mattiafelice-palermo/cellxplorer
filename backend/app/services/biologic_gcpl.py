@@ -9,9 +9,11 @@ cache layer.
 Only a registry-resolved GCPL layout from Specs 041.1 and 051 is accepted.  A source with an
 ambiguous control mode, direction, elapsed-time sequence, or capacity counter
 is rejected rather than being made to look like a plausible battery test.  A
-declared single-direction run is the one narrow exception to the otherwise
-fail-closed cycle-identity rule: after the decoded rows confirm a monotonic,
-charge-only or discharge-only run, the source is represented as cycle 1.
+Sources without an explicit full-cycle field may still be mapped when the
+decoded settings/execution establish either one non-repeating cycling episode
+or a deterministic repeated protocol loop. Cycle reconstruction remains
+source-local and fail-closed for ambiguous restarts, branches, and unresolved
+directions.
 The adapter is direct-parser support for Spec 041.2; user-facing ``.mpr``
 extension recognition remains intentionally owned by Spec 041.4.
 """
@@ -42,12 +44,10 @@ from .source_format_errors import (
 )
 
 
-# gcpl9 widens the low-level MPR binary contract to resolve ordinary columns
-# through the project-owned modulo-256 storage registry. Keep this as a new
-# parser identity so sources rejected or stored as metadata-only under gcpl8
-# are explicitly re-inspected rather than remaining stranded at the old
-# exact-layout boundary.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl9"
+# gcpl10 changes the logical-cycle contract: supported repeated GCPL execution
+# can now be reconstructed from validated protocol/observed Ns structure, and
+# prior gcpl9 metadata-only registrations must be re-inspected.
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl10"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by
@@ -831,6 +831,7 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
         "BioLogic GCPL conditions are not expressed in CellXplorer's Neware formula grammar; "
         "Chargeability condition matching is unavailable for this source."
     )
+    cycle_candidate = _protocol_cycle_candidate(settings)
     capabilities = {
         "declared_protocol_available": bool(steps),
         "explicit_rate_available": explicit_rate_available,
@@ -838,6 +839,9 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
         "loop_structure_available": bool(settings.get("layout")),
         "semantic_conditions_available": False,
         "single_direction_cycle_inference": _is_single_direction_protocol(settings),
+        "cycle_reconstruction_candidate": cycle_candidate.get("kind") is not None,
+        "protocol_loop_cycle_candidate": cycle_candidate.get("kind") == "protocol_loop",
+        "non_repeating_cycle_candidate": cycle_candidate.get("kind") == "non_repeating",
     }
     result = protocol.build_declared_protocol(
         steps,
@@ -945,18 +949,32 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
         capability_flags.get("single_direction_cycle_inference")
     )
     declared_direction = _single_direction_protocol_direction(settings)
-    if single_direction_candidate:
+    cycle_candidate = _protocol_cycle_candidate(settings)
+    candidate_kind = cycle_candidate.get("kind")
+    candidate = candidate_kind is not None
+    if candidate_kind == "protocol_loop":
+        protocol_warnings.append(
+            "This BioLogic MPR has no decoded full-cycle field, but its declared GCPL loop "
+            "contains resolved charge and discharge sequences. Canonical cycling remains "
+            "pending until decoded Ns execution verifies the loop edge and every completed "
+            "iteration."
+        )
+    elif candidate:
+        if single_direction_candidate:
+            candidate_description = "a non-repeating single-direction episode"
+        else:
+            candidate_description = "a non-repeating charge/discharge episode"
         protocol_warnings.append(
             "This BioLogic MPR has no decoded full-cycle field, but its declared protocol "
-            "is a non-repeating single-direction run. Canonical cycling remains pending "
-            "until the decoded rows verify the declared direction, constant-zero half-cycle "
-            "and monotonic Ns conditions; sources that fail that proof remain metadata-only."
+            f"is a candidate for {candidate_description}. Canonical cycling remains pending "
+            "until decoded rows verify the declared directions and deterministic execution; "
+            "sources that fail that proof remain metadata-only."
         )
     else:
+        reason = str(cycle_candidate.get("reason") or "cycle structure is unresolved")
         protocol_warnings.append(
             "BioLogic MPR metadata is readable, but canonical cycling rows remain unavailable "
-            "until an independently verified logical cycle identity (full-cycle field) is "
-            "available; this source is metadata-only."
+            "because logical cycle reconstruction is unresolved: " + reason + "."
         )
     capability_flags.update(
         {
@@ -967,17 +985,27 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
             # full parsing owns promotion or fail-closed downgrade.
             "cycling_rows": False,
             "canonical_cycling": False,
-            "canonical_cycling_pending": single_direction_candidate,
+            "canonical_cycling_pending": candidate,
             "canonical_cycling_verified": False,
-            "metadata_only": not single_direction_candidate,
+            "metadata_only": not candidate,
             "single_direction_cycle_candidate": single_direction_candidate,
             "single_direction_cycle_verification": (
                 "pending" if single_direction_candidate else "unavailable"
             ),
             "single_direction_declared_direction": declared_direction,
+            "cycle_reconstruction_candidate": candidate,
+            "cycle_reconstruction_verification": (
+                "pending" if candidate else "unavailable"
+            ),
+            "protocol_loop_cycle_candidate": candidate_kind == "protocol_loop",
+            "non_repeating_cycle_candidate": candidate_kind == "non_repeating",
             "cycle_identity_source": (
-                "single_direction_pending"
+                "protocol_loop_pending"
+                if candidate_kind == "protocol_loop"
+                else "single_direction_pending"
                 if single_direction_candidate
+                else "non_repeating_cycle_1_pending"
+                if candidate_kind == "non_repeating"
                 else "unresolved"
             ),
             "absolute_timestamps": bool(log.get("absolute_timestamps")),
@@ -1282,24 +1310,20 @@ def _validate_total_time(total_time_s: np.ndarray) -> None:
 
 
 def _validate_supported_half_cycle(half_cycle: np.ndarray) -> None:
-    """Accept only the observed single-segment half-cycle contract.
+    """Validate half-cycle values without assigning logical full cycles.
 
-    The verified private layout contains only zero-valued half-cycle records.
-    Without paired text-export evidence, the starting value, direction,
-    formation handling, and progression of a non-zero counter are not
-    independently established. It is safer to defer multi-half-cycle
-    canonical numbering than to publish a plausible but wrong cycle grouping.
+    The value remains source evidence for diagnostics, but its starting value,
+    parity, and reset semantics are not used by the adapter. In particular,
+    non-zero progression is valid input for protocol/execution reconstruction.
     """
 
-    if np.any(np.diff(half_cycle) < 0):
-        raise UnsupportedBiologicGcplError(
-            "GCPL half-cycle counter regresses or resets; paired MPT evidence is required"
+    numeric = np.asarray(half_cycle, dtype=np.float64)
+    if not np.isfinite(numeric).all() or np.any(numeric != np.floor(numeric)):
+        raise InvalidBiologicGcplError(
+            "GCPL half-cycle values must be finite integers"
         )
-    if np.any(half_cycle != 0):
-        raise UnsupportedBiologicGcplError(
-            "GCPL half-cycle progression is not independently validated; paired MPT evidence "
-            "is required before canonical cycle numbering can be emitted"
-        )
+    if np.any(numeric < 0):
+        raise InvalidBiologicGcplError("GCPL half-cycle values cannot be negative")
 
 
 def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
@@ -1312,25 +1336,13 @@ def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
 
 def _cycle_column(
     records: np.ndarray,
-    *,
-    allow_single_direction: bool = False,
 ) -> np.ndarray:
-    """Return a decoded cycle field or the bounded single-direction fallback.
-
-    The verified MPR layout has no independently decoded logical-cycle field,
-    and its half-cycle counter has no paired MPT semantics yet. Semantic test
-    records may provide ``raw_cycle_index`` to exercise the canonical adapter.
-    A source may opt into cycle 1 only after the caller has independently
-    established the bounded single-direction conditions.
-    """
+    """Return and validate the strongest source-provided cycle field."""
 
     direct = _optional_column(records, "raw_cycle_index")
     if direct is None:
-        if allow_single_direction:
-            return np.ones(len(records), dtype=np.int64)
         raise UnsupportedBiologicGcplError(
-            "GCPL logical cycle identity is not independently resolved; paired MPT evidence "
-            "or an explicitly decoded full-cycle field is required"
+            "GCPL logical cycle identity is not supplied by the source records"
         )
     cycle = _validate_integer_column(direct, "cycle", positive=True)
     if len(cycle) > 1 and np.any(np.diff(cycle) < 0):
@@ -1474,32 +1486,304 @@ def _raw_current_ma(
     return raw_current
 
 
-def _single_direction_cycle_is_safe(
-    raw_ns: np.ndarray,
-    mode: np.ndarray,
-    current_ma: np.ndarray,
-    *,
-    declared_protocol: bool,
-) -> bool:
-    """Confirm decoded rows support the cycle-1 single-direction fallback."""
+def _declared_sequence_is_neutral(sequence: Mapping[str, Any]) -> bool:
+    direction = sequence.get("direction")
+    if direction == "rest":
+        return True
+    if direction != "control":
+        return False
+    current_ma = sequence.get("current_ma")
+    try:
+        return current_ma is not None and math.isfinite(float(current_ma)) and (
+            abs(float(current_ma)) <= _CURRENT_TOLERANCE_MA
+        )
+    except (TypeError, ValueError):
+        return False
 
-    if not declared_protocol:
-        return False
-    if len(raw_ns) > 1 and np.any(np.diff(raw_ns) < 0):
-        return False
-    positive = np.any(current_ma > _CURRENT_TOLERANCE_MA)
-    negative = np.any(current_ma < -_CURRENT_TOLERANCE_MA)
-    if positive and negative:
-        return False
-    if not positive and not negative:
-        return False
-    # The current adapter cannot classify this fallback when potentiostatic
-    # rows are present: the verified byte contract has no independently
-    # decoded measured-current field for those rows. Keep that existing
-    # fail-closed boundary instead of widening the mode contract here.
-    if np.any(mode == MPR_MODE_POTENTIOSTATIC):
-        return False
-    return True
+
+def _declared_loop_structure(
+    settings: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Return one validated top-level GCPL loop, or ``None`` when absent."""
+
+    sequences = list(settings.get("sequences") or [])
+    by_step = {int(sequence["step_index"]): sequence for sequence in sequences}
+    declarations = [
+        sequence
+        for sequence in sequences
+        if sequence.get("loop_start_step") is not None
+        or sequence.get("loop_count") is not None
+    ]
+    if not declarations:
+        return None
+    if len(declarations) != 1:
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop reconstruction requires exactly one effective loop declaration"
+        )
+    control = declarations[0]
+    start = control.get("loop_start_step")
+    repeat_count = control.get("loop_count")
+    control_step = int(control["step_index"])
+    if not isinstance(start, int) or not isinstance(repeat_count, int):
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop declaration has unresolved start or repeat count"
+        )
+    if not (0 < start < control_step):
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop declaration must target an earlier declared sequence"
+        )
+    if repeat_count <= 0:
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop declaration has no positive repeat count"
+        )
+    body_steps = list(range(start, control_step + 1))
+    if any(step not in by_step for step in body_steps):
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop body contains an undeclared or non-contiguous sequence"
+        )
+    body = [by_step[step] for step in body_steps]
+    if any(
+        sequence.get("direction") not in {"charge", "discharge", "rest", "control"}
+        for sequence in body
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop body contains an unresolved sequence direction"
+        )
+    if not any(sequence.get("direction") == "charge" for sequence in body) or not any(
+        sequence.get("direction") == "discharge" for sequence in body
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL repeated loop must contain both charge and discharge sequences"
+        )
+    if any(
+        sequence.get("direction") == "control"
+        and not _declared_sequence_is_neutral(sequence)
+        for sequence in body
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL loop body contains an unresolved non-neutral control sequence"
+        )
+    return {
+        "start_step": start,
+        "control_step": control_step,
+        "repeat_count": repeat_count,
+        "body_steps": body_steps,
+        "source": "declared",
+    }
+
+
+def _protocol_cycle_candidate(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Classify a header-only cycle candidate without decoding records."""
+
+    try:
+        loop = _declared_loop_structure(settings)
+    except UnsupportedBiologicGcplError as exc:
+        return {"kind": None, "reason": str(exc)}
+    if loop is not None:
+        return {"kind": "protocol_loop", "loop": loop, "reason": None}
+
+    sequences = list(settings.get("sequences") or [])
+    active = set()
+    active_order: list[str] = []
+    for sequence in sequences:
+        direction = sequence.get("direction")
+        if direction in {"charge", "discharge"}:
+            active.add(direction)
+            if not active_order or active_order[-1] != direction:
+                active_order.append(direction)
+        elif direction == "rest":
+            continue
+        elif direction == "control" and _declared_sequence_is_neutral(sequence):
+            continue
+        else:
+            return {
+                "kind": None,
+                "reason": "GCPL protocol contains an unresolved active direction or control step",
+            }
+    if not active:
+        return {
+            "kind": None,
+            "reason": "GCPL protocol contains no independently resolved cycling direction",
+        }
+    if len(active_order) > 2:
+        return {
+            "kind": None,
+            "reason": (
+                "GCPL protocol returns to an active direction after an opposite phase; "
+                "a validated repeated loop is required"
+            ),
+        }
+    return {
+        "kind": "non_repeating",
+        "loop": None,
+        "reason": None,
+        "active_directions": sorted(active),
+    }
+
+
+def _infer_execution_loop_structure(
+    step_indices: list[int],
+    directions: list[int],
+    settings: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Infer one effective loop from a repeated, validated Ns progression.
+
+    Some supported GCPL files, including the private EGG cycling source, do
+    not persist a non-zero goto/repeat setting even though acquisition emits a
+    stable repeated sequence. This is not a direction-pair heuristic: the
+    exact backward edge and the complete forward body are validated below,
+    and the settings still own per-sequence direction semantics when present.
+    """
+
+    backward_edges = {
+        (previous, current)
+        for previous, current in zip(step_indices, step_indices[1:])
+        if current < previous
+    }
+    if not backward_edges:
+        return None
+    if len(backward_edges) != 1:
+        raise UnsupportedBiologicGcplError(
+            "GCPL execution contains more than one backward Ns edge; loop structure is ambiguous"
+        )
+    control_step, start_step = next(iter(backward_edges))
+    if not (0 < start_step < control_step):
+        raise UnsupportedBiologicGcplError(
+            "GCPL execution contains an invalid backward Ns loop edge"
+        )
+    body_steps = list(range(start_step, control_step + 1))
+    if settings is not None:
+        by_step = {
+            int(sequence["step_index"]): sequence
+            for sequence in settings.get("sequences") or []
+        }
+        if any(step not in by_step for step in body_steps):
+            raise UnsupportedBiologicGcplError(
+                "GCPL observed loop edge does not match declared sequence structure"
+            )
+        body = [by_step[step] for step in body_steps]
+        if any(
+            sequence.get("direction") not in {"charge", "discharge", "rest", "control"}
+            for sequence in body
+        ):
+            raise UnsupportedBiologicGcplError(
+                "GCPL observed loop body contains an unresolved declared direction"
+            )
+        if not any(sequence.get("direction") == "charge" for sequence in body) or not any(
+            sequence.get("direction") == "discharge" for sequence in body
+        ):
+            raise UnsupportedBiologicGcplError(
+                "GCPL observed repeated loop does not contain both charge and discharge"
+            )
+    else:
+        body_directions = [
+            direction
+            for step, direction in zip(step_indices, directions, strict=True)
+            if start_step <= step <= control_step
+        ]
+        if 1 not in body_directions or -1 not in body_directions:
+            raise UnsupportedBiologicGcplError(
+                "GCPL observed repeated loop does not contain both charge and discharge"
+            )
+    return {
+        "start_step": start_step,
+        "control_step": control_step,
+        "repeat_count": None,
+        "body_steps": body_steps,
+        "source": "execution",
+    }
+
+
+def _require_complete_loop_iteration(directions: list[int]) -> None:
+    if 1 not in directions or -1 not in directions:
+        raise UnsupportedBiologicGcplError(
+            "GCPL completed loop iteration does not contain both charge and discharge execution"
+        )
+
+
+def _reconstruct_loop_cycles(
+    step_indices: list[int],
+    directions: list[int],
+    loop: dict[str, Any],
+) -> np.ndarray:
+    """Assign dense source-local cycles to one validated loop execution."""
+
+    start_step = int(loop["start_step"])
+    control_step = int(loop["control_step"])
+    cycles: list[int] = []
+    current_cycle = 1
+    previous_step: int | None = None
+    body_seen = False
+    iteration_directions: list[int] = []
+
+    for step_index, direction in zip(step_indices, directions, strict=True):
+        in_body = start_step <= step_index <= control_step
+        if not body_seen:
+            if not in_body:
+                if direction != 0:
+                    raise UnsupportedBiologicGcplError(
+                        "GCPL active preconditioning outside the reconstructed loop is ambiguous"
+                    )
+                cycles.append(current_cycle)
+                continue
+            body_seen = True
+            previous_step = step_index
+            cycles.append(current_cycle)
+            iteration_directions.append(direction)
+            continue
+
+        if previous_step == control_step:
+            if step_index != start_step:
+                raise UnsupportedBiologicGcplError(
+                    f"GCPL loop control step {control_step} does not return to loop start "
+                    f"{start_step} (observed Ns {step_index})"
+                )
+            _require_complete_loop_iteration(iteration_directions)
+            current_cycle += 1
+            iteration_directions = []
+        elif step_index not in {previous_step, previous_step + 1}:
+            raise UnsupportedBiologicGcplError(
+                "GCPL execution does not follow the declared loop's forward Ns progression"
+            )
+        if not in_body:
+            raise UnsupportedBiologicGcplError(
+                "GCPL execution leaves the declared loop body without a valid loop edge"
+            )
+        cycles.append(current_cycle)
+        iteration_directions.append(direction)
+        previous_step = step_index
+
+    if not body_seen:
+        raise UnsupportedBiologicGcplError(
+            "GCPL records contain no executed rows from the reconstructed loop"
+        )
+    if previous_step == control_step:
+        _require_complete_loop_iteration(iteration_directions)
+    if any(cycle < 1 for cycle in cycles):
+        raise UnsupportedBiologicGcplError("GCPL reconstructed cycle values are not positive")
+    return np.asarray(cycles, dtype=np.int64)
+
+
+def _reconstruct_non_repeating_cycle(
+    directions: list[int],
+) -> np.ndarray:
+    """Assign cycle 1 to one bounded non-repeating cycling episode."""
+
+    active = [direction for direction in directions if direction != 0]
+    if not active:
+        raise UnsupportedBiologicGcplError(
+            "GCPL execution contains no active charge or discharge phase"
+        )
+    collapsed: list[int] = []
+    for direction in active:
+        if not collapsed or collapsed[-1] != direction:
+            collapsed.append(direction)
+    if len(collapsed) > 2:
+        raise UnsupportedBiologicGcplError(
+            "GCPL active direction returns after an opposite phase; a validated repeated loop "
+            "is required instead of assigning cycle 1"
+        )
+    return np.ones(len(directions), dtype=np.int64)
 
 
 def _step_boundaries(
@@ -1517,7 +1801,9 @@ def _step_boundaries(
         return boundaries
 
     boundaries[1:] |= ns[1:] != ns[:-1]
-    boundaries[1:] |= half_cycle[1:] != half_cycle[:-1]
+    # Half-cycle progression is retained as source evidence but is not an
+    # independently verified executed-step boundary. Ns, mode chronology,
+    # explicit cycle identity, and verified step-time resets own boundaries.
     if cycle is not None:
         boundaries[1:] |= cycle[1:] != cycle[:-1]
     # A transition into or out of a true rest operation is an executed-step
@@ -1793,27 +2079,16 @@ def map_gcpl_to_canonical(
         )
     current_ma = _raw_current_ma(records, mode, control)
     direct_cycle = _optional_column(records, "raw_cycle_index")
-    declared_single_direction = (
-        declared_settings is not None
-        and _is_single_direction_protocol(declared_settings)
-    )
-    if direct_cycle is None and declared_single_direction:
+    cycle = _cycle_column(records) if direct_cycle is not None else None
+    declared_loop: dict[str, Any] | None = None
+    if direct_cycle is None and declared_settings is not None:
         _validate_declared_execution_direction(
             declared_settings,
             ns,
             mode,
             current_ma,
         )
-    single_direction_inferred = direct_cycle is None and _single_direction_cycle_is_safe(
-        raw_ns,
-        mode,
-        current_ma,
-        declared_protocol=(declared_single_direction if declared_settings is not None else True),
-    )
-    cycle = _cycle_column(
-        records,
-        allow_single_direction=single_direction_inferred,
-    )
+        declared_loop = _declared_loop_structure(declared_settings)
     voltage_v, voltage_v_derived, working, counter, voltage_origin = _primary_voltage(
         records
     )
@@ -1864,6 +2139,31 @@ def map_gcpl_to_canonical(
         _classify_block(mode, direction, start, end)
         for direction, (start, end) in zip(directions, ranges)
     ]
+    block_step_indices = [int(ns[start]) for start, _ in ranges]
+    if cycle is None:
+        loop = declared_loop or _infer_execution_loop_structure(
+            block_step_indices,
+            directions,
+            declared_settings,
+        )
+        if loop is not None:
+            cycle_by_block = _reconstruct_loop_cycles(
+                block_step_indices,
+                directions,
+                loop,
+            )
+            cycle_identity_source = "protocol_loop_reconstruction"
+        else:
+            cycle_by_block = _reconstruct_non_repeating_cycle(directions)
+            cycle_identity_source = "non_repeating_cycle_1"
+        cycle = np.concatenate(
+            [
+                np.full(end - start, cycle_number, dtype=np.int64)
+                for cycle_number, (start, end) in zip(cycle_by_block, ranges, strict=True)
+            ]
+        )
+    else:
+        cycle_identity_source = "explicit_full_cycle"
     charge_capacity, discharge_capacity = _capacity_columns(
         raw_capacity, directions, ranges
     )
@@ -1915,17 +2215,18 @@ def map_gcpl_to_canonical(
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": GCPL_STEP_INDEX_BASE_ADJUSTMENT,
-        "cycle_source": (
-            "single direction fallback"
-            if single_direction_inferred
-            else "explicit full-cycle field"
-        ),
+        "cycle_source": cycle_identity_source,
         "cycle_formula": (
-            "inferred as cycle 1 after declared single-direction protocol and decoded "
-            "charge-only or discharge-only current with monotonic Ns"
-            if single_direction_inferred
-            else "copied from independently decoded raw_cycle_index"
+            "copied from independently decoded raw_cycle_index"
+            if cycle_identity_source == "explicit_full_cycle"
+            else "reconstructed from validated GCPL loop start/control Ns progression and "
+            "charge/discharge execution"
+            if cycle_identity_source == "protocol_loop_reconstruction"
+            else "assigned source-local cycle 1 to one validated non-repeating cycling episode"
         ),
+        "half_cycle_policy": "decoded_diagnostic_only",
+        "half_cycle_min": int(np.min(half_cycle)),
+        "half_cycle_max": int(np.max(half_cycle)),
         "current_sign_factor": 1,
         "energy_policy": "C-unavailable",
         "absolute_timestamps": start_timestamp is not None,
