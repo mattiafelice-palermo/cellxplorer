@@ -977,6 +977,60 @@ class AnalysisEngineTests(unittest.TestCase):
                 f"{key} restore",
             )
 
+    def test_transient_time_capacity_requests_read_the_cache_but_never_populate_it(self):
+        """Spec 052.3 Stage 3: moving previews must not write to the result cache."""
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Transient preview", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+
+        stored_bodies: dict[str, bytes] = {}
+
+        def fake_compute(_db, _spec, _provenance, **_options):
+            return {"cell_traces": [], "rendering": {}}
+
+        def fake_load_body(_kind, key):
+            body = stored_bodies.get(key)
+            return (body, []) if body is not None else None
+
+        def fake_store(_kind, key, result):
+            value = dict(result)
+            value.pop("cache_status", None)
+            value.pop("badges", None)
+            stored_bodies[key] = json.dumps(value, separators=(",", ":")).encode()
+
+        with patch.object(
+            analyses_router.engine, "compute_time_capacity", side_effect=fake_compute
+        ), patch.object(
+            analysis_cache, "load_result_body", side_effect=fake_load_body
+        ), patch.object(
+            analysis_cache, "load_result", return_value=None
+        ), patch.object(
+            analysis_cache, "store_result", side_effect=fake_store
+        ) as store, patch.object(
+            analyses_router.engine, "availability_badges", return_value=[]
+        ):
+            transient = analyses_router.ComputeRequest(
+                precision="standard", compact=True, persist=False
+            )
+            analyses_router.compute_time_capacity_analysis(analysis.id, transient, self.db)
+            self.assertEqual(store.call_count, 0, "a transient preview populated the cache")
+            self.assertEqual(stored_bodies, {})
+
+            # The same request persists normally when it is not transient, and
+            # the transient request then serves that entry rather than ignoring
+            # the cache: declining to write must not mean declining to read.
+            durable = analyses_router.ComputeRequest(precision="standard", compact=True)
+            analyses_router.compute_time_capacity_analysis(analysis.id, durable, self.db)
+            self.assertEqual(store.call_count, 1)
+            self.assertEqual(len(stored_bodies), 1)
+
+            served = analyses_router.compute_time_capacity_analysis(
+                analysis.id, transient, self.db
+            )
+            self.assertEqual(json.loads(served.body)["cache_status"], "hit")
+            self.assertEqual(store.call_count, 1, "a cache hit must not re-persist")
+
     def test_time_capacity_route_source_signature_is_stable_across_render_modes_and_cache_paths(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         analysis = Analysis(title="Time route", spec=spec)

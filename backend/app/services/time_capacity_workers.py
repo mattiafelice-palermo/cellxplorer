@@ -1227,9 +1227,17 @@ def _build_jobs(
                 cycle_end=settings["cycle_end"],
                 requested_columns=tuple(requested_columns),
                 derived_columns=("phase_code", "phase_capacity_mah") if needs.phase_capacity else (),
-                plan=deepcopy(plan),
+                # Spec 052.3 Stage 2: no defensive copy here. The read path
+                # treats `plan` as read-only, and `_materialize_read` already
+                # deep-copies `plan_diagnostics` before handing it to the
+                # readers that mutate it, so copying per Cell at planning time
+                # was pure overhead in both execution modes -- the process path
+                # is isolated by pickle, and the serial path never writes.
+                # `test_owner_job_state_is_not_mutated_by_a_serial_run` pins
+                # that invariant; reintroduce a copy here if it ever breaks.
+                plan=plan,
                 requested_cycles=tuple(requested_cycles),
-                plan_diagnostics=deepcopy(plan_diagnostics),
+                plan_diagnostics=plan_diagnostics,
                 descriptor=descriptor,
                 estimated_rows=_estimated_rows(plan, tuple(requested_cycles)),
                 time_origin_prefix_s=time_origin_prefix_s,
@@ -1274,13 +1282,24 @@ def _run_serial(jobs: list[ReadJob], request: ResolvedRequest) -> list[CellResul
     return [_run_job(job, request) for job in jobs]
 
 
-def _run_process(jobs: list[ReadJob], request: ResolvedRequest, workers: int) -> tuple[list[CellResult], int, int]:
+def _run_process(
+    jobs: list[ReadJob],
+    request: ResolvedRequest,
+    workers: int,
+    *,
+    measure_ipc: bool = False,
+) -> tuple[list[CellResult], int | None, int | None]:
+    # Spec 052.3 Stage 4: `ipc_input_bytes`/`ipc_output_bytes` are diagnostic
+    # facts only. Measuring them costs a second full pickle of every job and
+    # every result on top of the one the pool already performs, so it is done
+    # only when a profiled request actually asked for diagnostics.
     pool = _ready_pool(workers)
     futures = []
-    input_bytes = 0
-    for job in jobs:
-        input_bytes += len(
-            pickle.dumps((job, request), protocol=pickle.HIGHEST_PROTOCOL)
+    input_bytes: int | None = None
+    if measure_ipc:
+        input_bytes = sum(
+            len(pickle.dumps((job, request), protocol=pickle.HIGHEST_PROTOCOL))
+            for job in jobs
         )
     for job in jobs:
         futures.append(pool.submit(_run_job, job, request, perf_counter()))
@@ -1291,10 +1310,12 @@ def _run_process(jobs: list[ReadJob], request: ResolvedRequest, workers: int) ->
             future.cancel()
         _mark_pool_failed()
         raise
-    output_bytes = sum(
-        len(pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL))
-        for result in results
-    )
+    output_bytes: int | None = None
+    if measure_ipc:
+        output_bytes = sum(
+            len(pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL))
+            for result in results
+        )
     return results, input_bytes, output_bytes
 
 
@@ -1361,12 +1382,17 @@ def try_compute_time_capacity(
         )
         if progress:
             progress(0, len(jobs), "", "Reading indexed cache")
-        ipc_input = 0
-        ipc_output = 0
+        ipc_input: int | None = None
+        ipc_output: int | None = None
         parent_rss_before = process_rss_bytes()
         if decision.mode == "process":
             try:
-                results, ipc_input, ipc_output = _run_process(jobs, request, decision.workers)
+                results, ipc_input, ipc_output = _run_process(
+                    jobs,
+                    request,
+                    decision.workers,
+                    measure_ipc=access_diagnostics is not None,
+                )
             except PoolNotReadyError as exc:
                 decision = ExecutionDecision(
                     "serial",
@@ -1427,8 +1453,11 @@ def try_compute_time_capacity(
                 "total_memory_bytes": decision.total_memory_bytes,
                 "available_memory_bytes": decision.available_memory_bytes,
                 "selected_rows": selected_rows,
-                "ipc_input_bytes": ipc_input,
-                "ipc_output_bytes": ipc_output,
+                # Serial execution performs no IPC, so it keeps reporting 0 as
+                # it always has; the process path reports its measured bytes
+                # (always measured here, since diagnostics are on).
+                "ipc_input_bytes": ipc_input if decision.mode == "process" else 0,
+                "ipc_output_bytes": ipc_output if decision.mode == "process" else 0,
                 "effective_cores": decision.workers if decision.mode == "process" else 1,
                 "merge_ms": merge_ms,
                 "parent_rss_before_bytes": parent_rss_before,

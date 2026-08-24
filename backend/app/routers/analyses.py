@@ -435,6 +435,12 @@ class ComputeRequest(BaseModel):
     # scientific result/cache identity. Ordinary responses remain unchanged.
     profile: bool = False
     profile_request_id: str | None = Field(default=None, max_length=200)
+    # Spec 052.3 Stage 3: a moving slider preview is a transient view that the
+    # user is dragging past. Writing each one to the analysis result cache cost
+    # a gzip + disk write under the global cache lock and evicted genuinely
+    # reusable entries through the LRU budget. Transient requests still *read*
+    # the cache; they only decline to populate it.
+    persist: bool = True
 
 
 class TimeCapacityRefinementRequest(BaseModel):
@@ -1618,13 +1624,14 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
             result["data_signature"] = key
             result["source_data_signature"] = source_data_signature
             with time_capacity_profiling.profiled_stage(request_profile, "result_cache_persistence"):
-                store_result = analysis_cache.store_result
-                if request_profile is not None and getattr(store_result, "__name__", None) == "store_result":
-                    store_result("time_capacity", key, result, profile=request_profile)
-                else:
-                    # Keep the route compatible with focused tests that
-                    # replace persistence with a three-argument spy.
-                    store_result("time_capacity", key, result)
+                if req.persist:
+                    store_result = analysis_cache.store_result
+                    if request_profile is not None and getattr(store_result, "__name__", None) == "store_result":
+                        store_result("time_capacity", key, result, profile=request_profile)
+                    else:
+                        # Keep the route compatible with focused tests that
+                        # replace persistence with a three-argument spy.
+                        store_result("time_capacity", key, result)
         with time_capacity_profiling.profiled_stage(request_profile, "owner_finalization"):
             result["data_signature"] = key
             result["source_data_signature"] = source_data_signature

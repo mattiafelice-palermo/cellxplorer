@@ -473,5 +473,97 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertTrue(cache.raw_layout_is_current(self.FILE_HASH, self.PARSER))
 
 
+class RawLayoutIndexMemoTests(unittest.TestCase):
+    """Spec 052.3 Stage 1: the validated index memo and its freshness rules."""
+
+    FILE_HASH = "b" * 64
+    PARSER = "nx:test:r1"
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.cache_dir_patch = patch.object(cache, "CACHE_DIR", Path(self.temp.name))
+        self.cache_dir_patch.start()
+        self.row_group_patch = patch.object(cache, "RAW_CACHE_ROW_GROUP_SIZE", 4)
+        self.row_group_patch.start()
+        cache.clear_raw_layout_index_cache()
+
+    def tearDown(self) -> None:
+        cache.clear_raw_layout_index_cache()
+        self.row_group_patch.stop()
+        self.cache_dir_patch.stop()
+        self.temp.cleanup()
+
+    def _publish(self, frame: pd.DataFrame | None = None) -> dict:
+        frame = frame if frame is not None else canonical_frame()
+        target = cache.raw_path(self.FILE_HASH, self.PARSER)
+        return cache._publish_optimized_raw(frame, target, self.PARSER)
+
+    def test_repeated_loads_validate_the_sidecar_only_once(self) -> None:
+        self._publish()
+        cache.clear_raw_layout_index_cache()
+
+        original = cache._validate_raw_layout_index
+        with patch.object(
+            cache, "_validate_raw_layout_index", side_effect=original
+        ) as validate:
+            first = cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+            second = cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+            third = cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+
+        self.assertEqual(validate.call_count, 1)
+        self.assertEqual(first, second)
+        self.assertEqual(second, third)
+
+    def test_touching_the_pair_for_lru_does_not_invalidate_the_memo(self) -> None:
+        # `_touch` rewrites mtime on every read to drive cache reclamation, so
+        # the memo must not key freshness on mtime.
+        self._publish()
+        cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+
+        cache._touch(cache.raw_path(self.FILE_HASH, self.PARSER))
+        cache._touch(cache.raw_index_path(self.FILE_HASH, self.PARSER))
+
+        original = cache._validate_raw_layout_index
+        with patch.object(
+            cache, "_validate_raw_layout_index", side_effect=original
+        ) as validate:
+            cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+        self.assertEqual(validate.call_count, 0)
+
+    def test_republishing_the_raw_pair_invalidates_the_memo(self) -> None:
+        self._publish()
+        first = cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+        self.assertEqual(first["observed_source_cycles"], [1, 2, 4])
+
+        changed = canonical_frame()
+        changed["cycle"] = [1] * 5 + [2] * 2 + [7] * 5
+        self._publish(changed)
+
+        second = cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)
+        self.assertEqual(second["observed_source_cycles"], [1, 2, 7])
+
+    def test_deleting_the_index_is_observed_immediately(self) -> None:
+        self._publish()
+        self.assertIsNotNone(cache.load_raw_layout_index(self.FILE_HASH, self.PARSER))
+
+        cache.raw_index_path(self.FILE_HASH, self.PARSER).unlink()
+
+        self.assertIsNone(cache.load_raw_layout_index(self.FILE_HASH, self.PARSER))
+        self.assertEqual(
+            cache.raw_layout_status(self.FILE_HASH, self.PARSER), "layout_unavailable"
+        )
+
+    def test_memo_is_bounded_by_its_documented_limit(self) -> None:
+        limit = cache._RAW_LAYOUT_INDEX_CACHE_LIMIT
+        with patch.object(cache, "_RAW_LAYOUT_INDEX_CACHE_LIMIT", 3):
+            for index in range(6):
+                file_hash = f"{index:064d}"
+                target = cache.raw_path(file_hash, self.PARSER)
+                cache._publish_optimized_raw(canonical_frame(), target, self.PARSER)
+                cache.load_raw_layout_index(file_hash, self.PARSER)
+            self.assertLessEqual(cache.raw_layout_index_cache_stats()["entries"], 3)
+        self.assertEqual(cache._RAW_LAYOUT_INDEX_CACHE_LIMIT, limit)
+
+
 if __name__ == "__main__":
     unittest.main()

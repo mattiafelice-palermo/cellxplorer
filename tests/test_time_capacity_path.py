@@ -493,5 +493,92 @@ class IndexedLegacyTimeCapacityParityTests(unittest.TestCase):
                     self.assertEqual(strip_volatile(indexed), strip_volatile(legacy))
 
 
+class OwnerJobStateIsReadOnlyTests(unittest.TestCase):
+    """Spec 052.3 Stage 2: owner-resolved job state is never mutated by a run.
+
+    `_build_jobs` used to `deepcopy` the plan and its diagnostics for every
+    Cell. That copy was removed because the read path only ever reads them --
+    the process path is isolated by pickle, and `_materialize_read` already
+    copies `plan_diagnostics` before handing it to the readers that do mutate
+    it.
+
+    This test is what makes that deletion safe, and it matters more than it
+    looks: Stage 1 memoizes the validated raw-layout index, so one plan's
+    `index` object is now shared across requests. If a future change starts
+    mutating owner job state, this test must fail rather than letting one
+    request corrupt another's cached index.
+    """
+
+    def test_owner_job_state_is_not_mutated_by_a_serial_run(self) -> None:
+        import pickle
+        from hashlib import sha256
+
+        sys.path.insert(0, str(ROOT / "tests"))
+        from golden_analysis_support import GoldenFixtureEnvironment, load_case_spec
+
+        root = ROOT / "tests" / "fixtures" / "golden_analysis"
+
+        def digest(value: object) -> str:
+            return sha256(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest()
+
+        with GoldenFixtureEnvironment.create() as environment:
+            from app.services import time_capacity_workers as workers
+
+            for case_id, cycle_end, x_axis in (
+                ("time_capacity_baseline", 3, "time"),
+                ("time_capacity_baseline", None, "time"),
+                ("time_capacity_baseline", None, "capacity_mah"),
+            ):
+                spec = load_case_spec(root, {
+                    "id": case_id,
+                    "kind": "time_capacity",
+                    "spec_path": f"specs/{case_id}.json",
+                })
+                spec["computation"]["time_capacity"]["cycle_end"] = cycle_end
+                spec["computation"]["time_capacity"]["x_axis"] = x_axis
+
+                built = workers._build_jobs(
+                    environment.db,
+                    spec,
+                    None,
+                    use_current_versions=False,
+                    viewport_width=1200,
+                    precision="standard",
+                    compact=True,
+                    display_origin_cycle_start=None,
+                    display_origin_capacity_by_cell=None,
+                    refinement=False,
+                    refinement_viewport_x_min=None,
+                    refinement_viewport_x_max=None,
+                )
+                if built is None:
+                    continue
+                jobs, request, _missing = built
+
+                before = (
+                    [digest(job.plan) for job in jobs],
+                    [digest(job.plan_diagnostics) for job in jobs],
+                    [digest(job.descriptor) for job in jobs],
+                    digest(request),
+                )
+
+                workers._run_serial(jobs, request)
+
+                after = (
+                    [digest(job.plan) for job in jobs],
+                    [digest(job.plan_diagnostics) for job in jobs],
+                    [digest(job.descriptor) for job in jobs],
+                    digest(request),
+                )
+
+                with self.subTest(case=case_id, cycle_end=cycle_end, x_axis=x_axis):
+                    self.assertEqual(
+                        before,
+                        after,
+                        "a serial run mutated owner-resolved job state; the Spec 052.3 "
+                        "Stage 2 deletion of the per-Cell deepcopy is no longer safe",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

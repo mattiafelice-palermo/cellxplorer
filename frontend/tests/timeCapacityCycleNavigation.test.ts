@@ -401,3 +401,71 @@ test("explicit cycles disable range navigation without changing the retained ran
   assert.equal(timeCapacityPreviousViewDisabled([], 0), true);
   assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), true);
 });
+
+// Spec 052.3 Stage 5 evidence gate.
+//
+// Stage 5 proposed cooperative server-side abandonment of superseded requests.
+// Its premise was a growing queue of uncancellable computations during a drag.
+// This test simulates a realistic drag against the real scheduler policy and
+// counts how many admitted requests are actually superseded, so the decision to
+// implement (or not) rests on a measured number rather than an assumption.
+test("a realistic drag supersedes at most one admitted request", () => {
+  const backendLatencyMs = 84; // measured Spec 052.3 post-change moving preview
+  const pointerIntervalMs = 8; // ~120 Hz pointer stream
+  const dragDurationMs = 3000;
+
+  let state = timeCapacityPreviewSchedulerInitialState();
+  let admitted = 0;
+  let completed = 0;
+  let superseded = 0;
+  let inFlightSettlesAt: number | null = null;
+  let inFlightRequest: ReturnType<typeof timeCapacityPreviewOnMove>["request"] = null;
+
+  const admit = (request: typeof inFlightRequest, now: number) => {
+    if (!request) return;
+    if (inFlightRequest !== null) superseded += 1;
+    admitted += 1;
+    inFlightRequest = request;
+    inFlightSettlesAt = now + backendLatencyMs;
+  };
+
+  for (let now = 0; now <= dragDurationMs + 400; now += pointerIntervalMs) {
+    if (inFlightSettlesAt !== null && now >= inFlightSettlesAt) {
+      const settled = inFlightRequest!;
+      inFlightRequest = null;
+      inFlightSettlesAt = null;
+      completed += 1;
+      if (settled.resolution === "moving") {
+        const done = timeCapacityPreviewOnMovingRequestComplete(state, settled, now, 40);
+        state = done.state;
+        admit(done.request, now);
+      }
+    }
+
+    if (now <= dragDurationMs) {
+      const start = 1 + Math.floor(now / 20);
+      const moved = timeCapacityPreviewOnMove(state, { start, end: start + 9 }, now, 40);
+      state = moved.state;
+      admit(moved.request, now);
+      continue;
+    }
+
+    const idle = timeCapacityPreviewPromoteOnIdle(state, state.generation, now, 50);
+    state = idle.state;
+    admit(idle.request, now);
+  }
+
+  // Backpressure holds the drag to roughly one request per round trip rather
+  // than one per pointer event, and only the idle promotion at the end of the
+  // drag can overtake a still-open moving request.
+  assert.ok(admitted > 1, `expected the drag to issue requests, got ${admitted}`);
+  assert.ok(
+    admitted <= Math.ceil(dragDurationMs / backendLatencyMs) + 2,
+    `backpressure failed: ${admitted} requests for a ${dragDurationMs} ms drag`,
+  );
+  assert.ok(
+    superseded <= 1,
+    `expected at most one superseded request per drag, got ${superseded}`,
+  );
+  assert.ok(completed >= 1);
+});

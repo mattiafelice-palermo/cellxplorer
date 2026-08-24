@@ -1350,6 +1350,9 @@ function TimeCapacityPlotCardView({
     [previewRequest, spec],
   );
   const previewQueryRange = previewRequest?.range ?? null;
+  // Read alongside `requestSpec` so the value the query body sends always
+  // describes the same request the query key was built from.
+  const previewResolution = previewRequest?.resolution ?? null;
   const requestCfg = timeCapacityConfig(requestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
@@ -1484,6 +1487,13 @@ function TimeCapacityPlotCardView({
           job_token: token,
           viewport_width: viewportWidth,
           precision: "standard",
+          // Spec 052.3 Stage 3: a moving preview is a range the user is
+          // dragging past, so it must not populate the analysis result cache —
+          // persisting each one cost a write under the global cache lock and
+          // evicted genuinely reusable entries. Idle-promoted full previews and
+          // committed ranges persist exactly as before. Reads are unaffected:
+          // a moving preview that happens to hit an entry still serves it.
+          ...(previewResolution === "moving" ? { persist: false } : {}),
           ...(profileRequest
             ? {
                 profile: true,

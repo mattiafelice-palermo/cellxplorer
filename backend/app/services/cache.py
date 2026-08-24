@@ -20,6 +20,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -113,6 +114,70 @@ class TimeCapacityDerivedReadDiagnostics:
 # section.  Readers take the same lock between validating the sidecar and
 # reading row groups so an index cannot be paired with a replacement raw file.
 _raw_layout_io_lock = threading.RLock()
+
+
+# Spec 052.3 Stage 1: validated raw-layout indexes are re-read and re-validated
+# on every interactive request, per source -- a JSON parse plus a pyarrow
+# Parquet footer read that together dominated the owner-side cost of one
+# Time/Capacity request. The sidecar is immutable for its
+# (file_hash, parser_version) key, so the validated object is memoized here.
+#
+# Freshness is proved from the filesystem rather than from invalidation call
+# sites: an entry is served only when the index *and* raw Parquet stats still
+# match the ones observed when it was validated. That makes publication,
+# deletion, reclamation and out-of-process edits all self-invalidating, with no
+# obligation on writers to remember to clear anything.
+#
+# Entries are only ever read, never mutated, by consumers -- see
+# `test_owner_job_state_is_not_mutated_by_a_serial_run`, which pins that
+# invariant now that one object is shared across concurrent requests.
+_RAW_LAYOUT_INDEX_CACHE_LIMIT = 64
+_raw_layout_index_cache: "OrderedDict[tuple[str, str], tuple[tuple, dict[str, Any]]]" = (
+    OrderedDict()
+)
+
+
+def _raw_layout_stat_token(index_path: Path, parquet_path: Path) -> tuple | None:
+    """Return a cheap identity for the on-disk pair, or None if unusable.
+
+    Deliberately built from file identity and size, **not** mtime: `_touch`
+    rewrites the mtime of both files on every read to drive cache-reclamation
+    LRU, so an mtime-based token would never match twice. File identity is the
+    right signal anyway -- both files are published by atomic replace, which
+    produces a new identity, while a touch leaves it untouched.
+
+    Returns None when either file is missing or the platform does not report a
+    usable identity, in which case the caller simply does not memoize.
+    """
+    try:
+        index_stat = index_path.stat()
+        parquet_stat = parquet_path.stat()
+    except OSError:
+        return None
+    if not index_stat.st_ino or not parquet_stat.st_ino:
+        return None
+    return (
+        index_stat.st_ino,
+        index_stat.st_dev,
+        index_stat.st_size,
+        parquet_stat.st_ino,
+        parquet_stat.st_dev,
+        parquet_stat.st_size,
+    )
+
+
+def clear_raw_layout_index_cache() -> None:
+    """Drop every memoized raw-layout index (tests and explicit reclamation)."""
+    with _raw_layout_io_lock:
+        _raw_layout_index_cache.clear()
+
+
+def raw_layout_index_cache_stats() -> dict[str, int]:
+    with _raw_layout_io_lock:
+        return {
+            "entries": len(_raw_layout_index_cache),
+            "limit": _RAW_LAYOUT_INDEX_CACHE_LIMIT,
+        }
 
 
 @contextmanager
@@ -1084,12 +1149,32 @@ def _load_raw_layout_index_unlocked(
         raise RawLayoutError("raw cache is missing")
     if not index_path.is_file():
         raise RawLayoutError("raw cache has no current access index")
+
+    # Callers hold `_raw_layout_io_lock`, which is what makes this memo safe.
+    cache_key = (file_hash, parser_version)
+    token = _raw_layout_stat_token(index_path, parquet_path)
+    if token is not None:
+        cached = _raw_layout_index_cache.get(cache_key)
+        if cached is not None and cached[0] == token:
+            _raw_layout_index_cache.move_to_end(cache_key)
+            return cached[1]
+
     try:
         with index_path.open("r", encoding="utf-8") as handle:
             value = json.load(handle)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RawLayoutError("raw layout index is not readable JSON") from exc
-    return _validate_raw_layout_index(value, parquet_path, parser_version)
+    index = _validate_raw_layout_index(value, parquet_path, parser_version)
+
+    # Re-stat after validation: a concurrent publish between the first stat and
+    # the read would otherwise be memoized under the pre-publish token. Only
+    # cache when the pair was stable across the whole load.
+    if token is not None and _raw_layout_stat_token(index_path, parquet_path) == token:
+        _raw_layout_index_cache[cache_key] = (token, index)
+        _raw_layout_index_cache.move_to_end(cache_key)
+        while len(_raw_layout_index_cache) > _RAW_LAYOUT_INDEX_CACHE_LIMIT:
+            _raw_layout_index_cache.popitem(last=False)
+    return index
 
 
 def raw_layout_status(file_hash: str, parser_version: str) -> str:
