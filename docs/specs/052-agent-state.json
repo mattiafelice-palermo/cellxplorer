@@ -2,18 +2,17 @@
   "version": 1,
   "spec": "052",
   "branch": "feature/time-capacity-cycle-navigation",
-  "active_child": "052.1",
+  "active_child": "052.2",
   "children": [
     "052",
-    "052.1"
+    "052.1",
+    "052.2"
   ],
-  "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R2"
-  ],
-  "resume_review": "REVIEW",
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
   "user_message_seq": 0,
   "pending_user_messages": [],
-  "updated_at": "2026-08-24T18:08:15+02:00"
+  "updated_at": "2026-08-24T18:18:30+02:00"
 }

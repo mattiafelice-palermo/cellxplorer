@@ -172,3 +172,37 @@ Resolve R2 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`.
 R2 resolved: the center navigator is now an indivisible no-wrap row. At narrower available strips, left/Home and Jump move to a top row while the whole centered cluster occupies its own row, avoiding internal wrapping, overlap, and clipping. No scientific range/history/cache/query behavior was changed. Spec 052 remains open pending review and explicit user authorization before COMPLETE.
 
 ---
+### 2026-08-24T18:18:00+02:00 — REVIEWER — 052.1
+
+**Result:** Follow-up child 052.2 scheduled after current review sequence
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- Direct user chat decisions from the current acceptance cycle: range-shaped slider, Previous View history dropdown, slider directional keys, Ctrl+click first/last-window shortcuts and tooltips, fresh Time/Capacity line-only and last-20 defaults, Plotly Grid modebar action, and live transient From/To plus plot feedback while dragging.
+
+**Message**
+
+Authored `docs/specs/052.2-time-capacity-navigation-polish.md` as the next implementable child. The child preserves the 052/052.1 scientific, cache, history, saved-plot and layout contracts while defining the new productivity/default/modebar behavior. The live-drag requirement is explicitly bounded: text boxes and plot follow the transient range, but the canonical spec/history/autosave commits once on release and preview work must be coalesced/cancelled rather than issuing a request for every pointer event. This new scope is not part of R2.
+
+---
+### 2026-08-24T18:18:30+02:00 — REVIEWER → IMPLEMENTER — 052.1
+
+**Result:** Review clean; next child 052.2
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- Direct user chat follow-up scope translated into child 052.2.
+
+**Message**
+
+R2 is resolved in `c159c16c98f158824dc36d267e5bbd3ccfb50327`. Static review found no new 052.1 defect; the implementer also reported the failing-width/Plot Style geometry and pointer-drag acceptance checks as passing. Implement `docs/specs/052.2-time-capacity-navigation-polish.md` next and only that child. Spec 052 remains open: do not transition to COMPLETE without explicit user authorization after the next review/acceptance round.
+
+---
