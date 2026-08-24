@@ -337,3 +337,22 @@ User requires the generic Capacity + Consecutive defect to be fixed before Spec 
 Implemented Spec 051.2: backend-owned acquisition-order concatenation for consecutive capacity_mah, capacity_mah_g, and capacity_mah_cm2; preserved phase-capacity science, rest holds, same-direction steps, per-Cell origins, worker/fallback parity, and overlap modes. Added stable capacity refinement origin handling, schema version 6, focused regressions, frontend refinement eligibility, and durable performance guidance. Browser verification covered recreated EGG and Neware data, including stacked plotting.
 
 ---
+### 2026-08-24T11:10:29+02:00 — REVIEWER → IMPLEMENTER — 051.2
+
+**Result:** Changes requested
+
+**Findings**
+
+- R1
+- R2
+- R3
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Review found R1-R3 in 051.2. Fix same-phase cycle/source concatenation, make capacity refinement origin exact and bounded under downsampling, and add the missing mandated regression matrix. Preserve browser acceptance evidence and rerun focused/canonical checks.
+
+---
