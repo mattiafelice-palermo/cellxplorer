@@ -103,7 +103,11 @@ export function shiftTimeCapacityCycleRange(
 ): TimeCapacityCycleRange {
   const maximum = positiveMaximum(maxAvailableCycle);
   const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
-  if (maximum === null) return current;
+  if (maximum === null) {
+    if (direction !== -1 || mode !== "cycle") return current;
+    const start = Math.max(1, current.start - 1);
+    return { start, end: start + cycleRangeWidth(current) - 1 };
+  }
 
   const amount = mode === "window" ? cycleRangeWidth(current) : 1;
   return clampCycleWindow(current.start + direction * amount, cycleRangeWidth(current), maximum);
@@ -188,6 +192,13 @@ export function timeCapacityRangeNavigationDisabled(
   cycles: readonly number[] | null | undefined,
 ): boolean {
   return (cycles ?? []).length > 0;
+}
+
+export function timeCapacityPreviousViewDisabled(
+  cycles: readonly number[] | null | undefined,
+  historyLength: number,
+): boolean {
+  return timeCapacityRangeNavigationDisabled(cycles) || historyLength <= 0;
 }
 
 export function selectedTimeCapacityCycleMax(

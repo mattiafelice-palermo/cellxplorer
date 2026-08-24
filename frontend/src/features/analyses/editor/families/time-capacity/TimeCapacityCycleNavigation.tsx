@@ -36,6 +36,7 @@ import {
   normalizeTimeCapacityRange,
   resizeTimeCapacityCycleRange,
   shiftTimeCapacityCycleRange,
+  timeCapacityPreviousViewDisabled,
   timeCapacityRangeNavigationDisabled,
   type TimeCapacityCycleRange,
 } from "./timeCapacityCycleNavigationPolicy";
@@ -298,7 +299,7 @@ export function TimeCapacityCycleNavigation({
   const hasBound = maxAvailableCycle !== null && maxAvailableCycle > 0;
   const specificCyclesActive = timeCapacityRangeNavigationDisabled(config.cycles);
   const boundDependentDisabled = !hasBound;
-  const movementDisabled = specificCyclesActive || boundDependentDisabled;
+  const boundedNavigationDisabled = specificCyclesActive || boundDependentDisabled;
   const disabledReason = specificCyclesActive
     ? "Clear Specific cycles in the Cycles settings to navigate a continuous range"
     : "Cycle extent is not available yet";
@@ -387,34 +388,35 @@ export function TimeCapacityCycleNavigation({
 
   const move = useCallback(
     (direction: -1 | 1, mode: "cycle" | "window") => {
-      if (movementDisabled || !hasBound) return;
+      if (specificCyclesActive) return;
+      if (!hasBound && (direction === 1 || mode === "window")) return;
       commitRange(shiftTimeCapacityCycleRange(boundedRange, direction, mode, maxAvailableCycle));
     },
-    [boundedRange, commitRange, hasBound, maxAvailableCycle, movementDisabled],
+    [boundedRange, commitRange, hasBound, maxAvailableCycle, specificCyclesActive],
   );
 
   const resize = useCallback(
     (value: string | null) => {
-      if (!value || movementDisabled || !hasBound) return;
+      if (!value || boundedNavigationDisabled || !hasBound) return;
       commitRange(resizeTimeCapacityCycleRange(boundedRange, Number(value), maxAvailableCycle));
     },
-    [boundedRange, commitRange, hasBound, maxAvailableCycle, movementDisabled],
+    [boundedNavigationDisabled, boundedRange, commitRange, hasBound, maxAvailableCycle],
   );
 
   const jump = useCallback(() => {
-    if (!jumpDraft.trim() || movementDisabled || !hasBound) return;
+    if (!jumpDraft.trim() || boundedNavigationDisabled || !hasBound) return;
     const target = Number(jumpDraft);
     if (!Number.isFinite(target) || target <= 0) return;
     const committed = commitRange(
       centerTimeCapacityCycleRange(boundedRange, target, maxAvailableCycle),
     );
     if (committed) setJumpDraft("");
-  }, [boundedRange, commitRange, hasBound, jumpDraft, maxAvailableCycle, movementDisabled]);
+  }, [boundedNavigationDisabled, boundedRange, commitRange, hasBound, jumpDraft, maxAvailableCycle]);
 
   const showAll = useCallback(() => {
-    if (movementDisabled || !hasBound) return;
+    if (boundedNavigationDisabled || !hasBound) return;
     commitRange(clampCycleWindow(1, maxAvailableCycle!, maxAvailableCycle!));
-  }, [commitRange, hasBound, maxAvailableCycle, movementDisabled]);
+  }, [boundedNavigationDisabled, commitRange, hasBound, maxAvailableCycle]);
 
   const restorePrevious = useCallback(() => {
     const previous = historyRef.current[historyRef.current.length - 1];
@@ -429,12 +431,12 @@ export function TimeCapacityCycleNavigation({
   }, [commitRange, hasBound, maxAvailableCycle]);
 
   const openSlider = useCallback(() => {
-    if (movementDisabled || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) return;
+    if (boundedNavigationDisabled || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) return;
     setSliderValue(
       Math.round((boundedRange.start + boundedRange.end) / 2),
     );
     setSliderOpened(true);
-  }, [boundedRange, hasBound, maxAvailableCycle, movementDisabled]);
+  }, [boundedNavigationDisabled, boundedRange, hasBound, maxAvailableCycle]);
 
   const closeSlider = useCallback((opened: boolean) => {
     setSliderOpened(opened);
@@ -443,23 +445,23 @@ export function TimeCapacityCycleNavigation({
 
   const commitSlider = useCallback(
     (value: number) => {
-      if (movementDisabled || !hasBound) return;
+      if (boundedNavigationDisabled || !hasBound) return;
       const next = centerTimeCapacityCycleRange(boundedRange, value, maxAvailableCycle);
       commitRange(next);
       setSliderValue(Math.round((next.start + next.end) / 2));
     },
-    [boundedRange, commitRange, hasBound, maxAvailableCycle, movementDisabled],
+    [boundedNavigationDisabled, boundedRange, commitRange, hasBound, maxAvailableCycle],
   );
 
   const sliderAtFullExtent = hasBound && cycleRangeWidth(boundedRange) >= maxAvailableCycle!;
-  const sliderDisabled = movementDisabled || sliderAtFullExtent;
+  const sliderDisabled = boundedNavigationDisabled || sliderAtFullExtent;
   const sliderDisabledReason = specificCyclesActive || !hasBound
     ? disabledReason
     : sliderAtFullExtent
       ? "The current window already shows all cycles"
       : "Move cycle window";
-  const previousDisabled = movementDisabled || history.length === 0;
-  const previousDisabledReason = movementDisabled
+  const previousDisabled = timeCapacityPreviousViewDisabled(config.cycles, history.length);
+  const previousDisabledReason = specificCyclesActive
     ? disabledReason
     : "No previous cycle view";
 
@@ -489,16 +491,16 @@ export function TimeCapacityCycleNavigation({
             searchable={false}
             size="xs"
             w={60}
-            disabled={specificCyclesActive || boundDependentDisabled}
+            disabled={boundedNavigationDisabled}
           />,
-          specificCyclesActive || boundDependentDisabled,
+          boundedNavigationDisabled,
           disabledReason,
         )}
 
         <Button.Group>
           <NavigationSegmentButton
             label="Previous cycle window"
-            disabled={movementDisabled}
+            disabled={boundedNavigationDisabled}
             disabledReason={disabledReason}
             onClick={() => move(-1, "window")}
           >
@@ -506,7 +508,7 @@ export function TimeCapacityCycleNavigation({
           </NavigationSegmentButton>
           <NavigationSegmentButton
             label="Previous cycle"
-            disabled={movementDisabled}
+            disabled={specificCyclesActive}
             disabledReason={disabledReason}
             onClick={() => move(-1, "cycle")}
           >
@@ -567,7 +569,7 @@ export function TimeCapacityCycleNavigation({
         <Button.Group>
           <NavigationSegmentButton
             label="Next cycle"
-            disabled={movementDisabled}
+            disabled={boundedNavigationDisabled}
             disabledReason={disabledReason}
             onClick={() => move(1, "cycle")}
           >
@@ -575,7 +577,7 @@ export function TimeCapacityCycleNavigation({
           </NavigationSegmentButton>
           <NavigationSegmentButton
             label="Next cycle window"
-            disabled={movementDisabled}
+            disabled={boundedNavigationDisabled}
             disabledReason={disabledReason}
             onClick={() => move(1, "window")}
           >
@@ -595,7 +597,7 @@ export function TimeCapacityCycleNavigation({
         </NavigationIconAction>
         <NavigationIconAction
           label="Show all cycles"
-          disabled={movementDisabled}
+          disabled={boundedNavigationDisabled}
           disabledReason={disabledReason}
           onClick={showAll}
         >
@@ -625,9 +627,9 @@ export function TimeCapacityCycleNavigation({
               hideControls
               size="xs"
               w={72}
-              disabled={movementDisabled}
+              disabled={boundedNavigationDisabled}
             />,
-            movementDisabled,
+            boundedNavigationDisabled,
             disabledReason,
           )}
         </Group>

@@ -13,6 +13,7 @@ import {
   resizeTimeCapacityCycleRange,
   selectedTimeCapacityCycleMax,
   shiftTimeCapacityCycleRange,
+  timeCapacityPreviousViewDisabled,
   timeCapacityRangeNavigationDisabled,
   type TimeCapacityCycleRange,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityCycleNavigationPolicy.ts";
@@ -47,6 +48,23 @@ test("whole-window movement is non-overlapping and boundary-clamped", () => {
     shiftTimeCapacityCycleRange({ start: 701, end: 720 }, 1, "window", 720),
     { start: 701, end: 720 },
   );
+});
+
+test("null-bound navigation keeps only safe single-cycle backward movement", () => {
+  assert.deepEqual(shiftTimeCapacityCycleRange({ start: 10, end: 20 }, -1, "cycle", null), {
+    start: 9,
+    end: 19,
+  });
+  const lowerClamped = { start: 1, end: 20 };
+  assert.deepEqual(shiftTimeCapacityCycleRange(lowerClamped, -1, "cycle", null), lowerClamped);
+  assert.deepEqual(shiftTimeCapacityCycleRange({ start: 10, end: 20 }, -1, "window", null), {
+    start: 10,
+    end: 20,
+  });
+  assert.deepEqual(shiftTimeCapacityCycleRange({ start: 10, end: 20 }, 1, "cycle", null), {
+    start: 10,
+    end: 20,
+  });
 });
 
 test("width one and all-cycle windows remain valid", () => {
@@ -172,4 +190,7 @@ test("selected maximum ignores invalid summaries and returns null without a reli
 test("explicit cycles disable range navigation without changing the retained range", () => {
   assert.equal(timeCapacityRangeNavigationDisabled([]), false);
   assert.equal(timeCapacityRangeNavigationDisabled([1, 4, 9]), true);
+  assert.equal(timeCapacityPreviousViewDisabled([], 1), false);
+  assert.equal(timeCapacityPreviousViewDisabled([], 0), true);
+  assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), true);
 });

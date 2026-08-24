@@ -52,3 +52,20 @@ Spec 052 implementation is complete. Navigation is frontend-only, uses existing 
 Resolve R1 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`: the null-bound fallback currently disables safe single-cycle backward navigation and Previous View. Preserve the spec's narrower fallback policy, add focused null-bound coverage, rerun the required focused/frontend/preflight verification, and hand back with browser/manual acceptance recorded truthfully as RUN or NOT RUN.
 
 ---
+### 2026-08-24T15:18:48+02:00 — IMPLEMENTER → REVIEWER — 052
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 focused navigation tests: PASS (13/13)
+- TypeScript: PASS
+- production build: PASS
+- canonical preflight rerun: PASS (4/4 stages; 155 backend/frontend modules)
+- browser/manual acceptance: NOT RUN
+
+**Message**
+
+R1 addressed: null-bound single-cycle backward movement now lower-clamps safely, Previous View remains available for existing history, and all upper-bound-dependent actions remain disabled. Focused null-bound tests added.
+
+---

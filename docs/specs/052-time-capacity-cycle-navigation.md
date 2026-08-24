@@ -976,13 +976,14 @@ Spec 052 is complete when all of the following are true:
 
 Implemented on `feature/time-capacity-cycle-navigation` for `ACTIVE_CHILD: 052`.
 
-- Implementation commit: the single workflow checkpoint commit for this handoff (hash assigned at commit).
+- Implementation checkpoint commits: `ff57360` (initial implementation) plus the single R1-fix checkpoint commit for this handoff (hash assigned at commit).
 - Files changed: `AnalysisEditor.tsx`, `TimeCapacityPlotCard.tsx`, new `TimeCapacityCycleNavigation.tsx`, new `timeCapacityCycleNavigationPolicy.ts`, and new `frontend/tests/timeCapacityCycleNavigation.test.ts`.
 - Anchors moved: the duplicate sidebar `From`/`To` editors were removed; the compact navigation strip is mounted immediately after `PlotHeader`; the existing `cycle_start`/`cycle_end` update and query identity remain authoritative.
-- Focused verification: `node --test frontend\tests\timeCapacityCycleNavigation.test.ts` PASS (12/12); `npx.cmd tsc --noEmit` PASS; `npm.cmd run build` PASS; `git diff --check` PASS.
-- Canonical preflight: `python scripts\preflight.py` PASS — all 4 stages, including 155 backend/frontend test files/modules, passed.
+- R1 fallback: with no reliable maximum, single-cycle backward navigation remains lower-bound clamped and Previous View remains available for existing history; upper-bound-dependent actions remain disabled.
+- Focused verification: `node --test frontend\tests\timeCapacityCycleNavigation.test.ts` PASS (13/13); `npx.cmd tsc --noEmit` PASS; `npm.cmd run build` PASS; `git diff --check` PASS.
+- Canonical preflight rerun: `python scripts\preflight.py` PASS — all 4 stages, including 155 backend/frontend test files/modules, passed.
 - Manual/browser acceptance: NOT RUN in this implementation turn.
-- Review: pending repository reviewer handoff; `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md` remains reviewer-owned.
+- Review: R1 addressed; pending repository reviewer re-review; `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md` remains reviewer-owned.
 
 When implementation begins, keep this section concise and record:
 
