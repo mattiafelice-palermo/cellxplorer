@@ -812,6 +812,21 @@ def _cell_result(
         origin_time_s=job.display_origin_time_s,
         origin_capacity=(request.display_origin_capacity_by_cell or {}).get(job.cell_id),
     )
+    display_x_cycle_origins = (
+        {
+            str(cycle): float(value)
+            for cycle, value in analysis_engine._time_capacity_display_cycle_origins(
+                raw, display_x
+            ).items()
+        }
+        if (
+            settings["view"] == "voltage_current"
+            and settings["display_mode"] == "consecutive"
+            and settings["x_axis"]
+            in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+        )
+        else {}
+    )
     if (
         request.refinement
         and request.refinement_viewport_x_min is not None
@@ -896,6 +911,16 @@ def _cell_result(
         "electrode_area_cm2": electrode_area_cm2,
         "cycle": analysis_engine._jsonsafe_int(raw["cycle"].to_numpy()),
         "display_x": analysis_engine._jsonsafe_plot(display_x, None if full_response else 6),
+        **(
+            {"display_x_cycle_origins": display_x_cycle_origins}
+            if (
+                settings["view"] == "voltage_current"
+                and settings["display_mode"] == "consecutive"
+                and settings["x_axis"]
+                in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+            )
+            else {}
+        ),
         "time_s": (
             analysis_engine._jsonsafe_plot(raw["time_s"].to_numpy(), None if full_response else 3)
             if include_time and "time_s" in raw.columns

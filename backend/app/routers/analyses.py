@@ -1650,9 +1650,10 @@ def refine_time_capacity_analysis(
     display_origin_capacity_by_cell: dict[int, float] | None = None
     if settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}:
         overview = analysis_cache.load_result("time_capacity", overview_key)
-        # The refined indexed read begins at ``req.cycle_start``. Carry the
-        # overview coordinate at that same cycle so the subset can be
-        # translated locally without replaying the preceding cycles.
+        # The refined indexed read begins at ``req.cycle_start``. Use the
+        # exact cycle-origin map emitted before overview downsampling so a
+        # retained mid-cycle envelope point (or an absent retained cycle)
+        # cannot shift the refined display coordinate.
         origin_cycle = int(req.cycle_start)
         if overview is not None:
             candidates: dict[int, float] = {}
@@ -1661,15 +1662,14 @@ def refine_time_capacity_analysis(
                     cell_id = int(trace["cell_id"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                cycles = trace.get("cycle") or []
-                display_x = trace.get("display_x") or []
-                for cycle, value in zip(cycles, display_x):
-                    if cycle != origin_cycle or not isinstance(value, (int, float)):
-                        continue
-                    if isinstance(value, bool) or not math.isfinite(float(value)):
-                        continue
+                origins = trace.get("display_x_cycle_origins")
+                if not isinstance(origins, dict):
+                    continue
+                value = origins.get(str(origin_cycle), origins.get(origin_cycle))
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if math.isfinite(float(value)):
                     candidates[cell_id] = float(value)
-                    break
             visible_traces = [
                 trace for trace in overview.get("cell_traces", []) if not trace.get("excluded")
             ]
@@ -1677,6 +1677,11 @@ def refine_time_capacity_analysis(
                 int(trace.get("cell_id")) in candidates for trace in visible_traces
             ):
                 display_origin_capacity_by_cell = candidates
+        if display_origin_capacity_by_cell is None and overview is not None:
+            raise HTTPException(
+                409,
+                "exact capacity refinement origins are unavailable; recompute the overview",
+            )
     origin_cycle_start = (
         int(settings["cycle_start"])
         if settings["cycle_start"] is not None

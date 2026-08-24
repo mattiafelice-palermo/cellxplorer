@@ -264,10 +264,10 @@ X coordinate; neutral/rest rows hold the current displayed capacity. Each Cell s
 zero, while an ordered continued Cell preserves the running coordinate across sources. The
 scientific phase-capacity arrays and per-cycle quantities remain unchanged, and the same linear
 transform is used by the indexed worker and the established fallback.
-Viewport refinements reuse the owner-resolved per-Cell overview origin when it
-is available; otherwise the bounded request includes only the minimum prefix
-needed to derive that origin, never a frontend reconstruction of scientific
-capacity.
+Viewport refinements reuse exact per-Cell cycle origins computed before
+overview downsampling. The bounded request therefore reads only the requested
+cycle window; it never replays a preceding raw prefix or reconstructs
+scientific capacity in the frontend.
 
 Since Spec 040.4, the compact response's `voltage_v` array (still that key regardless of the
 selected channel — see `docs/agent-knowledge/canonical-cycling-data.md`) holds whichever canonical

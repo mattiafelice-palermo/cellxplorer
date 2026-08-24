@@ -1691,6 +1691,39 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.assign(time_s=t + np.cumsum(offsets))
 
 
+def _time_capacity_display_cycle_origins(
+    raw: pd.DataFrame,
+    display_x: np.ndarray,
+) -> dict[int, float]:
+    """Return exact first display coordinates for each selected cycle.
+
+    The map is computed from the full exact transformed rows, before compact
+    downsampling.  Refinement can therefore carry the coordinate of a late
+    cycle without treating an arbitrary retained envelope point as its
+    origin or replaying the preceding raw rows.
+    """
+
+    if "cycle" not in raw.columns:
+        return {}
+    values = np.asarray(display_x, dtype="float64")
+    if values.ndim != 1 or len(values) != len(raw):
+        return {}
+    cycles = raw["cycle"].to_numpy()
+    origins: dict[int, float] = {}
+    for index in np.flatnonzero(np.isfinite(values)):
+        candidate = cycles[index]
+        try:
+            numeric = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(numeric) or not numeric.is_integer():
+            continue
+        cycle = int(numeric)
+        if cycle not in origins:
+            origins[cycle] = float(values[index])
+    return origins
+
+
 def _time_capacity_display_x(
     raw: pd.DataFrame,
     phases: list[str],
@@ -1726,6 +1759,7 @@ def _time_capacity_display_x(
             return time_capacity_derived.consecutive_capacity_display(
                 values,
                 phases,
+                reset_ids=(raw["cycle"].to_numpy() if "cycle" in raw.columns else None),
                 initial_offset=origin_capacity if origin_capacity is not None else 0.0,
             )
         if origin_time_s is not None:
@@ -3687,30 +3721,24 @@ def compute_time_capacity(
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
 ) -> dict:
-    # Capacity-axis refinement requests are bounded to the visible cycle
-    # window, but their display coordinate is defined from the overview's
-    # origin.  Include the smallest required prefix in the indexed/fallback
-    # request so the shared O(n) transform can derive the same coordinate;
-    # this does not alter scientific arrays or the persisted result identity.
-    if refinement and display_origin_cycle_start is not None:
-        refinement_settings = time_capacity_settings(spec.get("computation", {}))
-        if (
-            refinement_settings["view"] == "voltage_current"
-            and refinement_settings["display_mode"] == "consecutive"
-            and refinement_settings["x_axis"]
-            in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
-            and not refinement_settings["cycles"]
-            and display_origin_capacity_by_cell is None
-        ):
-            origin_cycle = int(display_origin_cycle_start)
-            current_start = refinement_settings["cycle_start"]
-            if current_start is None or int(current_start) > origin_cycle:
-                spec = deepcopy(spec)
-                computation = dict(spec.get("computation") or {})
-                time_capacity = dict(computation.get("time_capacity") or {})
-                time_capacity["cycle_start"] = origin_cycle
-                computation["time_capacity"] = time_capacity
-                spec["computation"] = computation
+    # Capacity-axis refinement is display-only and must remain bounded to the
+    # requested cycle window.  The exact per-cycle origin is supplied by the
+    # owner-resolved overview response; replaying a large raw prefix here
+    # would defeat the indexed refinement contract.
+    refinement_settings = time_capacity_settings(spec.get("computation", {}))
+    if (
+        refinement
+        and refinement_settings["view"] == "voltage_current"
+        and refinement_settings["display_mode"] == "consecutive"
+        and refinement_settings["x_axis"]
+        in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+        and display_origin_capacity_by_cell is None
+    ):
+        from . import time_capacity_workers
+
+        raise time_capacity_workers.RefinementUnavailable(
+            "exact capacity refinement origins are unavailable; recompute the overview"
+        )
 
     # Spec 050.14: ordinary compact requests may use the owner-resolved
     # indexed path and bounded persistent process pool. The service returns
@@ -4029,6 +4057,16 @@ def compute_time_capacity(
                     "source_descriptors": descriptors,
                     "source_cycle": [],
                     "source_boundary_indices": [],
+                    **(
+                        {"display_x_cycle_origins": {}}
+                        if (
+                            settings["view"] == "voltage_current"
+                            and settings["display_mode"] == "consecutive"
+                            and settings["x_axis"]
+                            in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+                        )
+                        else {}
+                    ),
                 }
             )
             if compact_ordinary_time:
@@ -4362,6 +4400,21 @@ def compute_time_capacity(
                 origin_cycle_start=display_origin_cycle_start,
                 origin_capacity=(display_origin_capacity_by_cell or {}).get(cell.id),
             )
+        display_x_cycle_origins = (
+            {
+                str(cycle): float(value)
+                for cycle, value in _time_capacity_display_cycle_origins(
+                    raw, display_x
+                ).items()
+            }
+            if (
+                settings["view"] == "voltage_current"
+                and settings["display_mode"] == "consecutive"
+                and settings["x_axis"]
+                in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+            )
+            else {}
+        )
         if (
             refinement
             and refinement_viewport_x_min is not None
@@ -4474,6 +4527,16 @@ def compute_time_capacity(
                 "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
                 "display_x": _jsonsafe_plot(display_x, None if full_precision else 6),
+                **(
+                    {"display_x_cycle_origins": display_x_cycle_origins}
+                    if (
+                        settings["view"] == "voltage_current"
+                        and settings["display_mode"] == "consecutive"
+                        and settings["x_axis"]
+                        in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+                    )
+                    else {}
+                ),
                 "time_s": (
                     _jsonsafe_plot(raw["time_s"].to_numpy(), None if full_precision else 3)
                     if include_time and "time_s" in raw.columns

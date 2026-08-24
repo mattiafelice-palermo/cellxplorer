@@ -28,6 +28,7 @@ from app.services import analysis_cache
 from app.services import analysis_engine as engine
 from app.services import cache, calc, canonical_cycling, parsing, protocol, scanner
 from app.services import time_capacity_profiling, time_capacity_workers
+from app.services import time_capacity_path
 
 
 def analysis_protocol_header() -> dict[str, str]:
@@ -1690,6 +1691,7 @@ class AnalysisEngineTests(unittest.TestCase):
             compact=True,
         )
         overview_trace = overview["cell_traces"][0]
+        self.assertIn("28", overview_trace["display_x_cycle_origins"])
         overview_cycle_29 = [
             value
             for value, cycle in zip(overview_trace["display_x"], overview_trace["cycle"])
@@ -1706,6 +1708,9 @@ class AnalysisEngineTests(unittest.TestCase):
             precision="standard",
             compact=True,
             display_origin_cycle_start=1,
+            display_origin_capacity_by_cell={
+                self.cells["c1"].id: overview_trace["display_x_cycle_origins"]["28"]
+            },
             refinement=True,
             refinement_viewport_x_min=viewport_min,
             refinement_viewport_x_max=viewport_max,
@@ -1717,6 +1722,208 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertTrue(refined_cycle_29)
         self.assertEqual(refined_cycle_29, overview_cycle_29)
         self.assertTrue(all(viewport_min <= value <= viewport_max for value in trace["display_x"]))
+
+    def test_capacity_refinement_uses_exact_origin_when_overview_is_downsampled(self):
+        overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        overview_spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": 50,
+            "x_axis": "capacity_mah",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 100,
+        }
+        overview = engine.compute_time_capacity(
+            self.db,
+            overview_spec,
+            None,
+            viewport_width=320,
+            precision="standard",
+            compact=True,
+        )
+        overview_trace = overview["cell_traces"][0]
+        self.assertLess(len(overview_trace["display_x"]), len(self.FRAMES[self.HASHES["c1"]]))
+        origins = overview_trace["display_x_cycle_origins"]
+        retained_cycles = {int(value) for value in overview_trace["cycle"]}
+        missing_cycles = [cycle for cycle in range(1, 51) if cycle not in retained_cycles]
+        self.assertTrue(missing_cycles)
+        target_cycle = missing_cycles[0]
+        self.assertIn(str(target_cycle), origins)
+
+        candidate_spec = deepcopy(overview_spec)
+        candidate_spec["computation"]["time_capacity"]["cycle_start"] = target_cycle
+        candidate_spec["computation"]["time_capacity"]["cycle_end"] = target_cycle + 2
+        diagnostics: dict = {}
+        refined = engine.compute_time_capacity(
+            self.db,
+            candidate_spec,
+            None,
+            viewport_width=320,
+            precision="standard",
+            compact=True,
+            access_diagnostics=diagnostics,
+            display_origin_cycle_start=1,
+            display_origin_capacity_by_cell={
+                self.cells["c1"].id: origins[str(target_cycle)]
+            },
+            refinement=True,
+            refinement_viewport_x_min=origins[str(target_cycle)] - 0.01,
+            refinement_viewport_x_max=origins[str(target_cycle)] + 5.0,
+        )
+        refined_trace = refined["cell_traces"][0]
+        self.assertAlmostEqual(
+            refined_trace["display_x_cycle_origins"][str(target_cycle)],
+            origins[str(target_cycle)],
+            places=6,
+        )
+        self.assertLess(
+            diagnostics["cells"][0]["raw_rows_loaded_before_filter"],
+            len(self.FRAMES[self.HASHES["c1"]]),
+        )
+
+    def test_capacity_refinement_fallback_reads_only_requested_cycles(self):
+        overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        overview_spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": 50,
+            "x_axis": "capacity_mah",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+        overview = engine.compute_time_capacity(
+            self.db, overview_spec, None, precision="standard", compact=True
+        )
+        origin = overview["cell_traces"][0]["display_x_cycle_origins"]["28"]
+        candidate_spec = deepcopy(overview_spec)
+        candidate_spec["computation"]["time_capacity"]["cycle_start"] = 28
+        candidate_spec["computation"]["time_capacity"]["cycle_end"] = 30
+        calls: list[tuple[int, ...]] = []
+        original_loader = time_capacity_path.load_indexed_time_capacity_raw
+
+        def record_loader(plan, requested_cycles, *args, **kwargs):
+            calls.append(tuple(int(value) for value in requested_cycles))
+            return original_loader(plan, requested_cycles, *args, **kwargs)
+
+        with patch.object(
+            time_capacity_workers, "try_compute_time_capacity", return_value=None
+        ), patch.object(
+            time_capacity_path,
+            "load_indexed_time_capacity_raw",
+            side_effect=record_loader,
+        ):
+            refined = engine.compute_time_capacity(
+                self.db,
+                candidate_spec,
+                None,
+                precision="full",
+                compact=False,
+                display_origin_cycle_start=1,
+                display_origin_capacity_by_cell={self.cells["c1"].id: origin},
+                refinement=True,
+                refinement_viewport_x_min=origin - 0.01,
+                refinement_viewport_x_max=origin + 5.0,
+            )
+
+        self.assertTrue(calls)
+        self.assertTrue(all(set(call) == {28, 29, 30} for call in calls))
+        self.assertTrue(refined["cell_traces"][0]["display_x"])
+
+    def test_capacity_compact_and_noncompact_coordinates_match_before_downsampling(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": 5,
+            "x_axis": "capacity_mah",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+
+        compact = engine.compute_time_capacity(
+            self.db, deepcopy(spec), None, precision="standard", compact=True
+        )
+        noncompact = engine.compute_time_capacity(
+            self.db, deepcopy(spec), None, precision="standard", compact=False
+        )
+
+        compact_x = np.asarray(compact["cell_traces"][0]["display_x"], dtype="float64")
+        noncompact_x = np.asarray(
+            noncompact["cell_traces"][0]["display_x"], dtype="float64"
+        )
+        np.testing.assert_allclose(compact_x, noncompact_x, rtol=0.0, atol=1e-6)
+
+    def test_capacity_worker_process_and_fallback_coordinates_match_serial(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {
+            "cycle_end": 5,
+            "x_axis": "capacity_mah",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+        pool = None
+        published = False
+        try:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            pool = time_capacity_workers._new_pool(2)
+            time_capacity_workers._warm_pool(pool, 2)
+            with time_capacity_workers._POOL_LOCK:
+                time_capacity_workers._POOL = pool
+                time_capacity_workers._POOL_WORKERS = 2
+                time_capacity_workers._POOL_STATE = "ready"
+            published = True
+            serial = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                deepcopy(spec),
+                None,
+                viewport_width=1200,
+                precision="standard",
+                compact=True,
+                force_serial=True,
+            )
+            process_decision = time_capacity_workers.ExecutionDecision(
+                "process",
+                2,
+                "focused_test",
+                logical_cpus=16,
+                total_memory_bytes=32 * 1024 * 1024 * 1024,
+                available_memory_bytes=16 * 1024 * 1024 * 1024,
+            )
+            with patch.object(time_capacity_workers, "choose_execution", return_value=process_decision):
+                process = time_capacity_workers.try_compute_time_capacity(
+                    self.db,
+                    deepcopy(spec),
+                    None,
+                    viewport_width=1200,
+                    precision="standard",
+                    compact=True,
+                )
+            with patch.object(
+                time_capacity_workers, "choose_execution", return_value=process_decision
+            ), patch.object(
+                time_capacity_workers,
+                "_run_process",
+                side_effect=RuntimeError("focused process failure"),
+            ):
+                fallback = time_capacity_workers.try_compute_time_capacity(
+                    self.db,
+                    deepcopy(spec),
+                    None,
+                    viewport_width=1200,
+                    precision="standard",
+                    compact=True,
+                )
+            self.assertIsNotNone(serial)
+            self.assertIsNotNone(process)
+            self.assertIsNotNone(fallback)
+            self.assertEqual(process["cell_traces"], serial["cell_traces"])
+            self.assertEqual(fallback["cell_traces"], serial["cell_traces"])
+        finally:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            if pool is not None and not published:
+                pool.shutdown(wait=True, cancel_futures=True)
 
     def test_time_capacity_refinement_process_matches_forced_serial(self):
         spec = self.spec_with(

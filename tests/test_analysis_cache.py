@@ -485,7 +485,7 @@ class AnalysisCacheTests(unittest.TestCase):
         self.assertNotEqual(specs, specs_legacy)
 
     def test_time_capacity_result_schema_version_only_invalidates_time_capacity_results(self):
-        self.assertEqual(analysis_cache.RESULT_SCHEMA_VERSIONS["time_capacity"], 6)
+        self.assertEqual(analysis_cache.RESULT_SCHEMA_VERSIONS["time_capacity"], 7)
         spec = {
             "selection": {"units": []},
             "computation": {},

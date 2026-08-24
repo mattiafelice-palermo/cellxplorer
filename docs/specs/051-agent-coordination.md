@@ -356,3 +356,20 @@ Implemented Spec 051.2: backend-owned acquisition-order concatenation for consec
 Review found R1-R3 in 051.2. Fix same-phase cycle/source concatenation, make capacity refinement origin exact and bounded under downsampling, and add the missing mandated regression matrix. Preserve browser acceptance evidence and rerun focused/canonical checks.
 
 ---
+### 2026-08-24T11:40:44+02:00 — IMPLEMENTER → REVIEWER — 051.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused review matrix: PASS (192 tests; same-phase/source boundaries, exact origins, downsampled/missing cycles, compact/noncompact, serial/process/fallback, Neware/BioLogic fixtures)
+- backend compileall: PASS
+- frontend policy tests: PASS (664); production build: PASS
+- canonical preflight: PASS (4/4 stages)
+- browser: PASS (live Analysis 36 stacked Neware plot; five series, voltage/current panels, shared capacity axis)
+
+**Message**
+
+Fixed R1-R3: consecutive capacity now keys boundaries by cycle/reset identity, refinement uses exact pre-downsample per-cycle origins with bounded requested-cycle reads, and the required fixture/execution matrix is covered. Normalized the invalid reviewer resume_review value to REVIEW in the preceding recovery commit so the workflow helper could validate this handoff.
+
+---

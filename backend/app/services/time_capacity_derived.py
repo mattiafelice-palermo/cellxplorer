@@ -150,6 +150,7 @@ def consecutive_capacity_display(
     values: np.ndarray,
     phases: list[str] | np.ndarray,
     *,
+    reset_ids: list[object] | np.ndarray | None = None,
     initial_offset: float = 0.0,
 ) -> np.ndarray:
     """Concatenate capacity progress in acquisition order.
@@ -159,8 +160,11 @@ def consecutive_capacity_display(
     separate display coordinate, so each contiguous active run is translated
     to the end of the preceding run while preserving its internal shape.
     Neutral rows hold the current coordinate.  Same-direction rows remain in
-    one run even when the source step/segment changes; only a phase change or
-    neutral gap starts a new active run.
+    one run even when the source step/segment changes; when ``reset_ids`` is
+    supplied, a change in the scientific reset identity (normally the global
+    cycle) starts a new local-origin segment without resetting the running
+    display offset.  Source boundaries that retain the same identity remain
+    one segment.
 
     ``initial_offset`` carries an owner-resolved prefix for bounded
     refinement requests whose selected rows begin after the overview origin.
@@ -171,6 +175,9 @@ def consecutive_capacity_display(
     phase_values = np.asarray(phases, dtype=object)
     if source.ndim != 1 or len(source) != len(phase_values):
         raise ValueError("capacity values and phases must be one-dimensional and aligned")
+    reset_values = None if reset_ids is None else np.asarray(reset_ids, dtype=object)
+    if reset_values is not None and (reset_values.ndim != 1 or len(reset_values) != len(source)):
+        raise ValueError("capacity reset identities must be one-dimensional and aligned")
     try:
         offset = float(initial_offset)
     except (TypeError, ValueError):
@@ -180,6 +187,7 @@ def consecutive_capacity_display(
 
     output = np.full(len(source), np.nan, dtype="float64")
     active_phase: str | None = None
+    active_reset_id: object = None
     segment_origin = np.nan
     segment_has_value = False
     segment_base = offset
@@ -193,14 +201,29 @@ def consecutive_capacity_display(
                 offset = segment_last
             output[index] = offset
             active_phase = None
+            active_reset_id = None
             segment_origin = np.nan
             segment_has_value = False
             continue
 
-        if active_phase != phase_name:
+        reset_id = None
+        if reset_values is not None:
+            candidate = reset_values[index]
+            try:
+                numeric = float(candidate)
+            except (TypeError, ValueError):
+                numeric = np.nan
+            if np.isfinite(numeric) and numeric.is_integer():
+                reset_id = int(numeric)
+            elif candidate is not None and not (isinstance(candidate, float) and np.isnan(candidate)):
+                reset_id = str(candidate)
+
+        reset_boundary = reset_values is not None and active_reset_id != reset_id
+        if active_phase != phase_name or reset_boundary:
             if active_phase is not None:
                 offset = segment_last
             active_phase = phase_name
+            active_reset_id = reset_id
             segment_origin = np.nan
             segment_has_value = False
             segment_base = offset
