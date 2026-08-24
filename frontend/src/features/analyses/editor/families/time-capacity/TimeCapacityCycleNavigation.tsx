@@ -33,7 +33,6 @@ import {
 import type {
   FocusEventHandler,
   KeyboardEventHandler,
-  MouseEventHandler,
   PointerEventHandler,
   ReactElement,
   ReactNode,
@@ -60,6 +59,8 @@ import {
   timeCapacityVirginCycleRange,
   timeCapacityCycleRangeAtPointerDelta,
   timeCapacityCycleRangeAtTrackPosition,
+  timeCapacityCycleStartAtPointerDelta,
+  timeCapacityCycleStartAtTrackPosition,
   timeCapacityCycleSliderGeometry,
   type TimeCapacityCycleRange,
 } from "./timeCapacityCycleNavigationPolicy";
@@ -176,14 +177,14 @@ function NavigationSegmentButton({
   disabled,
   disabledReason,
   children,
-  onClick,
+  onActivate,
 }: {
   label: string;
   tooltipLabel?: string;
   disabled: boolean;
   disabledReason?: string;
   children: ReactNode;
-  onClick: MouseEventHandler<HTMLButtonElement>;
+  onActivate: (ctrlKey: boolean) => void;
 }) {
   return withControlTooltip(
     tooltipLabel ?? label,
@@ -195,7 +196,17 @@ function NavigationSegmentButton({
       aria-label={label}
       title={disabled ? disabledReason : label}
       disabled={disabled}
-      onClick={onClick}
+      // Pointer activation is intentionally handled on press, not release.
+      // With sub-100 ms Time/Capacity responses, the ordinary browser
+      // pointerdown-to-click gap had become the dominant perceived latency.
+      // Physical clicks have detail > 0 and were already handled here;
+      // keyboard and assistive clicks have detail 0 and retain native access.
+      onPointerDown={(event) => {
+        if (event.isPrimary && event.button === 0) onActivate(event.ctrlKey);
+      }}
+      onClick={(event) => {
+        if (event.detail === 0) onActivate(event.ctrlKey);
+      }}
     >
       {children}
     </Button>,
@@ -208,7 +219,7 @@ interface CycleWindowSliderProps {
   range: TimeCapacityCycleRange;
   maxAvailableCycle: number;
   disabled: boolean;
-  onPreview: (range: TimeCapacityCycleRange) => void;
+  onPreview: (range: TimeCapacityCycleRange, continuousStart: number) => void;
   onCommit: (range: TimeCapacityCycleRange) => void;
   onCancel: () => void;
 }
@@ -222,33 +233,65 @@ function CycleWindowSlider({
   onCancel,
 }: CycleWindowSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLSpanElement>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
     startRange: TimeCapacityCycleRange;
+    startPosition: number;
     latestRange: TimeCapacityCycleRange;
+    latestPosition: number;
     visualWidthCycles: number;
   } | null>(null);
   const keyboardRangeRef = useRef<TimeCapacityCycleRange | null>(null);
   const sliderGeometry = timeCapacityCycleSliderGeometry(range, maxAvailableCycle);
+  const visualPositionRef = useRef(range.start);
+  if (!dragRef.current) visualPositionRef.current = range.start;
+  const updateVisualHandle = useCallback(
+    (position: number) => {
+      visualPositionRef.current = position;
+      const handle = handleRef.current;
+      if (!handle) return;
+      const width = range.end - range.start + 1;
+      const availableStarts = Math.max(0, maxAvailableCycle - width);
+      const travelPercent = Math.max(0, 100 - sliderGeometry.widthPercent);
+      const left = availableStarts <= 0
+        ? 0
+        : ((Math.max(1, Math.min(availableStarts + 1, position)) - 1) / availableStarts) * travelPercent;
+      handle.style.left = `${left}%`;
+    },
+    [maxAvailableCycle, range.end, range.start, sliderGeometry.widthPercent],
+  );
 
-  const rangeAtPointer = useCallback(
+  const previewAtPointer = useCallback(
     (
       clientX: number,
       startX: number,
       startRange: TimeCapacityCycleRange,
+      startPosition: number,
       visualWidthCycles: number,
     ) => {
       const track = trackRef.current;
-      if (!track) return startRange;
+      if (!track) return { range: startRange, position: startPosition };
       const rect = track.getBoundingClientRect();
-      return timeCapacityCycleRangeAtPointerDelta(
-        startRange,
-        clientX - startX,
-        rect.width,
-        maxAvailableCycle,
-        visualWidthCycles,
-      );
+      const deltaX = clientX - startX;
+      return {
+        range: timeCapacityCycleRangeAtPointerDelta(
+          startRange,
+          deltaX,
+          rect.width,
+          maxAvailableCycle,
+          visualWidthCycles,
+        ),
+        position: timeCapacityCycleStartAtPointerDelta(
+          startRange,
+          deltaX,
+          rect.width,
+          maxAvailableCycle,
+          visualWidthCycles,
+          startPosition,
+        ),
+      };
     },
     [maxAvailableCycle],
   );
@@ -264,55 +307,99 @@ function CycleWindowSlider({
         event.target instanceof Element &&
         event.target.closest("[data-cycle-window-segment]") !== null;
       let startRange = range;
+      let startPosition = range.start;
       if (track && !clickedSegment) {
         const rect = track.getBoundingClientRect();
+        startPosition = timeCapacityCycleStartAtTrackPosition(
+          range,
+          event.clientX - rect.left,
+          rect.width,
+          maxAvailableCycle,
+        );
         startRange = timeCapacityCycleRangeAtTrackPosition(
           range,
           event.clientX - rect.left,
           rect.width,
           maxAvailableCycle,
         );
-        onPreview(startRange);
+      }
+      updateVisualHandle(startPosition);
+      // The production plot is intentionally cycle-by-cycle. Grabbing the
+      // existing handle must not issue a redundant low-resolution request and
+      // make the first frame blink; a track click still previews immediately.
+      if (startRange.start !== range.start || startRange.end !== range.end) {
+        onPreview(startRange, startPosition);
       }
       dragRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
         startRange,
+        startPosition,
         latestRange: startRange,
+        latestPosition: startPosition,
         visualWidthCycles: sliderGeometry.visualWidthCycles,
       };
     },
-    [disabled, maxAvailableCycle, onPreview, range, sliderGeometry.visualWidthCycles],
+    [
+      disabled,
+      maxAvailableCycle,
+      onPreview,
+      range,
+      sliderGeometry.visualWidthCycles,
+      updateVisualHandle,
+    ],
   );
 
   const handlePointerMove = useCallback<PointerEventHandler<HTMLDivElement>>(
     (event) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
-      const next = rangeAtPointer(
+      const next = previewAtPointer(
         event.clientX,
         drag.startX,
         drag.startRange,
+        drag.startPosition,
         drag.visualWidthCycles,
       );
-      if (next.start === drag.latestRange.start && next.end === drag.latestRange.end) return;
-      drag.latestRange = next;
-      onPreview(next);
+      if (Math.abs(next.position - drag.latestPosition) < 1e-4) return;
+      const rangeChanged =
+        next.range.start !== drag.latestRange.start || next.range.end !== drag.latestRange.end;
+      drag.latestRange = next.range;
+      drag.latestPosition = next.position;
+      updateVisualHandle(next.position);
+      // Keep the thumb following every pointer pixel, but publish plot work
+      // only when the selected integer cycle window changes. Each published
+      // response is independently re-zeroed, so Cells cannot drift in phase.
+      if (rangeChanged) onPreview(next.range, next.position);
     },
-    [onPreview, rangeAtPointer],
+    [onPreview, previewAtPointer, updateVisualHandle],
   );
 
   const finishPointer = useCallback<PointerEventHandler<HTMLDivElement>>(
     (event) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
+      // Browsers may coalesce the final pointer movement into pointerup. Use
+      // its actual coordinate instead of committing the last pointermove
+      // sample, which can lag behind by several cycles during a fast drag.
+      const final = previewAtPointer(
+        event.clientX,
+        drag.startX,
+        drag.startRange,
+        drag.startPosition,
+        drag.visualWidthCycles,
+      );
+      const finalRange = final.range;
+      drag.latestRange = finalRange;
+      drag.latestPosition = final.position;
+      updateVisualHandle(final.position);
       dragRef.current = null;
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      onCommit(drag.latestRange);
+      onCommit(finalRange);
     },
-    [onCommit],
+    [onCommit, previewAtPointer, updateVisualHandle],
   );
 
   const handleKeyDown = useCallback<KeyboardEventHandler<HTMLDivElement>>(
@@ -332,7 +419,7 @@ function CycleWindowSlider({
         maxAvailableCycle,
       );
       keyboardRangeRef.current = next;
-      if (next.start !== range.start || next.end !== range.end) onPreview(next);
+      if (next.start !== range.start || next.end !== range.end) onPreview(next, next.start);
     },
     [maxAvailableCycle, onCancel, onPreview, range],
   );
@@ -362,6 +449,7 @@ function CycleWindowSlider({
       onPointerUp={finishPointer}
       onPointerCancel={() => {
         dragRef.current = null;
+        updateVisualHandle(range.start);
         onCancel();
       }}
       onKeyDown={handleKeyDown}
@@ -390,12 +478,19 @@ function CycleWindowSlider({
         }}
       />
       <Box
+        ref={handleRef}
         component="span"
         aria-hidden
         data-cycle-window-segment
         style={{
           position: "absolute",
-          left: `${sliderGeometry.leftPercent}%`,
+          left: `${
+            Math.max(0, maxAvailableCycle - (range.end - range.start + 1)) <= 0
+              ? 0
+              : ((visualPositionRef.current - 1) /
+                  Math.max(1, maxAvailableCycle - (range.end - range.start + 1))) *
+                Math.max(0, 100 - sliderGeometry.widthPercent)
+          }%`,
           width: `${sliderGeometry.widthPercent}%`,
           height: 10,
           borderRadius: 999,
@@ -531,6 +626,7 @@ export function TimeCapacityCycleNavigation({
   maxAvailableCycle,
   onCommitRange,
   onPreviewRangeChange,
+  onWarmRange,
   isVirgin = false,
   navigationResetKey = "",
   spec,
@@ -538,7 +634,11 @@ export function TimeCapacityCycleNavigation({
   config: Pick<TimeCapacityConfig, "cycle_start" | "cycle_end" | "cycles">;
   maxAvailableCycle: number | null;
   onCommitRange: (range: TimeCapacityCycleRange) => void;
-  onPreviewRangeChange?: (range: TimeCapacityCycleRange | null) => void;
+  onPreviewRangeChange?: (
+    range: TimeCapacityCycleRange | null,
+    continuousStart?: number | null,
+  ) => void;
+  onWarmRange?: (range: TimeCapacityCycleRange) => void;
   isVirgin?: boolean;
   navigationResetKey?: string | number;
   spec: AnalysisSpec;
@@ -551,6 +651,13 @@ export function TimeCapacityCycleNavigation({
     () => normalizeCycleRangeForNavigation(config.cycle_start, config.cycle_end, maxAvailableCycle),
     [config.cycle_end, config.cycle_start, maxAvailableCycle],
   );
+  // Plotly may still be finishing the previous frame when the user presses an
+  // arrow again. Keep an optimistic button-only range so rapid presses compose
+  // instead of reusing a stale render and silently dropping a step.
+  const buttonRangeRef = useRef(boundedRange);
+  useEffect(() => {
+    buttonRangeRef.current = boundedRange;
+  }, [boundedRange.end, boundedRange.start, navigationResetKey]);
   const currentWidth = cycleRangeWidth(storedRange);
   const hasBound = maxAvailableCycle !== null && maxAvailableCycle > 0;
   const specificCyclesActive = timeCapacityRangeNavigationDisabled(config.cycles);
@@ -623,17 +730,23 @@ export function TimeCapacityCycleNavigation({
       );
       const sameStoredRange =
         config.cycle_start === nextRange.start && config.cycle_end === nextRange.end;
-      if (sameStoredRange) return false;
-
-      setSliderPreviewRange(null);
-      onPreviewRangeChange?.(null);
+      if (sameStoredRange) {
+        setSliderPreviewRange(null);
+        onPreviewRangeChange?.(null);
+        return false;
+      }
 
       if (recordHistory) {
         const nextHistory = appendTimeCapacityCycleHistory(historyRef.current, currentForHistory);
         historyRef.current = nextHistory;
         setHistory(nextHistory);
       }
+      // Publish the committed endpoint while the parent still has access to
+      // the live pan refs. It can then retain that exact viewport while the
+      // narrow committed query replaces the wider resident buffer.
       onCommitRange(nextRange);
+      setSliderPreviewRange(null);
+      onPreviewRangeChange?.(null);
       return true;
     },
     [config.cycle_end, config.cycle_start, maxAvailableCycle, onCommitRange, onPreviewRangeChange],
@@ -690,15 +803,18 @@ export function TimeCapacityCycleNavigation({
     ) => {
       if (specificCyclesActive) return;
       const next = navigateTimeCapacityCycleRange(
-        boundedRange,
+        buttonRangeRef.current,
         direction,
         mode,
         maxAvailableCycle,
         boundary,
       );
-      if (next) commitRange(next);
+      if (next) {
+        buttonRangeRef.current = next;
+        commitRange(next);
+      }
     },
-    [boundedRange, commitRange, maxAvailableCycle, specificCyclesActive],
+    [commitRange, maxAvailableCycle, specificCyclesActive],
   );
 
   const resize = useCallback(
@@ -754,8 +870,16 @@ export function TimeCapacityCycleNavigation({
     if (boundedNavigationDisabled || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) return;
     setSliderPreviewRange(null);
     onPreviewRangeChange?.(null);
+    onWarmRange?.(boundedRange);
     setSliderOpened(true);
-  }, [boundedNavigationDisabled, boundedRange, hasBound, maxAvailableCycle, onPreviewRangeChange]);
+  }, [
+    boundedNavigationDisabled,
+    boundedRange,
+    hasBound,
+    maxAvailableCycle,
+    onPreviewRangeChange,
+    onWarmRange,
+  ]);
 
   const closeSlider = useCallback((opened: boolean) => {
     setSliderOpened(opened);
@@ -845,9 +969,11 @@ export function TimeCapacityCycleNavigation({
   );
 
   const previewSlider = useCallback(
-    (range: TimeCapacityCycleRange) => {
-      setSliderPreviewRange(range);
-      onPreviewRangeChange?.(range);
+    (range: TimeCapacityCycleRange, continuousStart: number) => {
+      setSliderPreviewRange((current) =>
+        current && current.start === range.start && current.end === range.end ? current : range,
+      );
+      onPreviewRangeChange?.(range, continuousStart);
     },
     [onPreviewRangeChange],
   );
@@ -1002,7 +1128,7 @@ export function TimeCapacityCycleNavigation({
               tooltipLabel="Previous window · Ctrl+click: first window"
               disabled={boundedNavigationDisabled}
               disabledReason={disabledReason}
-              onClick={(event) => move(-1, "window", event.ctrlKey ? "first" : undefined)}
+              onActivate={(ctrlKey) => move(-1, "window", ctrlKey ? "first" : undefined)}
             >
               <IconChevronsLeft size={14} />
             </NavigationSegmentButton>
@@ -1011,7 +1137,7 @@ export function TimeCapacityCycleNavigation({
               tooltipLabel="Previous cycle · Ctrl+click: first window"
               disabled={specificCyclesActive}
               disabledReason={disabledReason}
-              onClick={(event) => move(-1, "cycle", event.ctrlKey ? "first" : undefined)}
+              onActivate={(ctrlKey) => move(-1, "cycle", ctrlKey ? "first" : undefined)}
             >
               <IconChevronLeft size={14} />
             </NavigationSegmentButton>
@@ -1086,7 +1212,7 @@ export function TimeCapacityCycleNavigation({
               tooltipLabel="Next cycle · Ctrl+click: last window"
               disabled={boundedNavigationDisabled}
               disabledReason={disabledReason}
-              onClick={(event) => move(1, "cycle", event.ctrlKey ? "last" : undefined)}
+              onActivate={(ctrlKey) => move(1, "cycle", ctrlKey ? "last" : undefined)}
             >
               <IconChevronRight size={14} />
             </NavigationSegmentButton>
@@ -1095,7 +1221,7 @@ export function TimeCapacityCycleNavigation({
               tooltipLabel="Next window · Ctrl+click: last window"
               disabled={boundedNavigationDisabled}
               disabledReason={disabledReason}
-              onClick={(event) => move(1, "window", event.ctrlKey ? "last" : undefined)}
+              onActivate={(ctrlKey) => move(1, "window", ctrlKey ? "last" : undefined)}
             >
               <IconChevronsRight size={14} />
             </NavigationSegmentButton>

@@ -7,7 +7,10 @@ export interface TimeCapacityCycleRange {
 
 export const TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS = 40;
 export const TIME_CAPACITY_PREVIEW_IDLE_MS = 50;
-export const TIME_CAPACITY_PREVIEW_MAX_POINTS = 1000;
+// The fallback preview is now the production drag path. Keep enough points for
+// the curves to remain recognisable while still leaving headroom for the
+// latest-wins request cadence on ordinary laptops.
+export const TIME_CAPACITY_PREVIEW_MAX_POINTS = 3000;
 
 export type TimeCapacityPreviewResolution = "moving" | "full";
 
@@ -435,6 +438,37 @@ export function timeCapacityCycleRangeAtTrackPosition(
   return centerTimeCapacityCycleRange(current, targetCycle, maximum);
 }
 
+/**
+ * Continuous left-edge position for a track click.
+ *
+ * The public cycle range remains integral, but the plot viewport must retain
+ * the pointer's fractional position or a drag can only jump one whole cycle
+ * at a time.  This is deliberately independent of the minimum visual handle
+ * width: that width is only a graspability affordance.
+ */
+export function timeCapacityCycleStartAtTrackPosition(
+  range: TimeCapacityCycleRange,
+  pointerOffsetPx: number,
+  trackWidthPx: number,
+  maxAvailableCycle: number | null | undefined,
+): number {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  if (
+    maximum === null ||
+    !Number.isFinite(pointerOffsetPx) ||
+    !Number.isFinite(trackWidthPx) ||
+    trackWidthPx <= 0
+  ) {
+    return current.start;
+  }
+  const width = cycleRangeWidth(current);
+  const availableStarts = Math.max(0, maximum - width);
+  const fraction = clamp(pointerOffsetPx / trackWidthPx, 0, 1);
+  const targetCycle = 1 + fraction * Math.max(0, maximum - 1);
+  return clamp(targetCycle - (width - 1) / 2, 1, availableStarts + 1);
+}
+
 export function timeCapacityCycleRangeAtBoundary(
   range: TimeCapacityCycleRange,
   boundary: "first" | "last",
@@ -479,6 +513,41 @@ export function timeCapacityCycleRangeAtPointerDelta(
   if (segmentTravelPx <= 0) return current;
   const deltaCycles = Math.round((pointerDeltaPx / segmentTravelPx) * availableStarts);
   return clampCycleWindow(current.start + deltaCycles, width, maximum);
+}
+
+/** Continuous counterpart of `timeCapacityCycleRangeAtPointerDelta`. */
+export function timeCapacityCycleStartAtPointerDelta(
+  range: TimeCapacityCycleRange,
+  pointerDeltaPx: number,
+  trackWidthPx: number,
+  maxAvailableCycle: number | null | undefined,
+  visualWidthCycles?: number,
+  startPosition: number = range.start,
+): number {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  if (maximum === null) return current.start;
+
+  const width = cycleRangeWidth(current);
+  const availableStarts = Math.max(0, maximum - width);
+  if (
+    availableStarts === 0 ||
+    !Number.isFinite(pointerDeltaPx) ||
+    !Number.isFinite(trackWidthPx) ||
+    trackWidthPx <= 0
+  ) {
+    return current.start;
+  }
+
+  const visualWidth = Math.min(
+    maximum,
+    Math.max(width, positiveInteger(visualWidthCycles, width)),
+  );
+  const segmentTravelPx = (trackWidthPx * Math.max(0, maximum - visualWidth)) / maximum;
+  if (segmentTravelPx <= 0) return current.start;
+  const deltaCycles = (pointerDeltaPx / segmentTravelPx) * availableStarts;
+  const continuousStart = Number.isFinite(startPosition) ? startPosition : current.start;
+  return clamp(continuousStart + deltaCycles, 1, availableStarts + 1);
 }
 
 /** Resolve a normal or Ctrl+extreme navigation action without inventing a null-bound extreme. */

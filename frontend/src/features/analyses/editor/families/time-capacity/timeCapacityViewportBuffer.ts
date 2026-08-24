@@ -1,5 +1,14 @@
 /**
- * Spec 052.7 — buffered viewport panning for the Time/Capacity cycle slider.
+ * Spec 052.7 — experimental buffered viewport panning for the Time/Capacity
+ * cycle slider.
+ *
+ * STATUS: DISABLED / NOT WORKING (2026-08-25). A shared absolute X axis lets
+ * different Cells accumulate different cycle-duration offsets, so their
+ * voltage curves visibly diverge during a drag and snap back on release.
+ * Giving every Cell a private overlaid axis fixes the coordinates but creates
+ * multiple Plotly WebGL subplots and makes interaction unacceptably slow. Keep
+ * this policy as an isolated experiment; production navigation uses the
+ * independently re-zeroed per-window preview path instead.
  *
  * The per-window model fetches exactly the cycles the slider selects, and the
  * backend re-zeroes every response at its own first point. Consecutive windows
@@ -32,7 +41,7 @@ export const TIME_CAPACITY_BUFFER_FACTOR = 2;
  * and nothing is ever panned through. The buffer therefore also spans at
  * least this fraction of the whole range.
  */
-export const TIME_CAPACITY_BUFFER_MIN_EXTENT_FRACTION = 0.1;
+export const TIME_CAPACITY_BUFFER_MIN_EXTENT_FRACTION = 0.15;
 
 /**
  * Requests for a buffer must raise `viewport_width` as well as the point
@@ -41,7 +50,7 @@ export const TIME_CAPACITY_BUFFER_MIN_EXTENT_FRACTION = 0.1;
  * default width silently returns the same number spread over a wider range —
  * which would make the visible window coarser, not equal.
  */
-export const TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH = 6000;
+export const TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH = 10_000;
 
 /**
  * Refill once the viewport comes within this fraction of a buffer half-width
@@ -94,19 +103,21 @@ const MEDIUM_PAN_EXIT_EXTENTS_PER_SECOND = 0.05;
 const FAST_PAN_EXIT_EXTENTS_PER_SECOND = 0.18;
 const PAN_VELOCITY_EMA_ALPHA = 0.35;
 
-// Five-Cell/131-cycle production-route measurement: 8k retained 2.7x the data
-// of the rejected 3k tier while still cutting payload by ~42% versus the 18k
-// display-budget ceiling. Keep visual recognizability ahead of marginal latency.
+// Five-Cell/131-cycle production-route measurement put 8k at ~258 ms and 12k
+// at ~309 ms: removing one third of the points bought only ~51 ms while making
+// the curves visibly hard to recognize. Keep the fast tier close to full
+// quality; stale Plotly frames are now dropped at the relayout boundary, which
+// is the higher-value way to protect interaction latency.
 const PAN_DENSITY: Record<TimeCapacityPanSpeedTier, number> = {
   slow: 1,
-  medium: 0.75,
-  fast: 0.45,
+  medium: 0.95,
+  fast: 0.9,
 };
 
 const PAN_POINT_CAP: Record<TimeCapacityPanSpeedTier, number> = {
-  slow: 18_000,
-  medium: 12_000,
-  fast: 8_000,
+  slow: 20_000,
+  medium: 19_000,
+  fast: 18_000,
 };
 
 function rangeCenter(range: TimeCapacityCycleRange): number {
@@ -352,30 +363,35 @@ export interface TimeCapacityCycleXSpan {
 
 export type TimeCapacityCycleXIndex = Map<number, TimeCapacityCycleXSpan>;
 
+function addTraceToCycleXIndex(
+  index: TimeCapacityCycleXIndex,
+  trace: TimeCapacityBufferTrace,
+): void {
+  const cycles = trace.cycle;
+  const xs = trace.display_x;
+  if (!cycles || !xs) return;
+  const length = Math.min(cycles.length, xs.length);
+  for (let point = 0; point < length; point += 1) {
+    const cycle = cycles[point];
+    const x = xs[point];
+    if (cycle === null || x === null || !Number.isFinite(cycle) || !Number.isFinite(x)) continue;
+    const key = Math.round(cycle);
+    const current = index.get(key);
+    if (!current) index.set(key, { min: x, max: x });
+    else {
+      if (x < current.min) current.min = x;
+      if (x > current.max) current.max = x;
+    }
+  }
+}
+
 /** Build once per resident buffer; live pointer frames then inspect only visible cycles. */
 export function buildTimeCapacityCycleXIndex(
   traces: readonly TimeCapacityBufferTrace[] | undefined,
 ): TimeCapacityCycleXIndex {
   const index: TimeCapacityCycleXIndex = new Map();
   if (!traces) return index;
-  for (const trace of traces) {
-    const cycles = trace.cycle;
-    const xs = trace.display_x;
-    if (!cycles || !xs) continue;
-    const length = Math.min(cycles.length, xs.length);
-    for (let point = 0; point < length; point += 1) {
-      const cycle = cycles[point];
-      const x = xs[point];
-      if (cycle === null || x === null || !Number.isFinite(cycle) || !Number.isFinite(x)) continue;
-      const key = Math.round(cycle);
-      const current = index.get(key);
-      if (!current) index.set(key, { min: x, max: x });
-      else {
-        if (x < current.min) current.min = x;
-        if (x > current.max) current.max = x;
-      }
-    }
-  }
+  for (const trace of traces) addTraceToCycleXIndex(index, trace);
   return index;
 }
 
@@ -384,9 +400,15 @@ export function absoluteXRangeForCycleIndex(
   start: number,
   end: number,
 ): [number, number] | null {
+  const normalizedStart = Math.round(start);
+  const normalizedEnd = Math.round(end);
+  // A pointer can outrun the resident buffer by a cycle or two. Returning the
+  // overlap would compress the x axis to a partial window and briefly show a
+  // different cycle count. Hold the last complete frame instead.
+  if (!index.has(normalizedStart) || !index.has(normalizedEnd)) return null;
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
-  for (let cycle = Math.round(start); cycle <= Math.round(end); cycle += 1) {
+  for (let cycle = normalizedStart; cycle <= normalizedEnd; cycle += 1) {
     const span = index.get(cycle);
     if (!span) continue;
     if (span.min < min) min = span.min;
@@ -398,6 +420,33 @@ export function absoluteXRangeForCycleIndex(
     return [min - pad, max + pad];
   }
   return [min, max];
+}
+
+/**
+ * Interpolate between adjacent integral cycle windows.
+ *
+ * The navigation inputs remain cycle based, while the plot follows every
+ * pointer pixel.  Keeping the interpolation in the resident coordinate
+ * system turns the slider into a genuine viewport pan instead of a slideshow
+ * of whole-cycle redraws.
+ */
+export function interpolatedXRangeForCycleIndex(
+  index: TimeCapacityCycleXIndex,
+  continuousStart: number,
+  windowWidth: number,
+): [number, number] | null {
+  if (!Number.isFinite(continuousStart)) return null;
+  const width = Math.max(1, Math.round(windowWidth));
+  const lowerStart = Math.max(1, Math.floor(continuousStart));
+  const fraction = Math.max(0, Math.min(1, continuousStart - lowerStart));
+  const lower = absoluteXRangeForCycleIndex(index, lowerStart, lowerStart + width - 1);
+  if (!lower || fraction <= 1e-6) return lower;
+  const upper = absoluteXRangeForCycleIndex(index, lowerStart + 1, lowerStart + width);
+  if (!upper) return lower;
+  return [
+    lower[0] + (upper[0] - lower[0]) * fraction,
+    lower[1] + (upper[1] - lower[1]) * fraction,
+  ];
 }
 
 function clampCycle(value: number, maxCycle: number): number {
@@ -509,25 +558,44 @@ export function absoluteXRangeForCycles(
   return absoluteXRangeForCycleIndex(buildTimeCapacityCycleXIndex(traces), start, end);
 }
 
-/** Is buffered panning switched on? Falls back to the per-window model. */
+/**
+ * Buffered panning is intentionally unavailable until one shared WebGL scene
+ * can preserve independent per-Cell cycle origins. Do not add a local-storage
+ * escape hatch: it previously made the known-bad path easy to re-enable and
+ * reproduce in normal use.
+ */
 export function timeCapacityPanningEnabled(): boolean {
-  try {
-    const override = globalThis.localStorage?.getItem("cellxplorer.timeCapacityPanning");
-    if (override === "on") return true;
-    if (override === "off") return false;
-  } catch {
-    // Storage can be unavailable (private mode, embedded webview); fall
-    // through to the compiled default rather than breaking the plot.
-  }
   return TIME_CAPACITY_PANNING_DEFAULT;
 }
 
-export const TIME_CAPACITY_PANNING_DEFAULT = true;
+export const TIME_CAPACITY_PANNING_DEFAULT = false;
 
 export interface TimeCapacityPlottedTrace {
   x?: unknown;
   y?: unknown;
   yaxis?: string;
+}
+
+function traceHasYOutsideRange(
+  trace: TimeCapacityPlottedTrace,
+  xRange: readonly [number, number],
+  yRange: readonly [number, number],
+): boolean {
+  const [xLo, xHi] = xRange;
+  const [yLo, yHi] = yRange;
+  const xs = trace.x;
+  const ys = trace.y;
+  if (!Array.isArray(xs) || !Array.isArray(ys)) return false;
+  const length = Math.min(xs.length, ys.length);
+  for (let index = 0; index < length; index += 1) {
+    const x = xs[index];
+    const y = ys[index];
+    if (typeof x !== "number" || !Number.isFinite(x)) continue;
+    if (x < xLo || x > xHi) continue;
+    if (typeof y !== "number" || !Number.isFinite(y)) continue;
+    if (y < yLo || y > yHi) return true;
+  }
+  return false;
 }
 
 /**
@@ -552,18 +620,7 @@ export function yDataOutsideRange(
 
   for (const trace of traces) {
     if (trace.yaxis && trace.yaxis !== "y") continue;
-    const xs = trace.x;
-    const ys = trace.y;
-    if (!Array.isArray(xs) || !Array.isArray(ys)) continue;
-    const length = Math.min(xs.length, ys.length);
-    for (let index = 0; index < length; index += 1) {
-      const x = xs[index];
-      const y = ys[index];
-      if (typeof x !== "number" || !Number.isFinite(x)) continue;
-      if (x < xLo || x > xHi) continue;
-      if (typeof y !== "number" || !Number.isFinite(y)) continue;
-      if (y < yLo || y > yHi) return true;
-    }
+    if (traceHasYOutsideRange(trace, [xLo, xHi], [yLo, yHi])) return true;
   }
   return false;
 }

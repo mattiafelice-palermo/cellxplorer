@@ -1331,7 +1331,7 @@ def _build_jobs(
             )
         )
     visible_count = sum(1 for job in jobs if not job.descriptor.excluded)
-    width = max(320, min(6000, int(viewport_width or 1200)))
+    width = max(320, min(10000, int(viewport_width or 1200)))
     configured = max(100, settings["max_points_per_cell"])
     display_max = (
         configured

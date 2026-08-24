@@ -26,6 +26,8 @@ class TimeCapacityWorkerTests(unittest.TestCase):
         self.assertEqual(analysis_engine.time_capacity_display_budget(4000, 1200, 6), 2400)
         self.assertEqual(analysis_engine.time_capacity_display_budget(4000, 2400, 6), 4000)
         self.assertEqual(analysis_engine.time_capacity_display_budget(4000, 320, 20), 800)
+        self.assertEqual(analysis_engine.time_capacity_display_budget(100_000, 10_000, 5), 24_000)
+        self.assertEqual(analysis_engine.time_capacity_display_budget(100_000, 50_000, 5), 24_000)
 
     def test_workload_gate_is_deterministic_and_bounded(self):
         rich = workers.HostResources(

@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import PlotlyLib from "plotly.js-dist-min";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -135,8 +135,8 @@ import {
   type TimeCapacityPreviewSchedulerState,
 } from "./timeCapacityCycleNavigationPolicy";
 import {
-  absoluteXRangeForCycleIndex,
   buildTimeCapacityCycleXIndex,
+  interpolatedXRangeForCycleIndex,
   nextTimeCapacityPanMotion,
   timeCapacityBufferCancel,
   timeCapacityBufferOnFailed,
@@ -203,6 +203,38 @@ function timeCapacitySpecWithPreview(
       },
     },
   };
+}
+
+function timeCapacityDataSignature(
+  requestSpec: AnalysisSpec,
+  viewportWidth: number,
+  coordinateOriginCycle: number | null = null,
+): string {
+  const requestCfg = timeCapacityConfig(requestSpec);
+  return JSON.stringify({
+    selection: requestSpec.selection,
+    protocol_segments: requestSpec.protocol_segments ?? [],
+    protocol_filter: requestSpec.computation.protocol_filter,
+    hidden_protocol_segment_ids: requestSpec.presentation.hidden_protocol_segment_ids ?? [],
+    cycles: requestCfg.cycles,
+    start: requestCfg.cycle_start,
+    end: requestCfg.cycle_end,
+    points: requestCfg.max_points_per_cell,
+    xAxis: requestCfg.x_axis,
+    timeUnit: requestCfg.time_unit,
+    displayMode: requestCfg.display_mode,
+    electrodeArea: requestCfg.electrode_area_cm2,
+    voltageChannel: requestCfg.voltage_channel,
+    viewportWidth,
+    coordinateOriginCycle,
+    derivative: requestCfg.view === "voltage_current" ? null : {
+      view: requestCfg.view,
+      phase: requestCfg.derivative_phase,
+      specific: requestCfg.derivative_specific,
+      absoluteDischarge: requestCfg.derivative_absolute_discharge,
+      smoothing: requestCfg.smoothing_window,
+    },
+  });
 }
 
 const CURRENT_AXIS_OPTIONS: { value: TimeCapacityCurrentQuantity; label: string }[] = [
@@ -1279,7 +1311,9 @@ function TimeCapacityPlotCardView({
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
   const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
+  const queryClient = useQueryClient();
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
+  const [panWarmRange, setPanWarmRange] = useState<TimeCapacityCycleRange | null>(null);
   const [previewRequest, setPreviewRequest] = useState<TimeCapacityPreviewRequest | null>(null);
   const [panRequest, setPanRequest] = useState<TimeCapacityBufferRequest | null>(null);
   const panSchedulerRef = useRef<TimeCapacityBufferSchedulerState>(
@@ -1288,7 +1322,12 @@ function TimeCapacityPlotCardView({
   const panMotionRef = useRef<TimeCapacityPanMotion | null>(null);
   const panActiveRef = useRef(false);
   const panLiveWindowRef = useRef<TimeCapacityCycleRange | null>(null);
-  const panVisualUpdateRef = useRef<(range: TimeCapacityCycleRange | null) => void>(() => {});
+  const panLivePositionRef = useRef<number | null>(null);
+  const panSettlingWindowRef = useRef<TimeCapacityCycleRange | null>(null);
+  const panVisualUpdateRef = useRef<(
+    range: TimeCapacityCycleRange | null,
+    continuousStart?: number | null,
+  ) => void>(() => {});
   const panIdleTimerRef = useRef<number | null>(null);
   const previewSchedulerRef = useRef<TimeCapacityPreviewSchedulerState>(
     timeCapacityPreviewSchedulerInitialState(),
@@ -1332,6 +1371,7 @@ function TimeCapacityPlotCardView({
     clearPanIdleTimer();
     panActiveRef.current = false;
     panLiveWindowRef.current = null;
+    panLivePositionRef.current = null;
     panMotionRef.current = null;
     panVisualUpdateRef.current(null);
     panSchedulerRef.current = timeCapacityBufferCancel(panSchedulerRef.current);
@@ -1345,6 +1385,81 @@ function TimeCapacityPlotCardView({
     },
     [cfg.max_points_per_cell, maxAvailableCycle],
   );
+  const panWarmPlan = useMemo(
+    () => (panWarmRange ? panPlanFor(panWarmRange, null) : null),
+    [panPlanFor, panWarmRange],
+  );
+  const panWarmSpec = useMemo(
+    () =>
+      panWarmPlan
+        ? timeCapacitySpecWithPreview(
+            spec,
+            panWarmPlan.buffer,
+            "moving",
+            panWarmPlan.maxPoints,
+          )
+        : null,
+    [panWarmPlan, spec],
+  );
+  const panWarmQuery = useMemo(() => {
+    if (!panWarmSpec || !panWarmPlan) return null;
+    const warmCfg = timeCapacityConfig(panWarmSpec);
+    return {
+      queryKey: [
+        "time-capacity",
+        analysisId,
+        timeCapacityCompatibilitySignature(
+          panWarmSpec,
+          warmCfg,
+          TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
+        ),
+        timeCapacityDataSignature(
+          panWarmSpec,
+          TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
+          panWarmPlan.window.start,
+        ),
+      ] as const,
+      spec: panWarmSpec,
+      origin: panWarmPlan.window.start,
+    };
+  }, [analysisId, panWarmPlan, panWarmSpec]);
+  useEffect(() => {
+    if (
+      !panWarmQuery ||
+      !panningEnabled ||
+      active === false ||
+      cfg.cycles.length > 0 ||
+      cfg.display_mode !== "consecutive" ||
+      spec.selection.entries.length === 0
+    ) return;
+    // Hover/focus opens the slider before pointer-down. Populate the exact
+    // React Query key the first pan request will observe, so grabbing the
+    // handle does not spend its first frames waiting for a buffer.
+    void queryClient.prefetchQuery({
+      queryKey: panWarmQuery.queryKey,
+      queryFn: ({ signal }) =>
+        post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+          spec: panWarmQuery.spec,
+          viewport_width: TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
+          precision: "standard",
+          compact: true,
+          persist: false,
+          background: true,
+          absolute_time_origin_cycle: panWarmQuery.origin,
+        }, { signal }),
+      staleTime: 30 * 60_000,
+      gcTime: 30 * 60_000,
+    });
+  }, [
+    active,
+    analysisId,
+    cfg.cycles.length,
+    cfg.display_mode,
+    panWarmQuery,
+    panningEnabled,
+    queryClient,
+    spec.selection.entries.length,
+  ]);
   const schedulePanIdlePromotion = useCallback(
     (range: TimeCapacityCycleRange) => {
       clearPanIdleTimer();
@@ -1407,6 +1522,8 @@ function TimeCapacityPlotCardView({
   }, [clearPreviewIdleTimer, clearPreviewMovingTimer]);
   useEffect(() => {
     setCyclePreviewRange(null);
+    setPanWarmRange(null);
+    panSettlingWindowRef.current = null;
     cancelPreviewScheduler();
     cancelPanScheduler();
   }, [cancelPanScheduler, cancelPreviewScheduler, navigationResetKey]);
@@ -1417,7 +1534,10 @@ function TimeCapacityPlotCardView({
     },
     [clearPanIdleTimer, clearPreviewTimers],
   );
-  const handleCyclePreviewRange = useCallback((range: TimeCapacityCycleRange | null) => {
+  const handleCyclePreviewRange = useCallback((
+    range: TimeCapacityCycleRange | null,
+    continuousStart?: number | null,
+  ) => {
     if (range === null) {
       setCyclePreviewRange(null);
       cancelPreviewScheduler();
@@ -1426,9 +1546,16 @@ function TimeCapacityPlotCardView({
     }
     if (panningEnabled && maxAvailableCycle) {
       cancelPreviewScheduler();
+      panSettlingWindowRef.current = null;
       panLiveWindowRef.current = { ...range };
-      panVisualUpdateRef.current(range);
-      if (!panActiveRef.current) {
+      const livePosition = Number.isFinite(continuousStart)
+        ? Number(continuousStart)
+        : range.start;
+      panLivePositionRef.current = livePosition;
+      panVisualUpdateRef.current(range, livePosition);
+      const startingSession = !panActiveRef.current;
+      const sampledAtMs = window.performance.now();
+      if (startingSession) {
         panActiveRef.current = true;
         // This state is a session sentinel only. Subsequent pointer positions
         // stay in refs so the full plot card does not rerender every frame.
@@ -1436,8 +1563,11 @@ function TimeCapacityPlotCardView({
       }
       const motion = nextTimeCapacityPanMotion(
         panMotionRef.current,
-        range,
-        window.performance.now(),
+        {
+          start: livePosition,
+          end: livePosition + (range.end - range.start),
+        },
+        sampledAtMs,
         maxAvailableCycle,
       );
       panMotionRef.current = motion;
@@ -1479,10 +1609,11 @@ function TimeCapacityPlotCardView({
   // Buffered panning has its own request boundary. The live pointer stays in a
   // ref; `panRequest` changes only when the latest-wins scheduler admits a new
   // directional buffer, so fast movement cannot cancel every refill.
-  const panActive = panningEnabled && cyclePreviewRange !== null && panRequest !== null;
+  const panActive = panningEnabled && cyclePreviewRange !== null;
+  const panBufferRequestActive = panActive && panRequest !== null;
 
   const requestSpec = useMemo(() => {
-    if (panActive && panRequest) {
+    if (panBufferRequestActive && panRequest) {
       return timeCapacitySpecWithPreview(
         spec,
         panRequest.buffer,
@@ -1492,12 +1623,12 @@ function TimeCapacityPlotCardView({
     }
     if (!previewRequest) return spec;
     return timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution);
-  }, [panActive, panRequest, previewRequest, spec]);
+  }, [panBufferRequestActive, panRequest, previewRequest, spec]);
   const previewQueryRange = previewRequest?.range ?? null;
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
   const previewResolution = previewRequest?.resolution ?? null;
-  const transientPreviewRequest = panActive || previewResolution === "moving";
+  const transientPreviewRequest = panBufferRequestActive || previewResolution === "moving";
   const requestCfg = timeCapacityConfig(requestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
@@ -1510,7 +1641,7 @@ function TimeCapacityPlotCardView({
   refinementLifecycle.setStacked(cfg.stacked);
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
-  const viewportWidth = panActive ? TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH : 1200;
+  const viewportWidth = panBufferRequestActive ? TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH : 1200;
   // Keep this separate from dataSignature. Range and point-density changes
   // may retain the old compact result while the replacement is fetched, but
   // a semantic/display change must never relabel that result temporarily.
@@ -1528,50 +1659,12 @@ function TimeCapacityPlotCardView({
   // Purely client-side renderings (stacked, current axes) stay out.
   const dataSignature = useMemo(
     () =>
-      JSON.stringify({
-        selection: requestSpec.selection,
-        protocol_segments: requestSpec.protocol_segments ?? [],
-        protocol_filter: requestSpec.computation.protocol_filter,
-        hidden_protocol_segment_ids: requestSpec.presentation.hidden_protocol_segment_ids ?? [],
-        cycles: requestCfg.cycles,
-        start: requestCfg.cycle_start,
-        end: requestCfg.cycle_end,
-        points: requestCfg.max_points_per_cell,
-        xAxis: requestCfg.x_axis,
-        timeUnit: requestCfg.time_unit,
-        displayMode: requestCfg.display_mode,
-        electrodeArea: requestCfg.electrode_area_cm2,
-        voltageChannel: requestCfg.voltage_channel,
+      timeCapacityDataSignature(
+        requestSpec,
         viewportWidth,
-        derivative: requestCfg.view === "voltage_current" ? null : {
-          view: requestCfg.view,
-          phase: requestCfg.derivative_phase,
-          specific: requestCfg.derivative_specific,
-          absoluteDischarge: requestCfg.derivative_absolute_discharge,
-          smoothing: requestCfg.smoothing_window,
-        },
-      }),
-    [
-      requestSpec.selection,
-      requestSpec.protocol_segments,
-      requestSpec.computation.protocol_filter,
-      requestSpec.presentation.hidden_protocol_segment_ids,
-      requestCfg.cycles,
-      requestCfg.cycle_start,
-      requestCfg.cycle_end,
-      requestCfg.max_points_per_cell,
-      requestCfg.x_axis,
-      requestCfg.time_unit,
-      requestCfg.display_mode,
-      requestCfg.electrode_area_cm2,
-      requestCfg.voltage_channel,
-      requestCfg.view,
-      requestCfg.derivative_phase,
-      requestCfg.derivative_specific,
-      requestCfg.derivative_absolute_discharge,
-      requestCfg.smoothing_window,
-      viewportWidth,
-    ]
+        panBufferRequestActive && panRequest ? panRequest.window.start : null,
+      ),
+    [panBufferRequestActive, panRequest, requestSpec, viewportWidth],
   );
   const dataSignatureRef = useRef(dataSignature);
   // Keep the latest request identity synchronous with render. A passive
@@ -1642,9 +1735,13 @@ function TimeCapacityPlotCardView({
           // committed ranges persist exactly as before. Reads are unaffected:
           // a moving preview that happens to hit an entry still serves it.
           ...(transientPreviewRequest ? { persist: false } : {}),
-          // Spec 052.7: anchor the buffer on one timeline so consecutive
-          // windows share an x axis and can be panned between.
-          ...(panActive ? { absolute_time_origin_cycle: 1 } : {}),
+          // Anchor each resident chunk at the viewport that requested it. A
+          // cycle-1 origin accumulates hundreds of cycles of per-Cell duration
+          // drift; a local viewport origin matches the exact comparison at
+          // admission and limits drift to the buffer's refill distance.
+          ...(panBufferRequestActive && panRequest
+            ? { absolute_time_origin_cycle: panRequest.window.start }
+            : {}),
           ...(profileRequest
             ? {
                 profile: true,
@@ -1721,10 +1818,11 @@ function TimeCapacityPlotCardView({
       return;
     }
     if (timeResult.isPlaceholderData || !timeResult.data) return;
-    panSchedulerRef.current = timeCapacityBufferOnResponseReady(
+    const ready = timeCapacityBufferOnResponseReady(
       panSchedulerRef.current,
       panRequest,
     );
+    panSchedulerRef.current = ready;
   }, [
     applyPanDecision,
     panActive,
@@ -1780,12 +1878,14 @@ function TimeCapacityPlotCardView({
     : undefined;
   const lastValidPanResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   if (queryResult) lastValidPanResultRef.current = queryResult;
-  const currentResult = timeCapacityRetainedPanResult(
+  const retainPanResult = panActive || panSettlingWindowRef.current !== null;
+  const retainedQueryResult = timeCapacityRetainedPanResult(
     queryResult,
     lastValidPanResultRef.current,
-    panActive,
+    retainPanResult,
   );
-  const resultIsRetainedPanFallback = !queryResult && Boolean(currentResult);
+  const currentResult = retainedQueryResult;
+  const resultIsRetainedPanFallback = !queryResult && Boolean(retainedQueryResult);
   const resolvedPlotSpecRef = useRef<AnalysisSpec>(spec);
   const renderSpec =
     timeResult.isPlaceholderData || resultIsRetainedPanFallback
@@ -1939,13 +2039,15 @@ function TimeCapacityPlotCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentResult, renderSpec, selectedVoltageUnavailable, viewSignature]
   );
-  const activeRefinedResult = timeCapacityRefinementDisplayIsCurrent(
-    cfg.stacked,
-    refinedResult,
-    currentResult,
-    refinementLifecycle.displayed?.compatibilitySignature ?? null,
-    compatibilitySignature,
-  )
+  const activeRefinedResult =
+    !panActive &&
+    timeCapacityRefinementDisplayIsCurrent(
+      cfg.stacked,
+      refinedResult,
+      currentResult,
+      refinementLifecycle.displayed?.compatibilitySignature ?? null,
+      compatibilitySignature,
+    )
     ? refinedResult
     : null;
   const plotResult = activeRefinedResult ?? currentResult;
@@ -1956,8 +2058,48 @@ function TimeCapacityPlotCardView({
         : [],
     [plotResult, renderSpec, selectedVoltageUnavailable, viewSignature]
   );
+  // One shared WebGL subplot is the performance boundary. Each resident
+  // buffer is re-zeroed near its own start, which avoids the large per-Cell
+  // phase drift of a cycle-1 origin without creating one expensive subplot per
+  // Cell. Pointer pixels interpolate between adjacent cycle windows below.
+  const panCycleXIndex = useMemo(
+    () => buildTimeCapacityCycleXIndex(plotResult?.cell_traces),
+    [plotResult],
+  );
+  const panLiveXRef = useRef<[number, number] | null>(null);
+  const livePanWindow = panLiveWindowRef.current;
+  const livePanPosition = panLivePositionRef.current ?? livePanWindow?.start ?? null;
+  const deliveredPanRange =
+    panActive && livePanWindow
+      ? interpolatedXRangeForCycleIndex(
+          panCycleXIndex,
+          livePanPosition ?? livePanWindow.start,
+          livePanWindow.end - livePanWindow.start + 1,
+        )
+      : null;
+  if (deliveredPanRange) panLiveXRef.current = deliveredPanRange;
+  const settlingWindow = panSettlingWindowRef.current;
+  const committedRangeHasSettled = Boolean(
+    !panActive &&
+      settlingWindow &&
+      cfg.cycle_start === settlingWindow.start &&
+      cfg.cycle_end === settlingWindow.end &&
+      !timeResult.isFetching &&
+      !timeResult.isPlaceholderData &&
+      queryResult,
+  );
+  if (committedRangeHasSettled) {
+    panSettlingWindowRef.current = null;
+    panLiveXRef.current = null;
+  } else if (!panActive && !settlingWindow) {
+    panLiveXRef.current = null;
+  }
+  const panPresentationActive = Boolean(
+    (panActive || panSettlingWindowRef.current) &&
+      panLiveXRef.current,
+  );
   const transitionTraces = useMemo(() => {
-    if (cfg.stacked || !refinementTransition) return null;
+    if (panPresentationActive || cfg.stacked || !refinementTransition) return null;
     // Keep the old line at its exact visual weight. The new LoD is revealed
     // over it; this avoids alpha-compositing two copies of the same line,
     // which otherwise produces a brief lightness/thickness blink.
@@ -1971,7 +2113,7 @@ function TimeCapacityPlotCardView({
         transitionTraceOpacity(trace, newOpacity, false),
       ),
     ];
-  }, [cfg.stacked, refinementTransition, refinementTransitionProgress]);
+  }, [cfg.stacked, panPresentationActive, refinementTransition, refinementTransitionProgress]);
   const plotExportReady = timeCapacityPlotExportReady(
     panActive || timeResult.isPlaceholderData || resultIsRetainedPanFallback,
     Boolean(currentResult),
@@ -1988,20 +2130,6 @@ function TimeCapacityPlotCardView({
   );
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
-  // Build the point-heavy cycle index once per delivered buffer. Pointer
-  // frames then inspect only the handful of cycles in the visible window.
-  const panCycleXIndex = useMemo(
-    () => buildTimeCapacityCycleXIndex(plotResult?.cell_traces),
-    [plotResult],
-  );
-  const panLiveXRef = useRef<[number, number] | null>(null);
-  const livePanWindow = panLiveWindowRef.current;
-  const deliveredPanX =
-    panActive && livePanWindow
-      ? absoluteXRangeForCycleIndex(panCycleXIndex, livePanWindow.start, livePanWindow.end)
-      : null;
-  if (deliveredPanX) panLiveXRef.current = deliveredPanX;
-  if (!panActive) panLiveXRef.current = null;
 
   // Spec 052.8: y is frozen for the duration of one drag. Letting Plotly
   // reautoscale y as each buffer landed made the whole plot rescale and blink
@@ -2032,77 +2160,122 @@ function TimeCapacityPlotCardView({
   const layout = useMemo(() => {
     const base = zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces));
     const retainedY = panFrozenYRef.current;
-    if (!panActive) {
-      if (!retainedY) return base;
-      return {
-        ...base,
-        yaxis: { ...(base.yaxis ?? {}), range: [...retainedY], autorange: false },
-      } as typeof base;
-    }
-    // Read through refs so a buffer landing mid-drag rebuilds the layout at the
-    // axis position the pointer is actually at, instead of snapping back.
-    const liveX = panLiveXRef.current;
-    const frozenY = panFrozenYRef.current;
     const next = { ...base } as Record<string, unknown>;
-    if (liveX) next.xaxis = { ...(base.xaxis ?? {}), range: [...liveX], autorange: false };
-    if (frozenY) next.yaxis = { ...(base.yaxis ?? {}), range: [...frozenY], autorange: false };
+    const liveX = panPresentationActive ? panLiveXRef.current : null;
+    if (liveX) {
+      next.xaxis = { ...(base.xaxis ?? {}), range: [...liveX], autorange: false };
+      if (cfg.stacked) {
+        next.xaxis2 = { ...(base.xaxis2 ?? {}), range: [...liveX], autorange: false };
+      }
+    }
+    if (!retainedY) return next as typeof base;
+    next.yaxis = { ...(base.yaxis ?? {}), range: [...retainedY], autorange: false };
     return next as typeof base;
   },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plotResult, renderSpec, viewSignature, plotTraces, panActive, frozenY]
+    [
+      plotResult,
+      renderSpec,
+      viewSignature,
+      plotTraces,
+      panPresentationActive,
+      cfg.stacked,
+      frozenY,
+    ]
   );
 
-  // One relayout per animation frame, coalescing pointer moves straight to
-  // Plotly. The parent component no longer rerenders for those moves.
+  // Coalesce twice: first to one requestAnimationFrame, then across Plotly's
+  // asynchronous relayout itself. The old code cleared the RAF guard before
+  // relayout completed, so fast input could queue stale Plotly work faster
+  // than it rendered. This keeps one relayout in flight and retains only the
+  // newest target -- actual frame dropping at the rendering boundary.
   const panFrameRef = useRef<number | null>(null);
+  const panRelayoutInFlightRef = useRef(false);
   const panPendingRef = useRef<[number, number] | null>(null);
-  const schedulePanRelayout = useCallback((range: TimeCapacityCycleRange | null) => {
+  const panCycleXIndexRef = useRef(panCycleXIndex);
+  const panStackedRef = useRef(cfg.stacked);
+  panCycleXIndexRef.current = panCycleXIndex;
+  panStackedRef.current = cfg.stacked;
+  const queuePanFrameRef = useRef<() => void>(() => {});
+  const queuePanFrame = useCallback(() => {
+    if (
+      panFrameRef.current !== null ||
+      panRelayoutInFlightRef.current ||
+      !panPendingRef.current
+    ) return;
+    panFrameRef.current = window.requestAnimationFrame(() => {
+      panFrameRef.current = null;
+      if (panRelayoutInFlightRef.current) return;
+      const target = panPendingRef.current;
+      panPendingRef.current = null;
+      const div = plotDivRef.current;
+      if (!target || !div) return;
+      panRelayoutInFlightRef.current = true;
+      const finish = () => {
+        panRelayoutInFlightRef.current = false;
+        if (panPendingRef.current) queuePanFrameRef.current();
+      };
+      try {
+        const update: Record<string, unknown> = {
+          "xaxis.range": [...target],
+          "xaxis.autorange": false,
+        };
+        if (panStackedRef.current) {
+          update["xaxis2.range"] = [...target];
+          update["xaxis2.autorange"] = false;
+        }
+        if (panFrozenYRef.current) {
+          update["yaxis.range"] = [...panFrozenYRef.current];
+          update["yaxis.autorange"] = false;
+        }
+        const result = PlotlyLib.relayout(div as never, update as never) as unknown;
+        if (result && typeof (result as Promise<unknown>).then === "function") {
+          void (result as Promise<unknown>).then(finish, finish);
+        } else {
+          finish();
+        }
+      } catch {
+        // A relayout can land after teardown/remount. The next React render
+        // restores the latest viewport from `layout`.
+        finish();
+      }
+    });
+  }, []);
+  queuePanFrameRef.current = queuePanFrame;
+  const schedulePanRelayout = useCallback((
+    range: TimeCapacityCycleRange | null,
+    continuousStart?: number | null,
+  ) => {
     if (!range) {
       panPendingRef.current = null;
       return;
     }
-    const target = absoluteXRangeForCycleIndex(panCycleXIndex, range.start, range.end);
+    const position = Number.isFinite(continuousStart)
+      ? Number(continuousStart)
+      : range.start;
+    const target = interpolatedXRangeForCycleIndex(
+      panCycleXIndexRef.current,
+      position,
+      range.end - range.start + 1,
+    );
     // Outside the resident buffer: retain the last valid frame. The scheduler
     // is already fetching the newest desired buffer and will jump directly to
     // that position when it renders, dropping obsolete intermediate frames.
     if (!target) return;
     panLiveXRef.current = target;
     panPendingRef.current = target;
-    if (panFrameRef.current !== null) return;
-    panFrameRef.current = window.requestAnimationFrame(() => {
-      panFrameRef.current = null;
-      const target = panPendingRef.current;
-      const div = plotDivRef.current;
-      if (!target || !div) return;
-      const update: Record<string, unknown> = {
-        "xaxis.range": [...target],
-        "xaxis.autorange": false,
-      };
-      const frozenY = panFrozenYRef.current;
-      if (frozenY) {
-        update["yaxis.range"] = [...frozenY];
-        update["yaxis.autorange"] = false;
-      }
-      try {
-        const result = PlotlyLib.relayout(div as never, update as never) as unknown;
-        if (result && typeof (result as Promise<unknown>).catch === "function") {
-          void (result as Promise<unknown>).catch(() => {});
-        }
-      } catch {
-        // A relayout can land after the plot is torn down or remounted; the
-        // next render restores the axis from `layout`, so this is not fatal.
-      }
-    });
-  }, [panCycleXIndex]);
+    queuePanFrame();
+  }, [queuePanFrame]);
   panVisualUpdateRef.current = schedulePanRelayout;
   useLayoutEffect(() => {
     if (panActive && panLiveWindowRef.current) {
-      schedulePanRelayout(panLiveWindowRef.current);
+      schedulePanRelayout(panLiveWindowRef.current, panLivePositionRef.current);
     }
   }, [panActive, panCycleXIndex, schedulePanRelayout]);
   useEffect(
     () => () => {
       if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current);
+      panPendingRef.current = null;
     },
     [],
   );
@@ -2137,9 +2310,14 @@ function TimeCapacityPlotCardView({
   // above or below the retained window. Rather than silently clipping it, the
   // modebar is pinned open and a highlighted control offers to refit.
   const yOutOfView = useMemo(
-    () => yDataOutsideRange(plotTraces as never, panLiveXRef.current, frozenY),
+    () =>
+      yDataOutsideRange(
+        plotTraces as never,
+        panPresentationActive ? panLiveXRef.current : null,
+        frozenY,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plotTraces, frozenY, panActive],
+    [plotTraces, frozenY, panActive, panPresentationActive],
   );
   const fitYModebarButton = useMemo<Plotly.ModeBarButton>(
     () => ({
@@ -2187,7 +2365,9 @@ function TimeCapacityPlotCardView({
     const ready = timeCapacityBufferOnResponseReady(panSchedulerRef.current, panRequest);
     const decision = timeCapacityBufferOnRendered(ready, panRequest, maxAvailableCycle);
     applyPanDecision(decision);
-    if (panLiveWindowRef.current) panVisualUpdateRef.current(panLiveWindowRef.current);
+    if (panLiveWindowRef.current) {
+      panVisualUpdateRef.current(panLiveWindowRef.current, panLivePositionRef.current);
+    }
   }, [
     applyPanDecision,
     maxAvailableCycle,
@@ -2199,6 +2379,12 @@ function TimeCapacityPlotCardView({
   ]);
   const commitCycleRange = useCallback(
     (range: TimeCapacityCycleRange) => {
+      if (panActiveRef.current) {
+        panSettlingWindowRef.current = { ...range };
+        panLiveWindowRef.current = { ...range };
+        panLivePositionRef.current = range.start;
+        panVisualUpdateRef.current(range, range.start);
+      }
       update((s) => {
         const next = {
           ...DEFAULT_TIME_CAPACITY,
@@ -2540,6 +2726,7 @@ function TimeCapacityPlotCardView({
           navigationResetKey={navigationResetKey}
           onCommitRange={commitCycleRange}
           onPreviewRangeChange={handleCyclePreviewRange}
+          onWarmRange={panningEnabled ? setPanWarmRange : undefined}
           spec={spec}
         />
         {timeResult.isError && (

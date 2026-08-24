@@ -10,12 +10,14 @@ import {
   bufferMaxPoints,
   bufferNeedsRefill,
   bufferRangeForWindow,
+  interpolatedXRangeForCycleIndex,
   nextTimeCapacityPanMotion,
   timeCapacityBufferOnMove,
   timeCapacityBufferOnRendered,
   timeCapacityBufferOnResponseReady,
   timeCapacityBufferPlanForWindow,
   timeCapacityBufferSchedulerInitialState,
+  TIME_CAPACITY_PANNING_DEFAULT,
   yDataOutsideRange,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityViewportBuffer.ts";
 import {
@@ -34,6 +36,8 @@ import {
   shiftTimeCapacityCycleRange,
   timeCapacityCycleRangeAtPointerDelta,
   timeCapacityCycleRangeAtTrackPosition,
+  timeCapacityCycleStartAtPointerDelta,
+  timeCapacityCycleStartAtTrackPosition,
   timeCapacityCycleRangeAtBoundary,
   timeCapacityCycleSliderGeometry,
   timeCapacityPreviousViewDisabled,
@@ -155,6 +159,18 @@ test("pointer movement follows the highlighted segment's legal travel and preser
   assert.equal(cycleRangeWidth(middleWindow), 50);
   assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(firstWindow, 500, 100, 100), lastWindow);
   assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(lastWindow, -500, 100, 100), firstWindow);
+});
+
+test("pointer and track positions retain sub-cycle motion for true panning", () => {
+  const range = { start: 1, end: 50 };
+  assert.equal(timeCapacityCycleStartAtPointerDelta(range, 12.5, 100, 100), 13.5);
+  const clicked = timeCapacityCycleStartAtTrackPosition(
+    { start: 40, end: 49 },
+    333,
+    1000,
+    100,
+  );
+  assert.ok(clicked > 29 && clicked < 30, String(clicked));
 });
 
 test("track clicks center the existing window and clamp at both ends", () => {
@@ -341,7 +357,7 @@ test("delayed moving requests are backpressured and retain only the newest range
   assert.equal(flushed.request, null);
   assert.equal(state.pendingRange, null);
   const canonical = { max_points_per_cell: 4000 };
-  assert.equal(timeCapacityPreviewMaxPoints(canonical.max_points_per_cell, "moving"), 1000);
+  assert.equal(timeCapacityPreviewMaxPoints(canonical.max_points_per_cell, "moving"), 3000);
   assert.equal(timeCapacityPreviewMaxPoints(800, "moving"), 800);
   assert.equal(timeCapacityPreviewMaxPoints(4000, "full"), 4000);
   assert.deepEqual(canonical, { max_points_per_cell: 4000 });
@@ -524,6 +540,10 @@ test("a realistic drag supersedes at most one admitted request", () => {
 
 // ---- Spec 052.7: buffered viewport panning ---------------------------------
 
+test("buffered panning stays disabled after shared-axis phase divergence", () => {
+  assert.equal(TIME_CAPACITY_PANNING_DEFAULT, false);
+});
+
 test("a buffer spans a useful slice of the range, not just a multiple of a narrow window", () => {
   // Three cycles out of 324: a pure window multiple would give ~15 cycles of
   // context, which a moving pointer leaves immediately. The extent floor is
@@ -583,8 +603,8 @@ test("fast motion looks farther ahead while reducing transient point density", (
   const fast = timeCapacityBufferPlanForWindow({ start: 180, end: 182 }, 324, 1000, motion);
   const slow = timeCapacityBufferPlanForWindow(window, 324, 1000, null);
   assert.ok(fast.buffer.end - 182 > 180 - fast.buffer.start, JSON.stringify(fast));
-  assert.ok(fast.maxPoints <= 8000);
-  assert.ok(fast.maxPoints >= 7000);
+  assert.ok(fast.maxPoints <= 18000);
+  assert.ok(fast.maxPoints >= 17000);
   assert.ok(fast.maxPoints < slow.maxPoints);
 });
 
@@ -653,6 +673,20 @@ test("the visible x span is read from loaded traces and tolerates short cells", 
   assert.deepEqual(absoluteXRangeForCycleIndex(index, 2, 2), [20, 33]);
   assert.deepEqual(absoluteXRangeForCycleIndex(index, 1, 3), [0, 50]);
   assert.equal(absoluteXRangeForCycleIndex(index, 90, 95), null);
+  // Never compress the viewport to a partial overlap while a refill catches up.
+  assert.equal(absoluteXRangeForCycleIndex(index, 2, 4), null);
+});
+
+test("fractional slider positions interpolate one resident x axis continuously", () => {
+  const index = buildTimeCapacityCycleXIndex([
+    {
+      cycle: [1, 1, 2, 2, 3, 3, 4, 4],
+      display_x: [0, 10, 20, 30, 40, 50, 60, 70],
+    },
+  ]);
+  assert.deepEqual(interpolatedXRangeForCycleIndex(index, 1, 2), [0, 30]);
+  assert.deepEqual(interpolatedXRangeForCycleIndex(index, 1.5, 2), [10, 40]);
+  assert.deepEqual(interpolatedXRangeForCycleIndex(index, 2, 2), [20, 50]);
 });
 
 // ---- Spec 052.8: frozen Y and the out-of-view affordance -------------------

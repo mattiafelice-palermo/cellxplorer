@@ -1821,7 +1821,7 @@ def time_capacity_display_budget(
     """
 
     ceiling = max(100, int(configured_max))
-    width = max(320, min(6000, int(viewport_width or 1200)))
+    width = max(320, min(10000, int(viewport_width or 1200)))
     visible = max(1, int(visible_cell_count))
     candidate = int((2 * width * 6) // visible)
     return min(ceiling, max(800, candidate))
@@ -3817,7 +3817,7 @@ def compute_time_capacity(
     badges: list[dict] = list(protocol_badges)
 
     configured_max = max(100, settings["max_points_per_cell"])
-    width = max(320, min(6000, int(viewport_width or 1200)))
+    width = max(320, min(10000, int(viewport_width or 1200)))
     total_units = len(units)
     visible_cell_count = sum(
         1

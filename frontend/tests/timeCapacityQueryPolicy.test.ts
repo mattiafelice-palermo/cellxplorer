@@ -183,6 +183,10 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
     new URL("../src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx", import.meta.url),
     "utf8",
   );
+  const navigationSource = readFileSync(
+    new URL("../src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx", import.meta.url),
+    "utf8",
+  );
   const savedPreviewSource = readFileSync(
     new URL("../src/features/analyses/editor/artifacts/SavedPlotPreviews.tsx", import.meta.url),
     "utf8",
@@ -203,6 +207,18 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /panActive \|\| timeResult\.isPlaceholderData \|\| resultIsRetainedPanFallback/);
   assert.match(liveSource, /const token = transientPreviewRequest \? null : newComputeToken\(\)/);
   assert.match(liveSource, /onReadyChange\?\.\(readyForParent\)/);
+  assert.match(liveSource, /panSettlingWindowRef\.current = \{ \.\.\.range \}/);
+  assert.match(liveSource, /interpolatedXRangeForCycleIndex\(/);
+  assert.match(liveSource, /queryClient\.prefetchQuery\(/);
+  assert.match(liveSource, /absolute_time_origin_cycle: panRequest\.window\.start/);
+  assert.match(liveSource, /const panRelayoutInFlightRef = useRef\(false\)/);
+  assert.match(liveSource, /if \(panPendingRef\.current\) queuePanFrameRef\.current\(\)/);
+  assert.match(navigationSource, /const final = previewAtPointer\(\s*event\.clientX,/s);
+  assert.doesNotMatch(navigationSource, /onPreview\(finalRange, final\.position\)/);
+  assert.match(navigationSource, /const final = previewAtPointer\([\s\S]*onCommit\(finalRange\);/);
+  assert.match(navigationSource, /onPointerDown=\{\(event\) => \{[\s\S]*onActivate\(event\.ctrlKey\)/);
+  assert.match(navigationSource, /if \(event\.detail === 0\) onActivate\(event\.ctrlKey\)/);
+  assert.match(navigationSource, /navigateTimeCapacityCycleRange\(\s*buttonRangeRef\.current,/s);
   assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);
   assert.match(liveSource, /new TimeCapacityRefinementLifecycle\(cfg\.stacked\)/);
   assert.match(
@@ -210,7 +226,7 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
     /useLayoutEffect\(\(\) => \{\s*if \(stackedModeChanged && cfg\.stacked\) invalidateRefinement\(\);/s,
   );
   assert.match(liveSource, /timeCapacityRefinementDisplayIsCurrent\(/);
-  assert.match(liveSource, /if \(cfg\.stacked \|\| !refinementTransition\) return null;/);
+  assert.match(liveSource, /if \(panPresentationActive \|\| cfg\.stacked \|\| !refinementTransition\) return null;/);
   assert.match(liveSource, /timeCapacityRefinementCanSchedule\(active, spec\)/);
   assert.match(liveSource, /refinementLifecycle\.acceptResponse\(/);
   assert.match(headerSource, /const plotExportEnabled = canPlotExport \?\? canExport/);

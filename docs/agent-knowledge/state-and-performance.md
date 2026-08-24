@@ -285,16 +285,15 @@ cancellation guarantee. A retained placeholder is display-only: plot/image/vecto
 disabled until the current query resolves, while the separate data-export path requests and validates
 full-resolution data for the current identity.
 
-Time/Capacity cycle-slider panning separates live viewport motion from buffer fetch identity.
-Pointer movement updates Plotly imperatively from a cycle-to-X-span index built once per delivered
-buffer; it must not rebuild the plot card or scan every loaded point per pointer frame. Buffer
-refills use one-request/latest-wins backpressure through Plotly's render acknowledgement, not merely
-HTTP completion. While one buffer fetches or renders, only the newest desired directional buffer is
-retained. Fast movement expands lookahead in the travel direction and uses a coarse request-only
-point budget; idle movement promotes the resident viewport back to the normal density. If the
-pointer leaves resident data, keep the last valid frame until a covering buffer renders instead of
-cancelling every request or fabricating coordinates. These transient budgets never enter the saved
-plot configuration, scientific calculation, or export path.
+Buffered Time/Capacity viewport panning is retained only as disabled experimental code. It is not a
+valid production path: one shared absolute X axis accumulates different cycle-duration offsets for
+different Cells, so curves diverge during the drag and snap back when the independently re-zeroed
+committed window arrives. Per-Cell overlaid Plotly axes preserve those origins but create multiple
+WebGL subplots and make interaction unacceptably slow. `timeCapacityPanningEnabled()` therefore
+fails closed with no local-storage override. Production slider movement publishes integer cycle
+windows only; every response is independently re-zeroed, moving requests use latest-wins
+backpressure and a mildly reduced point budget, and placeholder data keeps the previous plot visible
+until the newest admitted window is ready.
 
 Adaptive Time refinement is also display-only and ephemeral. Its response-generation check remains
 strict for accepting a newly arriving response, but it is independent from the compatibility check
