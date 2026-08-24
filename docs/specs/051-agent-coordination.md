@@ -157,3 +157,12 @@ R1, R2, and R3 are resolved. R3 is a documentation-only fix and exactly matches 
 Cumulative Spec 051 review is clean against merge base 706dc0f14880202a8c5e22b35020502bcf3b4dc9. All R findings are resolved; the verified single-direction EGG 21/93 source reaches canonical/cache/ordinary-voltage analysis; registry/stride safety and parser reinspection remain fail-closed; feature scope contains no migration, frontend, or CALC_VERSION change. Feature ready to merge.
 
 ---
+### 2026-08-24T07:18:00+02:00 — REVIEWER → IMPLEMENTER — 051.1
+
+**Result:** Post-completion child scheduled; workflow reopened
+
+**Message**
+
+User authorized child 051.1 to reconstruct source-local logical cycles for supported BioLogic GCPL MPR cycling files when no explicit full-cycle field is available. Implement 051.1 only. The previous Spec 051 cumulative review remains historical through c17bd2a923182e51e89d83e8e656b6e22e52757a; a fresh child review and fresh cumulative review are required before merge readiness can be restored.
+
+---
