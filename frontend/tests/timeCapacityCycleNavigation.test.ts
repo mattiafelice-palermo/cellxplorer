@@ -9,12 +9,10 @@ import {
   cycleRangeWidth,
   cycleRangesEqual,
   cycleWindowOptions,
-  flushTimeCapacityPreviewRange,
   navigateTimeCapacityCycleRange,
   normalizeCycleRangeForNavigation,
   normalizeManualTimeCapacityRange,
   normalizeTimeCapacityRange,
-  queueTimeCapacityPreviewRange,
   resizeTimeCapacityCycleRange,
   selectedTimeCapacityCycleMax,
   selectTimeCapacityCycleHistory,
@@ -22,6 +20,13 @@ import {
   timeCapacityCycleRangeAtPointerDelta,
   timeCapacityCycleRangeAtBoundary,
   timeCapacityPreviousViewDisabled,
+  timeCapacityPreviewCancel,
+  timeCapacityPreviewFlushMoving,
+  timeCapacityPreviewMaxPoints,
+  timeCapacityPreviewOnMove,
+  timeCapacityPreviewPromoteOnIdle,
+  timeCapacityPreviewRequestIsCurrent,
+  timeCapacityPreviewSchedulerInitialState,
   timeCapacityRangeNavigationDisabled,
   timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
@@ -227,21 +232,59 @@ test("history selection restores an older entry and drops newer back-stack entri
   assert.equal(selectTimeCapacityCycleHistory([first], 3), null);
 });
 
-test("preview coalescing publishes immediately and advances during a continuous stream", () => {
+test("two-resolution preview scheduling is immediate, bounded, and latest-wins", () => {
   const first = { start: 1, end: 20 };
   const second = { start: 2, end: 21 };
   const third = { start: 3, end: 22 };
-  const initial = { lastPublishedAt: null, pendingRange: null };
+  const initial = timeCapacityPreviewSchedulerInitialState();
 
-  const leading = queueTimeCapacityPreviewRange(initial, first, 0, 120);
-  assert.deepEqual(leading.publishedRange, first);
-  const pending = queueTimeCapacityPreviewRange(leading.state, second, 20, 120);
-  assert.equal(pending.publishedRange, null);
-  const latest = queueTimeCapacityPreviewRange(pending.state, third, 40, 120);
-  assert.equal(latest.publishedRange, null);
-  const flushed = flushTimeCapacityPreviewRange(latest.state, 120, 120);
-  assert.deepEqual(flushed.publishedRange, third);
+  const leading = timeCapacityPreviewOnMove(initial, first, 0, 40);
+  assert.deepEqual(leading.request, { range: first, resolution: "moving", generation: 1 });
+  const pending = timeCapacityPreviewOnMove(leading.state, second, 10, 40);
+  const latest = timeCapacityPreviewOnMove(pending.state, third, 20, 40);
+  assert.equal(pending.request, null);
+  assert.equal(latest.request, null);
+  const flushed = timeCapacityPreviewFlushMoving(latest.state, 40, 40);
+  assert.deepEqual(flushed.request, { range: third, resolution: "moving", generation: 3 });
   assert.equal(flushed.state.pendingRange, null);
+  const canonical = { max_points_per_cell: 4000 };
+  assert.equal(timeCapacityPreviewMaxPoints(canonical.max_points_per_cell, "moving"), 1000);
+  assert.equal(timeCapacityPreviewMaxPoints(800, "moving"), 800);
+  assert.equal(timeCapacityPreviewMaxPoints(4000, "full"), 4000);
+  assert.deepEqual(canonical, { max_points_per_cell: 4000 });
+});
+
+test("idle promotion sharpens the same range and renewed movement obsoletes it immediately", () => {
+  const first = { start: 10, end: 29 };
+  const second = { start: 11, end: 30 };
+  const third = { start: 12, end: 31 };
+  const moving = timeCapacityPreviewOnMove(
+    timeCapacityPreviewSchedulerInitialState(),
+    first,
+    0,
+    40,
+  );
+  const pending = timeCapacityPreviewOnMove(moving.state, second, 10, 40);
+  const idle = timeCapacityPreviewPromoteOnIdle(pending.state, pending.state.generation, 60, 50);
+  assert.deepEqual(idle.request, {
+    range: second,
+    resolution: "full",
+    generation: pending.state.generation,
+  });
+  assert.equal(timeCapacityPreviewRequestIsCurrent(idle.state, idle.request!), true);
+
+  const resumed = timeCapacityPreviewOnMove(idle.state, third, 61, 40);
+  assert.deepEqual(resumed.request, {
+    range: third,
+    resolution: "moving",
+    generation: idle.state.generation + 1,
+  });
+  assert.equal(timeCapacityPreviewRequestIsCurrent(resumed.state, idle.request!), false);
+  assert.equal(timeCapacityPreviewRequestIsCurrent(resumed.state, resumed.request!), true);
+  assert.equal(timeCapacityPreviewRequestIsCurrent(
+    timeCapacityPreviewCancel(resumed.state),
+    resumed.request!,
+  ), false);
 });
 
 test("null-bound Ctrl+first is a no-op while normal backward movement stays safe", () => {

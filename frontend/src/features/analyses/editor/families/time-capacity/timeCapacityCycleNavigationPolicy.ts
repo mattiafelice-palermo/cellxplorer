@@ -5,16 +5,31 @@ export interface TimeCapacityCycleRange {
   end: number;
 }
 
-export const TIME_CAPACITY_PREVIEW_INTERVAL_MS = 120;
+export const TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS = 40;
+export const TIME_CAPACITY_PREVIEW_IDLE_MS = 50;
+export const TIME_CAPACITY_PREVIEW_MAX_POINTS = 1000;
 
-export interface TimeCapacityPreviewThrottleState {
+export type TimeCapacityPreviewResolution = "moving" | "full";
+
+export interface TimeCapacityPreviewRequest {
+  range: TimeCapacityCycleRange;
+  resolution: TimeCapacityPreviewResolution;
+  generation: number;
+}
+
+export interface TimeCapacityPreviewSchedulerState {
+  active: boolean;
+  generation: number;
+  phase: TimeCapacityPreviewResolution;
+  range: TimeCapacityCycleRange | null;
+  lastMovementAt: number | null;
   lastPublishedAt: number | null;
   pendingRange: TimeCapacityCycleRange | null;
 }
 
-export interface TimeCapacityPreviewThrottleDecision {
-  state: TimeCapacityPreviewThrottleState;
-  publishedRange: TimeCapacityCycleRange | null;
+export interface TimeCapacityPreviewSchedulerDecision {
+  state: TimeCapacityPreviewSchedulerState;
+  request: TimeCapacityPreviewRequest | null;
   waitMs: number | null;
 }
 
@@ -54,60 +69,178 @@ export function cycleRangesEqual(
   return left.start === right.start && left.end === right.end;
 }
 
-function previewInterval(intervalMs: number): number {
-  return Number.isFinite(intervalMs) ? Math.max(1, intervalMs) : TIME_CAPACITY_PREVIEW_INTERVAL_MS;
+function previewInterval(intervalMs: number, fallback: number): number {
+  return Number.isFinite(intervalMs) ? Math.max(1, intervalMs) : fallback;
 }
 
-/** Publish the first live preview immediately, then retain only the newest pending range. */
-export function queueTimeCapacityPreviewRange(
-  state: TimeCapacityPreviewThrottleState,
+function previewNow(nowMs: number): number {
+  return Number.isFinite(nowMs) ? nowMs : 0;
+}
+
+export function timeCapacityPreviewSchedulerInitialState(): TimeCapacityPreviewSchedulerState {
+  return {
+    active: false,
+    generation: 0,
+    phase: "moving",
+    range: null,
+    lastMovementAt: null,
+    lastPublishedAt: null,
+    pendingRange: null,
+  };
+}
+
+function previewRequest(
+  range: TimeCapacityCycleRange,
+  resolution: TimeCapacityPreviewResolution,
+  generation: number,
+): TimeCapacityPreviewRequest {
+  return { range: { ...range }, resolution, generation };
+}
+
+/** Start or continue a latest-wins moving preview and reset the idle promotion clock. */
+export function timeCapacityPreviewOnMove(
+  state: TimeCapacityPreviewSchedulerState,
   range: TimeCapacityCycleRange,
   nowMs: number,
-  intervalMs = TIME_CAPACITY_PREVIEW_INTERVAL_MS,
-): TimeCapacityPreviewThrottleDecision {
-  const interval = previewInterval(intervalMs);
-  const now = Number.isFinite(nowMs) ? nowMs : 0;
-  if (state.lastPublishedAt === null || now - state.lastPublishedAt >= interval) {
+  intervalMs = TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
+): TimeCapacityPreviewSchedulerDecision {
+  const now = previewNow(nowMs);
+  const interval = previewInterval(intervalMs, TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS);
+  const generation = state.generation + 1;
+  const movingAfterFull = state.active && state.phase === "full";
+  const next: TimeCapacityPreviewSchedulerState = {
+    active: true,
+    generation,
+    phase: "moving",
+    range: { ...range },
+    lastMovementAt: now,
+    lastPublishedAt: movingAfterFull ? null : state.lastPublishedAt,
+    pendingRange: movingAfterFull ? null : state.pendingRange,
+  };
+  const elapsed = next.lastPublishedAt === null ? interval : now - next.lastPublishedAt;
+  if (movingAfterFull || next.lastPublishedAt === null || elapsed >= interval) {
+    next.lastPublishedAt = now;
+    next.pendingRange = null;
     return {
-      state: { lastPublishedAt: now, pendingRange: null },
-      publishedRange: range,
+      state: next,
+      request: previewRequest(range, "moving", generation),
       waitMs: null,
     };
   }
 
+  next.pendingRange = { ...range };
   return {
-    state: { lastPublishedAt: state.lastPublishedAt, pendingRange: range },
-    publishedRange: null,
-    waitMs: Math.max(0, interval - (now - state.lastPublishedAt)),
+    state: next,
+    request: null,
+    waitMs: Math.max(0, interval - elapsed),
   };
 }
 
-/** Flush the newest pending preview once the bounded coalescing interval elapses. */
-export function flushTimeCapacityPreviewRange(
-  state: TimeCapacityPreviewThrottleState,
+/** Publish the newest moving range once its bounded cadence elapses. */
+export function timeCapacityPreviewFlushMoving(
+  state: TimeCapacityPreviewSchedulerState,
   nowMs: number,
-  intervalMs = TIME_CAPACITY_PREVIEW_INTERVAL_MS,
-): TimeCapacityPreviewThrottleDecision {
-  if (!state.pendingRange) {
-    return { state, publishedRange: null, waitMs: null };
+  intervalMs = TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
+): TimeCapacityPreviewSchedulerDecision {
+  if (!state.active || state.phase !== "moving" || !state.pendingRange) {
+    return { state, request: null, waitMs: null };
   }
 
-  const interval = previewInterval(intervalMs);
-  const now = Number.isFinite(nowMs) ? nowMs : 0;
+  const now = previewNow(nowMs);
+  const interval = previewInterval(intervalMs, TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS);
   const elapsed = state.lastPublishedAt === null ? interval : now - state.lastPublishedAt;
   if (state.lastPublishedAt === null || elapsed >= interval) {
+    const range = state.pendingRange;
+    const next = {
+      ...state,
+      range: { ...range },
+      lastPublishedAt: now,
+      pendingRange: null,
+    };
     return {
-      state: { lastPublishedAt: now, pendingRange: null },
-      publishedRange: state.pendingRange,
+      state: next,
+      request: previewRequest(range, "moving", state.generation),
       waitMs: null,
     };
   }
 
   return {
     state,
-    publishedRange: null,
+    request: null,
     waitMs: Math.max(0, interval - elapsed),
   };
+}
+
+/** Promote the still-held range to the user's full resolution after pointer idle. */
+export function timeCapacityPreviewPromoteOnIdle(
+  state: TimeCapacityPreviewSchedulerState,
+  generation: number,
+  nowMs: number,
+  idleMs = TIME_CAPACITY_PREVIEW_IDLE_MS,
+): TimeCapacityPreviewSchedulerDecision {
+  if (
+    !state.active ||
+    state.phase !== "moving" ||
+    state.generation !== generation ||
+    state.range === null ||
+    state.lastMovementAt === null
+  ) {
+    return { state, request: null, waitMs: null };
+  }
+
+  const now = previewNow(nowMs);
+  const idle = previewInterval(idleMs, TIME_CAPACITY_PREVIEW_IDLE_MS);
+  const elapsed = now - state.lastMovementAt;
+  if (elapsed < idle) {
+    return { state, request: null, waitMs: Math.max(0, idle - elapsed) };
+  }
+
+  const next = {
+    ...state,
+    phase: "full" as const,
+    lastPublishedAt: now,
+    pendingRange: null,
+  };
+  return {
+    state: next,
+    request: previewRequest(state.range, "full", state.generation),
+    waitMs: null,
+  };
+}
+
+/** Invalidate all preview work when a drag is released, cancelled, or reset. */
+export function timeCapacityPreviewCancel(
+  state: TimeCapacityPreviewSchedulerState,
+): TimeCapacityPreviewSchedulerState {
+  return {
+    ...timeCapacityPreviewSchedulerInitialState(),
+    generation: state.generation + 1,
+  };
+}
+
+/** A late query result is ineligible once its range, phase, or generation is superseded. */
+export function timeCapacityPreviewRequestIsCurrent(
+  state: TimeCapacityPreviewSchedulerState,
+  request: TimeCapacityPreviewRequest,
+): boolean {
+  return (
+    state.active &&
+    state.generation === request.generation &&
+    state.phase === request.resolution &&
+    state.range !== null &&
+    cycleRangesEqual(state.range, request.range)
+  );
+}
+
+/** Resolve the request-only point budget without changing the canonical config. */
+export function timeCapacityPreviewMaxPoints(
+  configuredMaxPoints: number,
+  resolution: TimeCapacityPreviewResolution,
+): number {
+  const configured = Number.isFinite(configuredMaxPoints) ? configuredMaxPoints : 4000;
+  return resolution === "moving"
+    ? Math.min(configured, TIME_CAPACITY_PREVIEW_MAX_POINTS)
+    : configured;
 }
 
 /**

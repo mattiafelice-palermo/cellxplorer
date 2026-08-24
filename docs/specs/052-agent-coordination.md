@@ -269,3 +269,16 @@ R3-R6 resolved exactly: pointer delta now maps against legal segment travel with
 R3, R5 and R6 are resolved in `08d44dae28b13a4d9b024011fd8011eb8a64deae`. The initial R4 starvation defect is also improved by the new leading/periodic publisher, but R4 remains open because the current code still uses the user's full `max_points_per_cell` for every 120 ms preview and has no 50 ms idle-to-full-resolution transition. The governing 052.2 spec is amended in this same reviewer transition. Implement only the revised R4 target: moving preview `min(configuredMax, 1000)`, short latest-wins publication (around 40 ms scheduler target), full-resolution promotion after ~50 ms idle while still held, immediate low-resolution resumption/cancellation on renewed movement, one full-resolution canonical commit on release, and stale-response suppression. Do not transition Spec 052 to COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T20:10:05+02:00 — IMPLEMENTER → REVIEWER — 052.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R4 focused cycle-navigation/state-machine tests 23/23 PASS; Time/Capacity query-policy tests 6/6 PASS; TypeScript PASS; production frontend build PASS with existing ineffective-dynamic-import and large-chunk warnings; final canonical preflight PASS 4/4 with all 155 backend/frontend test files/modules passed; isolated tests.test_analysis_engine PASS 114/114 after a transient two-worker warmup error on one aggregate run; R4 browser/manual verification NOT RUN because the user disabled browser use; deterministic coverage proves 40 ms latest-wins moving requests, min(configuredMax,1000) request-only cap, 50 ms full-resolution idle promotion, renewed-movement generation invalidation, release/cancel invalidation, and query identity through range plus max_points_per_cell
+
+**Message**
+
+R4 resolved exactly: replaced the single 120 ms preview throttle with a generation-checked moving/idle scheduler; moving previews use the request-only min(configuredMax,1000) budget at a 40 ms latest-wins cadence, idle promotion requests the same range at full configured resolution after 50 ms, renewed movement immediately returns to moving and obsoletes the full request, and release/cancel invalidates transient work while canonical commit returns to full resolution. Browser acceptance is explicitly NOT RUN per user instruction. Spec 052 remains open; do not transition to COMPLETE without explicit user authorization.
+
+---

@@ -119,11 +119,17 @@ import {
 import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
 import { TimeCapacityCycleNavigation } from "./TimeCapacityCycleNavigation";
 import {
-  flushTimeCapacityPreviewRange,
-  queueTimeCapacityPreviewRange,
-  TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+  timeCapacityPreviewCancel,
+  timeCapacityPreviewFlushMoving,
+  timeCapacityPreviewMaxPoints,
+  timeCapacityPreviewOnMove,
+  timeCapacityPreviewPromoteOnIdle,
+  timeCapacityPreviewSchedulerInitialState,
+  TIME_CAPACITY_PREVIEW_IDLE_MS,
+  TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
   type TimeCapacityCycleRange,
-  type TimeCapacityPreviewThrottleState,
+  type TimeCapacityPreviewRequest,
+  type TimeCapacityPreviewSchedulerState,
 } from "./timeCapacityCycleNavigationPolicy";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
@@ -147,18 +153,21 @@ const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   path: "M64 64h144v144H64zM304 64h144v144H304zM64 304h144v144H64zM304 304h144v144H304z",
 };
 
-function timeCapacitySpecWithCycleRange(
+function timeCapacitySpecWithPreview(
   spec: AnalysisSpec,
   range: TimeCapacityCycleRange,
+  resolution: TimeCapacityPreviewRequest["resolution"],
 ): AnalysisSpec {
+  const config = timeCapacityConfig(spec);
   return {
     ...spec,
     computation: {
       ...spec.computation,
       time_capacity: {
-        ...timeCapacityConfig(spec),
+        ...config,
         cycle_start: range.start,
         cycle_end: range.end,
+        max_points_per_cell: timeCapacityPreviewMaxPoints(config.max_points_per_cell, resolution),
       },
     },
   };
@@ -1238,69 +1247,107 @@ function TimeCapacityPlotCardView({
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
-  const [previewQueryRange, setPreviewQueryRange] = useState<TimeCapacityCycleRange | null>(null);
-  const previewThrottleStateRef = useRef<TimeCapacityPreviewThrottleState>({
-    lastPublishedAt: null,
-    pendingRange: null,
-  });
-  const previewThrottleTimerRef = useRef<number | null>(null);
-  const cancelPreviewThrottle = useCallback(() => {
-    if (previewThrottleTimerRef.current !== null) {
-      window.clearTimeout(previewThrottleTimerRef.current);
-      previewThrottleTimerRef.current = null;
+  const [previewRequest, setPreviewRequest] = useState<TimeCapacityPreviewRequest | null>(null);
+  const previewSchedulerRef = useRef<TimeCapacityPreviewSchedulerState>(
+    timeCapacityPreviewSchedulerInitialState(),
+  );
+  const previewMovingTimerRef = useRef<number | null>(null);
+  const previewIdleTimerRef = useRef<number | null>(null);
+  const clearPreviewMovingTimer = useCallback(() => {
+    if (previewMovingTimerRef.current !== null) {
+      window.clearTimeout(previewMovingTimerRef.current);
+      previewMovingTimerRef.current = null;
     }
-    previewThrottleStateRef.current = { lastPublishedAt: null, pendingRange: null };
-    setPreviewQueryRange(null);
   }, []);
-  const schedulePreviewThrottleFlush = useCallback((delayMs: number) => {
-    if (previewThrottleTimerRef.current !== null) return;
-    previewThrottleTimerRef.current = window.setTimeout(() => {
-      previewThrottleTimerRef.current = null;
-      const decision = flushTimeCapacityPreviewRange(
-        previewThrottleStateRef.current,
+  const clearPreviewIdleTimer = useCallback(() => {
+    if (previewIdleTimerRef.current !== null) {
+      window.clearTimeout(previewIdleTimerRef.current);
+      previewIdleTimerRef.current = null;
+    }
+  }, []);
+  const clearPreviewTimers = useCallback(() => {
+    clearPreviewMovingTimer();
+    clearPreviewIdleTimer();
+  }, [clearPreviewIdleTimer, clearPreviewMovingTimer]);
+  const cancelPreviewScheduler = useCallback(() => {
+    clearPreviewTimers();
+    previewSchedulerRef.current = timeCapacityPreviewCancel(previewSchedulerRef.current);
+    setPreviewRequest(null);
+  }, [clearPreviewTimers]);
+  const scheduleMovingPreviewFlush = useCallback((delayMs: number) => {
+    clearPreviewMovingTimer();
+    previewMovingTimerRef.current = window.setTimeout(() => {
+      previewMovingTimerRef.current = null;
+      const decision = timeCapacityPreviewFlushMoving(
+        previewSchedulerRef.current,
         window.performance.now(),
-        TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+        TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
       );
-      previewThrottleStateRef.current = decision.state;
-      if (decision.publishedRange) setPreviewQueryRange(decision.publishedRange);
-      if (decision.waitMs !== null && decision.state.pendingRange !== null) {
-        schedulePreviewThrottleFlush(decision.waitMs);
-      }
+      previewSchedulerRef.current = decision.state;
+      if (decision.request) setPreviewRequest(decision.request);
+      if (decision.waitMs !== null) scheduleMovingPreviewFlush(decision.waitMs);
     }, Math.max(0, Math.ceil(delayMs)));
   }, []);
+  const scheduleIdlePreviewPromotion = useCallback((generation: number) => {
+    clearPreviewIdleTimer();
+    previewIdleTimerRef.current = window.setTimeout(() => {
+      previewIdleTimerRef.current = null;
+      const decision = timeCapacityPreviewPromoteOnIdle(
+        previewSchedulerRef.current,
+        generation,
+        window.performance.now(),
+        TIME_CAPACITY_PREVIEW_IDLE_MS,
+      );
+      previewSchedulerRef.current = decision.state;
+      if (decision.request) {
+        clearPreviewMovingTimer();
+        setPreviewRequest(decision.request);
+      } else if (decision.waitMs !== null) {
+        scheduleIdlePreviewPromotion(generation);
+      }
+    }, TIME_CAPACITY_PREVIEW_IDLE_MS);
+  }, [clearPreviewIdleTimer, clearPreviewMovingTimer]);
   useEffect(() => {
     setCyclePreviewRange(null);
-    cancelPreviewThrottle();
-  }, [cancelPreviewThrottle, navigationResetKey]);
+    cancelPreviewScheduler();
+  }, [cancelPreviewScheduler, navigationResetKey]);
   useEffect(
-    () => () => {
-      if (previewThrottleTimerRef.current !== null) {
-        window.clearTimeout(previewThrottleTimerRef.current);
-        previewThrottleTimerRef.current = null;
-      }
-    },
-    [],
+    () => () => clearPreviewTimers(),
+    [clearPreviewTimers],
   );
   const handleCyclePreviewRange = useCallback((range: TimeCapacityCycleRange | null) => {
     setCyclePreviewRange(range);
     if (range === null) {
-      cancelPreviewThrottle();
+      cancelPreviewScheduler();
       return;
     }
-    const decision = queueTimeCapacityPreviewRange(
-      previewThrottleStateRef.current,
+    clearPreviewMovingTimer();
+    clearPreviewIdleTimer();
+    const decision = timeCapacityPreviewOnMove(
+      previewSchedulerRef.current,
       range,
       window.performance.now(),
-      TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+      TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
     );
-    previewThrottleStateRef.current = decision.state;
-    if (decision.publishedRange) setPreviewQueryRange(decision.publishedRange);
-    if (decision.waitMs !== null) schedulePreviewThrottleFlush(decision.waitMs);
-  }, [cancelPreviewThrottle, schedulePreviewThrottleFlush]);
+    previewSchedulerRef.current = decision.state;
+    if (decision.request) setPreviewRequest(decision.request);
+    if (decision.waitMs !== null) scheduleMovingPreviewFlush(decision.waitMs);
+    scheduleIdlePreviewPromotion(decision.state.generation);
+  }, [
+    cancelPreviewScheduler,
+    clearPreviewIdleTimer,
+    clearPreviewMovingTimer,
+    scheduleIdlePreviewPromotion,
+    scheduleMovingPreviewFlush,
+  ]);
   const requestSpec = useMemo(
-    () => (previewQueryRange ? timeCapacitySpecWithCycleRange(spec, previewQueryRange) : spec),
-    [previewQueryRange, spec],
+    () =>
+      previewRequest
+        ? timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution)
+        : spec,
+    [previewRequest, spec],
   );
+  const previewQueryRange = previewRequest?.range ?? null;
   const requestCfg = timeCapacityConfig(requestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
