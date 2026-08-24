@@ -154,3 +154,21 @@ The user manually exercised the implemented navigation and requested a focused v
 Resolve R2 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`. The equal one-third grid plus wrapping center Group allows the normal-desktop center navigator to split across rows; the user's screenshot shows the forward `› | »` group below the rest of the controls. Keep Previous View + Home left, Jump to right, and the main cluster geometrically centered, but make the center cluster an indivisible single horizontal row at normal desktop width. If a narrower breakpoint needs wrapping, move the cluster as a whole rather than splitting its controls. Re-run the focused/frontend/preflight checks and the browser geometry check at the failing width; also exercise the pointer-drag slider gesture that was NOT RUN in the handoff. Do not implement the separately queued next-round enhancements as part of this R2 fix, and do not mark Spec 052 COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T18:08:15+02:00 — IMPLEMENTER → REVIEWER — 052.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R2 focused navigation tests: PASS (13/13)
+- R2 TypeScript: PASS
+- R2 production build: PASS
+- R2 canonical preflight: PASS (4/4 stages; 155 backend/frontend test files/modules)
+- R2 browser geometry: PASS at failing width and with Plot Style open; center cluster remains one row
+- R2 pointer-drag slider gesture: RUN; one Previous View step restored the pre-drag window
+
+**Message**
+
+R2 resolved: the center navigator is now an indivisible no-wrap row. At narrower available strips, left/Home and Jump move to a top row while the whole centered cluster occupies its own row, avoiding internal wrapping, overlap, and clipping. No scientific range/history/cache/query behavior was changed. Spec 052 remains open pending review and explicit user authorization before COMPLETE.
+
+---

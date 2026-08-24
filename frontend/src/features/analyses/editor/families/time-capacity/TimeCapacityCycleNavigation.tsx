@@ -12,6 +12,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
 import {
   IconArrowLeft,
   IconChevronLeft,
@@ -345,6 +346,7 @@ export function TimeCapacityCycleNavigation({
   const [sliderOpened, setSliderOpened] = useState(false);
   const [sliderValue, setSliderValue] = useState<number | null>(null);
   const [jumpDraft, setJumpDraft] = useState("");
+  const { ref: navigationRef, width: navigationWidth } = useElementSize();
   const sliderCloseTimerRef = useRef<number | null>(null);
   const triggerHoveredRef = useRef(false);
   const dropdownHoveredRef = useRef(false);
@@ -573,11 +575,13 @@ export function TimeCapacityCycleNavigation({
   const previousDisabledReason = specificCyclesActive
     ? disabledReason
     : "No previous cycle view";
+  const twoRowNavigation = navigationWidth === 0 || navigationWidth < 760;
 
   return (
     <Paper
       component="nav"
       aria-label="Cycle navigation"
+      ref={navigationRef}
       p="xs"
       mb="sm"
       withBorder
@@ -587,7 +591,10 @@ export function TimeCapacityCycleNavigation({
       <Box
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gridTemplateColumns: twoRowNavigation
+            ? "repeat(2, minmax(0, 1fr))"
+            : "minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr)",
+          gridTemplateAreas: twoRowNavigation ? '"left right" "center center"' : undefined,
           alignItems: "center",
           columnGap: 6,
           rowGap: 6,
@@ -599,7 +606,12 @@ export function TimeCapacityCycleNavigation({
           align="center"
           justify="flex-start"
           wrap="wrap"
-          style={{ minWidth: 0, width: "100%", justifySelf: "stretch" }}
+          style={{
+            minWidth: 0,
+            width: "100%",
+            justifySelf: "stretch",
+            gridArea: twoRowNavigation ? "left" : undefined,
+          }}
         >
           <NavigationIconAction
             label="Previous cycle view"
@@ -623,8 +635,15 @@ export function TimeCapacityCycleNavigation({
           gap={6}
           align="center"
           justify="center"
-          wrap="wrap"
-          style={{ minWidth: 0, width: "100%", maxWidth: "100%", justifySelf: "stretch" }}
+          wrap="nowrap"
+          style={{
+            minWidth: 0,
+            width: "100%",
+            maxWidth: "100%",
+            justifySelf: "stretch",
+            overflowX: twoRowNavigation ? "auto" : undefined,
+            gridArea: twoRowNavigation ? "center" : undefined,
+          }}
         >
           <Text size="xs" fw={700} style={{ flex: "0 0 auto" }}>
             Cycle navigation
@@ -771,7 +790,12 @@ export function TimeCapacityCycleNavigation({
           align="center"
           justify="flex-end"
           wrap="wrap"
-          style={{ minWidth: 0, width: "100%", justifySelf: "stretch" }}
+          style={{
+            minWidth: 0,
+            width: "100%",
+            justifySelf: "stretch",
+            gridArea: twoRowNavigation ? "right" : undefined,
+          }}
         >
           <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
             Jump to
