@@ -1,9 +1,13 @@
 import {
   Accordion,
   Alert,
+  Button,
   Box,
   Center,
+  Checkbox,
+  Combobox,
   Group,
+  InputBase,
   LoadingOverlay,
   Paper,
   Select,
@@ -11,7 +15,7 @@ import {
   Stack,
   Switch,
   Text,
-  Tooltip,
+  useCombobox,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,17 +38,22 @@ import {
 import { DebouncedNumberInput, DebouncedTextInput } from "../../../../../components/DebouncedInputs";
 import {
   shouldShowVoltageChannelSelector,
+  normalizeVoltageChannels,
   plotlySafeText,
   timeCapacityExportOptions,
   timeCapacityExportMatchesRequest,
-  timeCapacityResultMatchesVoltageChannel,
   voltageChannelAvailabilityPublication,
   voltageChannelAvailabilitySignature,
   voltageChannelDataIdentity,
-  voltageChannelUnavailable,
   voltageChannelUnavailableMessage,
   voltageChannelLabel,
+  voltageChannelShortLabel,
+  voltageChannelSelectionLabel,
+  voltageChannelSelectionSummary,
   voltageChannelSelectorOptions,
+  voltageChannelsUnavailable,
+  voltageChannelsUnavailableMessage,
+  timeCapacityResultMatchesVoltageChannels,
   type VoltageChannel,
 } from "../../policies/voltageChannelPolicy";
 import {
@@ -164,7 +173,12 @@ import {
   type TimeCapacityPerformanceContext,
 } from "../../performance/timeCapacityPerformanceProfile";
 
-export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
+export type TimeCapacityConfig = Omit<
+  NonNullable<AnalysisSpec["computation"]["time_capacity"]>,
+  "voltage_channels"
+> & {
+  voltage_channels: VoltageChannel[];
+};
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
 export type TimeCapacityVoltageChannel = VoltageChannel;
@@ -225,6 +239,7 @@ function timeCapacityDataSignature(
     displayMode: requestCfg.display_mode,
     electrodeArea: requestCfg.electrode_area_cm2,
     voltageChannel: requestCfg.voltage_channel,
+    voltageChannels: requestCfg.voltage_channels,
     viewportWidth,
     coordinateOriginCycle,
     derivative: requestCfg.view === "voltage_current" ? null : {
@@ -266,11 +281,25 @@ export const DEFAULT_TIME_CAPACITY: TimeCapacityConfig = {
   cycles: [],
   max_points_per_cell: 4000,
   voltage_channel: "voltage",
+  voltage_channels: ["voltage"],
 };
 
 
 export function timeCapacityConfig(spec: AnalysisSpec): TimeCapacityConfig {
-  return { ...DEFAULT_TIME_CAPACITY, ...(spec.computation.time_capacity ?? {}) };
+  const saved = spec.computation.time_capacity as
+    | NonNullable<AnalysisSpec["computation"]["time_capacity"]>
+    | undefined;
+  const legacyChannel =
+    saved?.voltage_channel === "working_potential" || saved?.voltage_channel === "counter_potential"
+      ? saved.voltage_channel
+      : "voltage";
+  const selectedChannels = normalizeVoltageChannels(saved?.voltage_channels, legacyChannel);
+  return {
+    ...DEFAULT_TIME_CAPACITY,
+    ...saved,
+    voltage_channel: selectedChannels[0] ?? legacyChannel,
+    voltage_channels: selectedChannels,
+  } as TimeCapacityConfig;
 }
 
 
@@ -361,11 +390,29 @@ type TimeCapacitySegment = {
   sourceCycle: (number | null)[];
   sources: TimeCapacitySourcePoint[];
   voltage: (number | null)[];
+  voltageByChannel: Partial<Record<VoltageChannel, (number | null)[]>>;
   current: (number | null)[];
 };
 
+function traceVoltageValues(
+  trace: TimeCapacityTrace,
+  channel: VoltageChannel,
+  fallbackChannel: VoltageChannel,
+): (number | null)[] {
+  const values = trace.voltage_v_by_channel?.[channel];
+  if (Array.isArray(values)) return values;
+  return channel === fallbackChannel ? trace.voltage_v : [];
+}
+
 function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): TimeCapacitySegment[] {
   const cfg = timeCapacityConfig(spec);
+  const selectedChannels = cfg.voltage_channels;
+  const voltageValues = new Map(
+    selectedChannels.map((channel) => [
+      channel,
+      traceVoltageValues(trace, channel, cfg.voltage_channel),
+    ] as const),
+  );
   const { x } = timeCapacityX(trace, spec);
   const segments: TimeCapacitySegment[] = [];
   let current: TimeCapacitySegment | null = null;
@@ -396,6 +443,9 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
         sourceCycle: [],
         sources: [],
         voltage: [],
+        voltageByChannel: Object.fromEntries(
+          selectedChannels.map((channel) => [channel, []]),
+        ) as Partial<Record<VoltageChannel, (number | null)[]>>,
         current: [],
       };
     }
@@ -403,7 +453,13 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
     current.cycle.push(trace.cycle[index] ?? null);
     current.sourceCycle.push(trace.source_cycle?.[index] ?? null);
     current.sources.push(timeCapacitySourceAt(trace, index));
-    current.voltage.push(trace.voltage_v[index] ?? null);
+    const firstChannel = selectedChannels[0];
+    current.voltage.push(
+      firstChannel ? voltageValues.get(firstChannel)?.[index] ?? null : null,
+    );
+    for (const channel of selectedChannels) {
+      current.voltageByChannel[channel]?.push(voltageValues.get(channel)?.[index] ?? null);
+    }
     current.current.push(trace.current_ma[index] ?? null);
   }
   flush();
@@ -438,6 +494,21 @@ function hasFinitePoint(values: (number | null)[]): boolean {
   return values.some((value) => value !== null && Number.isFinite(value));
 }
 
+function compactHoverName(name: string): string {
+  return plotlySafeText(shortSourceName(name, 28));
+}
+
+function voltageChannelLineDash(
+  channel: VoltageChannel,
+  baseDash: PlotStyle["line_dash"],
+  multiple: boolean,
+): PlotStyle["line_dash"] {
+  if (!multiple) return baseDash;
+  if (channel === "working_potential") return "dash";
+  if (channel === "counter_potential") return "dot";
+  return baseDash;
+}
+
 function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: AnalysisSpec): boolean {
   if (!result) return false;
   const cfg = timeCapacityConfig(spec);
@@ -458,9 +529,10 @@ export function timeCapacityTracesForResult(
   const style = currentPlotStyle(spec, "time_capacity");
   const palette = plotPalette(style);
   const cfg = timeCapacityConfig(spec);
-  const selectedVoltageLabel = voltageChannelLabel(cfg.voltage_channel, result.voltage_channels);
-  const selectedVoltageHoverLabel = plotlySafeText(
-    selectedVoltageLabel.replace(/\s*\(V\)$/, "")
+  const selectedVoltageChannels = cfg.voltage_channels;
+  const selectedVoltageLabel = voltageChannelSelectionLabel(
+    selectedVoltageChannels,
+    result.voltage_channels,
   );
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
@@ -564,7 +636,9 @@ export function timeCapacityTracesForResult(
               sourceFilename,
               sourceHash,
             ),
-            hovertemplate: "%{y:.5g}<br>%{x:.5g}<br>%{meta}<extra>%{fullData.name}</extra>",
+            hovertemplate:
+              `<b>${compactHoverName(resolved.name)}</b><br>` +
+              "value %{y:.5g}<br>x %{x:.5g}<br>%{meta}<extra></extra>",
           } as Plotly.Data);
         }
         start = end;
@@ -583,53 +657,67 @@ export function timeCapacityTracesForResult(
     const name = resolved.name;
     const fullX = timeCapacityX(trace, spec).x;
     for (const segment of timeCapacitySegments(trace, spec)) {
-      if (!hasFinitePoint(segment.voltage)) continue;
-      const showlegend = !legendShown.has(seriesKey) && resolved.showInLegend;
+      const hasVoltage = selectedVoltageChannels.some((channel) =>
+        hasFinitePoint(segment.voltageByChannel[channel] ?? []),
+      );
+      if (!hasVoltage) continue;
       const segmentCustomdata = segment.x.map((_, index) => [
         segment.cycle[index] ?? "",
         segment.sourceCycle[index] ?? "",
         segment.sources[index]?.position ?? "",
-        shortSourceName(String(segment.sources[index]?.filename ?? "")),
+        plotlySafeText(shortSourceName(String(segment.sources[index]?.filename ?? ""), 24)),
       ]);
-      legendShown.add(seriesKey);
-      out.push({
-        x: segment.x,
-        y: segment.voltage,
-        name,
-         legendgroup: seriesKey,
-         showlegend,
-         legendrank: legendRanks.get(seriesKey),
-         opacity: resolved.opacity,
-        line: {
-          color: resolved.color,
-          width: resolved.lineWidth,
-          dash: resolved.lineDash,
-          shape: resolved.lineShape,
-        },
-        marker: {
-          color: resolved.color,
-          size: resolved.markerSize,
-          symbol: seriesPlotlySymbol(resolved),
-        },
-        mode: seriesPlotlyMode(resolved),
-        type: traceType,
-         connectgaps: false,
-         customdata: segmentCustomdata,
-         cellxplorer_export_columns: sourceExportColumnsFromPoints(
-          name,
-          segment.cycle,
-          segment.sourceCycle,
-          segment.sources,
-         ),
-         meta: selectedVoltageHoverLabel,
-         cellxplorer_export_axis_labels: {
-           y: style.y_title ?? selectedVoltageLabel,
-         },
-         hovertemplate:
-           "%{meta} %{y:.4f} V<br>%{x:.4f}<br>global cycle %{customdata[0]}<br>" +
-           "local cycle %{customdata[1]}<br>%{customdata[3]} (source %{customdata[2]})" +
-           "<extra>%{fullData.name}</extra>",
-       } as Plotly.Data);
+      const multipleVoltageChannels = selectedVoltageChannels.length > 1;
+      for (const channel of selectedVoltageChannels) {
+        const voltage = segment.voltageByChannel[channel] ?? [];
+        if (!hasFinitePoint(voltage)) continue;
+        const channelLabel = voltageChannelLabel(channel, result.voltage_channels);
+        const channelName = multipleVoltageChannels
+          ? `${name} — ${voltageChannelShortLabel(channel)}`
+          : name;
+        const channelKey = `${seriesKey}|${channel}`;
+        const showlegend = !legendShown.has(channelKey) && resolved.showInLegend;
+        legendShown.add(channelKey);
+        out.push({
+          x: segment.x,
+          y: voltage,
+          name: channelName,
+          legendgroup: seriesKey,
+          showlegend,
+          legendrank: legendRanks.get(seriesKey),
+          opacity: resolved.opacity,
+          line: {
+            color: resolved.color,
+            width: resolved.lineWidth,
+            dash: voltageChannelLineDash(channel, resolved.lineDash, multipleVoltageChannels),
+            shape: resolved.lineShape,
+          },
+          marker: {
+            color: resolved.color,
+            size: resolved.markerSize,
+            symbol: seriesPlotlySymbol(resolved),
+          },
+          mode: seriesPlotlyMode(resolved),
+          type: traceType,
+          connectgaps: false,
+          customdata: segmentCustomdata,
+          cellxplorer_export_columns: sourceExportColumnsFromPoints(
+            channelName,
+            segment.cycle,
+            segment.sourceCycle,
+            segment.sources,
+          ),
+          meta: channelLabel.replace(/\s*\(V\)$/, ""),
+          cellxplorer_export_axis_labels: {
+            y: style.y_title ?? channelLabel,
+          },
+          hovertemplate:
+            `<b>${compactHoverName(channelName)}</b><br>` +
+            `${plotlySafeText(channelLabel.replace(/\s*\(V\)$/, ""))}: %{y:.4f} V<br>` +
+            "time: %{x:.4f}<br>cycle: %{customdata[0]} · local %{customdata[1]}<br>" +
+            "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+        } as Plotly.Data);
+      }
       if (cfg.stacked) {
         const left = cfg.current_left ?? "current_ma";
         const leftValues = currentAxisValues(segment, trace, left, cfg);
@@ -648,7 +736,10 @@ export function timeCapacityTracesForResult(
             showlegend: false,
             opacity: 0.85,
             meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
-            hovertemplate: `%{y:.4f}<br>%{x:.4f}<br>%{meta}<extra>${currentAxisLabel(left)}</extra>`,
+            hovertemplate:
+              `<b>${compactHoverName(name)}</b><br>` +
+              `${plotlySafeText(currentAxisLabel(left))}: %{y:.4f}<br>` +
+              "time: %{x:.4f}<br>%{meta}<extra></extra>",
           } as Plotly.Data);
         }
         if (cfg.current_right && cfg.current_right !== "none") {
@@ -668,12 +759,19 @@ export function timeCapacityTracesForResult(
               showlegend: false,
               opacity: 0.75,
               meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
-              hovertemplate: `%{y:.4f}<br>%{x:.4f}<br>%{meta}<extra>${currentAxisLabel(cfg.current_right)}</extra>`,
+              hovertemplate:
+                `<b>${compactHoverName(name)}</b><br>` +
+                `${plotlySafeText(currentAxisLabel(cfg.current_right))}: %{y:.4f}<br>` +
+                "time: %{x:.4f}<br>%{meta}<extra></extra>",
             } as Plotly.Data);
           }
         }
       }
     }
+    const boundaryChannel = selectedVoltageChannels[0];
+    const boundaryVoltage = boundaryChannel
+      ? traceVoltageValues(trace, boundaryChannel, cfg.voltage_channel)
+      : [];
     const boundaryPoints = (trace.source_descriptors ?? [])
       .filter((descriptor) => descriptor.source_position > 1 && descriptor.status !== "missing")
       .map((descriptor) => {
@@ -681,7 +779,7 @@ export function timeCapacityTracesForResult(
           (value, candidate) =>
             timeCapacitySourceAt(trace, candidate).position === descriptor.source_position &&
             Number.isFinite(value) &&
-            Number.isFinite(trace.voltage_v[candidate] ?? NaN) &&
+            Number.isFinite(boundaryVoltage[candidate] ?? NaN) &&
             (cfg.display_mode === "consecutive" ||
               trace.phase[candidate] === "charge" ||
               trace.phase[candidate] === "discharge")
@@ -692,7 +790,7 @@ export function timeCapacityTracesForResult(
     if (boundaryPoints.length) {
       out.push({
         x: boundaryPoints.map(({ index }) => fullX[index]),
-        y: boundaryPoints.map(({ index }) => trace.voltage_v[index]),
+        y: boundaryPoints.map(({ index }) => boundaryVoltage[index]),
         name: "Source boundary",
         type: traceType,
         mode: "markers",
@@ -707,10 +805,10 @@ export function timeCapacityTracesForResult(
           trace.cycle[index] ?? "",
           trace.source_cycle?.[index] ?? "",
           descriptor.source_position,
-          descriptor.filename,
+          plotlySafeText(shortSourceName(descriptor.filename, 24)),
         ]),
         hovertemplate:
-          "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
+          "<b>Source boundary</b><br>cycle %{customdata[0]} · local %{customdata[1]}<br>" +
           "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
       } as Plotly.Data);
     }
@@ -803,6 +901,7 @@ export function timeCapacityLayout(
       height: 560,
       hovermode: "closest",
       hoverdistance: 20,
+      hoverlabel: hoverLabelLayout(style),
       margin: {
         l: 78 + lm.l + leftGap,
         r: Math.max(28, lm.r ? lm.r + 24 : 0),
@@ -881,7 +980,8 @@ export function timeCapacityLayout(
       ...baseAxis(style.y_axis),
       title: {
         text: plotlySafeText(
-          style.y_title ?? voltageChannelLabel(cfg.voltage_channel, result?.voltage_channels)
+          style.y_title ??
+          voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)
         ),
         font: titleFont,
         standoff: style.y_axis.title_standoff,
@@ -960,6 +1060,93 @@ export function timeCapacityLayout(
   };
 }
 
+function TimeCapacityVoltageChannelSelector({
+  options,
+  value,
+  voltageChannels,
+  onChange,
+}: {
+  options: { value: VoltageChannel; label: string }[];
+  value: VoltageChannel[];
+  voltageChannels?: TimeCapacityResult["voltage_channels"];
+  onChange: (value: VoltageChannel[]) => void;
+}) {
+  const combobox = useCombobox({
+    onDropdownClose: () => combobox.resetSelectedOption(),
+  });
+  const allSelected = options.length > 0 && options.every((option) => value.includes(option.value));
+  const toggleChannel = (channel: VoltageChannel) => {
+    onChange(
+      value.includes(channel)
+        ? value.filter((selected) => selected !== channel)
+        : [...value, channel],
+    );
+  };
+
+  return (
+    <Combobox
+      store={combobox}
+      withinPortal
+      onOptionSubmit={(channel) => toggleChannel(channel as VoltageChannel)}
+    >
+      <Combobox.Target targetType="button" withExpandedAttribute>
+        <InputBase
+          component="button"
+          type="button"
+          label="Voltage quantities"
+          pointer
+          rightSection={<Combobox.Chevron />}
+          onClick={() => combobox.toggleDropdown()}
+          style={{ minWidth: 0 }}
+        >
+          <Text size="sm" truncate title={voltageChannelSelectionSummary(value, voltageChannels)}>
+            {voltageChannelSelectionSummary(value, voltageChannels)}
+          </Text>
+        </InputBase>
+      </Combobox.Target>
+      <Combobox.Dropdown>
+        <Combobox.Header>
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              {value.length} selected
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              onClick={(event) => {
+                event.stopPropagation();
+                onChange(allSelected ? [] : options.map((option) => option.value));
+              }}
+            >
+              {allSelected ? "Deselect all" : "Select all"}
+            </Button>
+          </Group>
+        </Combobox.Header>
+        <Combobox.Options>
+          {options.map((option) => {
+            const checked = value.includes(option.value);
+            return (
+              <Combobox.Option
+                key={option.value}
+                value={option.value}
+                active={checked}
+                aria-selected={checked}
+              >
+                <Group gap="xs" wrap="nowrap">
+                  <Checkbox checked={checked} readOnly tabIndex={-1} size="xs" />
+                  <Text size="sm" truncate title={option.label} style={{ minWidth: 0 }}>
+                    {option.label}
+                  </Text>
+                </Group>
+              </Combobox.Option>
+            );
+          })}
+        </Combobox.Options>
+      </Combobox.Dropdown>
+    </Combobox>
+  );
+}
+
 
 export function TimeCapacitySettings({
   spec,
@@ -983,16 +1170,12 @@ export function TimeCapacitySettings({
   // is a pure, independently-tested function (voltageChannelPolicy.ts) —
   // see frontend/tests/voltageChannelPolicy.test.ts — rather than logic
   // that lives only in this component.
-  const voltageChannelOptions = voltageChannelSelectorOptions(cfg.voltage_channel, voltageChannels);
-  const selectedVoltageLabel = voltageChannelLabel(cfg.voltage_channel, voltageChannels);
+  const voltageChannelOptions = voltageChannelSelectorOptions(cfg.voltage_channels, voltageChannels);
   const showVoltageChannelSelector = shouldShowVoltageChannelSelector(voltageChannelOptions);
   const needsArea = cfg.current_left === "current_density" || cfg.current_right === "current_density";
   const updateTime = (fn: (cfg: TimeCapacityConfig) => void) =>
     update((s) => {
-      const next = {
-        ...DEFAULT_TIME_CAPACITY,
-        ...(s.computation.time_capacity ?? {}),
-      };
+      const next = timeCapacityConfig(s);
       fn(next);
       s.computation.time_capacity = next;
     });
@@ -1025,7 +1208,7 @@ export function TimeCapacitySettings({
                 onChange={(value) =>
                   value &&
                   update((s) => {
-                    const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                    const next = timeCapacityConfig(s);
                     next.view = value as TimeCapacityConfig["view"];
                     s.computation.time_capacity = next;
                     resetAxis(s, "x_axis");
@@ -1036,24 +1219,15 @@ export function TimeCapacitySettings({
               {cfg.view === "voltage_current" ? (
                 <>
               {showVoltageChannelSelector && (
-                <Select
-                  label="Voltage quantity"
-                  data={voltageChannelOptions}
-                  value={cfg.voltage_channel}
-                  title={selectedVoltageLabel}
-                  styles={{ input: { textOverflow: "ellipsis" } }}
-                  renderOption={({ option }) => (
-                    <Tooltip label={option.label} withArrow>
-                      <Text component="span" size="sm" truncate title={option.label}>
-                        {option.label}
-                      </Text>
-                    </Tooltip>
-                  )}
+                <TimeCapacityVoltageChannelSelector
+                  options={voltageChannelOptions}
+                  value={cfg.voltage_channels}
+                  voltageChannels={voltageChannels}
                   onChange={(value) =>
-                    value &&
-                    updateTime(
-                      (next) => void (next.voltage_channel = value as TimeCapacityVoltageChannel)
-                    )
+                    updateTime((next) => {
+                      next.voltage_channels = value;
+                      next.voltage_channel = value[0] ?? "voltage";
+                    })
                   }
                 />
               )}
@@ -1069,7 +1243,7 @@ export function TimeCapacitySettings({
                 onChange={(value) =>
                   value &&
                   update((s) => {
-                    const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                    const next = timeCapacityConfig(s);
                     next.x_axis = value as TimeCapacityConfig["x_axis"];
                     s.computation.time_capacity = next;
                     // manual x-range belongs to the previous x quantity's scale
@@ -1101,10 +1275,10 @@ export function TimeCapacitySettings({
                   ]}
                   value={cfg.time_unit}
                   onChange={(value) =>
-                    value &&
-                    update((s) => {
-                      const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
-                      next.time_unit = value as TimeCapacityConfig["time_unit"];
+                  value &&
+                  update((s) => {
+                    const next = timeCapacityConfig(s);
+                    next.time_unit = value as TimeCapacityConfig["time_unit"];
                       s.computation.time_capacity = next;
                       resetAxis(s, "x_axis");
                     })
@@ -1122,7 +1296,7 @@ export function TimeCapacitySettings({
                 onChange={(value) =>
                   value &&
                   update((s) => {
-                    const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                    const next = timeCapacityConfig(s);
                     next.display_mode = value as TimeCapacityConfig["display_mode"];
                     s.computation.time_capacity = next;
                     resetAxis(s, "x_axis");
@@ -1671,8 +1845,8 @@ function TimeCapacityPlotCardView({
   // effect leaves a narrow window in which a delayed full-resolution export
   // can resolve after a channel switch but before this ref catches up.
   dataSignatureRef.current = dataSignature;
-  const voltageChannelRef = useRef(requestCfg.voltage_channel);
-  voltageChannelRef.current = requestCfg.voltage_channel;
+  const voltageChannelRef = useRef<VoltageChannel[]>(requestCfg.voltage_channels);
+  voltageChannelRef.current = requestCfg.voltage_channels;
   const profileEnabled = timeCapacityPerformanceProfiler.isEnabled();
   const profileContext = useMemo<TimeCapacityPerformanceContext>(
     () => ({
@@ -1870,9 +2044,9 @@ function TimeCapacityPlotCardView({
     timeResult.isFetching,
     timeResult.isPlaceholderData,
   ]);
-  const queryResult = timeCapacityResultMatchesVoltageChannel(
+  const queryResult = timeCapacityResultMatchesVoltageChannels(
     timeResult.data,
-    requestCfg.voltage_channel
+    requestCfg.voltage_channels,
   )
     ? timeResult.data
     : undefined;
@@ -1966,9 +2140,9 @@ function TimeCapacityPlotCardView({
     }
   }, [active, cancelPendingRefinement, cancelRefinementTransition, clearDisplayedRefinement]);
   useEffect(() => cancelPendingRefinement, [cancelPendingRefinement]);
-  const selectedVoltageUnavailable = voltageChannelUnavailable(
-    cfg.voltage_channel,
-    currentResult?.voltage_channels
+  const selectedVoltageUnavailable = voltageChannelsUnavailable(
+    cfg.voltage_channels,
+    currentResult?.voltage_channels,
   );
   const voltageDataIdentity = voltageChannelDataIdentity(currentResult);
   const lastVoltageDataIdentityRef = useRef<string | undefined>(undefined);
@@ -2154,7 +2328,7 @@ function TimeCapacityPlotCardView({
   // A change that redefines the y quantity makes a retained window meaningless.
   useEffect(() => {
     setFrozenY(null);
-  }, [cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.stacked, cfg.display_mode]);
+  }, [cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.voltage_channels.join("|"), cfg.stacked, cfg.display_mode]);
   const fitYAxis = useCallback(() => setFrozenY(null), []);
 
   const layout = useMemo(() => {
@@ -2386,10 +2560,7 @@ function TimeCapacityPlotCardView({
         panVisualUpdateRef.current(range, range.start);
       }
       update((s) => {
-        const next = {
-          ...DEFAULT_TIME_CAPACITY,
-          ...(s.computation.time_capacity ?? {}),
-        };
+        const next = timeCapacityConfig(s);
         next.cycle_start = range.start;
         next.cycle_end = range.end;
         s.computation.time_capacity = next;
@@ -2548,7 +2719,7 @@ function TimeCapacityPlotCardView({
   const handleDataExport = async (baseName: string) => {
     if (!currentResult || selectedVoltageUnavailable || exportTraces.length === 0 || dataExporting) return;
     const requestedSignature = dataSignature;
-    const requestedVoltageChannel = requestCfg.voltage_channel;
+    const requestedVoltageChannels = requestCfg.voltage_channels;
     const requestedSourceDataIdentity = voltageChannelDataIdentity(currentResult);
     setDataExporting(true);
     try {
@@ -2564,15 +2735,22 @@ function TimeCapacityPlotCardView({
           dataSignatureRef.current,
           requestedSignature,
           voltageChannelRef.current,
-          requestedVoltageChannel,
+          requestedVoltageChannels,
           fullResult,
           requestedSourceDataIdentity
         )
       ) {
         throw new Error("The plot changed while the full-resolution export was prepared. Please try again.");
       }
-      if (voltageChannelUnavailable(requestedVoltageChannel, fullResult.voltage_channels)) {
-        throw new Error(voltageChannelUnavailableMessage(requestedVoltageChannel));
+      if (voltageChannelsUnavailable(requestedVoltageChannels, fullResult.voltage_channels)) {
+        const unavailableChannel = requestedVoltageChannels.find((channel) =>
+          voltageChannelsUnavailable([channel], fullResult.voltage_channels),
+        );
+        throw new Error(
+          unavailableChannel
+            ? voltageChannelUnavailableMessage(unavailableChannel)
+            : "A selected voltage quantity is unavailable for the current selection.",
+        );
       }
       const fullTraces = timeCapacityTracesForResult(fullResult, requestSpec);
       if (fullTraces.length === 0) {
@@ -2683,9 +2861,9 @@ function TimeCapacityPlotCardView({
           tabName="Time / capacity"
           plotName={plotName}
           subtitle={subtitle}
-           quantityName={
+          quantityName={
              cfg.view === "voltage_current"
-               ? `${voltageChannelLabel(cfg.voltage_channel, currentResult?.voltage_channels)} and current`
+               ? `${voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}${cfg.stacked ? " and current" : ""}`
               : cfg.view === "dqdv"
                 ? "dQ/dV"
                 : "dV/dQ"
@@ -2742,8 +2920,10 @@ function TimeCapacityPlotCardView({
          ) : traces.length === 0 ? (
            <Center h={500}>
              <Text size="sm" c="dimmed">
-               {selectedVoltageUnavailable
-                 ? voltageChannelUnavailableMessage(cfg.voltage_channel)
+               {cfg.voltage_channels.length === 0
+                 ? "Select at least one voltage quantity to plot."
+                 : selectedVoltageUnavailable
+                 ? voltageChannelsUnavailableMessage(cfg.voltage_channels, currentResult?.voltage_channels)
                  : "Add cells or replicates, then choose cycles to plot raw voltage and current."}
              </Text>
           </Center>
@@ -2759,47 +2939,17 @@ function TimeCapacityPlotCardView({
             }}
           >
             {yOutOfView && (
-              <>
-                {/* Plotly owns the modebar DOM, so the highlight is applied by
-                    selector rather than by prop. Scoped to this card. */}
-                <style>{`
-                  [data-tc-fit-y-hint="on"] .modebar { opacity: 1 !important; }
-                  [data-tc-fit-y-hint="on"] .modebar-btn[data-title="Fit Y axis to visible data"] {
-                    background: var(--mantine-color-yellow-light, rgba(250, 176, 5, 0.15));
-                    border-radius: 4px;
-                  }
-                  [data-tc-fit-y-hint="on"] .modebar-btn[data-title="Fit Y axis to visible data"] .icon path {
-                    fill: var(--mantine-color-yellow-6, #fab005) !important;
-                  }
-                `}</style>
-                <Paper
-                  withBorder
-                  shadow="sm"
-                  radius="md"
-                  px="sm"
-                  py={6}
-                  role="status"
-                  style={{
-                    position: "absolute",
-                    top: 34,
-                    right: 8,
-                    zIndex: 5,
-                    maxWidth: 260,
-                    pointerEvents: "auto",
-                    borderColor: "var(--mantine-color-yellow-6, #fab005)",
-                  }}
-                >
-                  <Group gap={6} wrap="nowrap" align="flex-start">
-                    <Text size="xs" style={{ lineHeight: 1.35 }}>
-                      Some data is outside the current Y range. Use{" "}
-                      <Text span size="xs" fw={600} c="yellow.6">
-                        Fit Y axis
-                      </Text>{" "}
-                      in the toolbar above to show it all.
-                    </Text>
-                  </Group>
-                </Paper>
-              </>
+              /* Plotly owns the modebar DOM, so the highlight is applied by
+                 selector rather than by prop. Scoped to this card. */
+              <style>{`
+                [data-tc-fit-y-hint="on"] .modebar-btn[data-title="Fit Y axis to visible data"] {
+                  background: var(--mantine-color-yellow-light, rgba(250, 176, 5, 0.15));
+                  border-radius: 4px;
+                }
+                [data-tc-fit-y-hint="on"] .modebar-btn[data-title="Fit Y axis to visible data"] .icon path {
+                  fill: var(--mantine-color-yellow-6, #fab005) !important;
+                }
+              `}</style>
             )}
             <Plot
               // remount at the stacked↔flat boundary: diffing a matched-axes
@@ -2811,7 +2961,9 @@ function TimeCapacityPlotCardView({
               config={{
                 displaylogo: false,
                 edits: { legendPosition: style.legend_mode !== "outside" },
-                displayModeBar: yOutOfView ? true : undefined,
+                // Keep Plotly's normal hover-to-reveal modebar available even
+                // when the Y-range hint is not active.
+                displayModeBar: "hover",
                 modeBarButtonsToAdd: yOutOfView
                   ? [fitYModebarButton, gridModebarButton]
                   : [gridModebarButton],
@@ -2831,6 +2983,18 @@ function TimeCapacityPlotCardView({
                 acknowledgePanRender();
               }}
             />
+            {yOutOfView && (
+              <Alert color="yellow" variant="light" mt="xs" p="xs" role="status">
+                <Group gap="xs" justify="space-between" wrap="nowrap">
+                  <Text size="xs" style={{ lineHeight: 1.35 }}>
+                    Some data is outside the current Y range.
+                  </Text>
+                  <Button size="compact-xs" variant="light" color="yellow" onClick={fitYAxis}>
+                    Fit Y axis
+                  </Button>
+                </Group>
+              </Alert>
+            )}
           </Box>
         )}
       </Paper>
@@ -2843,7 +3007,7 @@ function TimeCapacityPlotCardView({
         axisScope="time_capacity"
         buildSeriesPreview={buildSeriesPreview}
         timeCapacityStacked={cfg.stacked}
-         yTitlePlaceholder={voltageChannelLabel(cfg.voltage_channel, currentResult?.voltage_channels)}
+         yTitlePlaceholder={voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}
       />
     </Group>
   );

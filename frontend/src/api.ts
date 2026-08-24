@@ -1229,6 +1229,12 @@ export interface AnalysisSpec {
        * derivative views (dQ/dV, dV/dQ) always use the primary voltage.
        */
       voltage_channel: "voltage" | "working_potential" | "counter_potential";
+      /**
+       * Voltage quantities rendered together by the voltage/current view.
+       * Optional for compatibility with saved specs written before
+       * multi-voltage selection; when absent, `voltage_channel` is used.
+       */
+      voltage_channels?: ("voltage" | "working_potential" | "counter_potential")[];
     };
     steps?: {
       series: StepsSeriesSpec[];
@@ -1657,6 +1663,17 @@ export interface TimeCapacityTrace {
   capacity_mah_g: (number | null)[];
   capacity_mah_cm2?: (number | null)[];
   voltage_v: (number | null)[];
+  /**
+   * Row-aligned voltage arrays for the selected voltage quantities. The
+   * legacy `voltage_v` array remains the first selected channel so older
+   * consumers and derivative/export paths continue to work unchanged.
+   */
+  voltage_v_by_channel?: Partial<
+    Record<
+      "voltage" | "working_potential" | "counter_potential",
+      (number | null)[]
+    >
+  >;
   current_ma: (number | null)[];
   phase: string[];
   status: (string | null)[];

@@ -160,7 +160,7 @@ import {
   timeCapacityTracesForResult,
 } from "./families/time-capacity/TimeCapacityPlotCard";
 import { selectedTimeCapacityCycleMax } from "./families/time-capacity/timeCapacityCycleNavigationPolicy";
-import { voltageChannelShortLabel } from "./policies/voltageChannelPolicy";
+import { voltageChannelSelectionLabel } from "./policies/voltageChannelPolicy";
 import { parserSourceBreakdown } from "./policies/parserProvenancePolicy";
 import {
   CellHoverCard,
@@ -543,7 +543,7 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
         : cfg.x_axis === "capacity_mah"
         ? "capacity (mAh)"
         : `time (${cfg.time_unit})`;
-    return `${voltageChannelShortLabel(cfg.voltage_channel)}${cfg.stacked ? " and current" : ""} vs ${axis}`;
+    return `${voltageChannelSelectionLabel(cfg.voltage_channels)}${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
   if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs cycle`;
   if (tab === "dcir") {
@@ -859,10 +859,7 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
         ...new Set(spec.computation?.protocol_filter?.only_segment_ids ?? []),
       ].filter((id) => validSegmentIds.has(id)),
     },
-    time_capacity: {
-      ...DEFAULT_TIME_CAPACITY,
-      ...(spec.computation?.time_capacity ?? {}),
-    },
+    time_capacity: timeCapacityConfig(spec),
     steps: {
       ...DEFAULT_STEPS_COMPUTATION,
       ...(spec.computation?.steps ?? {}),

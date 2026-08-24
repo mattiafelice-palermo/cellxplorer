@@ -63039,6 +63039,9 @@
     "time_unit": "min",
     "view": "voltage_current",
     "voltage_channel": "voltage",
+    "voltage_channels": [
+      "voltage"
+    ],
     "x_axis": "time"
   },
   "type": "cycling",

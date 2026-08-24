@@ -47,12 +47,14 @@ RESULT_SCHEMA_VERSIONS = {
     # Specs 040.4/041.5: the payload gained a top-level "voltage_channels"
     # availability map, "settings" gained "voltage_channel", and the channel
     # entries now carry resolved role/reference presentation context. Legacy
-    # payloads must not be served as if those semantics existed.
+    # payloads must not be served as if those semantics existed. The later
+    # multi-voltage extension adds the selected channel list and aligned
+    # per-channel voltage arrays to each trace.
     # Spec 050.15: compact ordinary Time/Capacity provenance is now a
     # deduplicated source table plus row-aligned source indexes.
     # Consecutive capacity display_x now concatenates phase/cycle segments;
     # the payload also carries exact per-cycle origins for bounded refinement.
-    "time_capacity": 7,
+    "time_capacity": 8,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

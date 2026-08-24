@@ -19,6 +19,27 @@ export const VOLTAGE_CHANNEL_ORDER: VoltageChannel[] = [
 ];
 
 /**
+ * Normalize a saved multi-selection without changing its semantic order.
+ * `undefined` means a legacy single-channel spec; an explicitly empty array
+ * is retained so the UI can implement its deselect-all action honestly.
+ */
+export function normalizeVoltageChannels(
+  channels: readonly VoltageChannel[] | undefined,
+  fallback: VoltageChannel = "voltage",
+): VoltageChannel[] {
+  if (channels !== undefined) {
+    return VOLTAGE_CHANNEL_ORDER.filter((channel) => channels.includes(channel));
+  }
+  return VOLTAGE_CHANNEL_ORDER.includes(fallback) ? [fallback] : ["voltage"];
+}
+
+function selectedVoltageChannels(
+  selected: VoltageChannel | readonly VoltageChannel[],
+): VoltageChannel[] {
+  return typeof selected === "string" ? [selected] : [...selected];
+}
+
+/**
  * Fallback labels used when a channel's live backend label is unavailable —
  * before a result has loaded, or for a stale/legacy cached result lacking
  * `voltage_channels` (Spec 040.4's `RESULT_SCHEMA_VERSIONS` bump means this
@@ -51,6 +72,28 @@ export function voltageChannelShortLabel(channel: VoltageChannel): string {
   return VOLTAGE_CHANNEL_SHORT_LABELS[channel];
 }
 
+/** Human-readable axis/plot title for one or more selected voltage quantities. */
+export function voltageChannelSelectionLabel(
+  channels: readonly VoltageChannel[],
+  voltageChannels?: VoltageChannelAvailability,
+): string {
+  if (channels.length === 0) return "No voltage quantities";
+  if (channels.length === 1) return voltageChannelLabel(channels[0], voltageChannels);
+  return `${channels
+    .map((channel) => voltageChannelLabel(channel, voltageChannels).replace(/\s*\(V\)$/, ""))
+    .join(" + ")} (V)`;
+}
+
+/** Compact value for the closed multi-select input. */
+export function voltageChannelSelectionSummary(
+  channels: readonly VoltageChannel[],
+  voltageChannels?: VoltageChannelAvailability,
+): string {
+  if (channels.length === 0) return "No voltages selected";
+  if (channels.length === 1) return voltageChannelLabel(channels[0], voltageChannels);
+  return `${channels.length} voltage quantities selected`;
+}
+
 /**
  * A result is safe to render only when it was computed for the currently
  * selected canonical voltage quantity. React Query may otherwise expose a
@@ -60,8 +103,27 @@ export function timeCapacityResultMatchesVoltageChannel(
   result: TimeCapacityResult | undefined,
   selectedChannel: VoltageChannel,
 ): boolean {
+  return timeCapacityResultMatchesVoltageChannels(result, [selectedChannel]);
+}
+
+/**
+ * Reject a previous result when a multi-voltage selection changed. Checking
+ * only the first channel would briefly render a one-channel result under a
+ * two- or three-channel label while the replacement request is in flight.
+ */
+export function timeCapacityResultMatchesVoltageChannels(
+  result: TimeCapacityResult | undefined,
+  selectedChannels: readonly VoltageChannel[],
+): boolean {
   if (!result) return false;
-  return (result.settings?.voltage_channel ?? "voltage") === selectedChannel;
+  const resultChannels = normalizeVoltageChannels(
+    result.settings?.voltage_channels,
+    result.settings?.voltage_channel ?? "voltage",
+  );
+  return (
+    resultChannels.length === selectedChannels.length &&
+    resultChannels.every((channel, index) => channel === selectedChannels[index])
+  );
 }
 
 /**
@@ -99,15 +161,18 @@ export function voltageChannelDataIdentity(
 export function timeCapacityExportMatchesRequest(
   currentDataSignature: string,
   requestedDataSignature: string,
-  currentChannel: VoltageChannel,
-  requestedChannel: VoltageChannel,
+  currentChannel: VoltageChannel | readonly VoltageChannel[],
+  requestedChannel: VoltageChannel | readonly VoltageChannel[],
   result: TimeCapacityResult,
   requestedSourceDataIdentity?: string,
 ): boolean {
+  const currentChannels = selectedVoltageChannels(currentChannel);
+  const requestedChannels = selectedVoltageChannels(requestedChannel);
   return (
     currentDataSignature === requestedDataSignature &&
-    currentChannel === requestedChannel &&
-    timeCapacityResultMatchesVoltageChannel(result, requestedChannel) &&
+    currentChannels.length === requestedChannels.length &&
+    currentChannels.every((channel, index) => channel === requestedChannels[index]) &&
+    timeCapacityResultMatchesVoltageChannels(result, requestedChannels) &&
     (requestedSourceDataIdentity === undefined ||
       voltageChannelDataIdentity(result) === requestedSourceDataIdentity)
   );
@@ -127,6 +192,26 @@ export function voltageChannelUnavailable(
 
 export function voltageChannelUnavailableMessage(channel: VoltageChannel): string {
   return `${voltageChannelShortLabel(channel)} is unavailable for the current selection.`;
+}
+
+export function voltageChannelsUnavailable(
+  channels: readonly VoltageChannel[],
+  voltageChannels: VoltageChannelAvailability | undefined,
+): boolean {
+  return channels.some((channel) => voltageChannelUnavailable(channel, voltageChannels));
+}
+
+export function voltageChannelsUnavailableMessage(
+  channels: readonly VoltageChannel[],
+  voltageChannels: VoltageChannelAvailability | undefined,
+): string {
+  const unavailable = channels.filter((channel) =>
+    voltageChannelUnavailable(channel, voltageChannels),
+  );
+  if (unavailable.length === 0) return "";
+  return `${unavailable.map(voltageChannelShortLabel).join(", ")} ${
+    unavailable.length === 1 ? "is" : "are"
+  } unavailable for the current selection.`;
 }
 
 /** Text supplied by source metadata must not become Plotly markup or a template token. */
@@ -211,9 +296,10 @@ export function voltageChannelAvailabilityPublication(
  *   channel is still retained per the rule above.
  */
 export function voltageChannelSelectorOptions(
-  selectedChannel: VoltageChannel,
+  selectedChannel: VoltageChannel | readonly VoltageChannel[],
   voltageChannels: VoltageChannelAvailability | undefined
 ): VoltageChannelOption[] {
+  const selectedChannels = selectedVoltageChannels(selectedChannel);
   const availableExtraChannels = voltageChannels
     ? VOLTAGE_CHANNEL_ORDER.filter(
         (channel) => channel !== "voltage" && voltageChannels[channel]?.available
@@ -223,7 +309,7 @@ export function voltageChannelSelectorOptions(
     (channel) =>
       channel === "voltage" ||
       availableExtraChannels.includes(channel) ||
-      channel === selectedChannel
+      selectedChannels.includes(channel)
   ).map((channel) => ({ value: channel, label: voltageChannelLabel(channel, voltageChannels) }));
 }
 

@@ -48,8 +48,8 @@ import {
   specForSavedPlotView,
 } from "../policies/analysisPlotPolicy";
 import {
-  voltageChannelUnavailable,
-  voltageChannelUnavailableMessage,
+  voltageChannelsUnavailable,
+  voltageChannelsUnavailableMessage,
 } from "../policies/voltageChannelPolicy";
 import { timeCapacityPreviewResult } from "../policies/timeCapacityPreviewPolicy";
 import {
@@ -671,11 +671,11 @@ export function SavedTimeCapacityPreview({
       artifact.data === null,
     staleTime: 5 * 60_000,
   });
-  const previewVoltageChannel = timeCapacityConfig(previewSpec).voltage_channel;
+  const previewVoltageChannels = timeCapacityConfig(previewSpec).voltage_channels;
   const previewResult = timeCapacityPreviewResult(preview.data, previewSpec);
-  const selectedVoltageUnavailable = voltageChannelUnavailable(
-    previewVoltageChannel,
-    preview.data?.voltage_channels
+  const selectedVoltageUnavailable = voltageChannelsUnavailable(
+    previewVoltageChannels,
+    preview.data?.voltage_channels,
   );
   const traces = useMemo(
     () =>
@@ -826,7 +826,7 @@ export function SavedTimeCapacityPreview({
      onWarmupComplete(
        resolution.error,
        selectedVoltageUnavailable
-         ? voltageChannelUnavailableMessage(previewVoltageChannel)
+         ? voltageChannelsUnavailableMessage(previewVoltageChannels, preview.data?.voltage_channels)
          : resolution.detail,
        selectedVoltageUnavailable ? "skipped" : resolution.disposition,
      );
@@ -838,7 +838,7 @@ export function SavedTimeCapacityPreview({
     preview.error,
     preview.isError,
     preview.isSuccess,
-    previewVoltageChannel,
+    previewVoltageChannels,
     selectedVoltageUnavailable,
     thumbnail.error,
     thumbnail.isError,
@@ -869,7 +869,7 @@ export function SavedTimeCapacityPreview({
       <Center h={120}>
         <Text size="xs" c="dimmed">
           {selectedVoltageUnavailable
-            ? voltageChannelUnavailableMessage(previewVoltageChannel)
+            ? voltageChannelsUnavailableMessage(previewVoltageChannels, preview.data?.voltage_channels)
             : "Preview unavailable"}
         </Text>
       </Center>

@@ -151,9 +151,13 @@ export function hoverLabelLayout(style: PlotStyle) {
   return {
     bgcolor: style.paper_bgcolor || "#ffffff",
     bordercolor: style.frame_color || "#adb5bd",
+    borderwidth: 1,
     font: { size: Math.max(10, style.tick_font_size - 1), family: "inherit" },
     align: "left" as const,
-    namelength: 28,
+    // Plotly cannot wrap hover text. Keep the fallback name lane bounded for
+    // plot families that still use `<extra>` and use compact static names in
+    // Time/Capacity templates themselves.
+    namelength: 20,
   };
 }
 

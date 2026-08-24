@@ -31,6 +31,7 @@ export function timeCapacityCompatibilitySignature(
     display_mode: config.display_mode,
     electrode_area_cm2: config.electrode_area_cm2,
     voltage_channel: config.voltage_channel,
+    voltage_channels: config.voltage_channels ?? [config.voltage_channel],
     view: config.view,
     derivative_phase: config.derivative_phase,
     derivative_specific: config.derivative_specific,

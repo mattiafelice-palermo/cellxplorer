@@ -3,11 +3,13 @@ import test from "node:test";
 
 import {
   plotlySafeText,
+  normalizeVoltageChannels,
   shouldShowVoltageChannelSelector,
   shouldResetVoltageChannelAvailability,
   timeCapacityExportOptions,
   timeCapacityExportMatchesRequest,
   timeCapacityResultMatchesVoltageChannel,
+  timeCapacityResultMatchesVoltageChannels,
   voltageChannelAvailabilitySignature,
   voltageChannelAvailabilityPublication,
   voltageChannelDataIdentity,
@@ -15,6 +17,8 @@ import {
   voltageChannelSelectorOptions,
   voltageChannelUnavailable,
   voltageChannelUnavailableMessage,
+  voltageChannelSelectionLabel,
+  voltageChannelSelectionSummary,
   type VoltageChannelAvailability,
 } from "../src/features/analyses/editor/policies/voltageChannelPolicy.ts";
 import { timeCapacityPreviewResult } from "../src/features/analyses/editor/policies/timeCapacityPreviewPolicy.ts";
@@ -68,6 +72,22 @@ test("both electrode potentials available offer all three channels in primary-fi
     ["voltage", "working_potential", "counter_potential"]
   );
   assert.equal(shouldShowVoltageChannelSelector(options), true);
+});
+
+test("multi-selection preserves canonical order and supports select-all/deselect-all state", () => {
+  assert.deepEqual(
+    normalizeVoltageChannels(["counter_potential", "voltage", "working_potential"]),
+    ["voltage", "working_potential", "counter_potential"],
+  );
+  assert.deepEqual(normalizeVoltageChannels([]), []);
+  assert.equal(
+    voltageChannelSelectionLabel(["voltage", "working_potential"], availability({ working_potential: true })),
+    "Cell voltage + Working potential vs ref (V)",
+  );
+  assert.equal(
+    voltageChannelSelectionSummary(["voltage", "working_potential"]),
+    "2 voltage quantities selected",
+  );
 });
 
 test("a saved plot pinned to a now-unavailable channel keeps that option instead of dropping it", () => {
@@ -138,6 +158,21 @@ test("a result computed for another channel is rejected during a channel switch"
   assert.equal(timeCapacityResultMatchesVoltageChannel(primary, "voltage"), true);
   assert.equal(timeCapacityResultMatchesVoltageChannel(primary, "working_potential"), false);
   assert.equal(timeCapacityResultMatchesVoltageChannel(undefined, "voltage"), false);
+});
+
+test("a result computed for one voltage is not reused for a multi-voltage selection", () => {
+  const result = {
+    settings: {
+      voltage_channel: "voltage",
+      voltage_channels: ["voltage", "working_potential"],
+    },
+  } as any;
+  assert.equal(
+    timeCapacityResultMatchesVoltageChannels(result, ["voltage", "working_potential"]),
+    true,
+  );
+  assert.equal(timeCapacityResultMatchesVoltageChannels(result, ["voltage"]), false);
+  assert.equal(timeCapacityResultMatchesVoltageChannels(result, ["working_potential"]), false);
 });
 
 test("full-resolution export rejects delayed results for either auxiliary channel after a race", () => {

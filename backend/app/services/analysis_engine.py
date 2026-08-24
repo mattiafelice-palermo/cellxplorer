@@ -1611,11 +1611,24 @@ def time_capacity_settings(computation: dict) -> dict:
     current_options = {"current_ma", "current_density", "c_rate"}
     current_left = cfg.get("current_left") if cfg.get("current_left") in current_options else "current_ma"
     current_right = cfg.get("current_right") if cfg.get("current_right") in current_options | {"none"} else "none"
-    voltage_channel = (
+    legacy_voltage_channel = (
         cfg.get("voltage_channel")
         if cfg.get("voltage_channel") in canonical_cycling.VOLTAGE_QUANTITIES
         else canonical_cycling.DEFAULT_VOLTAGE_QUANTITY
     )
+    configured_voltage_channels = cfg.get("voltage_channels")
+    if isinstance(configured_voltage_channels, list):
+        # Keep the canonical primary-first order regardless of how a client
+        # serialized the checkbox selection. An explicit empty list is kept
+        # as-is for the UI's deselect-all action.
+        voltage_channels = [
+            quantity
+            for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+            if quantity in configured_voltage_channels
+        ]
+    else:
+        voltage_channels = [legacy_voltage_channel]
+    voltage_channel = voltage_channels[0] if voltage_channels else legacy_voltage_channel
     return {
         "cycle_start": cfg.get("cycle_start", computation.get("cycle_range", {}).get("start", 1)),
         "cycle_end": cfg.get("cycle_end", computation.get("cycle_range", {}).get("end")),
@@ -1634,12 +1647,12 @@ def time_capacity_settings(computation: dict) -> dict:
         "smoothing_window": max(1, min(101, int(cfg.get("smoothing_window") or 7))),
         "max_points_per_cell": int(cfg.get("max_points_per_cell") or 4000),
         # Spec 040.4: stable internal quantity ID selecting which canonical
-        # voltage column populates the trace's "voltage_v" array — see
-        # `canonical_cycling.VOLTAGE_QUANTITIES`. Derivative views (dQ/dV,
-        # dV/dQ) intentionally ignore this and always read `voltage_v`
-        # (`_derivative_curve` below); this setting only changes the
-        # voltage/current plot.
+        # voltage column populates the legacy `voltage_v` array — see
+        # `canonical_cycling.VOLTAGE_QUANTITIES`. Multi-voltage selections
+        # additionally populate `voltage_v_by_channel`; derivative views
+        # intentionally continue to use the primary `voltage_v` array.
         "voltage_channel": voltage_channel,
+        "voltage_channels": voltage_channels,
     }
 
 
@@ -4369,11 +4382,22 @@ def compute_time_capacity(
             else:
                 plot_mask = np.zeros(len(raw), dtype=bool)
 
-        voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
-        voltage = (
-            raw[voltage_column].to_numpy(dtype="float64").copy()
-            if voltage_column in raw.columns
-            else np.full(len(raw), np.nan)
+        materialized_voltage_channels = (
+            settings["voltage_channels"]
+            if settings["view"] == "voltage_current"
+            else [settings["voltage_channel"]]
+        )
+        voltage_by_channel = {}
+        for quantity in materialized_voltage_channels:
+            voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[quantity]
+            voltage_by_channel[quantity] = (
+                raw[voltage_column].to_numpy(dtype="float64").copy()
+                if voltage_column in raw.columns
+                else np.full(len(raw), np.nan)
+            )
+        voltage = voltage_by_channel.get(
+            settings["voltage_channel"],
+            np.full(len(raw), np.nan),
         )
         current = (
             raw["current_ma"].to_numpy(dtype="float64").copy()
@@ -4389,6 +4413,7 @@ def compute_time_capacity(
             derivative_x = derivative_x.copy()
             derivative_y = derivative_y.copy()
             for values in (
+                *voltage_by_channel.values(),
                 voltage,
                 current,
                 capacity,
@@ -4446,6 +4471,10 @@ def compute_time_capacity(
             display_x = display_x[take]
             phases = np.asarray(phases)[take].tolist() if phases else []
             plot_mask = plot_mask[take]
+            voltage_by_channel = {
+                quantity: values[take]
+                for quantity, values in voltage_by_channel.items()
+            }
             voltage = voltage[take]
             current = current[take]
             capacity = capacity[take] if capacity is not None else None
@@ -4469,10 +4498,16 @@ def compute_time_capacity(
             envelope_series = (
                 [derivative_x, derivative_y]
                 if settings["view"] != "voltage_current"
-                else [voltage]
+                else list(voltage_by_channel.values()) or [voltage]
             )
             primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
-            visible_values = ~plot_mask & np.isfinite(primary_values)
+            if settings["view"] == "voltage_current" and voltage_by_channel:
+                visible_voltage_values = np.zeros(len(raw), dtype=bool)
+                for values in voltage_by_channel.values():
+                    visible_voltage_values |= np.isfinite(values)
+                visible_values = ~plot_mask & visible_voltage_values
+            else:
+                visible_values = ~plot_mask & np.isfinite(primary_values)
             with time_capacity_path.timed_stage(cell_diagnostics, "display_downsampling"):
                 take = _downsample_indices(
                     len(raw), display_max, visible_values, envelope_series
@@ -4484,6 +4519,10 @@ def compute_time_capacity(
                 raw = raw.iloc[take]
                 display_x = display_x[take]
                 phases = np.asarray(phases)[take].tolist()
+                voltage_by_channel = {
+                    quantity: values[take]
+                    for quantity, values in voltage_by_channel.items()
+                }
                 voltage = voltage[take]
                 current = current[take]
                 capacity = capacity[take] if capacity is not None else None
@@ -4576,6 +4615,16 @@ def compute_time_capacity(
                     else []
                 ),
                 "voltage_v": _jsonsafe_plot(voltage, None if full_precision else 5) if not compact or not is_derivative else [],
+                **(
+                    {
+                        "voltage_v_by_channel": {
+                            quantity: _jsonsafe_plot(values, None if full_precision else 5)
+                            for quantity, values in voltage_by_channel.items()
+                        }
+                    }
+                    if not is_derivative and len(settings["voltage_channels"]) > 1
+                    else {}
+                ),
                 "current_ma": _jsonsafe_plot(current, None if full_precision else 5) if not compact or not is_derivative else [],
                 "phase": phases,
                 "status": _textsafe(raw["status"]) if not compact and "status" in raw.columns else [],

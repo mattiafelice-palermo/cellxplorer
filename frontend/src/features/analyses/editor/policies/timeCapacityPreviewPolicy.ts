@@ -1,16 +1,20 @@
 import type { AnalysisSpec, TimeCapacityResult } from "../../../../api";
 
 import {
-  timeCapacityResultMatchesVoltageChannel,
-  voltageChannelUnavailable,
+  normalizeVoltageChannels,
+  timeCapacityResultMatchesVoltageChannels,
+  voltageChannelsUnavailable,
   type VoltageChannel,
 } from "./voltageChannelPolicy.ts";
 
-function selectedVoltageChannel(spec: AnalysisSpec): VoltageChannel {
-  const selected = spec.computation.time_capacity?.voltage_channel;
-  return selected === "working_potential" || selected === "counter_potential"
-    ? selected
-    : "voltage";
+function selectedVoltageChannels(spec: AnalysisSpec): VoltageChannel[] {
+  const config = spec.computation.time_capacity;
+  const selected = config?.voltage_channel;
+  const fallback =
+    selected === "working_potential" || selected === "counter_potential"
+      ? selected
+      : "voltage";
+  return normalizeVoltageChannels(config?.voltage_channels, fallback);
 }
 
 /**
@@ -23,12 +27,12 @@ export function timeCapacityPreviewResult(
   spec: AnalysisSpec,
 ): TimeCapacityResult | undefined {
   if (!result) return undefined;
-  const channel = selectedVoltageChannel(spec);
-  if (!timeCapacityResultMatchesVoltageChannel(result, channel)) return undefined;
-  if (voltageChannelUnavailable(channel, result.voltage_channels)) return undefined;
+  const channels = selectedVoltageChannels(spec);
+  if (!timeCapacityResultMatchesVoltageChannels(result, channels)) return undefined;
+  if (voltageChannelsUnavailable(channels, result.voltage_channels)) return undefined;
   return result;
 }
 
 export function timeCapacityPreviewChannel(spec: AnalysisSpec): VoltageChannel {
-  return selectedVoltageChannel(spec);
+  return selectedVoltageChannels(spec)[0] ?? "voltage";
 }
