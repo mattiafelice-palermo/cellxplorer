@@ -239,3 +239,16 @@ R2 is resolved in `c159c16c98f158824dc36d267e5bbd3ccfb50327`. Static review foun
 Resolve R3–R6 in `docs/specs/reviews/052.2-time-capacity-navigation-polish-review.md`. R3 corrects the range-segment pointer scale and requires real pointer-bound verification; R4 replaces trailing-idle preview starvation with bounded live coalescing/throttling; R5 preserves edited unsaved drafts instead of reclassifying them as virgin; R6 makes null-bound Ctrl+first a no-op while retaining normal safe backward navigation. R1/R2 remain resolved. Rerun the child-required focused/frontend/preflight checks and the targeted browser acceptance named by each finding. Do not transition Spec 052 to COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T19:47:06+02:00 — IMPLEMENTER → REVIEWER — 052.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R3-R6 focused cycle-navigation tests 22/22 PASS; Time/Capacity query-policy tests 6/6 PASS; TypeScript PASS; production frontend build PASS with existing ineffective-dynamic-import and large-chunk warnings; final canonical preflight PASS 4/4 with all 155 backend/frontend test files/modules passed; isolated analysis_engine rerun 114/114 PASS after a transient two-worker warmup error on the first aggregate run; targeted browser evidence collected before the user's browser-use restriction: R3 real segment drags reached 1-20 and 278-297 with width preserved, R4 continuous no-pause preview showed 103-123 before release and 278-297 after release, R5 edited 100-119 live draft retained range after DRAFT reopen; Escape, short-cycle live dataset, and grid persistence remain NOT RUN
+
+**Message**
+
+R3-R6 resolved exactly: pointer delta now maps against legal segment travel with width preservation; preview uses leading and bounded periodic latest-range coalescing with cancellation; live draft reopen no longer reinitializes virgin Time/Capacity state; null-bound Ctrl+first is a no-op while ordinary previous-cycle movement remains safe. Spec 052 remains open; do not transition to COMPLETE without explicit user authorization.
+
+---

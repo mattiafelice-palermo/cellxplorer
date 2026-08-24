@@ -47,16 +47,18 @@ import {
   clampCycleWindow,
   cycleRangeWidth,
   cycleWindowOptions,
+  navigateTimeCapacityCycleRange,
   normalizeCycleRangeForNavigation,
   normalizeManualTimeCapacityRange,
   normalizeTimeCapacityRange,
   resizeTimeCapacityCycleRange,
   selectTimeCapacityCycleHistory,
   shiftTimeCapacityCycleRange,
-  timeCapacityCycleRangeAtBoundary,
   timeCapacityPreviousViewDisabled,
   timeCapacityRangeNavigationDisabled,
+  timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
+  timeCapacityCycleRangeAtPointerDelta,
   type TimeCapacityCycleRange,
 } from "./timeCapacityCycleNavigationPolicy";
 
@@ -234,11 +236,12 @@ function CycleWindowSlider({
       const track = trackRef.current;
       if (!track) return startRange;
       const rect = track.getBoundingClientRect();
-      const availableStarts = Math.max(0, maxAvailableCycle - cycleRangeWidth(startRange));
-      const delta = rect.width > 0
-        ? Math.round(((clientX - startX) / rect.width) * availableStarts)
-        : 0;
-      return clampCycleWindow(startRange.start + delta, cycleRangeWidth(startRange), maxAvailableCycle);
+      return timeCapacityCycleRangeAtPointerDelta(
+        startRange,
+        clientX - startX,
+        rect.width,
+        maxAvailableCycle,
+      );
     },
     [maxAvailableCycle],
   );
@@ -609,15 +612,13 @@ export function TimeCapacityCycleNavigation({
   );
 
   useEffect(() => {
-    if (
-      !isVirgin ||
-      !virginDefaultPendingRef.current ||
-      virginDefaultAppliedRef.current ||
-      specificCyclesActive ||
-      !hasBound
-    ) {
-      return;
-    }
+    if (!timeCapacityVirginDefaultCanApply(
+      isVirgin,
+      virginDefaultPendingRef.current,
+      virginDefaultAppliedRef.current,
+      specificCyclesActive,
+      maxAvailableCycle,
+    )) return;
     const next = timeCapacityVirginCycleRange(maxAvailableCycle);
     if (!next) return;
     applyingVirginDefaultRef.current = true;
@@ -660,14 +661,16 @@ export function TimeCapacityCycleNavigation({
       boundary?: "first" | "last",
     ) => {
       if (specificCyclesActive) return;
-      if (!hasBound && (direction === 1 || mode === "window")) return;
-      commitRange(
-        boundary && hasBound
-          ? timeCapacityCycleRangeAtBoundary(boundedRange, boundary, maxAvailableCycle)
-          : shiftTimeCapacityCycleRange(boundedRange, direction, mode, maxAvailableCycle),
+      const next = navigateTimeCapacityCycleRange(
+        boundedRange,
+        direction,
+        mode,
+        maxAvailableCycle,
+        boundary,
       );
+      if (next) commitRange(next);
     },
-    [boundedRange, commitRange, hasBound, maxAvailableCycle, specificCyclesActive],
+    [boundedRange, commitRange, maxAvailableCycle, specificCyclesActive],
   );
 
   const resize = useCallback(

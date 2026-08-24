@@ -3974,10 +3974,6 @@ function AnalysisEditorView({
         draft={null}
         liveUnsaved={liveUnsavedDraft && tab === activeTab}
         onOpenDraft={() => {
-          if (tab === "time_capacity") {
-            setTimeCapacityNavigationSession((value) => value + 1);
-            setTimeCapacityVirginNavigation(true);
-          }
           setActiveSavedPlotId(null);
           setActivePlotBaselineSignature(null);
           setPlotWorkspaceTouched(true);

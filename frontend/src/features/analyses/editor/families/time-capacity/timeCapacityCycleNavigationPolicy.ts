@@ -5,6 +5,19 @@ export interface TimeCapacityCycleRange {
   end: number;
 }
 
+export const TIME_CAPACITY_PREVIEW_INTERVAL_MS = 120;
+
+export interface TimeCapacityPreviewThrottleState {
+  lastPublishedAt: number | null;
+  pendingRange: TimeCapacityCycleRange | null;
+}
+
+export interface TimeCapacityPreviewThrottleDecision {
+  state: TimeCapacityPreviewThrottleState;
+  publishedRange: TimeCapacityCycleRange | null;
+  waitMs: number | null;
+}
+
 export type TimeCapacityCycleRangePatch = {
   start?: number | string | null;
   end?: number | string | null;
@@ -39,6 +52,62 @@ export function cycleRangesEqual(
   right: TimeCapacityCycleRange,
 ): boolean {
   return left.start === right.start && left.end === right.end;
+}
+
+function previewInterval(intervalMs: number): number {
+  return Number.isFinite(intervalMs) ? Math.max(1, intervalMs) : TIME_CAPACITY_PREVIEW_INTERVAL_MS;
+}
+
+/** Publish the first live preview immediately, then retain only the newest pending range. */
+export function queueTimeCapacityPreviewRange(
+  state: TimeCapacityPreviewThrottleState,
+  range: TimeCapacityCycleRange,
+  nowMs: number,
+  intervalMs = TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+): TimeCapacityPreviewThrottleDecision {
+  const interval = previewInterval(intervalMs);
+  const now = Number.isFinite(nowMs) ? nowMs : 0;
+  if (state.lastPublishedAt === null || now - state.lastPublishedAt >= interval) {
+    return {
+      state: { lastPublishedAt: now, pendingRange: null },
+      publishedRange: range,
+      waitMs: null,
+    };
+  }
+
+  return {
+    state: { lastPublishedAt: state.lastPublishedAt, pendingRange: range },
+    publishedRange: null,
+    waitMs: Math.max(0, interval - (now - state.lastPublishedAt)),
+  };
+}
+
+/** Flush the newest pending preview once the bounded coalescing interval elapses. */
+export function flushTimeCapacityPreviewRange(
+  state: TimeCapacityPreviewThrottleState,
+  nowMs: number,
+  intervalMs = TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+): TimeCapacityPreviewThrottleDecision {
+  if (!state.pendingRange) {
+    return { state, publishedRange: null, waitMs: null };
+  }
+
+  const interval = previewInterval(intervalMs);
+  const now = Number.isFinite(nowMs) ? nowMs : 0;
+  const elapsed = state.lastPublishedAt === null ? interval : now - state.lastPublishedAt;
+  if (state.lastPublishedAt === null || elapsed >= interval) {
+    return {
+      state: { lastPublishedAt: now, pendingRange: null },
+      publishedRange: state.pendingRange,
+      waitMs: null,
+    };
+  }
+
+  return {
+    state,
+    publishedRange: null,
+    waitMs: Math.max(0, interval - elapsed),
+  };
 }
 
 /**
@@ -150,6 +219,50 @@ export function timeCapacityCycleRangeAtBoundary(
     : clampCycleWindow(maximum, cycleRangeWidth(current), maximum);
 }
 
+/** Map pointer movement to the highlighted segment's legal left-edge travel. */
+export function timeCapacityCycleRangeAtPointerDelta(
+  range: TimeCapacityCycleRange,
+  pointerDeltaPx: number,
+  trackWidthPx: number,
+  maxAvailableCycle: number | null | undefined,
+): TimeCapacityCycleRange {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  if (maximum === null) return current;
+
+  const width = cycleRangeWidth(current);
+  const availableStarts = Math.max(0, maximum - width);
+  if (
+    availableStarts === 0 ||
+    !Number.isFinite(pointerDeltaPx) ||
+    !Number.isFinite(trackWidthPx) ||
+    trackWidthPx <= 0
+  ) {
+    return current;
+  }
+
+  const segmentTravelPx = (trackWidthPx * availableStarts) / maximum;
+  if (segmentTravelPx <= 0) return current;
+  const deltaCycles = Math.round((pointerDeltaPx / segmentTravelPx) * availableStarts);
+  return clampCycleWindow(current.start + deltaCycles, width, maximum);
+}
+
+/** Resolve a normal or Ctrl+extreme navigation action without inventing a null-bound extreme. */
+export function navigateTimeCapacityCycleRange(
+  range: TimeCapacityCycleRange,
+  direction: -1 | 1,
+  mode: "cycle" | "window",
+  maxAvailableCycle: number | null | undefined,
+  boundary?: "first" | "last",
+): TimeCapacityCycleRange | null {
+  const hasBound = positiveMaximum(maxAvailableCycle) !== null;
+  if (boundary && !hasBound) return null;
+  if (!hasBound && (direction === 1 || mode === "window")) return null;
+  return boundary
+    ? timeCapacityCycleRangeAtBoundary(range, boundary, maxAvailableCycle)
+    : shiftTimeCapacityCycleRange(range, direction, mode, maxAvailableCycle);
+}
+
 export function timeCapacityVirginCycleRange(
   maxAvailableCycle: number | null | undefined,
   preferredWidth = 20,
@@ -158,6 +271,22 @@ export function timeCapacityVirginCycleRange(
   if (maximum === null) return null;
   const width = Math.min(positiveInteger(preferredWidth, 20), maximum);
   return clampCycleWindow(maximum - width + 1, width, maximum);
+}
+
+export function timeCapacityVirginDefaultCanApply(
+  isVirgin: boolean,
+  pending: boolean,
+  applied: boolean,
+  specificCyclesActive: boolean,
+  maxAvailableCycle: number | null | undefined,
+): boolean {
+  return (
+    isVirgin &&
+    pending &&
+    !applied &&
+    !specificCyclesActive &&
+    positiveMaximum(maxAvailableCycle) !== null
+  );
 }
 
 /** Apply one exact From/To edit, including the locked crossing behaviour. */

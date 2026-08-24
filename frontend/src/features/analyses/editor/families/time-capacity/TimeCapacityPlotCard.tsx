@@ -118,7 +118,13 @@ import {
 } from "./timeCapacityRefinementPolicy";
 import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
 import { TimeCapacityCycleNavigation } from "./TimeCapacityCycleNavigation";
-import type { TimeCapacityCycleRange } from "./timeCapacityCycleNavigationPolicy";
+import {
+  flushTimeCapacityPreviewRange,
+  queueTimeCapacityPreviewRange,
+  TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+  type TimeCapacityCycleRange,
+  type TimeCapacityPreviewThrottleState,
+} from "./timeCapacityCycleNavigationPolicy";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
@@ -134,8 +140,6 @@ export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_c
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
 export type TimeCapacityVoltageChannel = VoltageChannel;
-
-const TIME_CAPACITY_PREVIEW_DEBOUNCE_MS = 120;
 
 const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   width: 512,
@@ -1235,25 +1239,64 @@ function TimeCapacityPlotCardView({
   const cfg = timeCapacityConfig(spec);
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
   const [previewQueryRange, setPreviewQueryRange] = useState<TimeCapacityCycleRange | null>(null);
-  useEffect(() => {
-    if (!cyclePreviewRange) {
-      setPreviewQueryRange(null);
-      return;
+  const previewThrottleStateRef = useRef<TimeCapacityPreviewThrottleState>({
+    lastPublishedAt: null,
+    pendingRange: null,
+  });
+  const previewThrottleTimerRef = useRef<number | null>(null);
+  const cancelPreviewThrottle = useCallback(() => {
+    if (previewThrottleTimerRef.current !== null) {
+      window.clearTimeout(previewThrottleTimerRef.current);
+      previewThrottleTimerRef.current = null;
     }
-    const timer = window.setTimeout(
-      () => setPreviewQueryRange(cyclePreviewRange),
-      TIME_CAPACITY_PREVIEW_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [cyclePreviewRange]);
+    previewThrottleStateRef.current = { lastPublishedAt: null, pendingRange: null };
+    setPreviewQueryRange(null);
+  }, []);
+  const schedulePreviewThrottleFlush = useCallback((delayMs: number) => {
+    if (previewThrottleTimerRef.current !== null) return;
+    previewThrottleTimerRef.current = window.setTimeout(() => {
+      previewThrottleTimerRef.current = null;
+      const decision = flushTimeCapacityPreviewRange(
+        previewThrottleStateRef.current,
+        window.performance.now(),
+        TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+      );
+      previewThrottleStateRef.current = decision.state;
+      if (decision.publishedRange) setPreviewQueryRange(decision.publishedRange);
+      if (decision.waitMs !== null && decision.state.pendingRange !== null) {
+        schedulePreviewThrottleFlush(decision.waitMs);
+      }
+    }, Math.max(0, Math.ceil(delayMs)));
+  }, []);
   useEffect(() => {
     setCyclePreviewRange(null);
-    setPreviewQueryRange(null);
-  }, [navigationResetKey]);
+    cancelPreviewThrottle();
+  }, [cancelPreviewThrottle, navigationResetKey]);
+  useEffect(
+    () => () => {
+      if (previewThrottleTimerRef.current !== null) {
+        window.clearTimeout(previewThrottleTimerRef.current);
+        previewThrottleTimerRef.current = null;
+      }
+    },
+    [],
+  );
   const handleCyclePreviewRange = useCallback((range: TimeCapacityCycleRange | null) => {
     setCyclePreviewRange(range);
-    if (range === null) setPreviewQueryRange(null);
-  }, []);
+    if (range === null) {
+      cancelPreviewThrottle();
+      return;
+    }
+    const decision = queueTimeCapacityPreviewRange(
+      previewThrottleStateRef.current,
+      range,
+      window.performance.now(),
+      TIME_CAPACITY_PREVIEW_INTERVAL_MS,
+    );
+    previewThrottleStateRef.current = decision.state;
+    if (decision.publishedRange) setPreviewQueryRange(decision.publishedRange);
+    if (decision.waitMs !== null) schedulePreviewThrottleFlush(decision.waitMs);
+  }, [cancelPreviewThrottle, schedulePreviewThrottleFlush]);
   const requestSpec = useMemo(
     () => (previewQueryRange ? timeCapacitySpecWithCycleRange(spec, previewQueryRange) : spec),
     [previewQueryRange, spec],

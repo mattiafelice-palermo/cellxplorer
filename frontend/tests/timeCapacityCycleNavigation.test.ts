@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "../src/features/analyses/editor/plotting/plotStyle.ts";
@@ -8,16 +9,21 @@ import {
   cycleRangeWidth,
   cycleRangesEqual,
   cycleWindowOptions,
+  flushTimeCapacityPreviewRange,
+  navigateTimeCapacityCycleRange,
   normalizeCycleRangeForNavigation,
   normalizeManualTimeCapacityRange,
   normalizeTimeCapacityRange,
+  queueTimeCapacityPreviewRange,
   resizeTimeCapacityCycleRange,
   selectedTimeCapacityCycleMax,
   selectTimeCapacityCycleHistory,
   shiftTimeCapacityCycleRange,
+  timeCapacityCycleRangeAtPointerDelta,
   timeCapacityCycleRangeAtBoundary,
   timeCapacityPreviousViewDisabled,
   timeCapacityRangeNavigationDisabled,
+  timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
   type TimeCapacityCycleRange,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityCycleNavigationPolicy.ts";
@@ -115,11 +121,52 @@ test("boundary jumps preserve the current width", () => {
   assert.deepEqual(timeCapacityCycleRangeAtBoundary(range, "last", null), range);
 });
 
+test("pointer movement follows the highlighted segment's legal travel and preserves width", () => {
+  const firstWindow = { start: 1, end: 50 };
+  const lastWindow = { start: 51, end: 100 };
+  const middleWindow = timeCapacityCycleRangeAtPointerDelta(firstWindow, 25, 100, 100);
+
+  assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(firstWindow, 50, 100, 100), lastWindow);
+  assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(lastWindow, -50, 100, 100), firstWindow);
+  assert.deepEqual(middleWindow, { start: 26, end: 75 });
+  assert.equal(cycleRangeWidth(middleWindow), 50);
+  assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(firstWindow, 500, 100, 100), lastWindow);
+  assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(lastWindow, -500, 100, 100), firstWindow);
+});
+
 test("virgin views use the last twenty available cycles without exceeding the extent", () => {
   assert.deepEqual(timeCapacityVirginCycleRange(200), { start: 181, end: 200 });
   assert.deepEqual(timeCapacityVirginCycleRange(20), { start: 1, end: 20 });
   assert.deepEqual(timeCapacityVirginCycleRange(12), { start: 1, end: 12 });
   assert.equal(timeCapacityVirginCycleRange(null), null);
+});
+
+test("virgin initialization is one-time and respects edits before the maximum resolves", () => {
+  assert.equal(timeCapacityVirginDefaultCanApply(true, true, false, false, null), false);
+  assert.equal(timeCapacityVirginDefaultCanApply(true, true, false, false, 200), true);
+  assert.equal(timeCapacityVirginDefaultCanApply(true, false, false, false, 200), false);
+  assert.equal(timeCapacityVirginDefaultCanApply(true, true, true, false, 200), false);
+  assert.equal(timeCapacityVirginDefaultCanApply(true, true, false, true, 200), false);
+});
+
+test("reopening a live draft does not reclassify it as a virgin Time/Capacity view", () => {
+  const source = readFileSync(
+    new URL("../src/features/analyses/editor/AnalysisEditor.tsx", import.meta.url),
+    "utf8",
+  );
+  const draftStart = source.indexOf("onOpenDraft={() => {");
+  const draftEnd = source.indexOf("onSaveNew", draftStart);
+  assert.ok(draftStart >= 0 && draftEnd > draftStart);
+  const draftSource = source.slice(draftStart, draftEnd);
+  assert.doesNotMatch(draftSource, /setTimeCapacityNavigationSession|setTimeCapacityVirginNavigation/);
+
+  const newPlotStart = source.indexOf("const startNewPlotReset");
+  const newPlotEnd = source.indexOf("const startNewPlot =", newPlotStart);
+  assert.ok(newPlotStart >= 0 && newPlotEnd > newPlotStart);
+  assert.match(
+    source.slice(newPlotStart, newPlotEnd),
+    /setTimeCapacityNavigationSession[\s\S]*setTimeCapacityVirginNavigation\(true\)/,
+  );
 });
 
 test("the canonical virgin plot style remains line-only", () => {
@@ -178,6 +225,36 @@ test("history selection restores an older entry and drops newer back-stack entri
     history: [first],
   });
   assert.equal(selectTimeCapacityCycleHistory([first], 3), null);
+});
+
+test("preview coalescing publishes immediately and advances during a continuous stream", () => {
+  const first = { start: 1, end: 20 };
+  const second = { start: 2, end: 21 };
+  const third = { start: 3, end: 22 };
+  const initial = { lastPublishedAt: null, pendingRange: null };
+
+  const leading = queueTimeCapacityPreviewRange(initial, first, 0, 120);
+  assert.deepEqual(leading.publishedRange, first);
+  const pending = queueTimeCapacityPreviewRange(leading.state, second, 20, 120);
+  assert.equal(pending.publishedRange, null);
+  const latest = queueTimeCapacityPreviewRange(pending.state, third, 40, 120);
+  assert.equal(latest.publishedRange, null);
+  const flushed = flushTimeCapacityPreviewRange(latest.state, 120, 120);
+  assert.deepEqual(flushed.publishedRange, third);
+  assert.equal(flushed.state.pendingRange, null);
+});
+
+test("null-bound Ctrl+first is a no-op while normal backward movement stays safe", () => {
+  const range = { start: 10, end: 20 };
+  assert.deepEqual(navigateTimeCapacityCycleRange(range, -1, "cycle", null), {
+    start: 9,
+    end: 19,
+  });
+  assert.equal(navigateTimeCapacityCycleRange(range, -1, "cycle", null, "first"), null);
+  assert.deepEqual(navigateTimeCapacityCycleRange(range, -1, "cycle", 100, "first"), {
+    start: 1,
+    end: 11,
+  });
 });
 
 test("selected maximum resolves direct cells, groups, mixed entries, and duplicates", () => {
