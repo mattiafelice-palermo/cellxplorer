@@ -22,7 +22,7 @@ import multiprocessing
 import os
 import pickle
 import threading
-from time import perf_counter
+from time import perf_counter, sleep as _sleep
 from typing import Any, Literal
 
 import numpy as np
@@ -283,15 +283,38 @@ def choose_execution(
     }
     if force_serial:
         return ExecutionDecision("serial", 1, "forced_serial", **common)
-    if cell_count < 3:
-        return ExecutionDecision("serial", 1, "small_cell_count", **common)
-    if selected_rows < max(12_000, cell_count * 4_000):
-        return ExecutionDecision("serial", 1, "small_selected_row_count", **common)
+    # Spec 052.4: one Cell is one job, so there is nothing to split and the
+    # dispatch only adds IPC. Every larger request benefits.
+    if cell_count < 2:
+        return ExecutionDecision("serial", 1, "single_cell", **common)
+    # The former `selected_rows < max(12_000, cell_count * 4_000)` workload
+    # floor is deliberately gone. It was excluding exactly the interactive
+    # requests that need the pool most: a 6-Cell 10-cycle slider preview is
+    # ~16.5k rows against a 24k floor, so it ran serially while four warm
+    # workers idled. Measured on a warm pool, process dispatch won at every
+    # size tested down to ~8.2k rows (2.2x) and from two Cells upward (1.6x at
+    # 2, 2.9x at 4, 2.4x at 6); no lower crossover was found. The host and
+    # memory gates below still bound how many workers the machine can afford,
+    # which is the concern that actually needs a limit.
     if resources.logical_cpus is None or resources.total_memory_bytes is None or resources.available_memory_bytes is None:
         return ExecutionDecision("serial", 1, "host_resources_unavailable", **common)
 
     per_worker = _estimated_worker_bytes(selected_rows, cell_count)
     reserve = 512 * _MEGABYTE
+    # Spec 052.4: jobs are per Cell, so a pool narrower than the selection runs
+    # in rounds -- six Cells across four workers is two rounds, and the second
+    # round carries only two jobs. Measured on the six-Cell time-axis moving
+    # preview, dispatch fell from 34.8 ms (4 workers) to 23.5 ms (6). The pool
+    # is sized once at startup from this same function, so the tier here and
+    # the per-request decision stay consistent with `_ready_pool`'s exact match.
+    if resources.logical_cpus >= 12:
+        required = 6 * per_worker
+        if (
+            resources.total_memory_bytes >= required + reserve
+            and resources.available_memory_bytes >= required
+        ):
+            return ExecutionDecision("process", 6, "broad_host_gate_6", **common)
+
     if resources.logical_cpus >= 8:
         required = 4 * per_worker
         if (
@@ -311,9 +334,20 @@ def choose_execution(
     return ExecutionDecision("serial", 1, "host_resource_gate", **common)
 
 
-def _worker_ping() -> int:
+# Spec 052.4: an instant ping lets one fast process answer several
+# acknowledgements before its siblings have spawned, so warmup could conclude
+# that fewer workers were resident than requested and fail closed to serial.
+# Holding each acknowledgement briefly forces the pool to start a distinct
+# process per concurrent ping. This is a startup-only cost on an already
+# asynchronous warmup thread.
+_WARMUP_PING_HOLD_SECONDS = 0.2
+
+
+def _worker_ping(hold_seconds: float = 0.0) -> int:
     """Return the acknowledging worker PID after importing this module."""
 
+    if hold_seconds > 0:
+        _sleep(hold_seconds)
     return os.getpid()
 
 
@@ -340,7 +374,10 @@ def _warm_pool(
     # tiny acknowledgements so a fast first process cannot make a one-ping
     # warmup look like a fully resident pool. Read every result and require the
     # selected number of distinct worker PIDs.
-    futures = [pool.submit(_worker_ping) for _ in range(max(1, workers * 4))]
+    futures = [
+        pool.submit(_worker_ping, _WARMUP_PING_HOLD_SECONDS)
+        for _ in range(max(1, workers * 4))
+    ]
     deadline = perf_counter() + timeout_seconds
     pids: set[int] = set()
     try:

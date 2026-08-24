@@ -87,6 +87,19 @@ def workload_matrix(cell_ids: list[int]) -> list[dict]:
             "persist": False,
         },
         {
+            # The same slider drag, but on the capacity x-axis. This is the
+            # same Time/Capacity tab, so the navigator drives it too.
+            "name": "six-cell-capacity-moving-preview",
+            "cells": six,
+            "cycles": [],
+            "cycle_start": 1,
+            "cycle_end": 10,
+            "x_axis": "capacity_mah",
+            "view": "voltage_current",
+            "max_points": 1000,
+            "persist": False,
+        },
+        {
             "name": "six-cell-full-range-capacity",
             "cells": six,
             "cycles": [],
@@ -288,7 +301,18 @@ def main() -> int:
         if args.with_pool:
             from app.services import time_capacity_workers
 
+            # Warmup is asynchronous in production. Wait for it here so the
+            # first measured workload is not competing with four processes
+            # spawning and importing the scientific stack.
             time_capacity_workers.start_time_capacity_worker_pool()
+            thread = time_capacity_workers._WARMUP_THREAD
+            if thread is not None:
+                thread.join(180)
+            print(
+                f"pool state={time_capacity_workers._POOL_STATE} "
+                f"workers={time_capacity_workers._POOL_WORKERS}",
+                flush=True,
+            )
 
         rows = []
         for workload in workload_matrix(cell_ids):

@@ -33,13 +33,44 @@ class TimeCapacityWorkerTests(unittest.TestCase):
             total_memory_bytes=32 * 1024 * 1024 * 1024,
             available_memory_bytes=16 * 1024 * 1024 * 1024,
         )
+        # One Cell is one job: nothing to split, so serial.
         self.assertEqual(
             workers.choose_execution(1, 3_000, resources=rich).reason,
-            "small_cell_count",
+            "single_cell",
         )
+        # A 16-CPU host reaches the widest tier, so a selection is not split
+        # into rounds against a narrower pool.
         self.assertEqual(
             workers.choose_execution(6, 120_000, resources=rich).workers,
+            6,
+        )
+        self.assertEqual(
+            workers.choose_execution(6, 120_000, resources=rich).reason,
+            "broad_host_gate_6",
+        )
+        # An 8-CPU host keeps the previous 4-worker tier.
+        eight = workers.HostResources(
+            logical_cpus=8,
+            total_memory_bytes=32 * 1024 * 1024 * 1024,
+            available_memory_bytes=16 * 1024 * 1024 * 1024,
+        )
+        self.assertEqual(
+            workers.choose_execution(6, 120_000, resources=eight).workers,
             4,
+        )
+        # Spec 052.4: there is no workload floor any more. Small interactive
+        # requests are exactly the ones that need the warm pool, and they were
+        # the ones the old row threshold excluded.
+        for cell_count, rows in ((2, 5_510), (3, 8_231), (4, 10_988), (6, 16_492)):
+            decision = workers.choose_execution(cell_count, rows, resources=rich)
+            with self.subTest(cells=cell_count, rows=rows):
+                self.assertEqual(decision.mode, "process")
+                self.assertEqual(decision.workers, 6)
+        # A tiny multi-Cell request still parallelizes; only the host gates
+        # may reduce it.
+        self.assertEqual(
+            workers.choose_execution(2, 10, resources=rich).mode,
+            "process",
         )
         constrained = workers.HostResources(
             logical_cpus=8,
