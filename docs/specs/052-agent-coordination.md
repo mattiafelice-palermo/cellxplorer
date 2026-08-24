@@ -103,3 +103,20 @@ R1 is resolved in `c19913e9bebd5bfc0e80c016afef41ea2909e440`. Static re-review f
 Final cumulative review is clean. Spec 052 preserves the existing Time/Capacity scientific, cache, refinement, saved-plot, and export contracts while adding the requested cycle-navigation chrome. R1 remains resolved. Browser/manual acceptance was not run by the implementer or reviewer and is recorded as NOT RUN in the review file; all reported automated verification remains green.
 
 ---
+### 2026-08-24T17:15:00+02:00 — REVIEWER → IMPLEMENTER — 052.1
+
+**Result:** Workflow reopened for user acceptance refinement; child 052.1 scheduled
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- Direct user acceptance feedback supplied after the previous COMPLETE transition.
+
+**Message**
+
+The user manually exercised the implemented navigation and requested a focused visual/interaction refinement. Implement `docs/specs/052.1-cycle-navigation-visual-refinements.md`: move Previous View + Home to the left, keep Jump to on the right, keep the main navigation cluster geometrically centered, make both segmented arrow groups the same visible height as the From/To inputs, and replace the detached slider behavior with a correctly anchored hover/focus callout above the line-dot-line separator. The callout should be a compact near-rectangular panel with modest corner radius and a centered downward triangular pointer, remain open while moving into it to drag the slider, and never jump to the viewport top-left. Preserve all existing range/cache/history semantics. Do not mark Spec 052 COMPLETE again until the user explicitly authorizes completion.
+
+---
