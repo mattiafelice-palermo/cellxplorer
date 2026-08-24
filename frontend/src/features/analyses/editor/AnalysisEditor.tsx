@@ -2471,6 +2471,7 @@ function AnalysisEditorView({
     workspaceState?.activePlotBaselineSignature ?? null,
   );
   const [timeCapacityNavigationSession, setTimeCapacityNavigationSession] = useState(0);
+  const [timeCapacityVirginNavigation, setTimeCapacityVirginNavigation] = useState(false);
   const [plotWorkspaceTouched, setPlotWorkspaceTouched] = useState(
     workspaceState?.plotWorkspaceTouched ?? false,
   );
@@ -2888,6 +2889,7 @@ function AnalysisEditorView({
       });
       if (tab === "time_capacity") {
         setTimeCapacityNavigationSession((value) => value + 1);
+        setTimeCapacityVirginNavigation(false);
       }
       setActiveTab(tab);
       setActiveSavedPlotId(opened.activeSavedPlotId);
@@ -3381,6 +3383,7 @@ function AnalysisEditorView({
     const restoredForBaseline = specForSavedPlot(spec, plot);
     if (plot.tab === "time_capacity") {
       setTimeCapacityNavigationSession((value) => value + 1);
+      setTimeCapacityVirginNavigation(false);
     }
     setActiveSavedPlotId(plot.id);
     setActivePlotBaselineSignature(snapshotSignature(restoredForBaseline));
@@ -3571,6 +3574,7 @@ function AnalysisEditorView({
     }
     setSpec(next);
     setActiveSavedPlotId(plot.id);
+    if (plot.tab === "time_capacity") setTimeCapacityVirginNavigation(false);
     setActiveTab(plot.tab);
     setActivePlotBaselineSignature(snapshotSignature(next));
     normalWorkspaceRef.current = captureNormalWorkspace(next, plot.tab);
@@ -3599,6 +3603,7 @@ function AnalysisEditorView({
       : normalizePlotStyle(DEFAULT_PLOT_STYLE);
     if (activeTab === "time_capacity") {
       setTimeCapacityNavigationSession((value) => value + 1);
+      setTimeCapacityVirginNavigation(true);
     }
     update((s) => {
       const entries = clone(s.selection.entries);
@@ -3971,6 +3976,7 @@ function AnalysisEditorView({
         onOpenDraft={() => {
           if (tab === "time_capacity") {
             setTimeCapacityNavigationSession((value) => value + 1);
+            setTimeCapacityVirginNavigation(true);
           }
           setActiveSavedPlotId(null);
           setActivePlotBaselineSignature(null);
@@ -4213,6 +4219,9 @@ function AnalysisEditorView({
                     spec={spec}
                     update={update}
                     maxAvailableCycle={maxAvailableTimeCapacityCycle}
+                    isVirginNavigation={
+                      timeCapacityVirginNavigation && activeSavedPlotId === null
+                    }
                     navigationResetKey={`${aid}:${timeCapacityNavigationSession}:${activeSavedPlotId ?? "draft"}`}
                     active={activeTab === "time_capacity"}
                     onReadyChange={setTimeCapacityReady}

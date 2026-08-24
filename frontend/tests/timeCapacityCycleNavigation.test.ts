@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 import {
   appendTimeCapacityCycleHistory,
   centerTimeCapacityCycleRange,
@@ -12,9 +13,12 @@ import {
   normalizeTimeCapacityRange,
   resizeTimeCapacityCycleRange,
   selectedTimeCapacityCycleMax,
+  selectTimeCapacityCycleHistory,
   shiftTimeCapacityCycleRange,
+  timeCapacityCycleRangeAtBoundary,
   timeCapacityPreviousViewDisabled,
   timeCapacityRangeNavigationDisabled,
+  timeCapacityVirginCycleRange,
   type TimeCapacityCycleRange,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityCycleNavigationPolicy.ts";
 
@@ -98,6 +102,31 @@ test("jump and slider centering use deterministic even-width centering and clamp
   assert.deepEqual(centerTimeCapacityCycleRange(range, 719, 720), { start: 701, end: 720 });
 });
 
+test("boundary jumps preserve the current width", () => {
+  const range = { start: 101, end: 120 };
+  assert.deepEqual(timeCapacityCycleRangeAtBoundary(range, "first", 720), {
+    start: 1,
+    end: 20,
+  });
+  assert.deepEqual(timeCapacityCycleRangeAtBoundary(range, "last", 720), {
+    start: 701,
+    end: 720,
+  });
+  assert.deepEqual(timeCapacityCycleRangeAtBoundary(range, "last", null), range);
+});
+
+test("virgin views use the last twenty available cycles without exceeding the extent", () => {
+  assert.deepEqual(timeCapacityVirginCycleRange(200), { start: 181, end: 200 });
+  assert.deepEqual(timeCapacityVirginCycleRange(20), { start: 1, end: 20 });
+  assert.deepEqual(timeCapacityVirginCycleRange(12), { start: 1, end: 12 });
+  assert.equal(timeCapacityVirginCycleRange(null), null);
+});
+
+test("the canonical virgin plot style remains line-only", () => {
+  assert.equal(DEFAULT_PLOT_STYLE.marker_mode, "none");
+  assert.equal(normalizePlotStyle(undefined).marker_mode, "none");
+});
+
 test("manual From/To commits clamp and move the opposite endpoint when fields cross", () => {
   const current = { start: 10, end: 20 };
   assert.deepEqual(normalizeManualTimeCapacityRange(current, { start: 25 }, 100), {
@@ -136,7 +165,19 @@ test("history appends unique previous ranges and remains bounded", () => {
   assert.deepEqual(appendTimeCapacityCycleHistory([first], first), [first]);
   assert.deepEqual(appendTimeCapacityCycleHistory([first], second), [first, second]);
   assert.equal(appendTimeCapacityCycleHistory([first, second], first, 2).length, 2);
+  assert.deepEqual(appendTimeCapacityCycleHistory([first, second], first), [second, first]);
   assert.equal(cycleRangesEqual(first, { start: 1, end: 3 }), true);
+});
+
+test("history selection restores an older entry and drops newer back-stack entries", () => {
+  const first = { start: 1, end: 3 };
+  const second = { start: 10, end: 12 };
+  const third = { start: 20, end: 22 };
+  assert.deepEqual(selectTimeCapacityCycleHistory([first, second, third], 1), {
+    range: second,
+    history: [first],
+  });
+  assert.equal(selectTimeCapacityCycleHistory([first], 3), null);
 });
 
 test("selected maximum resolves direct cells, groups, mixed entries, and duplicates", () => {

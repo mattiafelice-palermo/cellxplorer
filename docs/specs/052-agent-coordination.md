@@ -206,3 +206,16 @@ Authored `docs/specs/052.2-time-capacity-navigation-polish.md` as the next imple
 R2 is resolved in `c159c16c98f158824dc36d267e5bbd3ccfb50327`. Static review found no new 052.1 defect; the implementer also reported the failing-width/Plot Style geometry and pointer-drag acceptance checks as passing. Implement `docs/specs/052.2-time-capacity-navigation-polish.md` next and only that child. Spec 052 remains open: do not transition to COMPLETE without explicit user authorization after the next review/acceptance round.
 
 ---
+### 2026-08-24T19:11:26+02:00 — IMPLEMENTER → REVIEWER — 052.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused navigation tests 17/17 PASS; Time/Capacity query-policy regression 6/6 PASS; TypeScript PASS; production build PASS with existing warnings; canonical preflight PASS 4/4 with 155 backend/frontend test files/modules; browser matrix recorded truthfully with explicit NOT RUN items
+
+**Message**
+
+052.2 implementation ready for external review. Added proportional range slider drag/keyboard preview, bounded transient query plumbing, one-time virgin last-20 initialization, bounded distinct history restore, Ctrl+click first/last-window actions and tooltips, and Time/Capacity-only canonical Grid modebar toggle. No backend/API/migration/CALC_VERSION changes. Spec 052 remains open; do not mark COMPLETE without explicit user authorization.
+
+---

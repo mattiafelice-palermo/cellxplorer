@@ -3,11 +3,11 @@ import {
   Box,
   Button,
   Group,
+  Menu,
   NumberInput,
   Paper,
   Popover,
   Select,
-  Slider,
   Text,
   Tooltip,
   UnstyledButton,
@@ -15,6 +15,7 @@ import {
 import { useElementSize } from "@mantine/hooks";
 import {
   IconArrowLeft,
+  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconChevronsLeft,
@@ -32,6 +33,7 @@ import {
 import type {
   FocusEventHandler,
   KeyboardEventHandler,
+  MouseEventHandler,
   PointerEventHandler,
   ReactElement,
   ReactNode,
@@ -49,9 +51,12 @@ import {
   normalizeManualTimeCapacityRange,
   normalizeTimeCapacityRange,
   resizeTimeCapacityCycleRange,
+  selectTimeCapacityCycleHistory,
   shiftTimeCapacityCycleRange,
+  timeCapacityCycleRangeAtBoundary,
   timeCapacityPreviousViewDisabled,
   timeCapacityRangeNavigationDisabled,
+  timeCapacityVirginCycleRange,
   type TimeCapacityCycleRange,
 } from "./timeCapacityCycleNavigationPolicy";
 
@@ -163,19 +168,21 @@ function withControlTooltip(
 
 function NavigationSegmentButton({
   label,
+  tooltipLabel,
   disabled,
   disabledReason,
   children,
   onClick,
 }: {
   label: string;
+  tooltipLabel?: string;
   disabled: boolean;
   disabledReason?: string;
   children: ReactNode;
-  onClick: () => void;
+  onClick: MouseEventHandler<HTMLButtonElement>;
 }) {
   return withControlTooltip(
-    label,
+    tooltipLabel ?? label,
     <Button
       size="xs"
       variant="default"
@@ -190,6 +197,193 @@ function NavigationSegmentButton({
     </Button>,
     disabled,
     disabledReason,
+  );
+}
+
+interface CycleWindowSliderProps {
+  range: TimeCapacityCycleRange;
+  maxAvailableCycle: number;
+  disabled: boolean;
+  onPreview: (range: TimeCapacityCycleRange) => void;
+  onCommit: (range: TimeCapacityCycleRange) => void;
+  onCancel: () => void;
+}
+
+function CycleWindowSlider({
+  range,
+  maxAvailableCycle,
+  disabled,
+  onPreview,
+  onCommit,
+  onCancel,
+}: CycleWindowSliderProps) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startRange: TimeCapacityCycleRange;
+    latestRange: TimeCapacityCycleRange;
+  } | null>(null);
+  const keyboardRangeRef = useRef<TimeCapacityCycleRange | null>(null);
+  const width = cycleRangeWidth(range);
+  const segmentLeft = ((range.start - 1) / maxAvailableCycle) * 100;
+  const segmentWidth = (width / maxAvailableCycle) * 100;
+
+  const rangeAtPointer = useCallback(
+    (clientX: number, startX: number, startRange: TimeCapacityCycleRange) => {
+      const track = trackRef.current;
+      if (!track) return startRange;
+      const rect = track.getBoundingClientRect();
+      const availableStarts = Math.max(0, maxAvailableCycle - cycleRangeWidth(startRange));
+      const delta = rect.width > 0
+        ? Math.round(((clientX - startX) / rect.width) * availableStarts)
+        : 0;
+      return clampCycleWindow(startRange.start + delta, cycleRangeWidth(startRange), maxAvailableCycle);
+    },
+    [maxAvailableCycle],
+  );
+
+  const handlePointerDown = useCallback<PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (disabled) return;
+      event.preventDefault();
+      event.currentTarget.focus();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startRange: range,
+        latestRange: range,
+      };
+    },
+    [disabled, range],
+  );
+
+  const handlePointerMove = useCallback<PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const next = rangeAtPointer(event.clientX, drag.startX, drag.startRange);
+      if (next.start === drag.latestRange.start && next.end === drag.latestRange.end) return;
+      drag.latestRange = next;
+      onPreview(next);
+    },
+    [onPreview, rangeAtPointer],
+  );
+
+  const finishPointer = useCallback<PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      dragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      onCommit(drag.latestRange);
+    },
+    [onCommit],
+  );
+
+  const handleKeyDown = useCallback<KeyboardEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        keyboardRangeRef.current = null;
+        onCancel();
+        return;
+      }
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const next = shiftTimeCapacityCycleRange(
+        range,
+        event.key === "ArrowLeft" ? -1 : 1,
+        "cycle",
+        maxAvailableCycle,
+      );
+      keyboardRangeRef.current = next;
+      if (next.start !== range.start || next.end !== range.end) onPreview(next);
+    },
+    [maxAvailableCycle, onCancel, onPreview, range],
+  );
+
+  const handleKeyUp = useCallback<KeyboardEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const next = keyboardRangeRef.current;
+      keyboardRangeRef.current = null;
+      if (next) onCommit(next);
+    },
+    [onCommit],
+  );
+
+  return (
+    <Box
+      ref={trackRef}
+      role="slider"
+      aria-label="Cycle window position"
+      aria-valuemin={1}
+      aria-valuemax={maxAvailableCycle}
+      aria-valuenow={Math.round((range.start + range.end) / 2)}
+      aria-valuetext={`Cycles ${range.start} to ${range.end}`}
+      tabIndex={disabled ? -1 : 0}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPointer}
+      onPointerCancel={() => {
+        dragRef.current = null;
+        onCancel();
+      }}
+      onKeyDown={handleKeyDown}
+      onKeyUp={handleKeyUp}
+      data-cycle-window-slider
+      style={{
+        position: "relative",
+        height: 28,
+        display: "flex",
+        alignItems: "center",
+        cursor: disabled ? "not-allowed" : "default",
+        outline: "none",
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      <Box
+        component="span"
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          height: 6,
+          borderRadius: 999,
+          background: "var(--mantine-color-default-border)",
+        }}
+      />
+      <Box
+        component="span"
+        aria-hidden
+        data-cycle-window-segment
+        style={{
+          position: "absolute",
+          left: `${segmentLeft}%`,
+          width: `${segmentWidth}%`,
+          height: 10,
+          borderRadius: 999,
+          background: "var(--mantine-primary-color-6)",
+          boxShadow: "0 0 0 1px var(--mantine-primary-color-7)",
+          cursor: disabled ? "not-allowed" : "grab",
+        }}
+      />
+      <Box
+        component="span"
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "var(--mantine-radius-sm)",
+          pointerEvents: "none",
+        }}
+      />
+    </Box>
   );
 }
 
@@ -305,12 +499,16 @@ export function TimeCapacityCycleNavigation({
   config,
   maxAvailableCycle,
   onCommitRange,
+  onPreviewRangeChange,
+  isVirgin = false,
   navigationResetKey = "",
   spec,
 }: {
   config: Pick<TimeCapacityConfig, "cycle_start" | "cycle_end" | "cycles">;
   maxAvailableCycle: number | null;
   onCommitRange: (range: TimeCapacityCycleRange) => void;
+  onPreviewRangeChange?: (range: TimeCapacityCycleRange | null) => void;
+  isVirgin?: boolean;
   navigationResetKey?: string | number;
   spec: AnalysisSpec;
 }) {
@@ -344,20 +542,31 @@ export function TimeCapacityCycleNavigation({
   const [history, setHistory] = useState<TimeCapacityCycleRange[]>([]);
   const historyRef = useRef<TimeCapacityCycleRange[]>([]);
   const [sliderOpened, setSliderOpened] = useState(false);
-  const [sliderValue, setSliderValue] = useState<number | null>(null);
+  const [sliderPreviewRange, setSliderPreviewRange] = useState<TimeCapacityCycleRange | null>(null);
   const [jumpDraft, setJumpDraft] = useState("");
   const { ref: navigationRef, width: navigationWidth } = useElementSize();
   const sliderCloseTimerRef = useRef<number | null>(null);
   const triggerHoveredRef = useRef(false);
   const dropdownHoveredRef = useRef(false);
   const sliderFocusRef = useRef(false);
+  const virginDefaultPendingRef = useRef(isVirgin);
+  const virginDefaultAppliedRef = useRef(false);
+  const applyingVirginDefaultRef = useRef(false);
+
+  const visibleRange = sliderPreviewRange ?? boundedRange;
+
+  useEffect(() => {
+    virginDefaultPendingRef.current = isVirgin;
+    virginDefaultAppliedRef.current = false;
+  }, [isVirgin, navigationResetKey]);
 
   const clearHistory = useCallback(() => {
     historyRef.current = [];
     setHistory([]);
     setSliderOpened(false);
-    setSliderValue(null);
-  }, []);
+    setSliderPreviewRange(null);
+    onPreviewRangeChange?.(null);
+  }, [onPreviewRangeChange]);
 
   useEffect(() => {
     clearHistory();
@@ -366,12 +575,16 @@ export function TimeCapacityCycleNavigation({
   useEffect(() => {
     if (specificCyclesActive || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) {
       setSliderOpened(false);
-      setSliderValue(null);
+      setSliderPreviewRange(null);
+      onPreviewRangeChange?.(null);
     }
-  }, [boundedRange, hasBound, maxAvailableCycle, specificCyclesActive]);
+  }, [boundedRange, hasBound, maxAvailableCycle, onPreviewRangeChange, specificCyclesActive]);
 
   const commitRange = useCallback(
     (nextRange: TimeCapacityCycleRange, recordHistory = true) => {
+      if (!applyingVirginDefaultRef.current) {
+        virginDefaultPendingRef.current = false;
+      }
       const currentForHistory = normalizeCycleRangeForNavigation(
         config.cycle_start,
         config.cycle_end,
@@ -381,6 +594,9 @@ export function TimeCapacityCycleNavigation({
         config.cycle_start === nextRange.start && config.cycle_end === nextRange.end;
       if (sameStoredRange) return false;
 
+      setSliderPreviewRange(null);
+      onPreviewRangeChange?.(null);
+
       if (recordHistory) {
         const nextHistory = appendTimeCapacityCycleHistory(historyRef.current, currentForHistory);
         historyRef.current = nextHistory;
@@ -389,40 +605,67 @@ export function TimeCapacityCycleNavigation({
       onCommitRange(nextRange);
       return true;
     },
-    [config.cycle_end, config.cycle_start, maxAvailableCycle, onCommitRange],
+    [config.cycle_end, config.cycle_start, maxAvailableCycle, onCommitRange, onPreviewRangeChange],
   );
+
+  useEffect(() => {
+    if (
+      !isVirgin ||
+      !virginDefaultPendingRef.current ||
+      virginDefaultAppliedRef.current ||
+      specificCyclesActive ||
+      !hasBound
+    ) {
+      return;
+    }
+    const next = timeCapacityVirginCycleRange(maxAvailableCycle);
+    if (!next) return;
+    applyingVirginDefaultRef.current = true;
+    commitRange(next, false);
+    applyingVirginDefaultRef.current = false;
+    virginDefaultAppliedRef.current = true;
+    virginDefaultPendingRef.current = false;
+  }, [commitRange, hasBound, isVirgin, maxAvailableCycle, specificCyclesActive]);
 
   const commitManualStart = useCallback(
     (value: number | null) => {
       const next = normalizeManualTimeCapacityRange(
-        storedRange,
+        visibleRange,
         { start: value },
         maxAvailableCycle,
       );
       commitRange(next);
       return next.start;
     },
-    [commitRange, maxAvailableCycle, storedRange],
+    [commitRange, maxAvailableCycle, visibleRange],
   );
 
   const commitManualEnd = useCallback(
     (value: number | null) => {
       const next = normalizeManualTimeCapacityRange(
-        storedRange,
+        visibleRange,
         { end: value },
         maxAvailableCycle,
       );
       commitRange(next);
       return next.end;
     },
-    [commitRange, maxAvailableCycle, storedRange],
+    [commitRange, maxAvailableCycle, visibleRange],
   );
 
   const move = useCallback(
-    (direction: -1 | 1, mode: "cycle" | "window") => {
+    (
+      direction: -1 | 1,
+      mode: "cycle" | "window",
+      boundary?: "first" | "last",
+    ) => {
       if (specificCyclesActive) return;
       if (!hasBound && (direction === 1 || mode === "window")) return;
-      commitRange(shiftTimeCapacityCycleRange(boundedRange, direction, mode, maxAvailableCycle));
+      commitRange(
+        boundary && hasBound
+          ? timeCapacityCycleRangeAtBoundary(boundedRange, boundary, maxAvailableCycle)
+          : shiftTimeCapacityCycleRange(boundedRange, direction, mode, maxAvailableCycle),
+      );
     },
     [boundedRange, commitRange, hasBound, maxAvailableCycle, specificCyclesActive],
   );
@@ -462,18 +705,34 @@ export function TimeCapacityCycleNavigation({
     commitRange(restored, false);
   }, [commitRange, hasBound, maxAvailableCycle]);
 
+  const restoreHistoryEntry = useCallback(
+    (index: number) => {
+      const selected = selectTimeCapacityCycleHistory(historyRef.current, index);
+      if (!selected) return;
+      historyRef.current = selected.history;
+      setHistory(selected.history);
+      const restored = hasBound
+        ? normalizeCycleRangeForNavigation(selected.range.start, selected.range.end, maxAvailableCycle)
+        : selected.range;
+      commitRange(restored, false);
+    },
+    [commitRange, hasBound, maxAvailableCycle],
+  );
+
   const openSlider = useCallback(() => {
     if (boundedNavigationDisabled || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) return;
-    setSliderValue(
-      Math.round((boundedRange.start + boundedRange.end) / 2),
-    );
+    setSliderPreviewRange(null);
+    onPreviewRangeChange?.(null);
     setSliderOpened(true);
-  }, [boundedNavigationDisabled, boundedRange, hasBound, maxAvailableCycle]);
+  }, [boundedNavigationDisabled, boundedRange, hasBound, maxAvailableCycle, onPreviewRangeChange]);
 
   const closeSlider = useCallback((opened: boolean) => {
     setSliderOpened(opened);
-    if (!opened) setSliderValue(null);
-  }, []);
+    if (!opened) {
+      setSliderPreviewRange(null);
+      onPreviewRangeChange?.(null);
+    }
+  }, [onPreviewRangeChange]);
 
   const clearSliderCloseTimer = useCallback(() => {
     if (sliderCloseTimerRef.current !== null) {
@@ -554,14 +813,20 @@ export function TimeCapacityCycleNavigation({
     [clearSliderCloseTimer],
   );
 
-  const commitSlider = useCallback(
-    (value: number) => {
-      if (boundedNavigationDisabled || !hasBound) return;
-      const next = centerTimeCapacityCycleRange(boundedRange, value, maxAvailableCycle);
-      commitRange(next);
-      setSliderValue(Math.round((next.start + next.end) / 2));
+  const previewSlider = useCallback(
+    (range: TimeCapacityCycleRange) => {
+      setSliderPreviewRange(range);
+      onPreviewRangeChange?.(range);
     },
-    [boundedNavigationDisabled, boundedRange, commitRange, hasBound, maxAvailableCycle],
+    [onPreviewRangeChange],
+  );
+
+  const commitSlider = useCallback(
+    (range: TimeCapacityCycleRange) => {
+      if (boundedNavigationDisabled || !hasBound) return;
+      commitRange(normalizeCycleRangeForNavigation(range.start, range.end, maxAvailableCycle));
+    },
+    [boundedNavigationDisabled, commitRange, hasBound, maxAvailableCycle],
   );
 
   const sliderAtFullExtent = hasBound && cycleRangeWidth(boundedRange) >= maxAvailableCycle!;
@@ -621,6 +886,40 @@ export function TimeCapacityCycleNavigation({
           >
             <IconArrowLeft size={15} />
           </NavigationIconAction>
+          <Menu shadow="md" withinPortal position="bottom-start">
+            <Menu.Target>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                aria-label="Open previous cycle views"
+                title={previousDisabled ? previousDisabledReason : "Open previous cycle views"}
+                disabled={previousDisabled}
+              >
+                <IconChevronDown size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {history.length === 0 ? (
+                <Menu.Item disabled>No previous cycle views</Menu.Item>
+              ) : (
+                history
+                  .slice()
+                  .reverse()
+                  .map((entry, menuIndex) => {
+                    const index = history.length - menuIndex - 1;
+                    return (
+                      <Menu.Item
+                        key={`${entry.start}-${entry.end}-${index}`}
+                        aria-label={`Restore cycles ${entry.start} to ${entry.end}`}
+                        onClick={() => restoreHistoryEntry(index)}
+                      >
+                        Cycles {entry.start}–{entry.end}
+                      </Menu.Item>
+                    );
+                  })
+              )}
+            </Menu.Dropdown>
+          </Menu>
           <NavigationIconAction
             label="Show all cycles"
             disabled={boundedNavigationDisabled}
@@ -669,24 +968,26 @@ export function TimeCapacityCycleNavigation({
           <Button.Group>
             <NavigationSegmentButton
               label="Previous cycle window"
+              tooltipLabel="Previous window · Ctrl+click: first window"
               disabled={boundedNavigationDisabled}
               disabledReason={disabledReason}
-              onClick={() => move(-1, "window")}
+              onClick={(event) => move(-1, "window", event.ctrlKey ? "first" : undefined)}
             >
               <IconChevronsLeft size={14} />
             </NavigationSegmentButton>
             <NavigationSegmentButton
               label="Previous cycle"
+              tooltipLabel="Previous cycle · Ctrl+click: first window"
               disabled={specificCyclesActive}
               disabledReason={disabledReason}
-              onClick={() => move(-1, "cycle")}
+              onClick={(event) => move(-1, "cycle", event.ctrlKey ? "first" : undefined)}
             >
               <IconChevronLeft size={14} />
             </NavigationSegmentButton>
           </Button.Group>
 
           <DraftCycleNumberInput
-            value={storedRange.start}
+            value={visibleRange.start}
             label="From cycle"
             onCommit={commitManualStart}
             disabled={specificCyclesActive}
@@ -729,21 +1030,18 @@ export function TimeCapacityCycleNavigation({
               onFocus={handleDropdownFocus}
               onBlur={handleDropdownBlur}
             >
-              <Slider
-                aria-label="Cycle window position"
-                min={1}
-                max={maxAvailableCycle ?? 1}
-                step={1}
-                value={sliderValue ?? Math.round((boundedRange.start + boundedRange.end) / 2)}
-                onChange={setSliderValue}
-                onChangeEnd={commitSlider}
-                label={(value) => `Cycle ${value}`}
+              <CycleWindowSlider
+                range={visibleRange}
+                maxAvailableCycle={maxAvailableCycle ?? 1}
                 disabled={sliderDisabled}
+                onPreview={previewSlider}
+                onCommit={commitSlider}
+                onCancel={() => closeSlider(false)}
               />
             </Popover.Dropdown>
           </Popover>
           <DraftCycleNumberInput
-            value={storedRange.end}
+            value={visibleRange.end}
             label="To cycle"
             onCommit={commitManualEnd}
             disabled={specificCyclesActive}
@@ -754,17 +1052,19 @@ export function TimeCapacityCycleNavigation({
           <Button.Group>
             <NavigationSegmentButton
               label="Next cycle"
+              tooltipLabel="Next cycle · Ctrl+click: last window"
               disabled={boundedNavigationDisabled}
               disabledReason={disabledReason}
-              onClick={() => move(1, "cycle")}
+              onClick={(event) => move(1, "cycle", event.ctrlKey ? "last" : undefined)}
             >
               <IconChevronRight size={14} />
             </NavigationSegmentButton>
             <NavigationSegmentButton
               label="Next cycle window"
+              tooltipLabel="Next window · Ctrl+click: last window"
               disabled={boundedNavigationDisabled}
               disabledReason={disabledReason}
-              onClick={() => move(1, "window")}
+              onClick={(event) => move(1, "window", event.ctrlKey ? "last" : undefined)}
             >
               <IconChevronsRight size={14} />
             </NavigationSegmentButton>

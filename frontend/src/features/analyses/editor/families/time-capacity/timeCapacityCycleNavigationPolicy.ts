@@ -12,7 +12,7 @@ export type TimeCapacityCycleRangePatch = {
 
 export const TIME_CAPACITY_WINDOW_PRESETS = [1, 5, 10, 20, 50, 100] as const;
 
-const HISTORY_LIMIT = 50;
+export const TIME_CAPACITY_HISTORY_LIMIT = 8;
 
 function positiveInteger(value: number | string | null | undefined, fallback: number): number {
   const numeric = typeof value === "number" ? value : Number(value);
@@ -137,6 +137,29 @@ export function centerTimeCapacityCycleRange(
   return clampCycleWindow(target - Math.floor(cycleRangeWidth(current) / 2), cycleRangeWidth(current), maximum);
 }
 
+export function timeCapacityCycleRangeAtBoundary(
+  range: TimeCapacityCycleRange,
+  boundary: "first" | "last",
+  maxAvailableCycle: number | null | undefined,
+): TimeCapacityCycleRange {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  if (maximum === null) return current;
+  return boundary === "first"
+    ? clampCycleWindow(1, cycleRangeWidth(current), maximum)
+    : clampCycleWindow(maximum, cycleRangeWidth(current), maximum);
+}
+
+export function timeCapacityVirginCycleRange(
+  maxAvailableCycle: number | null | undefined,
+  preferredWidth = 20,
+): TimeCapacityCycleRange | null {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  if (maximum === null) return null;
+  const width = Math.min(positiveInteger(preferredWidth, 20), maximum);
+  return clampCycleWindow(maximum - width + 1, width, maximum);
+}
+
 /** Apply one exact From/To edit, including the locked crossing behaviour. */
 export function normalizeManualTimeCapacityRange(
   current: TimeCapacityCycleRange,
@@ -180,12 +203,22 @@ export function cycleWindowOptions(
 export function appendTimeCapacityCycleHistory(
   history: readonly TimeCapacityCycleRange[],
   range: TimeCapacityCycleRange,
-  limit = HISTORY_LIMIT,
+  limit = TIME_CAPACITY_HISTORY_LIMIT,
 ): TimeCapacityCycleRange[] {
   const boundedLimit = Math.max(1, Math.floor(limit));
-  const last = history[history.length - 1];
-  if (last && cycleRangesEqual(last, range)) return [...history];
-  return [...history, range].slice(-boundedLimit);
+  const withoutDuplicate = history.filter((entry) => !cycleRangesEqual(entry, range));
+  return [...withoutDuplicate, range].slice(-boundedLimit);
+}
+
+export function selectTimeCapacityCycleHistory(
+  history: readonly TimeCapacityCycleRange[],
+  index: number,
+): { range: TimeCapacityCycleRange; history: TimeCapacityCycleRange[] } | null {
+  if (!Number.isInteger(index) || index < 0 || index >= history.length) return null;
+  return {
+    range: history[index],
+    history: history.slice(0, index),
+  };
 }
 
 export function timeCapacityRangeNavigationDisabled(

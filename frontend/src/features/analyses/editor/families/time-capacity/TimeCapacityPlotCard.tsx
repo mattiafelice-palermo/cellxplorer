@@ -135,6 +135,31 @@ type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
 export type TimeCapacityVoltageChannel = VoltageChannel;
 
+const TIME_CAPACITY_PREVIEW_DEBOUNCE_MS = 120;
+
+const TIME_CAPACITY_GRID_MODEBAR_ICON = {
+  width: 512,
+  height: 512,
+  path: "M64 64h144v144H64zM304 64h144v144H304zM64 304h144v144H64zM304 304h144v144H304z",
+};
+
+function timeCapacitySpecWithCycleRange(
+  spec: AnalysisSpec,
+  range: TimeCapacityCycleRange,
+): AnalysisSpec {
+  return {
+    ...spec,
+    computation: {
+      ...spec.computation,
+      time_capacity: {
+        ...timeCapacityConfig(spec),
+        cycle_start: range.start,
+        cycle_end: range.end,
+      },
+    },
+  };
+}
+
 const CURRENT_AXIS_OPTIONS: { value: TimeCapacityCurrentQuantity; label: string }[] = [
   { value: "current_ma", label: "Current (mA)" },
   { value: "current_density", label: "Current density (mA/cm2)" },
@@ -1169,6 +1194,7 @@ function TimeCapacityPlotCardView({
   updatePlotLabel = "Update",
   active = true,
   maxAvailableCycle,
+  isVirginNavigation = false,
   navigationResetKey,
 }: {
   analysisId: number;
@@ -1191,6 +1217,7 @@ function TimeCapacityPlotCardView({
   /** The parent keeps this expensive card mounted after first visit. */
   active?: boolean;
   maxAvailableCycle: number | null;
+  isVirginNavigation?: boolean;
   navigationResetKey?: string | number;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
@@ -1206,6 +1233,32 @@ function TimeCapacityPlotCardView({
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
+  const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
+  const [previewQueryRange, setPreviewQueryRange] = useState<TimeCapacityCycleRange | null>(null);
+  useEffect(() => {
+    if (!cyclePreviewRange) {
+      setPreviewQueryRange(null);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setPreviewQueryRange(cyclePreviewRange),
+      TIME_CAPACITY_PREVIEW_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [cyclePreviewRange]);
+  useEffect(() => {
+    setCyclePreviewRange(null);
+    setPreviewQueryRange(null);
+  }, [navigationResetKey]);
+  const handleCyclePreviewRange = useCallback((range: TimeCapacityCycleRange | null) => {
+    setCyclePreviewRange(range);
+    if (range === null) setPreviewQueryRange(null);
+  }, []);
+  const requestSpec = useMemo(
+    () => (previewQueryRange ? timeCapacitySpecWithCycleRange(spec, previewQueryRange) : spec),
+    [previewQueryRange, spec],
+  );
+  const requestCfg = timeCapacityConfig(requestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
     refinementLifecycleRef.current = new TimeCapacityRefinementLifecycle(cfg.stacked);
@@ -1222,8 +1275,8 @@ function TimeCapacityPlotCardView({
   // may retain the old compact result while the replacement is fetched, but
   // a semantic/display change must never relabel that result temporarily.
   const compatibilitySignature = timeCapacityCompatibilitySignature(
-    spec,
-    cfg,
+    requestSpec,
+    requestCfg,
     viewportWidth,
   );
   // Refetch when fields that change the returned data change. The compact
@@ -1236,47 +1289,47 @@ function TimeCapacityPlotCardView({
   const dataSignature = useMemo(
     () =>
       JSON.stringify({
-        selection: spec.selection,
-        protocol_segments: spec.protocol_segments ?? [],
-        protocol_filter: spec.computation.protocol_filter,
-        hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
-        cycles: cfg.cycles,
-        start: cfg.cycle_start,
-        end: cfg.cycle_end,
-        points: cfg.max_points_per_cell,
-        xAxis: cfg.x_axis,
-        timeUnit: cfg.time_unit,
-        displayMode: cfg.display_mode,
-        electrodeArea: cfg.electrode_area_cm2,
-        voltageChannel: cfg.voltage_channel,
+        selection: requestSpec.selection,
+        protocol_segments: requestSpec.protocol_segments ?? [],
+        protocol_filter: requestSpec.computation.protocol_filter,
+        hidden_protocol_segment_ids: requestSpec.presentation.hidden_protocol_segment_ids ?? [],
+        cycles: requestCfg.cycles,
+        start: requestCfg.cycle_start,
+        end: requestCfg.cycle_end,
+        points: requestCfg.max_points_per_cell,
+        xAxis: requestCfg.x_axis,
+        timeUnit: requestCfg.time_unit,
+        displayMode: requestCfg.display_mode,
+        electrodeArea: requestCfg.electrode_area_cm2,
+        voltageChannel: requestCfg.voltage_channel,
         viewportWidth,
-        derivative: cfg.view === "voltage_current" ? null : {
-          view: cfg.view,
-          phase: cfg.derivative_phase,
-          specific: cfg.derivative_specific,
-          absoluteDischarge: cfg.derivative_absolute_discharge,
-          smoothing: cfg.smoothing_window,
+        derivative: requestCfg.view === "voltage_current" ? null : {
+          view: requestCfg.view,
+          phase: requestCfg.derivative_phase,
+          specific: requestCfg.derivative_specific,
+          absoluteDischarge: requestCfg.derivative_absolute_discharge,
+          smoothing: requestCfg.smoothing_window,
         },
       }),
     [
-      spec.selection,
-      spec.protocol_segments,
-      spec.computation.protocol_filter,
-      spec.presentation.hidden_protocol_segment_ids,
-      cfg.cycles,
-      cfg.cycle_start,
-      cfg.cycle_end,
-      cfg.max_points_per_cell,
-      cfg.x_axis,
-      cfg.time_unit,
-      cfg.display_mode,
-      cfg.electrode_area_cm2,
-      cfg.voltage_channel,
-      cfg.view,
-      cfg.derivative_phase,
-      cfg.derivative_specific,
-      cfg.derivative_absolute_discharge,
-      cfg.smoothing_window,
+      requestSpec.selection,
+      requestSpec.protocol_segments,
+      requestSpec.computation.protocol_filter,
+      requestSpec.presentation.hidden_protocol_segment_ids,
+      requestCfg.cycles,
+      requestCfg.cycle_start,
+      requestCfg.cycle_end,
+      requestCfg.max_points_per_cell,
+      requestCfg.x_axis,
+      requestCfg.time_unit,
+      requestCfg.display_mode,
+      requestCfg.electrode_area_cm2,
+      requestCfg.voltage_channel,
+      requestCfg.view,
+      requestCfg.derivative_phase,
+      requestCfg.derivative_specific,
+      requestCfg.derivative_absolute_discharge,
+      requestCfg.smoothing_window,
       viewportWidth,
     ]
   );
@@ -1285,33 +1338,33 @@ function TimeCapacityPlotCardView({
   // effect leaves a narrow window in which a delayed full-resolution export
   // can resolve after a channel switch but before this ref catches up.
   dataSignatureRef.current = dataSignature;
-  const voltageChannelRef = useRef(cfg.voltage_channel);
-  voltageChannelRef.current = cfg.voltage_channel;
+  const voltageChannelRef = useRef(requestCfg.voltage_channel);
+  voltageChannelRef.current = requestCfg.voltage_channel;
   const profileEnabled = timeCapacityPerformanceProfiler.isEnabled();
   const profileContext = useMemo<TimeCapacityPerformanceContext>(
     () => ({
       analysis_id: analysisId,
-      selection_count: spec.selection.entries.length,
-      cycle_start: cfg.cycle_start,
-      cycle_end: cfg.cycle_end,
-      explicit_cycle_count: cfg.cycles.length,
-      view: cfg.view,
-      x_axis: cfg.x_axis,
-      display_mode: cfg.display_mode,
-      max_points_per_cell: cfg.max_points_per_cell,
+      selection_count: requestSpec.selection.entries.length,
+      cycle_start: requestCfg.cycle_start,
+      cycle_end: requestCfg.cycle_end,
+      explicit_cycle_count: requestCfg.cycles.length,
+      view: requestCfg.view,
+      x_axis: requestCfg.x_axis,
+      display_mode: requestCfg.display_mode,
+      max_points_per_cell: requestCfg.max_points_per_cell,
       compact: true,
       precision: "standard",
     }),
     [
       analysisId,
-      cfg.cycle_end,
-      cfg.cycle_start,
-      cfg.cycles.length,
-      cfg.display_mode,
-      cfg.max_points_per_cell,
-      cfg.view,
-      cfg.x_axis,
-      spec.selection.entries.length,
+      requestCfg.cycle_end,
+      requestCfg.cycle_start,
+      requestCfg.cycles.length,
+      requestCfg.display_mode,
+      requestCfg.max_points_per_cell,
+      requestCfg.view,
+      requestCfg.x_axis,
+      requestSpec.selection.entries.length,
     ],
   );
   const profileRequest = useMemo(
@@ -1335,7 +1388,7 @@ function TimeCapacityPlotCardView({
       const httpStarted = profileRequest ? timeCapacityPerformanceNow() : 0;
       try {
         const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
-          spec,
+          spec: requestSpec,
           job_token: token,
           viewport_width: viewportWidth,
           precision: "standard",
@@ -1374,12 +1427,12 @@ function TimeCapacityPlotCardView({
         analysisId,
         compatibilitySignature,
       ),
-    enabled: spec.selection.entries.length > 0,
+    enabled: requestSpec.selection.entries.length > 0,
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,
   });
   useLayoutEffect(() => {
-    if (!profileRequest || spec.selection.entries.length === 0) return;
+    if (!profileRequest || requestSpec.selection.entries.length === 0) return;
     // Run before the later plot-props layout effect so a React Query memory
     // hit (which has no queryFn/HTTP callback) still has a response boundary
     // before Plotly's own update effect can fire.
@@ -1411,17 +1464,25 @@ function TimeCapacityPlotCardView({
     dataSignature,
     profileContext,
     profileRequest,
-    spec.selection.entries.length,
+    requestSpec.selection.entries.length,
     timeResult.data,
     timeResult.isFetching,
     timeResult.isPlaceholderData,
   ]);
   const currentResult = timeCapacityResultMatchesVoltageChannel(
     timeResult.data,
-    cfg.voltage_channel
+    requestCfg.voltage_channel
   )
     ? timeResult.data
     : undefined;
+  const resolvedPlotSpecRef = useRef<AnalysisSpec>(spec);
+  const renderSpec = timeResult.isPlaceholderData ? resolvedPlotSpecRef.current : requestSpec;
+  const renderCfg = timeCapacityConfig(renderSpec);
+  useEffect(() => {
+    if (!timeResult.isPlaceholderData && currentResult) {
+      resolvedPlotSpecRef.current = requestSpec;
+    }
+  }, [currentResult, requestSpec, timeResult.isPlaceholderData]);
   const currentResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   currentResultRef.current = currentResult;
   const cancelPendingRefinement = useCallback(() => {
@@ -1545,19 +1606,19 @@ function TimeCapacityPlotCardView({
   const viewSignature = useMemo(
     () =>
       JSON.stringify({
-        cfg,
-        legend: spec.presentation.legend,
-        style: currentPlotStyle(spec, "time_capacity"),
+        cfg: renderCfg,
+        legend: renderSpec.presentation.legend,
+        style: currentPlotStyle(renderSpec, "time_capacity"),
       }),
-    [spec]
+    [renderSpec]
   );
   const exportTraces = useMemo(
     () =>
       currentResult && !selectedVoltageUnavailable
-        ? timeCapacityTracesForResult(currentResult, spec)
+        ? timeCapacityTracesForResult(currentResult, renderSpec)
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentResult, selectedVoltageUnavailable, viewSignature]
+    [currentResult, renderSpec, selectedVoltageUnavailable, viewSignature]
   );
   const activeRefinedResult = timeCapacityRefinementDisplayIsCurrent(
     cfg.stacked,
@@ -1572,9 +1633,9 @@ function TimeCapacityPlotCardView({
   const plotTraces = useMemo(
     () =>
       plotResult && !selectedVoltageUnavailable
-        ? timeCapacityTracesForResult(plotResult, spec)
+        ? timeCapacityTracesForResult(plotResult, renderSpec)
         : [],
-    [plotResult, selectedVoltageUnavailable, viewSignature]
+    [plotResult, renderSpec, selectedVoltageUnavailable, viewSignature]
   );
   const transitionTraces = useMemo(() => {
     if (cfg.stacked || !refinementTransition) return null;
@@ -1609,9 +1670,9 @@ function TimeCapacityPlotCardView({
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(plotResult, spec, plotTraces)),
+    () => zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plotResult, viewSignature, plotTraces]
+    [plotResult, renderSpec, viewSignature, plotTraces]
   );
   const profileResultIsCurrent = Boolean(
     timeCapacityProfileResultIsCurrent(
@@ -1634,6 +1695,21 @@ function TimeCapacityPlotCardView({
     );
   }, [currentResult, profileRequest, profileResultIsCurrent, traces.length]);
   const style = currentPlotStyle(spec, "time_capacity");
+  const updatePlotStyle = useCallback(
+    (fn: (style: PlotStyle) => void) => {
+      update((s) => writeScopedStyle(s, "time_capacity", fn));
+    },
+    [update],
+  );
+  const gridModebarButton = useMemo<Plotly.ModeBarButton>(
+    () => ({
+      name: "time-capacity-grid",
+      title: style.show_grid ? "Hide grid" : "Show grid",
+      icon: TIME_CAPACITY_GRID_MODEBAR_ICON,
+      click: () => updatePlotStyle((next) => void (next.show_grid = !next.show_grid)),
+    }),
+    [style.show_grid, updatePlotStyle],
+  );
   const explainer = getTimeCapacityExplainer(
     cfg.x_axis,
     cfg.stacked ? (cfg.current_right !== "none" ? cfg.current_right : cfg.current_left) : "none",
@@ -1649,9 +1725,6 @@ function TimeCapacityPlotCardView({
     setPlotSize((current) =>
       current && current.width === next.width && current.height === next.height ? current : next
     );
-  };
-  const updatePlotStyle = (fn: (style: PlotStyle) => void) => {
-    update((s) => writeScopedStyle(s, "time_capacity", fn));
   };
   const commitCycleRange = useCallback(
     (range: TimeCapacityCycleRange) => {
@@ -1686,7 +1759,11 @@ function TimeCapacityPlotCardView({
       cancelPendingRefinement();
       cancelRefinementTransition();
       clearDisplayedRefinement();
-    } else if (timeCapacityRefinementCanSchedule(active, spec)) {
+    } else if (
+      !cyclePreviewRange &&
+      !previewQueryRange &&
+      timeCapacityRefinementCanSchedule(active, spec)
+    ) {
       const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
       const previousViewport = refinementLifecycle.requestedViewport;
       const sameViewport =
@@ -1719,7 +1796,7 @@ function TimeCapacityPlotCardView({
             void post<TimeCapacityRefinementResult>(
               `/api/analyses/${analysisId}/time-capacity/refine`,
               {
-                spec,
+                spec: renderSpec,
                 viewport_x_min: viewport.min,
                 viewport_x_max: viewport.max,
                 viewport_width: viewportWidth,
@@ -1742,9 +1819,9 @@ function TimeCapacityPlotCardView({
                     prefersReducedMotion(),
                   );
                   const fromTraces = previousDisplayedResult
-                    ? refinementTransitionTraces(previousDisplayedResult, spec)
+                    ? refinementTransitionTraces(previousDisplayedResult, renderSpec)
                     : [];
-                  const toTraces = refinementTransitionTraces(response, spec);
+                  const toTraces = refinementTransitionTraces(response, renderSpec);
                   if (
                     previousDisplayedResult &&
                     transitionDuration > 0 &&
@@ -1814,14 +1891,14 @@ function TimeCapacityPlotCardView({
   const handleDataExport = async (baseName: string) => {
     if (!currentResult || selectedVoltageUnavailable || exportTraces.length === 0 || dataExporting) return;
     const requestedSignature = dataSignature;
-    const requestedVoltageChannel = cfg.voltage_channel;
+    const requestedVoltageChannel = requestCfg.voltage_channel;
     const requestedSourceDataIdentity = voltageChannelDataIdentity(currentResult);
     setDataExporting(true);
     try {
       const fullResult = await post<TimeCapacityResult>(
         `/api/analyses/${analysisId}/time-capacity`,
         {
-          spec,
+          spec: requestSpec,
           ...timeCapacityExportOptions(viewportWidth),
         }
       );
@@ -1840,7 +1917,7 @@ function TimeCapacityPlotCardView({
       if (voltageChannelUnavailable(requestedVoltageChannel, fullResult.voltage_channels)) {
         throw new Error(voltageChannelUnavailableMessage(requestedVoltageChannel));
       }
-      const fullTraces = timeCapacityTracesForResult(fullResult, spec);
+      const fullTraces = timeCapacityTracesForResult(fullResult, requestSpec);
       if (fullTraces.length === 0) {
         throw new Error("No data is available for the selected voltage quantity.");
       }
@@ -1910,13 +1987,13 @@ function TimeCapacityPlotCardView({
       // copied the whole selection, protocol segments and saved-plot state on
       // every keystroke, for the sake of two fields.
       const draftSpec: AnalysisSpec = {
-        ...spec,
+        ...renderSpec,
         presentation: {
-          ...spec.presentation,
+          ...renderSpec.presentation,
           plot_styles: {
-            ...(spec.presentation.plot_styles ?? {}),
+            ...(renderSpec.presentation.plot_styles ?? {}),
             time_capacity: {
-              ...currentPlotStyle(spec, "time_capacity"),
+              ...currentPlotStyle(renderSpec, "time_capacity"),
               ...(draft.styleOverlay ?? {}),
               series_overrides: draft.overrides,
               series_rules: draft.rules,
@@ -1927,7 +2004,7 @@ function TimeCapacityPlotCardView({
        const data = decimatePreviewTraces(timeCapacityTracesForResult(currentResult, draftSpec));
        return { data, layout: timeCapacityLayout(currentResult, draftSpec, data) };
      },
-     [currentResult, selectedVoltageUnavailable, spec],
+     [currentResult, renderSpec, selectedVoltageUnavailable],
    );
 
   return (
@@ -1988,8 +2065,10 @@ function TimeCapacityPlotCardView({
         <TimeCapacityCycleNavigation
           config={cfg}
           maxAvailableCycle={maxAvailableCycle}
+          isVirgin={isVirginNavigation}
           navigationResetKey={navigationResetKey}
           onCommitRange={commitCycleRange}
+          onPreviewRangeChange={handleCyclePreviewRange}
           spec={spec}
         />
         {timeResult.isError && (
@@ -2023,12 +2102,13 @@ function TimeCapacityPlotCardView({
               // remount at the stacked↔flat boundary: diffing a matched-axes
               // subplot layout into a single-axis one is Plotly's slowest
               // path; a clean newPlot is far cheaper and predictable
-              key={cfg.stacked ? "tc-stacked" : "tc-flat"}
+              key={`${cfg.stacked ? "tc-stacked" : "tc-flat"}|grid-${style.show_grid ? "on" : "off"}`}
               data={traces}
               layout={layout}
               config={{
                 displaylogo: false,
                 edits: { legendPosition: style.legend_mode !== "outside" },
+                modeBarButtonsToAdd: [gridModebarButton],
               }}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}
