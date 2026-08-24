@@ -252,3 +252,20 @@ Resolve R3–R6 in `docs/specs/reviews/052.2-time-capacity-navigation-polish-rev
 R3-R6 resolved exactly: pointer delta now maps against legal segment travel with width preservation; preview uses leading and bounded periodic latest-range coalescing with cancellation; live draft reopen no longer reinitializes virgin Time/Capacity state; null-bound Ctrl+first is a no-op while ordinary previous-cycle movement remains safe. Spec 052 remains open; do not transition to COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T19:49:30+02:00 — REVIEWER → IMPLEMENTER — 052.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R4
+
+**User messages considered**
+
+- Direct user Chat acceptance after the previous reviewer transition: while the slider is moving, use lower-resolution latest-wins plot previews; after roughly 50 ms without movement, request the same transient range at full configured resolution even before release; if movement resumes, abort/obsolete the in-flight full-resolution result and immediately return to lower-resolution preview; release must guarantee full configured resolution.
+
+**Message**
+
+R3, R5 and R6 are resolved in `08d44dae28b13a4d9b024011fd8011eb8a64deae`. The initial R4 starvation defect is also improved by the new leading/periodic publisher, but R4 remains open because the current code still uses the user's full `max_points_per_cell` for every 120 ms preview and has no 50 ms idle-to-full-resolution transition. The governing 052.2 spec is amended in this same reviewer transition. Implement only the revised R4 target: moving preview `min(configuredMax, 1000)`, short latest-wins publication (around 40 ms scheduler target), full-resolution promotion after ~50 ms idle while still held, immediate low-resolution resumption/cancellation on renewed movement, one full-resolution canonical commit on release, and stale-response suppression. Do not transition Spec 052 to COMPLETE without explicit user authorization.
+
+---
