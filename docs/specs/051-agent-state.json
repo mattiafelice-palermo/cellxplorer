@@ -2,18 +2,17 @@
   "version": 1,
   "spec": "051",
   "branch": "feature/biologic-mpr-extensible-columns-051",
-  "active_child": "051.1",
+  "active_child": "051.2",
   "children": [
     "051",
-    "051.1"
+    "051.1",
+    "051.2"
   ],
-  "turn": "REVIEWER",
-  "action": "FINAL_REVIEW",
-  "findings": [
-    "R5"
-  ],
-  "resume_review": "FINAL_REVIEW",
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
   "user_message_seq": 2,
   "pending_user_messages": [],
-  "updated_at": "2026-08-24T09:59:19+02:00"
+  "updated_at": "2026-08-24T10:12:33+02:00"
 }
