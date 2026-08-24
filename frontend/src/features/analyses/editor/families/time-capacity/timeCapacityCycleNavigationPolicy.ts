@@ -25,6 +25,8 @@ export interface TimeCapacityPreviewSchedulerState {
   lastMovementAt: number | null;
   lastPublishedAt: number | null;
   pendingRange: TimeCapacityCycleRange | null;
+  inFlight: boolean;
+  publishedRequest: TimeCapacityPreviewRequest | null;
 }
 
 export interface TimeCapacityPreviewSchedulerDecision {
@@ -86,6 +88,8 @@ export function timeCapacityPreviewSchedulerInitialState(): TimeCapacityPreviewS
     lastMovementAt: null,
     lastPublishedAt: null,
     pendingRange: null,
+    inFlight: false,
+    publishedRequest: null,
   };
 }
 
@@ -95,6 +99,28 @@ function previewRequest(
   generation: number,
 ): TimeCapacityPreviewRequest {
   return { range: { ...range }, resolution, generation };
+}
+
+function admitPreviewRequest(
+  state: TimeCapacityPreviewSchedulerState,
+  range: TimeCapacityCycleRange,
+  resolution: TimeCapacityPreviewResolution,
+  generation: number,
+  now: number,
+): TimeCapacityPreviewSchedulerDecision {
+  const request = previewRequest(range, resolution, generation);
+  return {
+    state: {
+      ...state,
+      range: { ...range },
+      lastPublishedAt: now,
+      pendingRange: null,
+      inFlight: true,
+      publishedRequest: request,
+    },
+    request,
+    waitMs: null,
+  };
 }
 
 /** Start or continue a latest-wins moving preview and reset the idle promotion clock. */
@@ -116,16 +142,17 @@ export function timeCapacityPreviewOnMove(
     lastMovementAt: now,
     lastPublishedAt: movingAfterFull ? null : state.lastPublishedAt,
     pendingRange: movingAfterFull ? null : state.pendingRange,
+    inFlight: movingAfterFull ? false : state.inFlight,
+    publishedRequest: movingAfterFull ? null : state.publishedRequest,
   };
+  if (next.inFlight) {
+    next.pendingRange = { ...range };
+    return { state: next, request: null, waitMs: null };
+  }
+
   const elapsed = next.lastPublishedAt === null ? interval : now - next.lastPublishedAt;
   if (movingAfterFull || next.lastPublishedAt === null || elapsed >= interval) {
-    next.lastPublishedAt = now;
-    next.pendingRange = null;
-    return {
-      state: next,
-      request: previewRequest(range, "moving", generation),
-      waitMs: null,
-    };
+    return admitPreviewRequest(next, range, "moving", generation, now);
   }
 
   next.pendingRange = { ...range };
@@ -145,23 +172,14 @@ export function timeCapacityPreviewFlushMoving(
   if (!state.active || state.phase !== "moving" || !state.pendingRange) {
     return { state, request: null, waitMs: null };
   }
+  if (state.inFlight) return { state, request: null, waitMs: null };
 
   const now = previewNow(nowMs);
   const interval = previewInterval(intervalMs, TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS);
   const elapsed = state.lastPublishedAt === null ? interval : now - state.lastPublishedAt;
   if (state.lastPublishedAt === null || elapsed >= interval) {
     const range = state.pendingRange;
-    const next = {
-      ...state,
-      range: { ...range },
-      lastPublishedAt: now,
-      pendingRange: null,
-    };
-    return {
-      state: next,
-      request: previewRequest(range, "moving", state.generation),
-      waitMs: null,
-    };
+    return admitPreviewRequest(state, range, "moving", state.generation, now);
   }
 
   return {
@@ -200,12 +218,33 @@ export function timeCapacityPreviewPromoteOnIdle(
     phase: "full" as const,
     lastPublishedAt: now,
     pendingRange: null,
+    inFlight: false,
+    publishedRequest: null,
   };
-  return {
-    state: next,
-    request: previewRequest(state.range, "full", state.generation),
-    waitMs: null,
-  };
+  return admitPreviewRequest(next, state.range, "full", state.generation, now);
+}
+
+/** Complete one admitted moving request and immediately admit only the newest pending range. */
+export function timeCapacityPreviewOnMovingRequestComplete(
+  state: TimeCapacityPreviewSchedulerState,
+  request: TimeCapacityPreviewRequest,
+  nowMs: number,
+  intervalMs = TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
+): TimeCapacityPreviewSchedulerDecision {
+  if (
+    !state.active ||
+    state.phase !== "moving" ||
+    !state.inFlight ||
+    state.publishedRequest === null ||
+    state.publishedRequest.generation !== request.generation ||
+    state.publishedRequest.resolution !== request.resolution ||
+    !cycleRangesEqual(state.publishedRequest.range, request.range)
+  ) {
+    return { state, request: null, waitMs: null };
+  }
+
+  const next = { ...state, inFlight: false };
+  return timeCapacityPreviewFlushMoving(next, nowMs, intervalMs);
 }
 
 /** Invalidate all preview work when a drag is released, cancelled, or reset. */
@@ -225,10 +264,11 @@ export function timeCapacityPreviewRequestIsCurrent(
 ): boolean {
   return (
     state.active &&
-    state.generation === request.generation &&
     state.phase === request.resolution &&
-    state.range !== null &&
-    cycleRangesEqual(state.range, request.range)
+    state.publishedRequest !== null &&
+    state.publishedRequest.generation === request.generation &&
+    state.publishedRequest.resolution === request.resolution &&
+    cycleRangesEqual(state.publishedRequest.range, request.range)
   );
 }
 

@@ -123,7 +123,9 @@ import {
   timeCapacityPreviewFlushMoving,
   timeCapacityPreviewMaxPoints,
   timeCapacityPreviewOnMove,
+  timeCapacityPreviewOnMovingRequestComplete,
   timeCapacityPreviewPromoteOnIdle,
+  timeCapacityPreviewRequestIsCurrent,
   timeCapacityPreviewSchedulerInitialState,
   TIME_CAPACITY_PREVIEW_IDLE_MS,
   TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
@@ -1521,6 +1523,30 @@ function TimeCapacityPlotCardView({
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,
   });
+  useEffect(() => {
+    if (
+      !previewRequest ||
+      previewRequest.resolution !== "moving" ||
+      timeResult.isFetching
+    ) return;
+    const scheduler = previewSchedulerRef.current;
+    if (
+      !scheduler.inFlight ||
+      !timeCapacityPreviewRequestIsCurrent(scheduler, previewRequest)
+    ) return;
+    // React Query keeps one moving request observed until it settles. Once it
+    // settles, admit only the latest pending range; this prevents a 40 ms
+    // cadence from cancelling every high-latency moving request.
+    const decision = timeCapacityPreviewOnMovingRequestComplete(
+      scheduler,
+      previewRequest,
+      window.performance.now(),
+      TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
+    );
+    previewSchedulerRef.current = decision.state;
+    if (decision.request) setPreviewRequest(decision.request);
+    if (decision.waitMs !== null) scheduleMovingPreviewFlush(decision.waitMs);
+  }, [previewRequest, scheduleMovingPreviewFlush, timeResult.isFetching]);
   useLayoutEffect(() => {
     if (!profileRequest || requestSpec.selection.entries.length === 0) return;
     // Run before the later plot-props layout effect so a React Query memory

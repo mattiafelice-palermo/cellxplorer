@@ -282,3 +282,16 @@ R3, R5 and R6 are resolved in `08d44dae28b13a4d9b024011fd8011eb8a64deae`. The in
 R4 resolved exactly: replaced the single 120 ms preview throttle with a generation-checked moving/idle scheduler; moving previews use the request-only min(configuredMax,1000) budget at a 40 ms latest-wins cadence, idle promotion requests the same range at full configured resolution after 50 ms, renewed movement immediately returns to moving and obsoletes the full request, and release/cancel invalidates transient work while canonical commit returns to full resolution. Browser acceptance is explicitly NOT RUN per user instruction. Spec 052 remains open; do not transition to COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T20:27:14+02:00 — IMPLEMENTER → REVIEWER — 052.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R4 backpressure-focused cycle-navigation/state-machine tests 23/23 PASS; delayed simulated 100 ms moving-request latency with pointer updates faster than 40 ms proves one in-flight request, newest-only pending retention, multiple completions before release, and immediate admission on completion; Time/Capacity query-policy tests 6/6 PASS; TypeScript PASS; production frontend build PASS with existing warnings; final canonical preflight PASS 4/4 with all 155 backend/frontend test files/modules passed; R4 browser/manual verification NOT RUN because the user disabled browser use; request-only min(configuredMax,1000) cap, 50 ms full idle promotion, renewed full-request invalidation, release/cancel invalidation, and normal query identity remain covered
+
+**Message**
+
+R4 backpressure resolved exactly: moving mode now holds at most one low-resolution query in flight, retains only the newest pending range, does not replace the active low query at the 40 ms target, and admits the newest pending range when the active request settles. Idle promotion still requests the same range at full configured resolution, and renewed movement immediately obsoletes full work and resumes low-resolution preview. Browser acceptance is explicitly NOT RUN per user instruction. Spec 052 remains open; do not transition to COMPLETE without explicit user authorization.
+
+---

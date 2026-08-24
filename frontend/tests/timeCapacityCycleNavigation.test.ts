@@ -24,6 +24,7 @@ import {
   timeCapacityPreviewFlushMoving,
   timeCapacityPreviewMaxPoints,
   timeCapacityPreviewOnMove,
+  timeCapacityPreviewOnMovingRequestComplete,
   timeCapacityPreviewPromoteOnIdle,
   timeCapacityPreviewRequestIsCurrent,
   timeCapacityPreviewSchedulerInitialState,
@@ -232,21 +233,61 @@ test("history selection restores an older entry and drops newer back-stack entri
   assert.equal(selectTimeCapacityCycleHistory([first], 3), null);
 });
 
-test("two-resolution preview scheduling is immediate, bounded, and latest-wins", () => {
+test("delayed moving requests are backpressured and retain only the newest range", async () => {
   const first = { start: 1, end: 20 };
   const second = { start: 2, end: 21 };
   const third = { start: 3, end: 22 };
+  const fourth = { start: 4, end: 23 };
+  const fifth = { start: 5, end: 24 };
+  const sixth = { start: 6, end: 25 };
   const initial = timeCapacityPreviewSchedulerInitialState();
 
   const leading = timeCapacityPreviewOnMove(initial, first, 0, 40);
   assert.deepEqual(leading.request, { range: first, resolution: "moving", generation: 1 });
-  const pending = timeCapacityPreviewOnMove(leading.state, second, 10, 40);
-  const latest = timeCapacityPreviewOnMove(pending.state, third, 20, 40);
-  assert.equal(pending.request, null);
-  assert.equal(latest.request, null);
-  const flushed = timeCapacityPreviewFlushMoving(latest.state, 40, 40);
-  assert.deepEqual(flushed.request, { range: third, resolution: "moving", generation: 3 });
-  assert.equal(flushed.state.pendingRange, null);
+  let state = leading.state;
+  let activeRequest = leading.request!;
+  let completedRanges: TimeCapacityCycleRange[] = [];
+
+  for (const [range, at] of [[second, 10], [third, 20], [fourth, 30]] as const) {
+    const moved = timeCapacityPreviewOnMove(state, range, at, 40);
+    assert.equal(moved.request, null);
+    state = moved.state;
+    assert.equal(state.inFlight, true);
+    assert.deepEqual(state.pendingRange, range);
+  }
+
+  const settle = async (at: number) => {
+    await Promise.resolve();
+    const completed = timeCapacityPreviewOnMovingRequestComplete(state, activeRequest, at, 40);
+    completedRanges.push(activeRequest.range);
+    state = completed.state;
+    if (completed.request) activeRequest = completed.request;
+    return completed;
+  };
+
+  // Simulate a 100 ms transport/server latency, well above the 40 ms target.
+  const secondRequest = await settle(100);
+  assert.deepEqual(secondRequest.request?.range, fourth);
+  assert.equal(state.inFlight, true);
+
+  for (const [range, at] of [[fifth, 110], [sixth, 120]] as const) {
+    const moved = timeCapacityPreviewOnMove(state, range, at, 40);
+    assert.equal(moved.request, null);
+    state = moved.state;
+    assert.deepEqual(state.pendingRange, range);
+  }
+
+  const thirdRequest = await settle(200);
+  assert.deepEqual(thirdRequest.request?.range, sixth);
+  assert.equal(state.inFlight, true);
+  const finalCompletion = await settle(300);
+  assert.equal(finalCompletion.request, null);
+  assert.equal(state.inFlight, false);
+  assert.deepEqual(completedRanges, [first, fourth, sixth]);
+
+  const flushed = timeCapacityPreviewFlushMoving(state, 340, 40);
+  assert.equal(flushed.request, null);
+  assert.equal(state.pendingRange, null);
   const canonical = { max_points_per_cell: 4000 };
   assert.equal(timeCapacityPreviewMaxPoints(canonical.max_points_per_cell, "moving"), 1000);
   assert.equal(timeCapacityPreviewMaxPoints(800, "moving"), 800);
@@ -272,6 +313,11 @@ test("idle promotion sharpens the same range and renewed movement obsoletes it i
     generation: pending.state.generation,
   });
   assert.equal(timeCapacityPreviewRequestIsCurrent(idle.state, idle.request!), true);
+  assert.equal(timeCapacityPreviewRequestIsCurrent(idle.state, moving.request!), false);
+  assert.equal(
+    timeCapacityPreviewOnMovingRequestComplete(idle.state, moving.request!, 70, 40).request,
+    null,
+  );
 
   const resumed = timeCapacityPreviewOnMove(idle.state, third, 61, 40);
   assert.deepEqual(resumed.request, {
