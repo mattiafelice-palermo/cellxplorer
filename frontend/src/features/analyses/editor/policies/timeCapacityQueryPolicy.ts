@@ -11,15 +11,15 @@ type TimeCapacityCompatibilitySpec = Pick<
 
 /**
  * Return the identity of the meaning carried by a compact Time/Capacity
- * response. Range and density are intentionally absent: those fields select
- * which records are returned, but do not relabel the records already on the
- * plot. Every coordinate/series semantic is kept here so placeholder data
+ * response. Range, point density, and viewport width are intentionally absent:
+ * those fields select which records are returned, but do not relabel the
+ * records already on the plot. Every coordinate/series semantic is kept here so placeholder data
  * cannot be shown under a different meaning while a new request is pending.
  */
 export function timeCapacityCompatibilitySignature(
   spec: TimeCapacityCompatibilitySpec,
   config: TimeCapacityQueryConfig,
-  viewportWidth: number,
+  _viewportWidth: number,
 ): string {
   return JSON.stringify({
     selection: spec.selection,
@@ -36,7 +36,6 @@ export function timeCapacityCompatibilitySignature(
     derivative_specific: config.derivative_specific,
     derivative_absolute_discharge: config.derivative_absolute_discharge,
     smoothing_window: config.smoothing_window,
-    viewport_width: viewportWidth,
   });
 }
 
@@ -85,4 +84,13 @@ export function timeCapacityPlotExportReady(
   hasTraces: boolean,
 ): boolean {
   return !isPlaceholderData && hasCurrentResult && !voltageUnavailable && hasTraces;
+}
+
+/** A transient pan/refill must never replace the last valid plot with an empty loader. */
+export function timeCapacityRetainedPanResult<T>(
+  current: T | undefined,
+  lastValid: T | undefined,
+  panActive: boolean,
+): T | undefined {
+  return current ?? (panActive ? lastValid : undefined);
 }

@@ -573,7 +573,8 @@ test("fast motion looks farther ahead while reducing transient point density", (
   const fast = timeCapacityBufferPlanForWindow({ start: 180, end: 182 }, 324, 1000, motion);
   const slow = timeCapacityBufferPlanForWindow(window, 324, 1000, null);
   assert.ok(fast.buffer.end - 182 > 180 - fast.buffer.start, JSON.stringify(fast));
-  assert.ok(fast.maxPoints <= 3000);
+  assert.ok(fast.maxPoints <= 8000);
+  assert.ok(fast.maxPoints >= 7000);
   assert.ok(fast.maxPoints < slow.maxPoints);
 });
 

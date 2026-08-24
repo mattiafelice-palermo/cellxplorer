@@ -276,8 +276,8 @@ voltage column `computation.time_capacity.voltage_channel` selects
 `x_axis`, so `voltage_channel` must be in the frontend query signature too — omitting it would
 reuse a cached primary-voltage response after the user switched to an electrode potential.
 The frontend keeps that full `dataSignature` as the fetch/cache identity and carries a second
-`timeCapacityCompatibilitySignature` in the React Query key. Only cycle-window and point-density
-changes reuse the previous result as placeholder data; changing selection, protocol filtering,
+`timeCapacityCompatibilitySignature` in the React Query key. Only cycle-window, point-density, and
+viewport-width changes reuse the previous result as placeholder data; changing selection, protocol filtering,
 coordinate/unit/display meaning, normalization, voltage channel, or derivative semantics clears
 the old visible result until the new response arrives. Both live and saved Time/Capacity POSTs
 consume React Query's abort signal, while backend synchronous work remains outside the browser

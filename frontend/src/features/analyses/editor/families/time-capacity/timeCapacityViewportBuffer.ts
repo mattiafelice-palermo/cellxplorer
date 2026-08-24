@@ -94,16 +94,19 @@ const MEDIUM_PAN_EXIT_EXTENTS_PER_SECOND = 0.05;
 const FAST_PAN_EXIT_EXTENTS_PER_SECOND = 0.18;
 const PAN_VELOCITY_EMA_ALPHA = 0.35;
 
+// Five-Cell/131-cycle production-route measurement: 8k retained 2.7x the data
+// of the rejected 3k tier while still cutting payload by ~42% versus the 18k
+// display-budget ceiling. Keep visual recognizability ahead of marginal latency.
 const PAN_DENSITY: Record<TimeCapacityPanSpeedTier, number> = {
   slow: 1,
-  medium: 0.45,
-  fast: 0.15,
+  medium: 0.75,
+  fast: 0.45,
 };
 
 const PAN_POINT_CAP: Record<TimeCapacityPanSpeedTier, number> = {
-  slow: 24_000,
-  medium: 8_000,
-  fast: 3_000,
+  slow: 18_000,
+  medium: 12_000,
+  fast: 8_000,
 };
 
 function rangeCenter(range: TimeCapacityCycleRange): number {

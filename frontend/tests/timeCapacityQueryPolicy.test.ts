@@ -8,6 +8,7 @@ import {
   timeCapacityPlotExportReady,
   timeCapacityPlaceholderCompatible,
   timeCapacityPlaceholderData,
+  timeCapacityRetainedPanResult,
   type TimeCapacityQueryConfig,
 } from "../src/features/analyses/editor/policies/timeCapacityQueryPolicy.ts";
 
@@ -86,6 +87,7 @@ test("range and density changes are compatible placeholder identities", () => {
   assert.equal(signature(makeSpec(), range), signature(makeSpec(), widerRange));
   assert.equal(signature(makeSpec(), range), signature(makeSpec(), explicitCycles));
   assert.equal(signature(makeSpec(), range), signature(makeSpec(), denser));
+  assert.equal(signature(makeSpec(), range, 1200), signature(makeSpec(), range, 6000));
 });
 
 test("selection and protocol visibility changes are incompatible", () => {
@@ -166,6 +168,14 @@ test("plot export is unavailable while a compatible placeholder is displayed", (
   assert.equal(timeCapacityPlotExportReady(false, false, false, true), false);
   assert.equal(timeCapacityPlotExportReady(false, true, true, true), false);
   assert.equal(timeCapacityPlotExportReady(false, true, false, false), false);
+});
+
+test("an active pan retains the last valid result when a refill has no data", () => {
+  const previous = { cell_traces: [{ cycle: [1, 2, 3] }] };
+  const current = { cell_traces: [{ cycle: [4, 5, 6] }] };
+  assert.equal(timeCapacityRetainedPanResult(undefined, previous, true), previous);
+  assert.equal(timeCapacityRetainedPanResult(undefined, previous, false), undefined);
+  assert.equal(timeCapacityRetainedPanResult(current, previous, true), current);
 });
 
 test("live and saved-preview Time/Capacity queries forward React Query cancellation", () => {

@@ -51,6 +51,7 @@ import {
   timeCapacityCompatibilitySignature,
   timeCapacityPlotExportReady,
   timeCapacityPlaceholderData,
+  timeCapacityRetainedPanResult,
 } from "../../policies/timeCapacityQueryPolicy";
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
@@ -1765,20 +1766,31 @@ function TimeCapacityPlotCardView({
     timeResult.isFetching,
     timeResult.isPlaceholderData,
   ]);
-  const currentResult = timeCapacityResultMatchesVoltageChannel(
+  const queryResult = timeCapacityResultMatchesVoltageChannel(
     timeResult.data,
     requestCfg.voltage_channel
   )
     ? timeResult.data
     : undefined;
+  const lastValidPanResultRef = useRef<TimeCapacityResult | undefined>(undefined);
+  if (queryResult) lastValidPanResultRef.current = queryResult;
+  const currentResult = timeCapacityRetainedPanResult(
+    queryResult,
+    lastValidPanResultRef.current,
+    panActive,
+  );
+  const resultIsRetainedPanFallback = !queryResult && Boolean(currentResult);
   const resolvedPlotSpecRef = useRef<AnalysisSpec>(spec);
-  const renderSpec = timeResult.isPlaceholderData ? resolvedPlotSpecRef.current : requestSpec;
+  const renderSpec =
+    timeResult.isPlaceholderData || resultIsRetainedPanFallback
+      ? resolvedPlotSpecRef.current
+      : requestSpec;
   const renderCfg = timeCapacityConfig(renderSpec);
   useEffect(() => {
-    if (!timeResult.isPlaceholderData && currentResult) {
+    if (!timeResult.isPlaceholderData && queryResult) {
       resolvedPlotSpecRef.current = requestSpec;
     }
-  }, [currentResult, requestSpec, timeResult.isPlaceholderData]);
+  }, [queryResult, requestSpec, timeResult.isPlaceholderData]);
   const currentResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   currentResultRef.current = currentResult;
   const cancelPendingRefinement = useCallback(() => {
@@ -1950,7 +1962,7 @@ function TimeCapacityPlotCardView({
     ];
   }, [cfg.stacked, refinementTransition, refinementTransitionProgress]);
   const plotExportReady = timeCapacityPlotExportReady(
-    timeResult.isPlaceholderData,
+    timeResult.isPlaceholderData || resultIsRetainedPanFallback,
     Boolean(currentResult),
     selectedVoltageUnavailable,
     exportTraces.length > 0,
