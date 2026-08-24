@@ -117,6 +117,8 @@ import {
   type TimeCapacityViewport,
 } from "./timeCapacityRefinementPolicy";
 import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
+import { TimeCapacityCycleNavigation } from "./TimeCapacityCycleNavigation";
+import type { TimeCapacityCycleRange } from "./timeCapacityCycleNavigationPolicy";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
@@ -1125,20 +1127,6 @@ export function TimeCapacitySettings({
           </Accordion.Control>
           <Accordion.Panel>
             <Stack gap="xs">
-              <Group grow>
-                <DebouncedNumberInput
-                  label="From"
-                  min={1}
-                  value={cfg.cycle_start}
-                  onCommit={(value) => updateTime((next) => void (next.cycle_start = value))}
-                />
-                <DebouncedNumberInput
-                  label="To"
-                  min={1}
-                  value={cfg.cycle_end}
-                  onCommit={(value) => updateTime((next) => void (next.cycle_end = value))}
-                />
-              </Group>
               <DebouncedTextInput
                 label="Specific cycles"
                 placeholder="e.g. 1, 2, 5, 10"
@@ -1180,6 +1168,8 @@ function TimeCapacityPlotCardView({
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
   active = true,
+  maxAvailableCycle,
+  navigationResetKey,
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -1200,6 +1190,8 @@ function TimeCapacityPlotCardView({
   updatePlotLabel?: string;
   /** The parent keeps this expensive card mounted after first visit. */
   active?: boolean;
+  maxAvailableCycle: number | null;
+  navigationResetKey?: string | number;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -1661,6 +1653,20 @@ function TimeCapacityPlotCardView({
   const updatePlotStyle = (fn: (style: PlotStyle) => void) => {
     update((s) => writeScopedStyle(s, "time_capacity", fn));
   };
+  const commitCycleRange = useCallback(
+    (range: TimeCapacityCycleRange) => {
+      update((s) => {
+        const next = {
+          ...DEFAULT_TIME_CAPACITY,
+          ...(s.computation.time_capacity ?? {}),
+        };
+        next.cycle_start = range.start;
+        next.cycle_end = range.end;
+        s.computation.time_capacity = next;
+      });
+    },
+    [update],
+  );
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     zoom.onRelayout(event);
     const relayout = event as Record<string, unknown>;
@@ -1978,6 +1984,13 @@ function TimeCapacityPlotCardView({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+        />
+        <TimeCapacityCycleNavigation
+          config={cfg}
+          maxAvailableCycle={maxAvailableCycle}
+          navigationResetKey={navigationResetKey}
+          onCommitRange={commitCycleRange}
+          spec={spec}
         />
         {timeResult.isError && (
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>

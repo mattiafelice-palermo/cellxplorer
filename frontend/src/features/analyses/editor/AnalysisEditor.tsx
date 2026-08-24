@@ -159,6 +159,7 @@ import {
   timeCapacityLayout,
   timeCapacityTracesForResult,
 } from "./families/time-capacity/TimeCapacityPlotCard";
+import { selectedTimeCapacityCycleMax } from "./families/time-capacity/timeCapacityCycleNavigationPolicy";
 import { voltageChannelShortLabel } from "./policies/voltageChannelPolicy";
 import { parserSourceBreakdown } from "./policies/parserProvenancePolicy";
 import {
@@ -2469,6 +2470,7 @@ function AnalysisEditorView({
   const [activePlotBaselineSignature, setActivePlotBaselineSignature] = useState<string | null>(
     workspaceState?.activePlotBaselineSignature ?? null,
   );
+  const [timeCapacityNavigationSession, setTimeCapacityNavigationSession] = useState(0);
   const [plotWorkspaceTouched, setPlotWorkspaceTouched] = useState(
     workspaceState?.plotWorkspaceTouched ?? false,
   );
@@ -2544,6 +2546,15 @@ function AnalysisEditorView({
     }
     return [...ids].sort((a, b) => a - b);
   }, [analysis.data?.selection_groups, groupsQuery.data, spec]);
+  const maxAvailableTimeCapacityCycle = useMemo(
+    () =>
+      selectedTimeCapacityCycleMax(
+        spec?.selection.entries,
+        cellsQuery.data,
+        groupsQuery.data,
+      ),
+    [cellsQuery.data, groupsQuery.data, spec?.selection.entries],
+  );
 
   useEffect(() => {
     autosaveSignatureRef.current = autosaveSignature;
@@ -2875,6 +2886,9 @@ function AnalysisEditorView({
         viewSignature: snapshotSignature,
         preferredPlotId: lastPlotIdByTabRef.current[tab] ?? null,
       });
+      if (tab === "time_capacity") {
+        setTimeCapacityNavigationSession((value) => value + 1);
+      }
       setActiveTab(tab);
       setActiveSavedPlotId(opened.activeSavedPlotId);
       setPlotSessionActive(opened.plotSessionActive);
@@ -3365,6 +3379,9 @@ function AnalysisEditorView({
 
   const openSavedPlotDirect = (plot: SavedAnalysisPlot) => {
     const restoredForBaseline = specForSavedPlot(spec, plot);
+    if (plot.tab === "time_capacity") {
+      setTimeCapacityNavigationSession((value) => value + 1);
+    }
     setActiveSavedPlotId(plot.id);
     setActivePlotBaselineSignature(snapshotSignature(restoredForBaseline));
     normalWorkspaceRef.current = captureNormalWorkspace(restoredForBaseline, plot.tab);
@@ -3580,6 +3597,9 @@ function AnalysisEditorView({
     const initialStyle = preset
       ? normalizePlotStyle(preset.style)
       : normalizePlotStyle(DEFAULT_PLOT_STYLE);
+    if (activeTab === "time_capacity") {
+      setTimeCapacityNavigationSession((value) => value + 1);
+    }
     update((s) => {
       const entries = clone(s.selection.entries);
       const savedPlots = clone(s.saved_plots ?? []);
@@ -3949,6 +3969,9 @@ function AnalysisEditorView({
         draft={null}
         liveUnsaved={liveUnsavedDraft && tab === activeTab}
         onOpenDraft={() => {
+          if (tab === "time_capacity") {
+            setTimeCapacityNavigationSession((value) => value + 1);
+          }
           setActiveSavedPlotId(null);
           setActivePlotBaselineSignature(null);
           setPlotWorkspaceTouched(true);
@@ -4189,6 +4212,8 @@ function AnalysisEditorView({
                     subtitle={plotSubtitle("time_capacity", undefined, spec)}
                     spec={spec}
                     update={update}
+                    maxAvailableCycle={maxAvailableTimeCapacityCycle}
+                    navigationResetKey={`${aid}:${timeCapacityNavigationSession}:${activeSavedPlotId ?? "draft"}`}
                     active={activeTab === "time_capacity"}
                     onReadyChange={setTimeCapacityReady}
                     onVoltageChannelsChange={setTimeCapacityVoltageChannels}

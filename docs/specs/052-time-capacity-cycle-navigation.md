@@ -974,7 +974,15 @@ Spec 052 is complete when all of the following are true:
 
 ## Implementation record
 
-Not implemented yet.
+Implemented on `feature/time-capacity-cycle-navigation` for `ACTIVE_CHILD: 052`.
+
+- Implementation commit: the single workflow checkpoint commit for this handoff (hash assigned at commit).
+- Files changed: `AnalysisEditor.tsx`, `TimeCapacityPlotCard.tsx`, new `TimeCapacityCycleNavigation.tsx`, new `timeCapacityCycleNavigationPolicy.ts`, and new `frontend/tests/timeCapacityCycleNavigation.test.ts`.
+- Anchors moved: the duplicate sidebar `From`/`To` editors were removed; the compact navigation strip is mounted immediately after `PlotHeader`; the existing `cycle_start`/`cycle_end` update and query identity remain authoritative.
+- Focused verification: `node --test frontend\tests\timeCapacityCycleNavigation.test.ts` PASS (12/12); `npx.cmd tsc --noEmit` PASS; `npm.cmd run build` PASS; `git diff --check` PASS.
+- Canonical preflight: `python scripts\preflight.py` PASS — all 4 stages, including 155 backend/frontend test files/modules, passed.
+- Manual/browser acceptance: NOT RUN in this implementation turn.
+- Review: pending repository reviewer handoff; `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md` remains reviewer-owned.
 
 When implementation begins, keep this section concise and record:
 
