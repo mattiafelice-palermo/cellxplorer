@@ -344,8 +344,27 @@ _WARMUP_PING_HOLD_SECONDS = 0.2
 
 
 def _worker_ping(hold_seconds: float = 0.0) -> int:
-    """Return the acknowledging worker PID after importing this module."""
+    """Return the acknowledging worker PID after importing this module.
 
+    Spec 052.6: the acknowledgement also imports the scientific stack a real
+    job needs. This module's own top level pulls in only numpy -- pandas,
+    pyarrow, `analysis_engine` and `time_capacity_path` are all imported lazily
+    inside the functions that use them. A ping that merely returned its PID
+    therefore proved the process existed while leaving it unable to do work
+    without first paying that import.
+
+    The cost landed on the first *real* job in each worker, which is the first
+    dispatch of a drag: measured at ~1.6 s against ~20-60 ms for every request
+    after it. Because the navigator admits one moving request at a time, the
+    whole drag waits on it and the plot visibly freezes while the pointer keeps
+    moving. Paying it here moves it into the asynchronous startup warmup, where
+    nothing is waiting on it.
+    """
+
+    try:
+        from . import analysis_engine, time_capacity_path  # noqa: F401
+    except Exception:  # pragma: no cover - warmup must not fail on import
+        logger.debug("Time/Capacity worker warmup import failed", exc_info=True)
     if hold_seconds > 0:
         _sleep(hold_seconds)
     return os.getpid()

@@ -1612,9 +1612,23 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
             with time_capacity_profiling.profiled_stage(request_profile, "compute_request_setup"):
                 from ..services.process_priority import background_thread_priority
 
-            if job_id is None and req.job_token:
+            # Spec 052.6: a transient request is a range the user is dragging
+            # past. It is never persisted, so it always misses the result cache
+            # and would otherwise open and close one activity entry per drag
+            # step -- roughly thirty per second of sustained dragging, each
+            # costing an INSERT plus an UPDATE and flooding the activity feed
+            # with work the user never asked to see. Transient previews stay
+            # out of the activity log entirely.
+            if job_id is None and req.job_token and req.persist:
                 with time_capacity_profiling.profiled_stage(request_profile, "activity_setup"):
-                    job_id = _open_compute_job(db, a, spec, "time_capacity", req.job_token)
+                    job_id = _open_compute_job(
+                        db,
+                        a,
+                        spec,
+                        "time_capacity",
+                        req.job_token,
+                        request_context=request_context,
+                    )
             with time_capacity_profiling.profiled_stage(request_profile, "compute_request_setup"):
                 compute_options = {
                     "use_current_versions": req.recompute,

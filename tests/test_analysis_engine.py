@@ -977,6 +977,50 @@ class AnalysisEngineTests(unittest.TestCase):
                 f"{key} restore",
             )
 
+    def test_transient_previews_never_open_an_activity_entry(self):
+        """Spec 052.6: a dragged-past range is not work the user asked to see.
+
+        Transient previews are never persisted, so they always miss the result
+        cache. Without this guard each drag step opened and closed one activity
+        entry -- roughly thirty per second of sustained dragging.
+        """
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Transient activity", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+
+        with patch.object(
+            analyses_router.engine,
+            "compute_time_capacity",
+            side_effect=lambda *a, **k: {"cell_traces": [], "rendering": {}},
+        ), patch.object(analysis_cache, "load_result_body", return_value=None), patch.object(
+            analysis_cache, "load_result", return_value=None
+        ), patch.object(analysis_cache, "store_result"), patch.object(
+            analyses_router.engine, "availability_badges", return_value=[]
+        ), patch.object(analyses_router, "_finish_job"), patch.object(
+            analyses_router, "_progress_callback", return_value=None
+        ), patch.object(
+            analyses_router, "_open_compute_job", return_value=1
+        ) as open_job:
+            analyses_router.compute_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(
+                    precision="standard", compact=True, persist=False, job_token="drag-token"
+                ),
+                self.db,
+            )
+            self.assertEqual(open_job.call_count, 0, "a transient preview opened an activity entry")
+
+            # A committed range is real work and still reports itself.
+            analyses_router.compute_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(
+                    precision="standard", compact=True, job_token="commit-token"
+                ),
+                self.db,
+            )
+            self.assertEqual(open_job.call_count, 1)
+
     def test_time_capacity_route_resolves_owner_state_once_per_request(self):
         """Spec 052.5: the route shares one AnalysisRequestContext.
 
