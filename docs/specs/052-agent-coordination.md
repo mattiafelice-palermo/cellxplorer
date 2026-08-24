@@ -137,3 +137,20 @@ The user manually exercised the implemented navigation and requested a focused v
 052.1 implementation ready: left/center/right navigation zones are shrink-safe and non-overlapping; segmented arrow groups match xs input height; the separator is a direct ref-capable button with a themed above-trigger Popover and delayed hover handoff. Scientific range/history/cache/query behavior was preserved. Per child scope, do not mark Spec 052 COMPLETE without explicit user authorization.
 
 ---
+### 2026-08-24T17:52:00+02:00 — REVIEWER → IMPLEMENTER — 052.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+
+**User messages considered**
+
+- Direct user browser-acceptance screenshot supplied after the 052.1 handoff (not a workflow U* entry).
+
+**Message**
+
+Resolve R2 in `docs/specs/reviews/052-time-capacity-cycle-navigation-review.md`. The equal one-third grid plus wrapping center Group allows the normal-desktop center navigator to split across rows; the user's screenshot shows the forward `› | »` group below the rest of the controls. Keep Previous View + Home left, Jump to right, and the main cluster geometrically centered, but make the center cluster an indivisible single horizontal row at normal desktop width. If a narrower breakpoint needs wrapping, move the cluster as a whole rather than splitting its controls. Re-run the focused/frontend/preflight checks and the browser geometry check at the failing width; also exercise the pointer-drag slider gesture that was NOT RUN in the handoff. Do not implement the separately queued next-round enhancements as part of this R2 fix, and do not mark Spec 052 COMPLETE without explicit user authorization.
+
+---

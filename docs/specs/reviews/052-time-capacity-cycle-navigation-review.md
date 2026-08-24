@@ -1,18 +1,20 @@
 # Spec 052 Implementation Review — Time/Capacity Cycle Navigation
 
 **Branch:** `feature/time-capacity-cycle-navigation`  
-**Reviewed implementation commit:** `c19913e9bebd5bfc0e80c016afef41ea2909e440`  
+**Reviewed implementation commit:** `e327c3f90af84130736a7865a8b89f0949445f60`  
 **Previous final review transition commit:** `c03a7eb512842cdfaa81e38df0bf8ca395cb8c68`  
 **Merge base:** `df99746ee6d8827e3ff55762e4d28c5b22fa646e`  
-**Review round:** 4 — reopened for post-implementation user acceptance refinement  
-**Status:** Active child `052.1` awaiting implementation  
+**Review round:** 5 — child 052.1 implementation review  
+**Status:** Changes required — R2  
 **Ready to merge:** No
 
 ## Review status
 
-R1 remains resolved. The earlier cumulative review was technically clean, but browser/manual acceptance had not been run. The user subsequently exercised the feature and identified concrete layout/interaction refinements. The workflow is therefore reopened with active child `052.1`, governed by `docs/specs/052.1-cycle-navigation-visual-refinements.md`.
+R1 remains resolved. Child `052.1` was implemented in `e327c3f90af84130736a7865a8b89f0949445f60`. Static inspection confirms the intended left/center/right restructuring, equal-height arrow controls, direct ref-capable separator trigger, above-trigger arrowed Popover, and delayed hover handoff are present.
 
-The previous `COMPLETE` state is no longer authoritative. Per direct user instruction, Spec 052 must not be marked `COMPLETE` again until the user explicitly authorizes completion after reviewing the refined UI.
+One concrete acceptance defect remains: the centered navigation cluster is allowed to wrap internally. The user's post-handoff browser screenshot shows the forward `› | »` group dropping to a second line at normal desktop width. This directly contradicts the desired single-line toolbar geometry and the implementer's reported normal-desktop acceptance result.
+
+Per direct user instruction, Spec 052 must not be marked `COMPLETE` until the user explicitly authorizes completion.
 
 ## Findings
 
@@ -28,48 +30,64 @@ The previous `COMPLETE` state is no longer authoritative. Per direct user instru
 
 **Status:** Resolved.
 
-## Post-implementation acceptance scope — child 052.1
+### R2 — Medium — Open — Normal desktop navigation cluster wraps onto two lines
 
-Direct user browser feedback requires a focused visual/interaction refinement, not a change to scientific semantics. The active child locks the following targets:
+**Affected files:**
 
-- Previous View + Home move to the left zone.
-- The main cycle-navigation group is geometrically centered at normal desktop width.
-- Jump to remains on the right.
-- Backward/forward segmented button groups match the From/To input height.
-- The line-dot-line separator opens an anchored hover/focus slider callout above the trigger, with modest rectangular corner radius and a centered downward triangular pointer.
-- Pointer movement from trigger into the callout must keep it open for dragging.
-- The current detached/top-left popover behavior must be eliminated.
-- Existing slider transient/one-commit semantics, range/history policy, query/cache behavior, and accessibility are preserved.
+- `frontend/src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx`
+- `docs/specs/052.1-cycle-navigation-visual-refinements.md`
 
-This scope is implementation work under `052.1`, not a reopened R1 defect.
+**Current:** The 052.1 implementation uses three equal grid columns (`repeat(3, minmax(0, 1fr))`) and the center `Group` allows wrapping. That constrains the main navigation cluster to roughly one third of the toolbar width and permits its last controls to wrap. In the user's normal-desktop acceptance screenshot, the forward `› | »` group appears below the rest of the center cluster. The implementer had recorded the normal desktop geometry as RUN/passing, but the user's subsequent browser evidence demonstrates that this acceptance point is not met.
 
-## Previous cumulative review facts retained
+**Target:** At normal desktop width, the entire center cluster must remain one continuous horizontal row:
 
-- Branch merge base remained `df99746ee6d8827e3ff55762e4d28c5b22fa646e`; there was no unrelated base drift at the prior review.
-- `AnalysisEditor.tsx` derived the upper cycle bound only from already-loaded Cell/replicate summaries and kept visibility/exclusion state out of that bound.
-- `TimeCapacityPlotCard.tsx` retained the existing Spec 050 query identity and Spec 051.2 refinement lifecycle; navigation commits mutated only the canonical Time/Capacity cycle range through the existing `update(...)` path.
-- The duplicate sidebar `From` / `To` controls were removed while `Specific cycles` and `Max points per cell` remained in the Cycles accordion.
-- The navigation strip remained editor chrome outside Plotly/export artifacts.
-- Range/history/max-cycle policy stayed frontend-only; no backend route, migration, parser/result schema, `SPEC_VERSION`, `CALC_VERSION`, or scientific cache contract change was introduced.
+```text
+Cycle navigation [window] [«|‹] [from] [—o—] [to] [›|»]
+```
+
+Keep Previous View + Home in the left zone, keep Jump to on the right, and keep the center cluster geometrically centered. Do not solve centering by giving the center only one third of the width if that forces an internal wrap. At narrower supported widths, if a breakpoint is genuinely needed, move/wrap the center cluster as a whole rather than splitting its own controls across rows.
+
+**Acceptance criteria:**
+
+- At the user's normal desktop analysis geometry, all center-cluster controls stay on one line.
+- The forward `› | »` group remains directly after the `To` input on that same line.
+- Previous View + Home remain left; Jump to remains right; the main cluster remains visually centered.
+- Plot-style-panel-open geometry does not make the center cluster wrap internally, overlap, or clip.
+- If a narrower-layout fallback is retained, the central navigation controls remain an indivisible one-line cluster; any row transition happens at the zone/cluster level.
+- Re-run the focused navigation tests, TypeScript, production build, and canonical preflight.
+- Re-run the manual desktop geometry check at the width that exposed the defect. Also run the pointer-drag slider gesture that remained NOT RUN in the handoff, and report it truthfully.
+
+## Child 052.1 implementation inspection
+
+The remaining 052.1 changes are consistent with the child scope by static inspection:
+
+- Previous View and Home moved to the left zone.
+- Jump to remains in the right zone.
+- Segmented arrow buttons changed from `compact-xs` to `xs`, matching the adjacent numeric-input height contract.
+- The separator trigger is now a ref-capable `UnstyledButton` target rather than a Tooltip/Fragment-style wrapper.
+- The Popover is positioned above the trigger, uses an arrow, modest radius, and portal anchoring.
+- Hover/focus state uses a short delayed close so pointer travel from trigger to dropdown can keep the callout open.
+- Existing range/history/query/cache/scientific code was not broadened in this commit.
 
 ## Verification
 
-### Implementer-reported before child 052.1
+### Implementer-reported for `e327c3f90af84130736a7865a8b89f0949445f60`
 
 - `node --test frontend\tests\timeCapacityCycleNavigation.test.ts`: **PASS (13/13)**.
 - TypeScript (`npx.cmd tsc --noEmit`): **PASS**.
 - Production build (`npm.cmd run build`): **PASS**.
-- `git diff --check`: **PASS**.
-- Canonical preflight (`python scripts\preflight.py`): **PASS (4/4 stages; 155 backend/frontend modules)**.
-- Browser/manual acceptance matrix: **NOT RUN**.
+- Canonical preflight (`python scripts\preflight.py`): **PASS (4/4 stages; 155 backend/frontend test files/modules)**.
+- Browser/manual acceptance: **RUN**, except pointer-drag gesture **NOT RUN**.
 
-### Reviewer-independent before child 052.1
+### Reviewer-independent
 
-- Static inspection of initial implementation `ff57360b86d595139e3a3988f944a96ee9c07a0d`, R1 fix `c19913e9bebd5bfc0e80c016afef41ea2909e440`, workflow/spec files, and cumulative branch scope against `main`.
-- Re-inspected `AnalysisEditor.tsx`, `TimeCapacityPlotCard.tsx`, `TimeCapacityCycleNavigation.tsx`, `timeCapacityCycleNavigationPolicy.ts`, and `frontend/tests/timeCapacityCycleNavigation.test.ts`.
-- GitHub reported no combined status checks for the implementation fix commit.
-- Repository test commands and browser/manual checks were **not independently executed** in this reviewer environment.
+- Confirmed current `main` remains `df99746ee6d8827e3ff55762e4d28c5b22fa646e` and is the exact merge base; the branch is ahead with no unrelated base drift.
+- Inspected implementation commit `e327c3f90af84130736a7865a8b89f0949445f60`, live workflow state, child spec, and cumulative branch scope.
+- Inspected the actual layout diff showing equal one-third grid columns plus a wrapping center group.
+- Treated the user's browser screenshot as direct manual acceptance evidence that the normal-desktop one-line layout currently fails.
+- GitHub reports no combined status checks for `e327c3f90af84130736a7865a8b89f0949445f60`.
+- Repository commands and browser checks were **not independently executed** by the reviewer.
 
 ## Merge readiness
 
-**Not ready to merge while child `052.1` is active.** Review the implementer's returned changes against the child spec, then leave the workflow in final review awaiting explicit user completion authorization even if the technical review is clean.
+**Not ready to merge. R2 is open.** After R2 is fixed, the workflow must still remain open for user acceptance; do not transition Spec 052 to `COMPLETE` without explicit user authorization.
