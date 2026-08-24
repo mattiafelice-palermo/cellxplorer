@@ -2,14 +2,15 @@
 
 **Branch:** `feature/time-capacity-cycle-navigation`  
 **Reviewed implementation commit:** `c19913e9bebd5bfc0e80c016afef41ea2909e440`  
+**Final review transition commit:** `c03a7eb512842cdfaa81e38df0bf8ca395cb8c68`  
 **Merge base:** `df99746ee6d8827e3ff55762e4d28c5b22fa646e`  
-**Review round:** 2  
-**Status:** Child review clean; final cumulative review pending  
-**Ready to merge:** No
+**Review round:** 3 — final closure  
+**Status:** Review clean  
+**Ready to merge:** Yes
 
 ## Review status
 
-R1 is resolved. The null-bound fallback now preserves the safe operations required by Spec 052 without reopening the upper-bound-dependent actions. No new child-review finding was identified in the returned fix or the cumulative implementation scope.
+R1 is resolved. The cumulative Spec 052 branch is review-clean against current `main`. The implementation preserves the existing Time/Capacity scientific/cache/refinement architecture while adding the requested editor-only cycle navigator over the canonical `cycle_start` / `cycle_end` range.
 
 ## Findings
 
@@ -21,11 +22,21 @@ R1 is resolved. The null-bound fallback now preserves the safe operations requir
 - `frontend/src/features/analyses/editor/families/time-capacity/timeCapacityCycleNavigationPolicy.ts`
 - `frontend/tests/timeCapacityCycleNavigation.test.ts`
 
-**Current:** Resolved in `c19913e9bebd5bfc0e80c016afef41ea2909e440`. With no reliable maximum, single-cycle backward navigation remains enabled and lower-clamps at cycle 1; Previous View remains available when history exists. Whole-window paging, forward movement, Home, slider, bounded resize/window-size selection, and Jump remain disabled until a reliable upper bound is available. Non-empty Specific cycles still disables continuous navigation as a whole.
+**Resolution:** Commit `c19913e9bebd5bfc0e80c016afef41ea2909e440` narrows the null-bound disable policy. Single-cycle backward navigation remains usable and lower-clamped at cycle 1; Previous View remains available when history exists; upper-bound-dependent actions remain disabled until a reliable maximum is available. Non-empty Specific cycles still disables the continuous navigator.
 
-**Target:** Preserve the narrower null-bound fallback defined by Spec 052 while retaining the Specific Cycles override policy.
+**Status:** Resolved.
 
-**Acceptance criteria:** Met by static inspection and focused policy coverage. The added test verifies `[10,20] -> [9,19]`, lower-bound clamping, and that forward/whole-window motion remain inert without a bound; the Previous View helper verifies history remains available unless Specific cycles is active.
+## Final cumulative review
+
+- Branch merge base remains `df99746ee6d8827e3ff55762e4d28c5b22fa646e`; there is no unrelated base drift.
+- `AnalysisEditor.tsx` derives the upper cycle bound only from already-loaded Cell/replicate summaries and keeps visibility/exclusion state out of that bound.
+- `TimeCapacityPlotCard.tsx` retains the existing Spec 050 query identity and Spec 051.2 refinement lifecycle; navigation commits only mutate the canonical Time/Capacity cycle range through the existing `update(...)` path.
+- The duplicate sidebar `From` / `To` controls are removed while `Specific cycles` and `Max points per cell` remain in the Cycles accordion.
+- The navigation strip is mounted immediately after `PlotHeader`, before plot loading/error/empty/Plotly content, so it remains editor chrome and is not part of exported Plotly figures.
+- Window resizing, single-cycle/whole-window motion, manual crossing rules, jump centering, Home, history, selected maximum resolution, Specific Cycles override, and null-bound behavior are implemented in a pure colocated policy with focused tests.
+- Slider motion is transient during `onChange`; exactly one canonical range commit occurs on `onChangeEnd`.
+- History is session-only, bounded, duplicate-suppressed, and reset on selection identity and saved/new plot session transitions; it is not persisted or added to scientific signatures.
+- No backend route, migration, parser/result schema, `SPEC_VERSION`, `CALC_VERSION`, or scientific cache contract change was introduced.
 
 ## Verification
 
@@ -40,17 +51,12 @@ R1 is resolved. The null-bound fallback now preserves the safe operations requir
 
 ### Reviewer-independent
 
-- Inspected fix commit `c19913e9bebd5bfc0e80c016afef41ea2909e440` and cumulative branch scope against current `main`.
-- Confirmed live merge base remains `df99746ee6d8827e3ff55762e4d28c5b22fa646e`; branch is ahead with no unrelated base drift.
-- Re-inspected the navigation component, pure policy, focused tests, `AnalysisEditor.tsx` lifecycle/reset wiring, and `TimeCapacityPlotCard.tsx` integration.
-- Confirmed canonical `cycle_start`/`cycle_end` remain the only continuous range state and still participate in the existing Time/Capacity query identity.
-- Confirmed the navigator remains editor chrome immediately after `PlotHeader`, outside Plotly/export artifacts.
-- Confirmed slider `onChange` is transient and only `onChangeEnd` commits the canonical range.
-- Confirmed selected maximum uses already-loaded Cell/replicate summaries and does not introduce a new API or raw/Parquet read.
-- Confirmed Spec 050 request/cache behavior and Spec 051.2 refinement owners remain intact in the touched card.
-- GitHub reports no combined status checks for the fix commit.
-- Repository commands and browser/manual checks were **not independently executed** in this reviewer environment.
+- Static inspection of initial implementation `ff57360b86d595139e3a3988f944a96ee9c07a0d`, R1 fix `c19913e9bebd5bfc0e80c016afef41ea2909e440`, current workflow/spec files, and cumulative branch scope against `main`.
+- Re-inspected `AnalysisEditor.tsx`, `TimeCapacityPlotCard.tsx`, `TimeCapacityCycleNavigation.tsx`, `timeCapacityCycleNavigationPolicy.ts`, and `frontend/tests/timeCapacityCycleNavigation.test.ts`.
+- Confirmed reviewer transition commit `c03a7eb512842cdfaa81e38df0bf8ca395cb8c68` is documentation/workflow-only.
+- GitHub reports no combined status checks for the implementation fix commit.
+- Repository test commands and browser/manual checks were **not independently executed** in this reviewer environment.
 
 ## Merge readiness
 
-**Child review clean.** The workflow may enter the required final cumulative Spec 052 review before merge readiness is declared.
+**Review clean. Ready to merge.**
