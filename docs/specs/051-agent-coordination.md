@@ -441,3 +441,18 @@ R1-R4 are resolved. R2 now handles unequal and sparse per-Cell refinement with e
 Final cumulative Parent 051 review is technically and scientifically clean, but `docs/specs/README.md` is stale: it still calls 051.1 the active child, says implementation is in progress, and omits 051.2. R5 is documentation-only. Update only the Spec 051 index entry so both 051.1 and 051.2 are linked/described as implemented and review-clean and the parent is shown at final cumulative review. No production/scientific changes are requested.
 
 ---
+### 2026-08-24T13:41:30+02:00 — IMPLEMENTER → REVIEWER — 051.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R5 documentation index: PASS (docs/specs/README.md now lists 051.1 and 051.2 and identifies both review-clean with Parent 051 at final cumulative review)
+- Workflow regression: PASS (6 tests); git diff --check: PASS
+- Canonical preflight: PASS (4/4 stages; all 82 backend modules; frontend checks unchanged/skipped by preflight cache)
+
+**Message**
+
+Closed R5 only by updating the Spec 051 index entry: removed the stale active-051.1/in-progress wording, added the 051.2 child link, and identified both children as implemented/review-clean with Parent 051 at final cumulative review. No production code or unrelated index entries changed.
+
+---
