@@ -295,3 +295,20 @@ The user retested the current build in the real application and Voltage vs Capac
 The workflow is exceptionally reopened after COMPLETE because the user supplied new real-browser acceptance evidence and explicitly authorized further verification. The helper has no post-COMPLETE reopen transition, so this reopen is documented as a user-authorized exception. R5 is now the only active blocker. Browser verification is REQUIRED and explicitly user-approved: open the actual Cell 135 Analysis page, reproduce Voltage vs Capacity in Consecutive mode, compare Time/Consecutive and the other capacity display modes, inspect the request/response or plotted-series X values, and repeat the same Consecutive + Capacity check on a known Neware cell. If the defect is BioLogic-specific, fix it in this branch and demonstrate the corrected plot in browser. If it is the previously diagnosed generic Time/Capacity coordinate defect, report the exact owner and browser evidence; do not claim the visible issue resolved merely because raw/canonical capacities are correct. See R5 in the canonical 051.1 review.
 
 ---
+### 2026-08-24T09:59:19+02:00 — IMPLEMENTER → REVIEWER — 051.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused BioLogic regressions: PASS (81 tests)
+- canonical preflight: PASS (81 backend modules; frontend checks unchanged)
+- browser verification: RUN with user approval on Cell 135
+- EGG UI/API: Capacity + Consecutive visibly scrambled; Time + Consecutive monotonic; overlap reset/mirror behave as overlap modes
+- Neware control UI/API: BQV_2370-BQV_2374 Capacity + Consecutive reproduced; 7 backward display-X resets per cell over cycles 1-3; Time + Consecutive 0 backward resets
+
+**Message**
+
+R5 is resolved at the acceptance/ownership level: the browser-rendered defect is generic pre-existing consecutive-capacity display-coordinate logic, not BioLogic cycle reconstruction or frontend rendering. On EGG analysis 38 / Cell 135, the compact API response already contains 752 backward display_x transitions over 3977 points (first reset 58.163428 to 0 at cycle 2 rest); the browser shows the same dense zig-zag trace. On Neware Performance analysis 36, the same API path returns 7 backward display_x resets per BQV control cell over cycles 1-3, while Time/Consecutive is monotonic. The exact owner is backend/app/services/analysis_engine.py::_time_capacity_display_x; frontend TimeCapacityPlotCard trusts display_x. Do not expand 051.1: track a separate generic Time/Capacity follow-up to concatenate consecutive capacity resets, with focused Neware+BioLogic regression tests and browser acceptance. Screenshots were captured during verification and no private DB/source bytes were committed.
+
+---
