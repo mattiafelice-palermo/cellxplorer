@@ -12,10 +12,11 @@
   "findings": [
     "R1",
     "R2",
-    "R3"
+    "R3",
+    "R4"
   ],
   "resume_review": "REVIEW",
   "user_message_seq": 1,
   "pending_user_messages": [],
-  "updated_at": "2026-08-24T09:02:01+02:00"
+  "updated_at": "2026-08-24T09:12:17+02:00"
 }
