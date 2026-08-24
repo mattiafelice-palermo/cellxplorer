@@ -48,7 +48,7 @@ Manual acceptance result: the build can load the BioLogic cell, but opening Anal
 
 **Verification**
 
-- Reviewer inspected cumulative branch diff through implementation handoff 09f584f32d095edb70efb18147b8aeb0eeb918eb against merge base/main 706dc0f14880202a8c5e22b35020502bcf3b4dc9.
+- Reviewer inspected cumulative branch diff through implementation handoff 09f584f32d095edb70efb18147b8aeb0eeb918eb against merge base/main 706dc0f14880202bcf3b4dc9.
 - Implementer-reported focused tests and preflight were reviewed but not independently rerun; reviewer execution environment cannot clone the repository from GitHub.
 - User manual acceptance U1 reproduces the unresolved metadata-only/canonical-cycling failure in the built application.
 
@@ -205,5 +205,20 @@ Implemented 051.1 with gcpl10 deterministic cycle reconstruction: explicit cycle
 **Message**
 
 R1 is the scientific merge blocker: execution-only Ns loop inference broadens the locked repeated-cycle contract beyond a declared-loop proof and must be explicitly bounded in the governing spec or removed. R2 fixes incorrect cache-hit cycle provenance inference and mixed-loop capability metadata. R3 updates stale high-priority repository guidance. See `reviews/051.1-biologic-mpr-cycle-reconstruction-review.md` for Current, Target, and Acceptance criteria.
+
+---
+### 2026-08-24T09:12:17+02:00 — REVIEWER → IMPLEMENTER — 051.1
+
+**Result:** Additional user acceptance evidence; investigate before returning fixes
+
+**Findings**
+
+- R4
+
+**Message**
+
+The user's real EGG Analysis plots show that the earlier private-file acceptance is not scientifically sufficient. Voltage vs time looks plausible, but voltage vs capacity is scrambled and discharge capacity vs cycle starts around 58/29 mAh then collapses toward zero while the implementation reports 1,629 cycles. Use your local access to the user's CellXplorer database, current caches, and original EGG `.mpr` source to determine whether the 1,629 labels are actual full battery cycles or an inner/repeated protocol segment, and separately verify ID-211/ID-7 -> canonical phase capacity -> `calc.per_cycle` values for representative early/middle/late portions. Do not fix this by changing generic calculations; the owning BioLogic cycle/capacity mapping must be established from the source. R4 in the 051.1 review gives the required evidence and acceptance criteria.
+
+Separately, reproduce `display_mode=consecutive` with a capacity X-axis on a known Neware cell. Current reviewer inspection finds `_time_capacity_display_x(...)` only subtracts the first finite capacity value, while phase capacity resets by cycle/phase; the same logic exists in pre-Spec-050 commit `1a23198e`, so this currently looks like a generic older Time/Capacity bug rather than a Spec-050 regression. Diagnose and report it, but do not silently expand the 051.1 BioLogic branch with an unrelated fix unless the root cause proves coupled.
 
 ---
