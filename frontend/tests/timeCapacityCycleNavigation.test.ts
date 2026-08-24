@@ -554,6 +554,16 @@ test("refill triggers before the viewport reaches the buffer edge, but not at th
   assert.equal(bufferNeedsRefill({ start: 200, end: 324 }, { start: 322, end: 324 }, 324), false);
 });
 
+test("resident buffers prefetch after half of their original spare context is consumed", () => {
+  const buffer = { start: 67, end: 135 };
+  const anchor = { start: 100, end: 102 };
+  // The old viewport-width margin would wait until cycle 133. The scheduler
+  // has enough context to start the replacement while the resident data still
+  // covers another fifteen cycles.
+  assert.equal(bufferNeedsRefill(buffer, { start: 110, end: 112 }, 324, 0.5, anchor), false);
+  assert.equal(bufferNeedsRefill(buffer, { start: 118, end: 120 }, 324, 0.5, anchor), true);
+});
+
 test("buffer point budget scales so the visible window keeps its density", () => {
   const window = { start: 100, end: 102 };
   const buffer = { start: 70, end: 132 };

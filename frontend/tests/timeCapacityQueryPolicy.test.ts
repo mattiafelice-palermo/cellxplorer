@@ -200,6 +200,9 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
   assert.match(liveSource, /timeCapacityPlotExportReady/);
   assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
+  assert.match(liveSource, /panActive \|\| timeResult\.isPlaceholderData \|\| resultIsRetainedPanFallback/);
+  assert.match(liveSource, /const token = transientPreviewRequest \? null : newComputeToken\(\)/);
+  assert.match(liveSource, /onReadyChange\?\.\(readyForParent\)/);
   assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);
   assert.match(liveSource, /new TimeCapacityRefinementLifecycle\(cfg\.stacked\)/);
   assert.match(

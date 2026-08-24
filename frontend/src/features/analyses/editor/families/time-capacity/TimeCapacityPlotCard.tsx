@@ -1497,6 +1497,7 @@ function TimeCapacityPlotCardView({
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
   const previewResolution = previewRequest?.resolution ?? null;
+  const transientPreviewRequest = panActive || previewResolution === "moving";
   const requestCfg = timeCapacityConfig(requestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
@@ -1619,8 +1620,11 @@ function TimeCapacityPlotCardView({
       // The server opens an activity entry only if the cache misses, so send a
       // token instead of pre-creating a job: a cached load costs one request
       // and leaves no spurious "Preparing..." entry behind.
-      const token = newComputeToken();
-      setComputeToken(token);
+      // Moving previews never persist and therefore never open a backend job.
+      // Do not churn local token state or poll for a job that cannot exist on
+      // every buffer refill.
+      const token = transientPreviewRequest ? null : newComputeToken();
+      if (token) setComputeToken(token);
       if (profileRequest) {
         timeCapacityPerformanceProfiler.begin(profileRequest.requestId, profileContext);
       }
@@ -1628,7 +1632,7 @@ function TimeCapacityPlotCardView({
       try {
         const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
           spec: requestSpec,
-          job_token: token,
+          ...(token ? { job_token: token } : {}),
           viewport_width: viewportWidth,
           precision: "standard",
           // Spec 052.3 Stage 3: a moving preview is a range the user is
@@ -1637,7 +1641,7 @@ function TimeCapacityPlotCardView({
           // evicted genuinely reusable entries. Idle-promoted full previews and
           // committed ranges persist exactly as before. Reads are unaffected:
           // a moving preview that happens to hit an entry still serves it.
-          ...(panActive || previewResolution === "moving" ? { persist: false } : {}),
+          ...(transientPreviewRequest ? { persist: false } : {}),
           // Spec 052.7: anchor the buffer on one timeline so consecutive
           // windows share an x axis and can be panned between.
           ...(panActive ? { absolute_time_origin_cycle: 1 } : {}),
@@ -1663,10 +1667,12 @@ function TimeCapacityPlotCardView({
         }
         throw error;
       } finally {
-        window.setTimeout(
-          () => setComputeToken((current) => (current === token ? null : current)),
-          300
-        );
+        if (token) {
+          window.setTimeout(
+            () => setComputeToken((current) => (current === token ? null : current)),
+            300
+          );
+        }
       }
     },
     placeholderData: (previous, previousQuery) =>
@@ -1907,9 +1913,14 @@ function TimeCapacityPlotCardView({
     timeResult.isLoading || (timeResult.isFetching && !currentResult)
   );
   const loadingWithoutResult = timeResult.isLoading || (timeResult.isFetching && !currentResult);
+  const readyForParent =
+    !timeResult.isLoading && (!timeResult.isFetching || Boolean(currentResult));
   useEffect(() => {
-    onReadyChange?.(!timeResult.isLoading && !timeResult.isFetching);
-  }, [onReadyChange, timeResult.isFetching, timeResult.isLoading]);
+    // Background replacement of an already visible buffer is still ready.
+    // Flipping this false for every refill rerenders the entire analysis
+    // editor, including the live Plotly surface, while the pointer is moving.
+    onReadyChange?.(readyForParent);
+  }, [onReadyChange, readyForParent]);
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
     () =>
@@ -1962,7 +1973,7 @@ function TimeCapacityPlotCardView({
     ];
   }, [cfg.stacked, refinementTransition, refinementTransitionProgress]);
   const plotExportReady = timeCapacityPlotExportReady(
-    timeResult.isPlaceholderData || resultIsRetainedPanFallback,
+    panActive || timeResult.isPlaceholderData || resultIsRetainedPanFallback,
     Boolean(currentResult),
     selectedVoltageUnavailable,
     exportTraces.length > 0,
@@ -2513,7 +2524,7 @@ function TimeCapacityPlotCardView({
           updateStyle={updatePlotStyle}
           viewSize={plotSize}
           layout={layout}
-          canExport={Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
+          canExport={!panActive && Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
           canPlotExport={plotExportReady && !dataExporting}
           edited={edited}
           onNewPlot={onNewPlot}

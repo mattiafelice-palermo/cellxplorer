@@ -219,7 +219,13 @@ function planSatisfiedBy(
 ): boolean {
   return Boolean(
     request &&
-      !bufferNeedsRefill(request.buffer, plan.window, maxCycle) &&
+      !bufferNeedsRefill(
+        request.buffer,
+        plan.window,
+        maxCycle,
+        TIME_CAPACITY_BUFFER_REFILL_FRACTION,
+        request.window,
+      ) &&
       request.maxPoints >= plan.maxPoints,
   );
 }
@@ -437,17 +443,35 @@ export function bufferNeedsRefill(
   window: TimeCapacityCycleRange,
   maxCycle: number,
   fraction: number = TIME_CAPACITY_BUFFER_REFILL_FRACTION,
+  anchorWindow?: TimeCapacityCycleRange,
 ): boolean {
   if (!buffer) return true;
   if (!bufferCoversWindow(buffer, window)) return true;
 
   const width = Math.max(1, window.end - window.start + 1);
-  const margin = Math.max(1, Math.round(width * Math.max(0, fraction)));
+  const normalizedFraction = Math.max(0, fraction);
+  const fallbackMargin = Math.max(1, Math.round(width * normalizedFraction));
+  // Scheduler-owned buffers remember the viewport that created them. Begin
+  // replacing one after the pointer consumes half of that original spare
+  // context, rather than waiting until a narrow viewport is only one or two
+  // cycles from the edge. Direct callers retain the viewport-width fallback.
+  const lowerMargin = anchorWindow
+    ? Math.max(
+        1,
+        Math.round(Math.max(0, anchorWindow.start - buffer.start) * normalizedFraction),
+      )
+    : fallbackMargin;
+  const upperMargin = anchorWindow
+    ? Math.max(
+        1,
+        Math.round(Math.max(0, buffer.end - anchorWindow.end) * normalizedFraction),
+      )
+    : fallbackMargin;
   const atLowerExtent = buffer.start <= 1;
   const atUpperExtent = buffer.end >= maxCycle;
 
-  if (!atLowerExtent && window.start - buffer.start <= margin) return true;
-  if (!atUpperExtent && buffer.end - window.end <= margin) return true;
+  if (!atLowerExtent && window.start - buffer.start <= lowerMargin) return true;
+  if (!atUpperExtent && buffer.end - window.end <= upperMargin) return true;
   return false;
 }
 
