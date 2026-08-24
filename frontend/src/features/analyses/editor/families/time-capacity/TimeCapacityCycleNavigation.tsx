@@ -20,8 +20,21 @@ import {
   IconChevronsRight,
   IconHome,
 } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactElement, ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type {
+  FocusEventHandler,
+  KeyboardEventHandler,
+  PointerEventHandler,
+  ReactElement,
+  ReactNode,
+} from "react";
 
 import type { AnalysisSpec } from "../../../../../api";
 import type { TimeCapacityConfig } from "./TimeCapacityPlotCard";
@@ -163,7 +176,7 @@ function NavigationSegmentButton({
   return withControlTooltip(
     label,
     <Button
-      size="compact-xs"
+      size="xs"
       variant="default"
       px={6}
       style={{ minWidth: 29 }}
@@ -209,26 +222,48 @@ function NavigationIconAction({
   );
 }
 
-function CyclePositionTrigger({
-  opened,
-  disabled,
-  tooltipLabel,
-  onClick,
-}: {
+interface CyclePositionTriggerProps {
   opened: boolean;
   disabled: boolean;
   tooltipLabel: string;
   onClick: () => void;
-}) {
-  const trigger = (
+  onPointerEnter?: PointerEventHandler<HTMLButtonElement>;
+  onPointerLeave?: PointerEventHandler<HTMLButtonElement>;
+  onFocus?: FocusEventHandler<HTMLButtonElement>;
+  onBlur?: FocusEventHandler<HTMLButtonElement>;
+  onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
+}
+
+const CyclePositionTrigger = forwardRef<HTMLButtonElement, CyclePositionTriggerProps>(
+  function CyclePositionTrigger(
+    {
+      opened,
+      disabled,
+      tooltipLabel,
+      onClick,
+      onPointerEnter,
+      onPointerLeave,
+      onFocus,
+      onBlur,
+      onKeyDown,
+    },
+    ref,
+  ) {
+    return (
     <UnstyledButton
+      ref={ref}
       type="button"
       aria-label="Open cycle position slider"
       aria-haspopup="dialog"
       aria-expanded={opened}
-      title={tooltipLabel}
+      title={disabled ? tooltipLabel : undefined}
       disabled={disabled}
       onClick={onClick}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
       styles={{
         root: {
           display: "inline-flex",
@@ -261,18 +296,9 @@ function CyclePositionTrigger({
         <Box component="span" style={{ width: 10, height: 1, background: "currentColor" }} />
       </Box>
     </UnstyledButton>
-  );
-
-  return (
-    <Tooltip label={tooltipLabel} withArrow>
-      {disabled ? (
-        <Box component="span" style={{ display: "inline-block" }}>
-          {trigger}
-        </Box>
-      ) : trigger}
-    </Tooltip>
-  );
-}
+    );
+  },
+);
 
 export function TimeCapacityCycleNavigation({
   config,
@@ -319,6 +345,10 @@ export function TimeCapacityCycleNavigation({
   const [sliderOpened, setSliderOpened] = useState(false);
   const [sliderValue, setSliderValue] = useState<number | null>(null);
   const [jumpDraft, setJumpDraft] = useState("");
+  const sliderCloseTimerRef = useRef<number | null>(null);
+  const triggerHoveredRef = useRef(false);
+  const dropdownHoveredRef = useRef(false);
+  const sliderFocusRef = useRef(false);
 
   const clearHistory = useCallback(() => {
     historyRef.current = [];
@@ -443,6 +473,85 @@ export function TimeCapacityCycleNavigation({
     if (!opened) setSliderValue(null);
   }, []);
 
+  const clearSliderCloseTimer = useCallback(() => {
+    if (sliderCloseTimerRef.current !== null) {
+      window.clearTimeout(sliderCloseTimerRef.current);
+      sliderCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleSliderClose = useCallback(() => {
+    clearSliderCloseTimer();
+    sliderCloseTimerRef.current = window.setTimeout(() => {
+      sliderCloseTimerRef.current = null;
+      if (!triggerHoveredRef.current && !dropdownHoveredRef.current && !sliderFocusRef.current) {
+        closeSlider(false);
+      }
+    }, 160);
+  }, [clearSliderCloseTimer, closeSlider]);
+
+  const handleTriggerPointerEnter = useCallback(() => {
+    triggerHoveredRef.current = true;
+    clearSliderCloseTimer();
+    openSlider();
+  }, [clearSliderCloseTimer, openSlider]);
+
+  const handleTriggerPointerLeave = useCallback(() => {
+    triggerHoveredRef.current = false;
+    scheduleSliderClose();
+  }, [scheduleSliderClose]);
+
+  const handleTriggerFocus = useCallback(() => {
+    sliderFocusRef.current = true;
+    clearSliderCloseTimer();
+    openSlider();
+  }, [clearSliderCloseTimer, openSlider]);
+
+  const handleTriggerBlur = useCallback(() => {
+    sliderFocusRef.current = false;
+    scheduleSliderClose();
+  }, [scheduleSliderClose]);
+
+  const handleDropdownPointerEnter = useCallback(() => {
+    dropdownHoveredRef.current = true;
+    clearSliderCloseTimer();
+  }, [clearSliderCloseTimer]);
+
+  const handleDropdownPointerLeave = useCallback(() => {
+    dropdownHoveredRef.current = false;
+    scheduleSliderClose();
+  }, [scheduleSliderClose]);
+
+  const handleDropdownFocus = useCallback(() => {
+    sliderFocusRef.current = true;
+    clearSliderCloseTimer();
+  }, [clearSliderCloseTimer]);
+
+  const handleDropdownBlur = useCallback(() => {
+    sliderFocusRef.current = false;
+    scheduleSliderClose();
+  }, [scheduleSliderClose]);
+
+  const handleTriggerKeyDown = useCallback<KeyboardEventHandler<HTMLButtonElement>>(
+    (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      triggerHoveredRef.current = false;
+      dropdownHoveredRef.current = false;
+      sliderFocusRef.current = false;
+      clearSliderCloseTimer();
+      closeSlider(false);
+    },
+    [clearSliderCloseTimer, closeSlider],
+  );
+
+  useEffect(
+    () => () => {
+      clearSliderCloseTimer();
+    },
+    [clearSliderCloseTimer],
+  );
+
   const commitSlider = useCallback(
     (value: number) => {
       if (boundedNavigationDisabled || !hasBound) return;
@@ -475,135 +584,195 @@ export function TimeCapacityCycleNavigation({
       radius="sm"
       style={{ minWidth: 0 }}
     >
-      <Group gap={6} align="center" wrap="wrap" style={{ minWidth: 0 }}>
-        <Text size="xs" fw={700} style={{ flex: "0 0 auto" }}>
-          Cycle navigation
-        </Text>
-        {withControlTooltip(
-          "Cycle window size",
-          <Select
-            aria-label="Cycle window size"
-            title="Cycle window size"
-            data={windowOptions.map((value: number) => ({ value: String(value), label: String(value) }))}
-            value={String(currentWidth)}
-            onChange={resize}
-            allowDeselect={false}
-            searchable={false}
-            size="xs"
-            w={60}
-            disabled={boundedNavigationDisabled}
-          />,
-          boundedNavigationDisabled,
-          disabledReason,
-        )}
-
-        <Button.Group>
-          <NavigationSegmentButton
-            label="Previous cycle window"
+      <Box
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          alignItems: "center",
+          columnGap: 6,
+          rowGap: 6,
+          minWidth: 0,
+        }}
+      >
+        <Group
+          gap={4}
+          align="center"
+          justify="flex-start"
+          wrap="wrap"
+          style={{ minWidth: 0, width: "100%", justifySelf: "stretch" }}
+        >
+          <NavigationIconAction
+            label="Previous cycle view"
+            disabled={previousDisabled}
+            disabledReason={previousDisabledReason}
+            onClick={restorePrevious}
+          >
+            <IconArrowLeft size={15} />
+          </NavigationIconAction>
+          <NavigationIconAction
+            label="Show all cycles"
             disabled={boundedNavigationDisabled}
             disabledReason={disabledReason}
-            onClick={() => move(-1, "window")}
+            onClick={showAll}
           >
-            <IconChevronsLeft size={14} />
-          </NavigationSegmentButton>
-          <NavigationSegmentButton
-            label="Previous cycle"
+            <IconHome size={15} />
+          </NavigationIconAction>
+        </Group>
+
+        <Group
+          gap={6}
+          align="center"
+          justify="center"
+          wrap="wrap"
+          style={{ minWidth: 0, width: "100%", maxWidth: "100%", justifySelf: "stretch" }}
+        >
+          <Text size="xs" fw={700} style={{ flex: "0 0 auto" }}>
+            Cycle navigation
+          </Text>
+          {withControlTooltip(
+            "Cycle window size",
+            <Select
+              aria-label="Cycle window size"
+              title="Cycle window size"
+              data={windowOptions.map((value: number) => ({ value: String(value), label: String(value) }))}
+              value={String(currentWidth)}
+              onChange={resize}
+              allowDeselect={false}
+              searchable={false}
+              size="xs"
+              w={60}
+              disabled={boundedNavigationDisabled}
+            />,
+            boundedNavigationDisabled,
+            disabledReason,
+          )}
+
+          <Button.Group>
+            <NavigationSegmentButton
+              label="Previous cycle window"
+              disabled={boundedNavigationDisabled}
+              disabledReason={disabledReason}
+              onClick={() => move(-1, "window")}
+            >
+              <IconChevronsLeft size={14} />
+            </NavigationSegmentButton>
+            <NavigationSegmentButton
+              label="Previous cycle"
+              disabled={specificCyclesActive}
+              disabledReason={disabledReason}
+              onClick={() => move(-1, "cycle")}
+            >
+              <IconChevronLeft size={14} />
+            </NavigationSegmentButton>
+          </Button.Group>
+
+          <DraftCycleNumberInput
+            value={storedRange.start}
+            label="From cycle"
+            onCommit={commitManualStart}
             disabled={specificCyclesActive}
             disabledReason={disabledReason}
-            onClick={() => move(-1, "cycle")}
+            max={hasBound ? maxAvailableCycle! : undefined}
+          />
+          <Popover
+            opened={sliderOpened}
+            onChange={closeSlider}
+            position="top"
+            offset={6}
+            withArrow
+            arrowPosition="center"
+            arrowSize={8}
+            arrowRadius={2}
+            withinPortal
+            shadow="md"
+            radius="sm"
+            width={250}
+            closeOnClickOutside
+            closeOnEscape
           >
-            <IconChevronLeft size={14} />
-          </NavigationSegmentButton>
-        </Button.Group>
-
-        <DraftCycleNumberInput
-          value={storedRange.start}
-          label="From cycle"
-          onCommit={commitManualStart}
-          disabled={specificCyclesActive}
-          disabledReason={disabledReason}
-          max={hasBound ? maxAvailableCycle! : undefined}
-        />
-        <Popover
-          opened={sliderOpened}
-          onChange={closeSlider}
-          position="bottom"
-          withArrow
-          withinPortal
-          shadow="md"
-          width={250}
-          closeOnClickOutside
-          closeOnEscape
-        >
-          <Popover.Target>
-            <CyclePositionTrigger
-              opened={sliderOpened}
-              disabled={sliderDisabled}
-              tooltipLabel={sliderDisabled ? sliderDisabledReason : "Move cycle window"}
-              onClick={openSlider}
-            />
-          </Popover.Target>
-          <Popover.Dropdown p="sm">
-            <Slider
-              aria-label="Cycle window position"
-              min={1}
-              max={maxAvailableCycle ?? 1}
-              step={1}
-              value={sliderValue ?? Math.round((boundedRange.start + boundedRange.end) / 2)}
-              onChange={setSliderValue}
-              onChangeEnd={commitSlider}
-              label={(value) => `Cycle ${value}`}
-              disabled={sliderDisabled}
-            />
-          </Popover.Dropdown>
-        </Popover>
-        <DraftCycleNumberInput
-          value={storedRange.end}
-          label="To cycle"
-          onCommit={commitManualEnd}
-          disabled={specificCyclesActive}
-          disabledReason={disabledReason}
-          max={hasBound ? maxAvailableCycle! : undefined}
-        />
-
-        <Button.Group>
-          <NavigationSegmentButton
-            label="Next cycle"
-            disabled={boundedNavigationDisabled}
+            <Popover.Target>
+              <CyclePositionTrigger
+                opened={sliderOpened}
+                disabled={sliderDisabled}
+                tooltipLabel={sliderDisabled ? sliderDisabledReason : "Move cycle window"}
+                onClick={openSlider}
+                onPointerEnter={handleTriggerPointerEnter}
+                onPointerLeave={handleTriggerPointerLeave}
+                onFocus={handleTriggerFocus}
+                onBlur={handleTriggerBlur}
+                onKeyDown={handleTriggerKeyDown}
+              />
+            </Popover.Target>
+            <Popover.Dropdown
+              p="sm"
+              onPointerEnter={handleDropdownPointerEnter}
+              onPointerLeave={handleDropdownPointerLeave}
+              onFocus={handleDropdownFocus}
+              onBlur={handleDropdownBlur}
+            >
+              <Slider
+                aria-label="Cycle window position"
+                min={1}
+                max={maxAvailableCycle ?? 1}
+                step={1}
+                value={sliderValue ?? Math.round((boundedRange.start + boundedRange.end) / 2)}
+                onChange={setSliderValue}
+                onChangeEnd={commitSlider}
+                label={(value) => `Cycle ${value}`}
+                disabled={sliderDisabled}
+              />
+            </Popover.Dropdown>
+          </Popover>
+          <DraftCycleNumberInput
+            value={storedRange.end}
+            label="To cycle"
+            onCommit={commitManualEnd}
+            disabled={specificCyclesActive}
             disabledReason={disabledReason}
-            onClick={() => move(1, "cycle")}
-          >
-            <IconChevronRight size={14} />
-          </NavigationSegmentButton>
-          <NavigationSegmentButton
-            label="Next cycle window"
-            disabled={boundedNavigationDisabled}
-            disabledReason={disabledReason}
-            onClick={() => move(1, "window")}
-          >
-            <IconChevronsRight size={14} />
-          </NavigationSegmentButton>
-        </Button.Group>
+            max={hasBound ? maxAvailableCycle! : undefined}
+          />
 
-        <Box style={{ flex: 1, minWidth: 8 }} />
+          <Button.Group>
+            <NavigationSegmentButton
+              label="Next cycle"
+              disabled={boundedNavigationDisabled}
+              disabledReason={disabledReason}
+              onClick={() => move(1, "cycle")}
+            >
+              <IconChevronRight size={14} />
+            </NavigationSegmentButton>
+            <NavigationSegmentButton
+              label="Next cycle window"
+              disabled={boundedNavigationDisabled}
+              disabledReason={disabledReason}
+              onClick={() => move(1, "window")}
+            >
+              <IconChevronsRight size={14} />
+            </NavigationSegmentButton>
+          </Button.Group>
+          {specificCyclesActive && (
+            <Tooltip label={disabledReason} withArrow>
+              <Text size="xs" c="dimmed" style={{ flex: "0 1 auto" }}>
+                Specific cycles active
+              </Text>
+            </Tooltip>
+          )}
+          {!specificCyclesActive && !hasBound && (
+            <Tooltip label={disabledReason} withArrow>
+              <Text size="xs" c="dimmed" style={{ flex: "0 1 auto" }}>
+                Cycle extent pending
+              </Text>
+            </Tooltip>
+          )}
+        </Group>
 
-        <NavigationIconAction
-          label="Previous cycle view"
-          disabled={previousDisabled}
-          disabledReason={previousDisabledReason}
-          onClick={restorePrevious}
+        <Group
+          gap={4}
+          align="center"
+          justify="flex-end"
+          wrap="wrap"
+          style={{ minWidth: 0, width: "100%", justifySelf: "stretch" }}
         >
-          <IconArrowLeft size={15} />
-        </NavigationIconAction>
-        <NavigationIconAction
-          label="Show all cycles"
-          disabled={boundedNavigationDisabled}
-          disabledReason={disabledReason}
-          onClick={showAll}
-        >
-          <IconHome size={15} />
-        </NavigationIconAction>
-        <Group gap={4} align="center" wrap="nowrap" style={{ flex: "0 0 auto" }}>
           <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
             Jump to
           </Text>
@@ -633,21 +802,7 @@ export function TimeCapacityCycleNavigation({
             disabledReason,
           )}
         </Group>
-        {specificCyclesActive && (
-          <Tooltip label={disabledReason} withArrow>
-            <Text size="xs" c="dimmed" style={{ flex: "0 1 auto" }}>
-              Specific cycles active
-            </Text>
-          </Tooltip>
-        )}
-        {!specificCyclesActive && !hasBound && (
-          <Tooltip label={disabledReason} withArrow>
-            <Text size="xs" c="dimmed" style={{ flex: "0 1 auto" }}>
-              Cycle extent pending
-            </Text>
-          </Tooltip>
-        )}
-      </Group>
+      </Box>
     </Paper>
   );
 }
