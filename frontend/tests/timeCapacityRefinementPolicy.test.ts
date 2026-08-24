@@ -182,14 +182,14 @@ test("refinement transition is bounded and reduced-motion safe", () => {
   assert.equal(timeCapacityRefinementTransitionProgress(10, 0), 1);
 });
 
-test("ordinary default spec is eligible and unsafe refinement modes are not", () => {
+test("ordinary Time/Capacity specs are eligible and unsafe refinement modes are not", () => {
   const base = { computation: { time_capacity: undefined } } as never;
   assert.equal(timeCapacityRefinementEligible(base), true);
   assert.equal(
     timeCapacityRefinementEligible({
       computation: { time_capacity: { view: "voltage_current", x_axis: "capacity_mah" } },
     } as never),
-    false,
+    true,
   );
   assert.equal(
     timeCapacityRefinementEligible({

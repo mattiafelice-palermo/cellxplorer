@@ -324,4 +324,16 @@ R5 is resolved at the acceptance/ownership level: the browser-rendered defect is
 
 User requires the generic Capacity + Consecutive defect to be fixed before Spec 051 completes. Implement 051.2 only. Browser verification is explicitly approved. The user also explicitly authorizes fresh acceptance setup after deleting the two test Cells: re-import/re-register the specific EGG and Neware test Cells through normal application workflows, rebuild their caches normally, and create new temporary analyses from scratch. Do not modify unrelated user data or commit private DB/source/cache bytes.
 
+### 2026-08-24T10:47:49+02:00 — IMPLEMENTER → REVIEWER — 051.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- Focused unittest: 162 tests OK (analysis_engine, time_capacity_workers, analysis_cache, time_capacity_display); compileall OK; frontend policy tests: 664 passed; frontend build passed; preflight PASSED all 4 stages, all 82 backend modules. Browser/API acceptance: recreated local EGG Cell 135 from the two Downloads EGG sources and temporary Analysis 39; Capacity+Consecutive 1,370 points had 0 backward and 0 boundary drops, Time+Consecutive had 0 backward and 0 boundary drops, overlap reset/mirror preserved their overlap behavior; Neware Analysis 36 BQV_2370-BQV_2374 Capacity+Consecutive had 0 backward and 0 boundary drops, and the stacked Capacity+Consecutive plot rendered continuously; EGG refinement cycle-2 origin matched 58.163428 to 58.163428. Private source/database bytes were not added to Git.
+
+**Message**
+
+Implemented Spec 051.2: backend-owned acquisition-order concatenation for consecutive capacity_mah, capacity_mah_g, and capacity_mah_cm2; preserved phase-capacity science, rest holds, same-direction steps, per-Cell origins, worker/fallback parity, and overlap modes. Added stable capacity refinement origin handling, schema version 6, focused regressions, frontend refinement eligibility, and durable performance guidance. Browser verification covered recreated EGG and Neware data, including stacked plotting.
+
 ---

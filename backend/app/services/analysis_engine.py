@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1700,6 +1701,7 @@ def _time_capacity_display_x(
     *,
     origin_cycle_start: int | None = None,
     origin_time_s: float | None = None,
+    origin_capacity: float | None = None,
 ) -> np.ndarray:
     if settings["x_axis"] == "capacity_mah_g":
         values = capacity_g.copy() if capacity_g is not None else np.full(len(raw), np.nan)
@@ -1714,7 +1716,18 @@ def _time_capacity_display_x(
             if "time_s" in raw.columns
             else np.full(len(raw), np.nan)
         )
+    capacity_axis = settings["x_axis"] in {
+        "capacity_mah",
+        "capacity_mah_g",
+        "capacity_mah_cm2",
+    }
     if settings["display_mode"] == "consecutive":
+        if capacity_axis and settings.get("view") == "voltage_current":
+            return time_capacity_derived.consecutive_capacity_display(
+                values,
+                phases,
+                initial_offset=origin_capacity if origin_capacity is not None else 0.0,
+            )
         if origin_time_s is not None:
             time_factor = (
                 3600.0
@@ -3669,10 +3682,36 @@ def compute_time_capacity(
     progress: ProgressCallback | None = None,
     access_diagnostics: dict[str, Any] | None = None,
     display_origin_cycle_start: int | None = None,
+    display_origin_capacity_by_cell: dict[int, float] | None = None,
     refinement: bool = False,
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
 ) -> dict:
+    # Capacity-axis refinement requests are bounded to the visible cycle
+    # window, but their display coordinate is defined from the overview's
+    # origin.  Include the smallest required prefix in the indexed/fallback
+    # request so the shared O(n) transform can derive the same coordinate;
+    # this does not alter scientific arrays or the persisted result identity.
+    if refinement and display_origin_cycle_start is not None:
+        refinement_settings = time_capacity_settings(spec.get("computation", {}))
+        if (
+            refinement_settings["view"] == "voltage_current"
+            and refinement_settings["display_mode"] == "consecutive"
+            and refinement_settings["x_axis"]
+            in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+            and not refinement_settings["cycles"]
+            and display_origin_capacity_by_cell is None
+        ):
+            origin_cycle = int(display_origin_cycle_start)
+            current_start = refinement_settings["cycle_start"]
+            if current_start is None or int(current_start) > origin_cycle:
+                spec = deepcopy(spec)
+                computation = dict(spec.get("computation") or {})
+                time_capacity = dict(computation.get("time_capacity") or {})
+                time_capacity["cycle_start"] = origin_cycle
+                computation["time_capacity"] = time_capacity
+                spec["computation"] = computation
+
     # Spec 050.14: ordinary compact requests may use the owner-resolved
     # indexed path and bounded persistent process pool. The service returns
     # ``None`` for every unsupported or unsafe case, leaving this established
@@ -3691,6 +3730,7 @@ def compute_time_capacity(
             progress=progress,
             access_diagnostics=access_diagnostics,
             display_origin_cycle_start=display_origin_cycle_start,
+            display_origin_capacity_by_cell=display_origin_capacity_by_cell,
             refinement=refinement,
             refinement_viewport_x_min=refinement_viewport_x_min,
             refinement_viewport_x_max=refinement_viewport_x_max,
@@ -4320,6 +4360,7 @@ def compute_time_capacity(
                 capacity_area,
                 settings,
                 origin_cycle_start=display_origin_cycle_start,
+                origin_capacity=(display_origin_capacity_by_cell or {}).get(cell.id),
             )
         if (
             refinement

@@ -156,9 +156,13 @@ export function timeCapacityRefinementTransitionProgress(
 
 export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {
   const cfg = spec.computation.time_capacity;
+  const xAxis = cfg?.x_axis ?? "time";
   return (
     (cfg?.view ?? "voltage_current") === "voltage_current" &&
-    (cfg?.x_axis ?? "time") === "time" &&
+    (xAxis === "time" ||
+      xAxis === "capacity_mah" ||
+      xAxis === "capacity_mah_g" ||
+      xAxis === "capacity_mah_cm2") &&
     (cfg?.display_mode ?? "consecutive") === "consecutive" &&
     cfg?.stacked !== true &&
     !(cfg?.cycles?.length)

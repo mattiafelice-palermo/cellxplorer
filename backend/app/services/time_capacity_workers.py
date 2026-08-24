@@ -110,6 +110,7 @@ class ResolvedRequest:
     compact: bool
     display_max_points_per_cell: int
     display_origin_cycle_start: int | None = None
+    display_origin_capacity_by_cell: dict[int, float] | None = None
     refinement: bool = False
     refinement_viewport_x_min: float | None = None
     refinement_viewport_x_max: float | None = None
@@ -809,6 +810,7 @@ def _cell_result(
         settings,
         origin_cycle_start=request.display_origin_cycle_start,
         origin_time_s=job.display_origin_time_s,
+        origin_capacity=(request.display_origin_capacity_by_cell or {}).get(job.cell_id),
     )
     if (
         request.refinement
@@ -1070,6 +1072,7 @@ def _build_jobs(
     precision: str,
     compact: bool,
     display_origin_cycle_start: int | None = None,
+    display_origin_capacity_by_cell: dict[int, float] | None = None,
     refinement: bool = False,
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
@@ -1114,7 +1117,7 @@ def _build_jobs(
         )
         time_origin_prefix_s: float | None = None
         display_origin_time_s: float | None = None
-        if refinement and requested_cycles:
+        if refinement and requested_cycles and settings["x_axis"] == "time":
             time_facts = time_capacity_path.consecutive_time_request_facts(
                 plan,
                 requested_cycles,
@@ -1230,6 +1233,11 @@ def _build_jobs(
         compact=compact,
         display_max_points_per_cell=display_max,
         display_origin_cycle_start=display_origin_cycle_start,
+        display_origin_capacity_by_cell=(
+            dict(display_origin_capacity_by_cell)
+            if display_origin_capacity_by_cell is not None
+            else None
+        ),
         refinement=refinement,
         refinement_viewport_x_min=refinement_viewport_x_min,
         refinement_viewport_x_max=refinement_viewport_x_max,
@@ -1278,6 +1286,7 @@ def try_compute_time_capacity(
     access_diagnostics: dict[str, Any] | None = None,
     force_serial: bool = False,
     display_origin_cycle_start: int | None = None,
+    display_origin_capacity_by_cell: dict[int, float] | None = None,
     refinement: bool = False,
     refinement_viewport_x_min: float | None = None,
     refinement_viewport_x_max: float | None = None,
@@ -1290,10 +1299,11 @@ def try_compute_time_capacity(
     if precision != "standard" or not compact or settings.get("view") != "voltage_current":
         return None
     if refinement and (
-        settings.get("x_axis") != "time"
+        settings.get("x_axis")
+        not in {"time", "capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
         or settings.get("display_mode") != "consecutive"
     ):
-        raise RefinementUnavailable("refinement requires ordinary consecutive Time")
+        raise RefinementUnavailable("refinement requires ordinary consecutive Time/Capacity")
     if refinement and settings.get("cycles"):
         raise RefinementUnavailable("refinement does not broaden explicit sparse cycles")
     started = perf_counter()
@@ -1308,13 +1318,14 @@ def try_compute_time_capacity(
             precision=precision,
             compact=compact,
             display_origin_cycle_start=display_origin_cycle_start,
+            display_origin_capacity_by_cell=display_origin_capacity_by_cell,
             refinement=refinement,
             refinement_viewport_x_min=refinement_viewport_x_min,
             refinement_viewport_x_max=refinement_viewport_x_max,
         )
         if built is None:
             if refinement:
-                raise RefinementUnavailable("indexed consecutive-time facts are unavailable")
+                raise RefinementUnavailable("indexed consecutive display facts are unavailable")
             return None
         jobs, request, missing_refs = built
         selected_rows = sum(job.estimated_rows for job in jobs)

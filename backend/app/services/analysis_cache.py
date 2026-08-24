@@ -50,7 +50,9 @@ RESULT_SCHEMA_VERSIONS = {
     # payloads must not be served as if those semantics existed.
     # Spec 050.15: compact ordinary Time/Capacity provenance is now a
     # deduplicated source table plus row-aligned source indexes.
-    "time_capacity": 5,
+    # Consecutive capacity display_x now concatenates phase/cycle segments;
+    # invalidate persisted payloads produced with the resetting coordinate.
+    "time_capacity": 6,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

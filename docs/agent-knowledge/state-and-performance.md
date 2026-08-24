@@ -257,6 +257,18 @@ axis title produces a convincing but scientifically wrong stale plot. Areal capa
 cell's `electrode_area_cm2` metadata unless the analysis supplies a positive override; keep both
 the metadata value and override in the scientific/cache inputs.
 
+For ordinary Time/Capacity, `display_mode = consecutive` with a capacity X axis is a backend-owned
+acquisition-order display coordinate. It concatenates each active charge/discharge segment after
+removing that segment's local origin, so phase/cycle/source counter resets never reset the plotted
+X coordinate; neutral/rest rows hold the current displayed capacity. Each Cell starts at its own
+zero, while an ordered continued Cell preserves the running coordinate across sources. The
+scientific phase-capacity arrays and per-cycle quantities remain unchanged, and the same linear
+transform is used by the indexed worker and the established fallback.
+Viewport refinements reuse the owner-resolved per-Cell overview origin when it
+is available; otherwise the bounded request includes only the minimum prefix
+needed to derive that origin, never a frontend reconstruction of scientific
+capacity.
+
 Since Spec 040.4, the compact response's `voltage_v` array (still that key regardless of the
 selected channel — see `docs/agent-knowledge/canonical-cycling-data.md`) holds whichever canonical
 voltage column `computation.time_capacity.voltage_channel` selects

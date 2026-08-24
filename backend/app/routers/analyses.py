@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 import re
 import tempfile
@@ -1622,11 +1623,12 @@ def refine_time_capacity_analysis(
     settings = engine.time_capacity_settings(spec.get("computation", {}))
     if not (
         settings["view"] == "voltage_current"
-        and settings["x_axis"] == "time"
+        and settings["x_axis"]
+        in {"time", "capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
         and settings["display_mode"] == "consecutive"
         and not settings["stacked"]
     ):
-        raise HTTPException(422, "viewport refinement is only available for ordinary Time/Capacity")
+        raise HTTPException(422, "viewport refinement is only available for ordinary consecutive Time/Capacity")
     if settings["cycles"]:
         raise HTTPException(
             422,
@@ -1645,6 +1647,36 @@ def refine_time_capacity_analysis(
             "compact": True,
         },
     )
+    display_origin_capacity_by_cell: dict[int, float] | None = None
+    if settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}:
+        overview = analysis_cache.load_result("time_capacity", overview_key)
+        # The refined indexed read begins at ``req.cycle_start``. Carry the
+        # overview coordinate at that same cycle so the subset can be
+        # translated locally without replaying the preceding cycles.
+        origin_cycle = int(req.cycle_start)
+        if overview is not None:
+            candidates: dict[int, float] = {}
+            for trace in overview.get("cell_traces", []):
+                try:
+                    cell_id = int(trace["cell_id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                cycles = trace.get("cycle") or []
+                display_x = trace.get("display_x") or []
+                for cycle, value in zip(cycles, display_x):
+                    if cycle != origin_cycle or not isinstance(value, (int, float)):
+                        continue
+                    if isinstance(value, bool) or not math.isfinite(float(value)):
+                        continue
+                    candidates[cell_id] = float(value)
+                    break
+            visible_traces = [
+                trace for trace in overview.get("cell_traces", []) if not trace.get("excluded")
+            ]
+            if visible_traces and all(
+                int(trace.get("cell_id")) in candidates for trace in visible_traces
+            ):
+                display_origin_capacity_by_cell = candidates
     origin_cycle_start = (
         int(settings["cycle_start"])
         if settings["cycle_start"] is not None
@@ -1667,6 +1699,7 @@ def refine_time_capacity_analysis(
             precision="standard",
             compact=True,
             display_origin_cycle_start=origin_cycle_start,
+            display_origin_capacity_by_cell=display_origin_capacity_by_cell,
             refinement=True,
             refinement_viewport_x_min=req.viewport_x_min,
             refinement_viewport_x_max=req.viewport_x_max,

@@ -146,6 +146,86 @@ def phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
     return out
 
 
+def consecutive_capacity_display(
+    values: np.ndarray,
+    phases: list[str] | np.ndarray,
+    *,
+    initial_offset: float = 0.0,
+) -> np.ndarray:
+    """Concatenate capacity progress in acquisition order.
+
+    ``phase_capacity`` is intentionally cycle/phase-local scientific data:
+    counters can restart at every active phase.  A consecutive plot needs a
+    separate display coordinate, so each contiguous active run is translated
+    to the end of the preceding run while preserving its internal shape.
+    Neutral rows hold the current coordinate.  Same-direction rows remain in
+    one run even when the source step/segment changes; only a phase change or
+    neutral gap starts a new active run.
+
+    ``initial_offset`` carries an owner-resolved prefix for bounded
+    refinement requests whose selected rows begin after the overview origin.
+    It is display-only and never changes the scientific capacity vector.
+    """
+
+    source = np.asarray(values, dtype="float64")
+    phase_values = np.asarray(phases, dtype=object)
+    if source.ndim != 1 or len(source) != len(phase_values):
+        raise ValueError("capacity values and phases must be one-dimensional and aligned")
+    try:
+        offset = float(initial_offset)
+    except (TypeError, ValueError):
+        offset = 0.0
+    if not np.isfinite(offset):
+        offset = 0.0
+
+    output = np.full(len(source), np.nan, dtype="float64")
+    active_phase: str | None = None
+    segment_origin = np.nan
+    segment_has_value = False
+    segment_base = offset
+    segment_last = offset
+    for index, (value, phase) in enumerate(zip(source, phase_values, strict=True)):
+        phase_name = str(phase)
+        if phase_name not in {"charge", "discharge"}:
+            # A neutral row does not consume capacity and therefore preserves
+            # the last active endpoint, including the initial zero origin.
+            if active_phase is not None:
+                offset = segment_last
+            output[index] = offset
+            active_phase = None
+            segment_origin = np.nan
+            segment_has_value = False
+            continue
+
+        if active_phase != phase_name:
+            if active_phase is not None:
+                offset = segment_last
+            active_phase = phase_name
+            segment_origin = np.nan
+            segment_has_value = False
+            segment_base = offset
+            segment_last = offset
+
+        if not np.isfinite(value):
+            # Preserve the established NaN behavior for an active row with no
+            # capacity sample; the next finite sample still starts this same
+            # active segment.
+            continue
+        if not segment_has_value:
+            segment_origin = float(value)
+            segment_has_value = True
+        coordinate = segment_base + float(value) - segment_origin
+        output[index] = coordinate
+        # Keep the last finite point, rather than a maximum, so small genuine
+        # within-segment decreases are not smoothed away at a boundary.
+        segment_last = coordinate
+
+    if active_phase is not None:
+        offset = segment_last
+
+    return output
+
+
 def encode_phases(phases: list[str]) -> np.ndarray:
     """Encode canonical phase strings into the stable sidecar code mapping."""
 

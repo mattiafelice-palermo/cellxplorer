@@ -1396,10 +1396,17 @@ class AnalysisEngineTests(unittest.TestCase):
         ]
         self.assertGreater(len(raw_values), 0)
         self.assertEqual(len(raw_values), len(display_values))
-        for raw_value, display_value in zip(raw_values, display_values):
-            self.assertAlmostEqual(
-                display_value, raw_value - raw_values[0], places=4
+        self.assertAlmostEqual(display_values[0], 0.0, places=6)
+        # Consecutive capacity is an acquisition-order display coordinate, so
+        # later phase/cycle resets continue from the preceding endpoint rather
+        # than reusing the raw local counter.
+        self.assertGreater(display_values[-1], raw_values[-1])
+        self.assertTrue(
+            all(
+                later >= earlier
+                for earlier, later in zip(display_values, display_values[1:])
             )
+        )
 
         spec["computation"]["time_capacity"]["electrode_area_cm2"] = 4
         override_result = engine.compute_time_capacity(
@@ -1661,6 +1668,55 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertTrue(all(viewport_min <= value <= viewport_max for value in trace["display_x"]))
         self.assertEqual(len(trace["source_index"]), len(trace["cycle"]))
         self.assertEqual(len(trace["sources"]), 1)
+
+    def test_capacity_refinement_keeps_consecutive_capacity_origin(self):
+        overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        overview_spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": 50,
+            "x_axis": "capacity_mah",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 4000,
+        }
+        candidate_spec = deepcopy(overview_spec)
+        candidate_spec["computation"]["time_capacity"]["cycle_start"] = 28
+        candidate_spec["computation"]["time_capacity"]["cycle_end"] = 30
+
+        overview = engine.compute_time_capacity(
+            self.db,
+            overview_spec,
+            None,
+            precision="standard",
+            compact=True,
+        )
+        overview_trace = overview["cell_traces"][0]
+        overview_cycle_29 = [
+            value
+            for value, cycle in zip(overview_trace["display_x"], overview_trace["cycle"])
+            if cycle == 29
+        ]
+        self.assertTrue(overview_cycle_29)
+        viewport_min = min(overview_cycle_29) - 0.01
+        viewport_max = max(overview_cycle_29) + 0.01
+
+        refined = engine.compute_time_capacity(
+            self.db,
+            candidate_spec,
+            None,
+            precision="standard",
+            compact=True,
+            display_origin_cycle_start=1,
+            refinement=True,
+            refinement_viewport_x_min=viewport_min,
+            refinement_viewport_x_max=viewport_max,
+        )
+        trace = refined["cell_traces"][0]
+        refined_cycle_29 = [
+            value for value, cycle in zip(trace["display_x"], trace["cycle"]) if cycle == 29
+        ]
+        self.assertTrue(refined_cycle_29)
+        self.assertEqual(refined_cycle_29, overview_cycle_29)
+        self.assertTrue(all(viewport_min <= value <= viewport_max for value in trace["display_x"]))
 
     def test_time_capacity_refinement_process_matches_forced_serial(self):
         spec = self.spec_with(
