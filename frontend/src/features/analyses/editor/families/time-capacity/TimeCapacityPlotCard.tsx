@@ -134,13 +134,23 @@ import {
   type TimeCapacityPreviewSchedulerState,
 } from "./timeCapacityCycleNavigationPolicy";
 import {
-  absoluteXRangeForCycles,
-  bufferMaxPoints,
-  bufferNeedsRefill,
-  bufferRangeForWindow,
+  absoluteXRangeForCycleIndex,
+  buildTimeCapacityCycleXIndex,
+  nextTimeCapacityPanMotion,
+  timeCapacityBufferCancel,
+  timeCapacityBufferOnFailed,
+  timeCapacityBufferOnMove,
+  timeCapacityBufferOnRendered,
+  timeCapacityBufferOnResponseReady,
+  timeCapacityBufferPlanForWindow,
+  timeCapacityBufferSchedulerInitialState,
   timeCapacityPanningEnabled,
   yDataOutsideRange,
   TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
+  type TimeCapacityBufferRequest,
+  type TimeCapacityBufferSchedulerDecision,
+  type TimeCapacityBufferSchedulerState,
+  type TimeCapacityPanMotion,
 } from "./timeCapacityViewportBuffer";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
@@ -170,13 +180,6 @@ const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   height: 512,
   path: "M64 64h144v144H64zM304 64h144v144H304zM64 304h144v144H64zM304 304h144v144H304z",
 };
-
-function bufferCoversWindowSafe(
-  buffer: TimeCapacityCycleRange,
-  window: TimeCapacityCycleRange,
-): boolean {
-  return buffer.start <= window.start && buffer.end >= window.end;
-}
 
 function timeCapacitySpecWithPreview(
   spec: AnalysisSpec,
@@ -1274,8 +1277,18 @@ function TimeCapacityPlotCardView({
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
+  const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
   const [previewRequest, setPreviewRequest] = useState<TimeCapacityPreviewRequest | null>(null);
+  const [panRequest, setPanRequest] = useState<TimeCapacityBufferRequest | null>(null);
+  const panSchedulerRef = useRef<TimeCapacityBufferSchedulerState>(
+    timeCapacityBufferSchedulerInitialState(),
+  );
+  const panMotionRef = useRef<TimeCapacityPanMotion | null>(null);
+  const panActiveRef = useRef(false);
+  const panLiveWindowRef = useRef<TimeCapacityCycleRange | null>(null);
+  const panVisualUpdateRef = useRef<(range: TimeCapacityCycleRange | null) => void>(() => {});
+  const panIdleTimerRef = useRef<number | null>(null);
   const previewSchedulerRef = useRef<TimeCapacityPreviewSchedulerState>(
     timeCapacityPreviewSchedulerInitialState(),
   );
@@ -1302,6 +1315,62 @@ function TimeCapacityPlotCardView({
     previewSchedulerRef.current = timeCapacityPreviewCancel(previewSchedulerRef.current);
     setPreviewRequest(null);
   }, [clearPreviewTimers]);
+  const applyPanDecision = useCallback((decision: TimeCapacityBufferSchedulerDecision) => {
+    panSchedulerRef.current = decision.state;
+    if (decision.request) {
+      setPanRequest(decision.request);
+    }
+  }, []);
+  const clearPanIdleTimer = useCallback(() => {
+    if (panIdleTimerRef.current !== null) {
+      window.clearTimeout(panIdleTimerRef.current);
+      panIdleTimerRef.current = null;
+    }
+  }, []);
+  const cancelPanScheduler = useCallback(() => {
+    clearPanIdleTimer();
+    panActiveRef.current = false;
+    panLiveWindowRef.current = null;
+    panMotionRef.current = null;
+    panVisualUpdateRef.current(null);
+    panSchedulerRef.current = timeCapacityBufferCancel(panSchedulerRef.current);
+    setPanRequest(null);
+  }, [clearPanIdleTimer]);
+  const panPlanFor = useCallback(
+    (range: TimeCapacityCycleRange, motion: TimeCapacityPanMotion | null) => {
+      if (!maxAvailableCycle) return null;
+      const windowPoints = timeCapacityPreviewMaxPoints(cfg.max_points_per_cell, "moving");
+      return timeCapacityBufferPlanForWindow(range, maxAvailableCycle, windowPoints, motion);
+    },
+    [cfg.max_points_per_cell, maxAvailableCycle],
+  );
+  const schedulePanIdlePromotion = useCallback(
+    (range: TimeCapacityCycleRange) => {
+      clearPanIdleTimer();
+      panIdleTimerRef.current = window.setTimeout(() => {
+        panIdleTimerRef.current = null;
+        if (!panActiveRef.current || !maxAvailableCycle) return;
+        const live = panLiveWindowRef.current;
+        if (!live || live.start !== range.start || live.end !== range.end) return;
+        const previous = panMotionRef.current;
+        const settledMotion: TimeCapacityPanMotion = {
+          centerCycle: (live.start + live.end) / 2,
+          sampledAtMs: window.performance.now(),
+          extentVelocityPerSecond: 0,
+          direction: previous?.direction ?? 0,
+          tier: "slow",
+        };
+        panMotionRef.current = settledMotion;
+        const plan = panPlanFor(live, settledMotion);
+        if (plan) {
+          applyPanDecision(
+            timeCapacityBufferOnMove(panSchedulerRef.current, plan, maxAvailableCycle),
+          );
+        }
+      }, TIME_CAPACITY_PREVIEW_IDLE_MS);
+    },
+    [applyPanDecision, clearPanIdleTimer, maxAvailableCycle, panPlanFor],
+  );
   const scheduleMovingPreviewFlush = useCallback((delayMs: number) => {
     clearPreviewMovingTimer();
     previewMovingTimerRef.current = window.setTimeout(() => {
@@ -1338,17 +1407,49 @@ function TimeCapacityPlotCardView({
   useEffect(() => {
     setCyclePreviewRange(null);
     cancelPreviewScheduler();
-  }, [cancelPreviewScheduler, navigationResetKey]);
+    cancelPanScheduler();
+  }, [cancelPanScheduler, cancelPreviewScheduler, navigationResetKey]);
   useEffect(
-    () => () => clearPreviewTimers(),
-    [clearPreviewTimers],
+    () => () => {
+      clearPreviewTimers();
+      clearPanIdleTimer();
+    },
+    [clearPanIdleTimer, clearPreviewTimers],
   );
   const handleCyclePreviewRange = useCallback((range: TimeCapacityCycleRange | null) => {
-    setCyclePreviewRange(range);
     if (range === null) {
+      setCyclePreviewRange(null);
       cancelPreviewScheduler();
+      cancelPanScheduler();
       return;
     }
+    if (panningEnabled && maxAvailableCycle) {
+      cancelPreviewScheduler();
+      panLiveWindowRef.current = { ...range };
+      panVisualUpdateRef.current(range);
+      if (!panActiveRef.current) {
+        panActiveRef.current = true;
+        // This state is a session sentinel only. Subsequent pointer positions
+        // stay in refs so the full plot card does not rerender every frame.
+        setCyclePreviewRange(range);
+      }
+      const motion = nextTimeCapacityPanMotion(
+        panMotionRef.current,
+        range,
+        window.performance.now(),
+        maxAvailableCycle,
+      );
+      panMotionRef.current = motion;
+      const plan = panPlanFor(range, motion);
+      if (plan) {
+        applyPanDecision(
+          timeCapacityBufferOnMove(panSchedulerRef.current, plan, maxAvailableCycle),
+        );
+      }
+      schedulePanIdlePromotion(range);
+      return;
+    }
+    setCyclePreviewRange(range);
     clearPreviewMovingTimer();
     clearPreviewIdleTimer();
     const decision = timeCapacityPreviewOnMove(
@@ -1363,53 +1464,34 @@ function TimeCapacityPlotCardView({
     scheduleIdlePreviewPromotion(decision.state.generation);
   }, [
     cancelPreviewScheduler,
+    cancelPanScheduler,
     clearPreviewIdleTimer,
     clearPreviewMovingTimer,
+    applyPanDecision,
+    maxAvailableCycle,
+    panPlanFor,
+    panningEnabled,
     scheduleIdlePreviewPromotion,
     scheduleMovingPreviewFlush,
+    schedulePanIdlePromotion,
   ]);
-  // ---- Spec 052.7: buffered viewport panning -------------------------------
-  // A moving preview fetches a *buffer* several windows wide, anchored on one
-  // absolute timeline, and the plot shows only the window inside it. Pointer
-  // movement then moves the x-range through data already held instead of
-  // issuing a request per step, which is what makes the curve translate rather
-  // than be replaced. `timeCapacityPanningEnabled()` falls back to the
-  // per-window model, which remains intact.
-  const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
-  // The live pointer position, not the admitted request. `previewRequest` only
-  // advances when the scheduler admits a fetch, so binding the viewport to it
-  // made the pan jump between requests instead of tracking the finger.
-  const panWindow =
-    panningEnabled && cyclePreviewRange && maxAvailableCycle ? cyclePreviewRange : null;
-  // Resolved during render, not in an effect. An effect would leave the first
-  // render after each pointer move with no buffer, so the per-window request
-  // would be issued and then immediately aborted when the buffer arrived one
-  // render later -- two requests per step, the first one pure waste.
-  const panBufferRef = useRef<TimeCapacityCycleRange | null>(null);
-  if (!panWindow) {
-    panBufferRef.current = null;
-  } else if (maxAvailableCycle) {
-    if (bufferNeedsRefill(panBufferRef.current, panWindow, maxAvailableCycle)) {
-      panBufferRef.current = bufferRangeForWindow(panWindow, maxAvailableCycle);
-    }
-  }
-  const panBuffer = panBufferRef.current;
-  const panActive = Boolean(panWindow && panBuffer && bufferCoversWindowSafe(panBuffer, panWindow));
+  // Buffered panning has its own request boundary. The live pointer stays in a
+  // ref; `panRequest` changes only when the latest-wins scheduler admits a new
+  // directional buffer, so fast movement cannot cancel every refill.
+  const panActive = panningEnabled && cyclePreviewRange !== null && panRequest !== null;
 
   const requestSpec = useMemo(() => {
-    if (panActive && panBuffer && panWindow) {
-      const configured = timeCapacityConfig(spec).max_points_per_cell;
-      const windowPoints = timeCapacityPreviewMaxPoints(configured, "moving");
+    if (panActive && panRequest) {
       return timeCapacitySpecWithPreview(
         spec,
-        panBuffer,
+        panRequest.buffer,
         "moving",
-        bufferMaxPoints(windowPoints, panWindow, panBuffer),
+        panRequest.maxPoints,
       );
     }
     if (!previewRequest) return spec;
     return timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution);
-  }, [panActive, panBuffer, panWindow, previewRequest, spec]);
+  }, [panActive, panRequest, previewRequest, spec]);
   const previewQueryRange = previewRequest?.range ?? null;
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
@@ -1554,7 +1636,7 @@ function TimeCapacityPlotCardView({
           // evicted genuinely reusable entries. Idle-promoted full previews and
           // committed ranges persist exactly as before. Reads are unaffected:
           // a moving preview that happens to hit an entry still serves it.
-          ...(previewResolution === "moving" ? { persist: false } : {}),
+          ...(panActive || previewResolution === "moving" ? { persist: false } : {}),
           // Spec 052.7: anchor the buffer on one timeline so consecutive
           // windows share an x axis and can be panned between.
           ...(panActive ? { absolute_time_origin_cycle: 1 } : {}),
@@ -1621,6 +1703,30 @@ function TimeCapacityPlotCardView({
     if (decision.request) setPreviewRequest(decision.request);
     if (decision.waitMs !== null) scheduleMovingPreviewFlush(decision.waitMs);
   }, [previewRequest, scheduleMovingPreviewFlush, timeResult.isFetching]);
+  useEffect(() => {
+    if (!panActive || !panRequest || timeResult.isFetching) return;
+    if (timeResult.isError) {
+      const decision = timeCapacityBufferOnFailed(panSchedulerRef.current, panRequest);
+      applyPanDecision(decision);
+      if (!decision.request && decision.state.resident) {
+        setPanRequest(decision.state.resident);
+      }
+      return;
+    }
+    if (timeResult.isPlaceholderData || !timeResult.data) return;
+    panSchedulerRef.current = timeCapacityBufferOnResponseReady(
+      panSchedulerRef.current,
+      panRequest,
+    );
+  }, [
+    applyPanDecision,
+    panActive,
+    panRequest,
+    timeResult.data,
+    timeResult.isError,
+    timeResult.isFetching,
+    timeResult.isPlaceholderData,
+  ]);
   useLayoutEffect(() => {
     if (!profileRequest || requestSpec.selection.entries.length === 0) return;
     // Run before the later plot-props layout effect so a React Query memory
@@ -1859,17 +1965,19 @@ function TimeCapacityPlotCardView({
   );
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
-  // Spec 052.8: the visible slice of the loaded buffer, recomputed per pointer
-  // move over data already in memory. Held in a ref rather than driving the
-  // React layout: rebuilding `layout` every move made react-plotly.js run a
-  // full Plotly.react diff per frame, which is what made the pan step rather
-  // than glide. React keeps a stable layout; the axis moves imperatively below.
-  const panXRange = useMemo(() => {
-    if (!panActive || !panWindow) return null;
-    return absoluteXRangeForCycles(plotResult?.cell_traces, panWindow.start, panWindow.end);
-  }, [panActive, panWindow, plotResult]);
+  // Build the point-heavy cycle index once per delivered buffer. Pointer
+  // frames then inspect only the handful of cycles in the visible window.
+  const panCycleXIndex = useMemo(
+    () => buildTimeCapacityCycleXIndex(plotResult?.cell_traces),
+    [plotResult],
+  );
   const panLiveXRef = useRef<[number, number] | null>(null);
-  if (panXRange) panLiveXRef.current = panXRange;
+  const livePanWindow = panLiveWindowRef.current;
+  const deliveredPanX =
+    panActive && livePanWindow
+      ? absoluteXRangeForCycleIndex(panCycleXIndex, livePanWindow.start, livePanWindow.end)
+      : null;
+  if (deliveredPanX) panLiveXRef.current = deliveredPanX;
   if (!panActive) panLiveXRef.current = null;
 
   // Spec 052.8: y is frozen for the duration of one drag. Letting Plotly
@@ -1921,13 +2029,22 @@ function TimeCapacityPlotCardView({
     [plotResult, renderSpec, viewSignature, plotTraces, panActive, frozenY]
   );
 
-  // Spec 052.8: the pan itself -- one relayout per animation frame, coalescing
-  // whatever pointer moves arrived since the last, straight to Plotly.
+  // One relayout per animation frame, coalescing pointer moves straight to
+  // Plotly. The parent component no longer rerenders for those moves.
   const panFrameRef = useRef<number | null>(null);
   const panPendingRef = useRef<[number, number] | null>(null);
-  useEffect(() => {
-    if (!panActive || !panXRange) return;
-    panPendingRef.current = panXRange;
+  const schedulePanRelayout = useCallback((range: TimeCapacityCycleRange | null) => {
+    if (!range) {
+      panPendingRef.current = null;
+      return;
+    }
+    const target = absoluteXRangeForCycleIndex(panCycleXIndex, range.start, range.end);
+    // Outside the resident buffer: retain the last valid frame. The scheduler
+    // is already fetching the newest desired buffer and will jump directly to
+    // that position when it renders, dropping obsolete intermediate frames.
+    if (!target) return;
+    panLiveXRef.current = target;
+    panPendingRef.current = target;
     if (panFrameRef.current !== null) return;
     panFrameRef.current = window.requestAnimationFrame(() => {
       panFrameRef.current = null;
@@ -1953,7 +2070,13 @@ function TimeCapacityPlotCardView({
         // next render restores the axis from `layout`, so this is not fatal.
       }
     });
-  }, [panActive, panXRange]);
+  }, [panCycleXIndex]);
+  panVisualUpdateRef.current = schedulePanRelayout;
+  useLayoutEffect(() => {
+    if (panActive && panLiveWindowRef.current) {
+      schedulePanRelayout(panLiveWindowRef.current);
+    }
+  }, [panActive, panCycleXIndex, schedulePanRelayout]);
   useEffect(
     () => () => {
       if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current);
@@ -2029,6 +2152,28 @@ function TimeCapacityPlotCardView({
       current && current.width === next.width && current.height === next.height ? current : next
     );
   };
+  const acknowledgePanRender = useCallback(() => {
+    if (
+      !panActive ||
+      !panRequest ||
+      !maxAvailableCycle ||
+      timeResult.isFetching ||
+      timeResult.isPlaceholderData ||
+      !timeResult.data
+    ) return;
+    const ready = timeCapacityBufferOnResponseReady(panSchedulerRef.current, panRequest);
+    const decision = timeCapacityBufferOnRendered(ready, panRequest, maxAvailableCycle);
+    applyPanDecision(decision);
+    if (panLiveWindowRef.current) panVisualUpdateRef.current(panLiveWindowRef.current);
+  }, [
+    applyPanDecision,
+    maxAvailableCycle,
+    panActive,
+    panRequest,
+    timeResult.data,
+    timeResult.isFetching,
+    timeResult.isPlaceholderData,
+  ]);
   const commitCycleRange = useCallback(
     (range: TimeCapacityCycleRange) => {
       update((s) => {
@@ -2467,11 +2612,13 @@ function TimeCapacityPlotCardView({
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
                 completeTimeCapacityProfile();
+                acknowledgePanRender();
               }}
               onUpdate={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
                 completeTimeCapacityProfile();
+                acknowledgePanRender();
               }}
             />
           </Box>

@@ -379,6 +379,62 @@ export function centerTimeCapacityCycleRange(
   return clampCycleWindow(target - Math.floor(cycleRangeWidth(current) / 2), cycleRangeWidth(current), maximum);
 }
 
+export const TIME_CAPACITY_SLIDER_MIN_VISUAL_CYCLES = 24;
+
+export interface TimeCapacityCycleSliderGeometry {
+  leftPercent: number;
+  widthPercent: number;
+  visualWidthCycles: number;
+}
+
+/**
+ * Keep narrow cycle windows graspable without changing their scientific width.
+ * Start positions still map linearly across the visual handle's legal travel.
+ */
+export function timeCapacityCycleSliderGeometry(
+  range: TimeCapacityCycleRange,
+  maxAvailableCycle: number | null | undefined,
+  minimumVisualCycles = TIME_CAPACITY_SLIDER_MIN_VISUAL_CYCLES,
+): TimeCapacityCycleSliderGeometry {
+  const maximum = positiveMaximum(maxAvailableCycle) ?? 1;
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  const width = cycleRangeWidth(current);
+  const maximumGraspableWidth =
+    width >= maximum ? maximum : Math.max(width, Math.floor(maximum / 2));
+  const visualWidthCycles = Math.min(
+    maximumGraspableWidth,
+    Math.max(width, positiveInteger(minimumVisualCycles, TIME_CAPACITY_SLIDER_MIN_VISUAL_CYCLES)),
+  );
+  const widthPercent = (visualWidthCycles / maximum) * 100;
+  const availableStarts = Math.max(0, maximum - width);
+  const visualTravelPercent = Math.max(0, 100 - widthPercent);
+  const leftPercent =
+    availableStarts === 0 ? 0 : ((current.start - 1) / availableStarts) * visualTravelPercent;
+  return { leftPercent, widthPercent, visualWidthCycles };
+}
+
+/** Center the current-width window on a click position along the slider track. */
+export function timeCapacityCycleRangeAtTrackPosition(
+  range: TimeCapacityCycleRange,
+  pointerOffsetPx: number,
+  trackWidthPx: number,
+  maxAvailableCycle: number | null | undefined,
+): TimeCapacityCycleRange {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  if (
+    maximum === null ||
+    !Number.isFinite(pointerOffsetPx) ||
+    !Number.isFinite(trackWidthPx) ||
+    trackWidthPx <= 0
+  ) {
+    return current;
+  }
+  const fraction = clamp(pointerOffsetPx / trackWidthPx, 0, 1);
+  const targetCycle = 1 + Math.round(fraction * Math.max(0, maximum - 1));
+  return centerTimeCapacityCycleRange(current, targetCycle, maximum);
+}
+
 export function timeCapacityCycleRangeAtBoundary(
   range: TimeCapacityCycleRange,
   boundary: "first" | "last",
@@ -398,6 +454,7 @@ export function timeCapacityCycleRangeAtPointerDelta(
   pointerDeltaPx: number,
   trackWidthPx: number,
   maxAvailableCycle: number | null | undefined,
+  visualWidthCycles?: number,
 ): TimeCapacityCycleRange {
   const maximum = positiveMaximum(maxAvailableCycle);
   const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
@@ -414,7 +471,11 @@ export function timeCapacityCycleRangeAtPointerDelta(
     return current;
   }
 
-  const segmentTravelPx = (trackWidthPx * availableStarts) / maximum;
+  const visualWidth = Math.min(
+    maximum,
+    Math.max(width, positiveInteger(visualWidthCycles, width)),
+  );
+  const segmentTravelPx = (trackWidthPx * Math.max(0, maximum - visualWidth)) / maximum;
   if (segmentTravelPx <= 0) return current;
   const deltaCycles = Math.round((pointerDeltaPx / segmentTravelPx) * availableStarts);
   return clampCycleWindow(current.start + deltaCycles, width, maximum);

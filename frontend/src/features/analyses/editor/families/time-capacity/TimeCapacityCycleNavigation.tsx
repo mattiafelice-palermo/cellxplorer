@@ -59,6 +59,8 @@ import {
   timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
   timeCapacityCycleRangeAtPointerDelta,
+  timeCapacityCycleRangeAtTrackPosition,
+  timeCapacityCycleSliderGeometry,
   type TimeCapacityCycleRange,
 } from "./timeCapacityCycleNavigationPolicy";
 
@@ -225,14 +227,18 @@ function CycleWindowSlider({
     startX: number;
     startRange: TimeCapacityCycleRange;
     latestRange: TimeCapacityCycleRange;
+    visualWidthCycles: number;
   } | null>(null);
   const keyboardRangeRef = useRef<TimeCapacityCycleRange | null>(null);
-  const width = cycleRangeWidth(range);
-  const segmentLeft = ((range.start - 1) / maxAvailableCycle) * 100;
-  const segmentWidth = (width / maxAvailableCycle) * 100;
+  const sliderGeometry = timeCapacityCycleSliderGeometry(range, maxAvailableCycle);
 
   const rangeAtPointer = useCallback(
-    (clientX: number, startX: number, startRange: TimeCapacityCycleRange) => {
+    (
+      clientX: number,
+      startX: number,
+      startRange: TimeCapacityCycleRange,
+      visualWidthCycles: number,
+    ) => {
       const track = trackRef.current;
       if (!track) return startRange;
       const rect = track.getBoundingClientRect();
@@ -241,6 +247,7 @@ function CycleWindowSlider({
         clientX - startX,
         rect.width,
         maxAvailableCycle,
+        visualWidthCycles,
       );
     },
     [maxAvailableCycle],
@@ -252,21 +259,42 @@ function CycleWindowSlider({
       event.preventDefault();
       event.currentTarget.focus();
       event.currentTarget.setPointerCapture(event.pointerId);
+      const track = trackRef.current;
+      const clickedSegment =
+        event.target instanceof Element &&
+        event.target.closest("[data-cycle-window-segment]") !== null;
+      let startRange = range;
+      if (track && !clickedSegment) {
+        const rect = track.getBoundingClientRect();
+        startRange = timeCapacityCycleRangeAtTrackPosition(
+          range,
+          event.clientX - rect.left,
+          rect.width,
+          maxAvailableCycle,
+        );
+        onPreview(startRange);
+      }
       dragRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
-        startRange: range,
-        latestRange: range,
+        startRange,
+        latestRange: startRange,
+        visualWidthCycles: sliderGeometry.visualWidthCycles,
       };
     },
-    [disabled, range],
+    [disabled, maxAvailableCycle, onPreview, range, sliderGeometry.visualWidthCycles],
   );
 
   const handlePointerMove = useCallback<PointerEventHandler<HTMLDivElement>>(
     (event) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
-      const next = rangeAtPointer(event.clientX, drag.startX, drag.startRange);
+      const next = rangeAtPointer(
+        event.clientX,
+        drag.startX,
+        drag.startRange,
+        drag.visualWidthCycles,
+      );
       if (next.start === drag.latestRange.start && next.end === drag.latestRange.end) return;
       drag.latestRange = next;
       onPreview(next);
@@ -367,8 +395,8 @@ function CycleWindowSlider({
         data-cycle-window-segment
         style={{
           position: "absolute",
-          left: `${segmentLeft}%`,
-          width: `${segmentWidth}%`,
+          left: `${sliderGeometry.leftPercent}%`,
+          width: `${sliderGeometry.widthPercent}%`,
           height: 10,
           borderRadius: 999,
           background: "var(--mantine-primary-color-6)",

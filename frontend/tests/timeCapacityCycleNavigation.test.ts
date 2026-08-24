@@ -4,10 +4,18 @@ import test from "node:test";
 
 import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 import {
+  absoluteXRangeForCycleIndex,
   absoluteXRangeForCycles,
+  buildTimeCapacityCycleXIndex,
   bufferMaxPoints,
   bufferNeedsRefill,
   bufferRangeForWindow,
+  nextTimeCapacityPanMotion,
+  timeCapacityBufferOnMove,
+  timeCapacityBufferOnRendered,
+  timeCapacityBufferOnResponseReady,
+  timeCapacityBufferPlanForWindow,
+  timeCapacityBufferSchedulerInitialState,
   yDataOutsideRange,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityViewportBuffer.ts";
 import {
@@ -25,7 +33,9 @@ import {
   selectTimeCapacityCycleHistory,
   shiftTimeCapacityCycleRange,
   timeCapacityCycleRangeAtPointerDelta,
+  timeCapacityCycleRangeAtTrackPosition,
   timeCapacityCycleRangeAtBoundary,
+  timeCapacityCycleSliderGeometry,
   timeCapacityPreviousViewDisabled,
   timeCapacityPreviewCancel,
   timeCapacityPreviewFlushMoving,
@@ -145,6 +155,41 @@ test("pointer movement follows the highlighted segment's legal travel and preser
   assert.equal(cycleRangeWidth(middleWindow), 50);
   assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(firstWindow, 500, 100, 100), lastWindow);
   assert.deepEqual(timeCapacityCycleRangeAtPointerDelta(lastWindow, -500, 100, 100), firstWindow);
+});
+
+test("track clicks center the existing window and clamp at both ends", () => {
+  const range = { start: 40, end: 49 };
+  assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 500, 1000, 100), {
+    start: 46,
+    end: 55,
+  });
+  assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 0, 1000, 100), {
+    start: 1,
+    end: 10,
+  });
+  assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 1000, 1000, 100), {
+    start: 91,
+    end: 100,
+  });
+});
+
+test("narrow windows retain a graspable visual handle without changing their range", () => {
+  const one = timeCapacityCycleSliderGeometry({ start: 100, end: 100 }, 324);
+  const five = timeCapacityCycleSliderGeometry({ start: 100, end: 104 }, 324);
+  const thirty = timeCapacityCycleSliderGeometry({ start: 100, end: 129 }, 324);
+  assert.equal(one.visualWidthCycles, 24);
+  assert.equal(five.visualWidthCycles, 24);
+  assert.equal(thirty.visualWidthCycles, 30);
+  assert.ok(one.widthPercent > 7 && one.widthPercent < 8);
+
+  // A very short dataset still leaves travel instead of filling the track.
+  assert.equal(timeCapacityCycleSliderGeometry({ start: 2, end: 2 }, 10).visualWidthCycles, 5);
+
+  const travelPx = (1000 * (324 - one.visualWidthCycles)) / 324;
+  assert.deepEqual(
+    timeCapacityCycleRangeAtPointerDelta({ start: 1, end: 1 }, travelPx, 1000, 324, one.visualWidthCycles),
+    { start: 324, end: 324 },
+  );
 });
 
 test("virgin views use the last twenty available cycles without exceeding the extent", () => {
@@ -519,6 +564,63 @@ test("buffer point budget scales so the visible window keeps its density", () =>
   assert.equal(bufferMaxPoints(1000, window, window), 1000);
 });
 
+test("fast motion looks farther ahead while reducing transient point density", () => {
+  const window = { start: 100, end: 102 };
+  let motion = nextTimeCapacityPanMotion(null, window, 0, 324);
+  motion = nextTimeCapacityPanMotion(motion, { start: 180, end: 182 }, 100, 324);
+  assert.equal(motion.tier, "fast");
+  assert.equal(motion.direction, 1);
+  const fast = timeCapacityBufferPlanForWindow({ start: 180, end: 182 }, 324, 1000, motion);
+  const slow = timeCapacityBufferPlanForWindow(window, 324, 1000, null);
+  assert.ok(fast.buffer.end - 182 > 180 - fast.buffer.start, JSON.stringify(fast));
+  assert.ok(fast.maxPoints <= 3000);
+  assert.ok(fast.maxPoints < slow.maxPoints);
+});
+
+test("buffer scheduler keeps one request in flight and admits only the newest after render", () => {
+  const maxCycle = 324;
+  const slow = timeCapacityBufferPlanForWindow({ start: 10, end: 12 }, maxCycle, 1000, null);
+  const first = timeCapacityBufferOnMove(
+    timeCapacityBufferSchedulerInitialState(),
+    slow,
+    maxCycle,
+  );
+  assert.ok(first.request);
+  assert.equal(first.state.phase, "fetching");
+
+  const motion = nextTimeCapacityPanMotion(
+    nextTimeCapacityPanMotion(null, { start: 10, end: 12 }, 0, maxCycle),
+    { start: 220, end: 222 },
+    100,
+    maxCycle,
+  );
+  const middlePlan = timeCapacityBufferPlanForWindow(
+    { start: 140, end: 142 },
+    maxCycle,
+    1000,
+    motion,
+  );
+  const latestPlan = timeCapacityBufferPlanForWindow(
+    { start: 220, end: 222 },
+    maxCycle,
+    1000,
+    motion,
+  );
+  const middle = timeCapacityBufferOnMove(first.state, middlePlan, maxCycle);
+  const latest = timeCapacityBufferOnMove(middle.state, latestPlan, maxCycle);
+  assert.equal(middle.request, null);
+  assert.equal(latest.request, null);
+  assert.deepEqual(latest.state.pending?.window, latestPlan.window);
+
+  const responseReady = timeCapacityBufferOnResponseReady(latest.state, first.request!);
+  assert.equal(responseReady.phase, "rendering");
+  // HTTP completion alone does not admit the next refill.
+  assert.equal(responseReady.published?.id, first.request!.id);
+  const rendered = timeCapacityBufferOnRendered(responseReady, first.request!, maxCycle);
+  assert.ok(rendered.request);
+  assert.deepEqual(rendered.request?.window, latestPlan.window);
+});
+
 test("the visible x span is read from loaded traces and tolerates short cells", () => {
   const traces = [
     { cycle: [1, 1, 2, 2, 3, 3], display_x: [0, 10, 20, 30, 40, 50] },
@@ -535,6 +637,11 @@ test("the visible x span is read from loaded traces and tolerates short cells", 
     absoluteXRangeForCycles([{ cycle: [5, 5, 5], display_x: [null, 7, 9] }], 5, 5),
     [7, 9],
   );
+
+  const index = buildTimeCapacityCycleXIndex(traces);
+  assert.deepEqual(absoluteXRangeForCycleIndex(index, 2, 2), [20, 33]);
+  assert.deepEqual(absoluteXRangeForCycleIndex(index, 1, 3), [0, 50]);
+  assert.equal(absoluteXRangeForCycleIndex(index, 90, 95), null);
 });
 
 // ---- Spec 052.8: frozen Y and the out-of-view affordance -------------------

@@ -285,6 +285,17 @@ cancellation guarantee. A retained placeholder is display-only: plot/image/vecto
 disabled until the current query resolves, while the separate data-export path requests and validates
 full-resolution data for the current identity.
 
+Time/Capacity cycle-slider panning separates live viewport motion from buffer fetch identity.
+Pointer movement updates Plotly imperatively from a cycle-to-X-span index built once per delivered
+buffer; it must not rebuild the plot card or scan every loaded point per pointer frame. Buffer
+refills use one-request/latest-wins backpressure through Plotly's render acknowledgement, not merely
+HTTP completion. While one buffer fetches or renders, only the newest desired directional buffer is
+retained. Fast movement expands lookahead in the travel direction and uses a coarse request-only
+point budget; idle movement promotes the resident viewport back to the normal density. If the
+pointer leaves resident data, keep the last valid frame until a covering buffer renders instead of
+cancelling every request or fabricating coordinates. These transient budgets never enter the saved
+plot configuration, scientific calculation, or export path.
+
 Adaptive Time refinement is also display-only and ephemeral. Its response-generation check remains
 strict for accepting a newly arriving response, but it is independent from the compatibility check
 for the refinement already on screen: a compatible old viewport may remain visible while a newer
