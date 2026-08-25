@@ -559,10 +559,6 @@ export function timeCapacityTracesForResult(
   const palette = plotPalette(style);
   const cfg = timeCapacityConfig(spec);
   const selectedVoltageChannels = cfg.voltage_channels;
-  const selectedVoltageLabel = voltageChannelSelectionLabel(
-    selectedVoltageChannels,
-    result.voltage_channels,
-  );
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
@@ -1040,10 +1036,10 @@ export function timeCapacityLayout(
     yaxis: {
       ...baseAxis(style.y_axis),
       title: {
-        text: plotlySafeText(
-          style.y_title ??
-          voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)
-        ),
+        // Keep the shared voltage axis compact when several independent
+        // voltage channels are selected. Channel identity remains visible in
+        // the legend, hover card, and export labels.
+        text: plotlySafeText(style.y_title ?? "Voltage (V)"),
         font: titleFont,
         standoff: style.y_axis.title_standoff,
       },
