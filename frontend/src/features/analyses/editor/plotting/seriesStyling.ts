@@ -18,9 +18,35 @@ import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "../.
 
 export type SeriesKind = "cell" | "group";
 
+/** Voltage channels that can be rendered together by Time/Capacity. */
+export type TimeCapacityVoltageChannel =
+  | "voltage"
+  | "working_potential"
+  | "counter_potential";
+
+const TIME_CAPACITY_VOLTAGE_CHANNEL_LABELS: Record<TimeCapacityVoltageChannel, string> = {
+  voltage: "Cell voltage",
+  working_potential: "Working potential",
+  counter_potential: "Counter potential",
+};
+
+export function timeCapacityVoltageChannelShortLabel(
+  channel: TimeCapacityVoltageChannel,
+): string {
+  return TIME_CAPACITY_VOLTAGE_CHANNEL_LABELS[channel];
+}
+
+export function timeCapacityVoltageChannelPaletteIndex(
+  channel: TimeCapacityVoltageChannel,
+): number {
+  if (channel === "working_potential") return 1;
+  if (channel === "counter_potential") return 2;
+  return 0;
+}
+
 /** One stylable line on a plot. */
 export interface SeriesDescriptor {
-  /** Stable identity, and the key into `series_overrides`: `c12`, `g3`, `ce:c12`. */
+  /** Stable identity, and the key into `series_overrides`: `c12`, `g3`, `c12|voltage`, `ce:c12`. */
   key: string;
   kind: SeriesKind;
   /** Legend text before any override. */
@@ -39,6 +65,8 @@ export interface SeriesDescriptor {
   secondarySuffix?: string;
   /** Human name of the plotted quantity, e.g. "Discharge capacity", "Coulombic efficiency". */
   measureLabel?: string;
+  /** Selected Time/Capacity voltage channel for a channel-specific descriptor. */
+  channel?: TimeCapacityVoltageChannel;
 }
 
 /** Everything a trace needs, after all three layers are applied. */
@@ -258,9 +286,11 @@ export function cyclesSeriesDescriptors(
 /**
  * Time/capacity series identity.
  *
- * This tab draws one line per cell but colours grouped cells together, so the
- * key is the group when there is one. Descriptors must use the same scheme as
- * the trace builder, or the editor would list series the plot cannot match.
+ * The legacy/single-channel view draws one line per cell but colours grouped
+ * cells together, so the key is the group when there is one. Multi-voltage
+ * rendering wraps this identity with a channel suffix below. Descriptors must
+ * use the same scheme as the trace builder, or the editor would list series
+ * the plot cannot match.
  */
 export function timeCapacitySeriesDescriptor(trace: CellSeriesLike): SeriesDescriptor {
   return {
@@ -272,16 +302,46 @@ export function timeCapacitySeriesDescriptor(trace: CellSeriesLike): SeriesDescr
   };
 }
 
-/** Stylable time/capacity series, de-duplicated by key. */
-export function timeCapacitySeriesDescriptors(traces: CellSeriesLike[]): SeriesDescriptor[] {
+/** One independently stylable voltage trace for a Cell/replicate group. */
+export function timeCapacityVoltageSeriesDescriptor(
+  trace: CellSeriesLike,
+  channel: TimeCapacityVoltageChannel,
+): SeriesDescriptor {
+  const base = timeCapacitySeriesDescriptor(trace);
+  return {
+    ...base,
+    key: `${base.key}|${channel}`,
+    label: `${base.label} — ${timeCapacityVoltageChannelShortLabel(channel)}`,
+    sourceKey: base.key,
+    measureLabel: timeCapacityVoltageChannelShortLabel(channel),
+    channel,
+  };
+}
+
+/**
+ * Stylable time/capacity series, de-duplicated by key.
+ *
+ * When several voltage channels are rendered together, each plotted channel
+ * is a separate descriptor. With the legacy/single-channel shape we retain
+ * the original Cell key so existing saved overrides remain untouched.
+ */
+export function timeCapacitySeriesDescriptors(
+  traces: CellSeriesLike[],
+  voltageChannels: readonly TimeCapacityVoltageChannel[] = [],
+): SeriesDescriptor[] {
   const seen = new Set<string>();
   const out: SeriesDescriptor[] = [];
+  const channels = voltageChannels.length > 1 ? voltageChannels : null;
   for (const trace of traces) {
     if (trace.excluded) continue;
-    const descriptor = timeCapacitySeriesDescriptor(trace);
-    if (seen.has(descriptor.key)) continue;
-    seen.add(descriptor.key);
-    out.push(descriptor);
+    const descriptors = channels
+      ? channels.map((channel) => timeCapacityVoltageSeriesDescriptor(trace, channel))
+      : [timeCapacitySeriesDescriptor(trace)];
+    for (const descriptor of descriptors) {
+      if (seen.has(descriptor.key)) continue;
+      seen.add(descriptor.key);
+      out.push(descriptor);
+    }
   }
   return out;
 }
@@ -639,8 +699,13 @@ export function resolveSeriesStyle(
   for (const rule of matchingRules(descriptor, rules)) {
     resolved = applyOverride(resolved, rule.style);
   }
-  // Last, so a hand-set value is never taken away by a bulk rule.
-  return applyOverride(resolved, overrides?.[descriptor.key]);
+  // Last, so a hand-set value is never taken away by a bulk rule. A channel
+  // descriptor also accepts a legacy Cell/group override as its fallback;
+  // the channel-specific key wins as soon as the user edits that channel.
+  const override =
+    overrides?.[descriptor.key] ??
+    (descriptor.channel && descriptor.sourceKey ? overrides?.[descriptor.sourceKey] : undefined);
+  return applyOverride(resolved, override);
 }
 
 /**

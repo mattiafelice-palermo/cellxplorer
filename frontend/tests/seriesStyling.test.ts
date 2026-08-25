@@ -6,6 +6,7 @@ import {
   decimatePreviewTraces,
   cyclesSeriesDescriptors,
   timeCapacitySeriesDescriptors,
+  timeCapacityVoltageSeriesDescriptor,
   applySeriesOverridePatch,
   emptySeriesRule,
   isEmptyOverride,
@@ -404,6 +405,45 @@ test("time/capacity descriptors key grouped cells together and de-duplicate", ()
   assert.deepEqual(descriptors.map((d) => d.key), ["g2", "c9"]);
   assert.equal(descriptors[0].kind, "group");
   assert.equal(descriptors[1].kind, "cell");
+});
+
+test("multi-voltage Time/Capacity descriptors expose independent channel keys", () => {
+  const descriptors = timeCapacitySeriesDescriptors(
+    [traceLike({ cell_id: 1, label: "Cell A" })],
+    ["voltage", "working_potential", "counter_potential"],
+  );
+
+  assert.deepEqual(descriptors.map((descriptor) => descriptor.key), [
+    "c1|voltage",
+    "c1|working_potential",
+    "c1|counter_potential",
+  ]);
+  assert.deepEqual(descriptors.map((descriptor) => descriptor.measureLabel), [
+    "Cell voltage",
+    "Working potential",
+    "Counter potential",
+  ]);
+  assert.equal(descriptors[1].channel, "working_potential");
+  assert.equal(descriptors[1].sourceKey, "c1");
+  assert.equal(
+    timeCapacityVoltageSeriesDescriptor(traceLike({ cell_id: 1 }), "counter_potential").key,
+    "c1|counter_potential",
+  );
+});
+
+test("channel overrides win while legacy Cell overrides remain the fallback", () => {
+  const descriptor = timeCapacityVoltageSeriesDescriptor(
+    traceLike({ cell_id: 1 }),
+    "working_potential",
+  );
+  const legacy = resolveSeriesStyle(base, descriptor, [], { c1: { line_width: 4 } });
+  const channel = resolveSeriesStyle(base, descriptor, [], {
+    c1: { line_width: 4 },
+    "c1|working_potential": { line_width: 1 },
+  });
+
+  assert.equal(legacy.lineWidth, 4);
+  assert.equal(channel.lineWidth, 1);
 });
 
 test("a populated result never yields an empty series list", () => {

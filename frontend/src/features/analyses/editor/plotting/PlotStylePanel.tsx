@@ -45,10 +45,12 @@ import {
   DebouncedNumberInput,
   DebouncedTextInput,
 } from "../../../../components/DebouncedInputs";
+import { normalizeVoltageChannels } from "../policies/voltageChannelPolicy";
 import { applyPlotStylePreset } from "./plotStylePresets";
 import {
   cyclesSeriesDescriptors,
   seriesPaletteSlots,
+  timeCapacityVoltageChannelPaletteIndex,
   timeCapacitySeriesDescriptors,
   type SeriesDescriptor,
 } from "./seriesStyling";
@@ -163,7 +165,17 @@ export function PlotStylePanel({
   // `cell_series` — so the editor lists exactly what is on screen.
   const timeCapacityResult = result && "cell_traces" in result ? result : undefined;
   const computedSeriesDescriptors = useMemo(() => {
-    if (timeCapacityResult) return timeCapacitySeriesDescriptors(timeCapacityResult.cell_traces);
+    if (timeCapacityResult) {
+      const timeCapacity = timeCapacityResult.settings;
+      const selectedVoltageChannels = normalizeVoltageChannels(
+        timeCapacity.voltage_channels,
+        timeCapacity.voltage_channel,
+      );
+      return timeCapacitySeriesDescriptors(
+        timeCapacityResult.cell_traces,
+        selectedVoltageChannels,
+      );
+    }
     if (computeResult) {
       return cyclesSeriesDescriptors(
         computeResult.aggregates,
@@ -207,8 +219,17 @@ export function PlotStylePanel({
       const index = seriesKeyOrder.get(descriptor.key) ?? 0;
       const { palette, paletteOverflow } = seriesBaseDefaults;
       const isCe = descriptor.measure === "coulombic_efficiency";
+      const legacyColor = descriptor.sourceKey
+        ? seriesBaseDefaults.customColors[descriptor.sourceKey]
+        : undefined;
+      const colorIndex = descriptor.channel
+        ? timeCapacityVoltageChannelPaletteIndex(descriptor.channel)
+        : index;
       return {
-        color: seriesBaseDefaults.customColors[descriptor.key] ?? paletteColorAt(palette, index, paletteOverflow),
+        color:
+          seriesBaseDefaults.customColors[descriptor.key] ??
+          legacyColor ??
+          paletteColorAt(palette, colorIndex, paletteOverflow),
         lineWidth: isCe ? seriesBaseDefaults.ceLineWidth : seriesBaseDefaults.lineWidth,
         lineDash: isCe ? seriesBaseDefaults.ceLineDash : seriesBaseDefaults.lineDash,
         markerMode: isCe ? seriesBaseDefaults.ceMarkerMode : seriesBaseDefaults.markerMode,

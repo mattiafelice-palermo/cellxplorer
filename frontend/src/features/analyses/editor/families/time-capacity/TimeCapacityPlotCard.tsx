@@ -47,7 +47,6 @@ import {
   voltageChannelDataIdentity,
   voltageChannelUnavailableMessage,
   voltageChannelLabel,
-  voltageChannelShortLabel,
   voltageChannelSelectionLabel,
   voltageChannelSelectionSummary,
   voltageChannelSelectorOptions,
@@ -109,6 +108,8 @@ import {
   shortSourceName,
   timeCapacitySeriesDescriptors,
   timeCapacitySeriesDescriptor,
+  timeCapacityVoltageSeriesDescriptor,
+  type SeriesDescriptor,
 } from "../../plotting/seriesStyling";
 import { sourceExportColumns, sourceExportColumnsFromPoints } from "../../plotting/sourceChainPlot";
 import {
@@ -343,16 +344,19 @@ function overlapX(values: number[], cycles: (number | null)[], phases: string[],
   });
 }
 
+function timeCapacityXAxisTitle(cfg: TimeCapacityConfig): string {
+  return cfg.x_axis === "capacity_mah_g"
+    ? "Specific capacity (mAh/g)"
+    : cfg.x_axis === "capacity_mah_cm2"
+    ? "Areal capacity (mAh/cm²)"
+    : cfg.x_axis === "capacity_mah"
+    ? "Capacity (mAh)"
+    : `Time (${cfg.time_unit})`;
+}
+
 function timeCapacityX(trace: TimeCapacityTrace, spec: AnalysisSpec): { x: number[]; title: string } {
   const cfg = timeCapacityConfig(spec);
-  const title =
-    cfg.x_axis === "capacity_mah_g"
-      ? "Specific capacity (mAh/g)"
-      : cfg.x_axis === "capacity_mah_cm2"
-      ? "Areal capacity (mAh/cm²)"
-      : cfg.x_axis === "capacity_mah"
-      ? "Capacity (mAh)"
-      : `Time (${cfg.time_unit})`;
+  const title = timeCapacityXAxisTitle(cfg);
 
   // Compact ordinary responses make display_x authoritative and may omit the
   // redundant raw time array. Check it before touching any alternate x source
@@ -404,7 +408,11 @@ function traceVoltageValues(
   return channel === fallbackChannel ? trace.voltage_v : [];
 }
 
-function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): TimeCapacitySegment[] {
+function timeCapacitySegments(
+  trace: TimeCapacityTrace,
+  spec: AnalysisSpec,
+  xOverride?: number[],
+): TimeCapacitySegment[] {
   const cfg = timeCapacityConfig(spec);
   const selectedChannels = cfg.voltage_channels;
   const voltageValues = new Map(
@@ -413,7 +421,7 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
       traceVoltageValues(trace, channel, cfg.voltage_channel),
     ] as const),
   );
-  const { x } = timeCapacityX(trace, spec);
+  const x = xOverride ?? timeCapacityX(trace, spec).x;
   const segments: TimeCapacitySegment[] = [];
   let current: TimeCapacitySegment | null = null;
 
@@ -524,9 +532,21 @@ function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: Ana
   if (!cfg.stacked || !cfg.current_right || cfg.current_right === "none") return false;
   return result.cell_traces.some((trace) => {
     if (trace.excluded) return false;
-    return timeCapacitySegments(trace, spec).some((segment) =>
-      hasFinitePoint(currentAxisValues(segment, trace, cfg.current_right, cfg))
-    );
+    const area = cfg.electrode_area_cm2 ?? trace.electrode_area_cm2 ?? null;
+    const nominal = trace.nominal_capacity_mah ?? null;
+    return trace.current_ma.some((value, index) => {
+      if (value === null || !Number.isFinite(value)) return false;
+      if (
+        cfg.display_mode !== "consecutive" &&
+        trace.phase[index] !== "charge" &&
+        trace.phase[index] !== "discharge"
+      ) {
+        return false;
+      }
+      if (cfg.current_right === "current_density") return Boolean(area && area > 0);
+      if (cfg.current_right === "c_rate") return Boolean(nominal && nominal > 0);
+      return true;
+    });
   });
 }
 
@@ -547,7 +567,7 @@ export function timeCapacityTracesForResult(
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
   const legendRanks = seriesLegendRanks(
-    timeCapacitySeriesDescriptors(result.cell_traces),
+    timeCapacitySeriesDescriptors(result.cell_traces, selectedVoltageChannels),
     style.series_order,
   );
   const traceType = interactiveWebGl ? "scattergl" : "scatter";
@@ -561,8 +581,7 @@ export function timeCapacityTracesForResult(
   // Per-series resolution against this tab's own key scheme. The base carries
   // what each trace previously hardcoded, so an unstyled plot is unchanged.
   const resolveTrace = (
-    trace: TimeCapacityTrace,
-    label: string,
+    descriptor: SeriesDescriptor,
     color: string,
     lineDash: PlotStyle["line_dash"],
   ) =>
@@ -577,7 +596,7 @@ export function timeCapacityTracesForResult(
         markerOpen: style.marker_open,
         opacity: 1,
       },
-      timeCapacitySeriesDescriptor(trace),
+      descriptor,
       style.series_rules,
       style.series_overrides,
     );
@@ -588,6 +607,8 @@ export function timeCapacityTracesForResult(
       const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
       const color = pick(seriesKey);
       const baseName = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+      const descriptor = timeCapacitySeriesDescriptor(trace);
+      const resolvedByPhase = new Map<string | null, ReturnType<typeof resolveTrace>>();
       let start = 0;
       while (start < trace.derivative_x.length) {
         const cycle = trace.cycle[start];
@@ -602,12 +623,15 @@ export function timeCapacityTracesForResult(
           const sourcePosition = trace.source_position?.slice(start, end);
           const sourceFilename = trace.source_filename?.slice(start, end);
           const sourceHash = trace.source_hash?.slice(start, end);
-          const resolved = resolveTrace(
-            trace,
-            baseName,
-            color,
-            phase === "discharge" ? "dash" : style.line_dash,
-          );
+          let resolved = resolvedByPhase.get(phase);
+          if (!resolved) {
+            resolved = resolveTrace(
+              descriptor,
+              color,
+              phase === "discharge" ? "dash" : style.line_dash,
+            );
+            resolvedByPhase.set(phase, resolved);
+          }
           if (resolved.hidden) {
             start = end;
             continue;
@@ -660,12 +684,38 @@ export function timeCapacityTracesForResult(
     if (trace.excluded) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     const color = pick(seriesKey);
-    const baseLabel = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
-    const resolved = resolveTrace(trace, baseLabel, color, style.line_dash);
+    const descriptor = timeCapacitySeriesDescriptor(trace);
+    const resolved = resolveTrace(
+      descriptor,
+      color,
+      style.line_dash,
+    );
     if (resolved.hidden) continue;
     const name = resolved.name;
     const fullX = timeCapacityX(trace, spec).x;
-    for (const segment of timeCapacitySegments(trace, spec)) {
+    const multipleVoltageChannels = selectedVoltageChannels.length > 1;
+    const channelStyles = selectedVoltageChannels.map((channel) => {
+      const channelKey = `${seriesKey}|${channel}`;
+      const channelDescriptor = multipleVoltageChannels
+        ? timeCapacityVoltageSeriesDescriptor(trace, channel)
+        : descriptor;
+      const channelColor = multipleVoltageChannels
+        ? style.custom_colors[channelKey] ??
+          style.custom_colors[seriesKey] ??
+          voltageChannelColor(channel, resolved.color, palette, paletteOverflow, true)
+        : resolved.color;
+      const channelResolved = multipleVoltageChannels
+        ? resolveTrace(channelDescriptor, channelColor, style.line_dash)
+        : resolved;
+      return {
+        channel,
+        channelLabel: voltageChannelLabel(channel, result.voltage_channels),
+        channelKey,
+        channelResolved,
+        legendKey: multipleVoltageChannels ? channelKey : seriesKey,
+      };
+    });
+    for (const segment of timeCapacitySegments(trace, spec, fullX)) {
       const hasVoltage = selectedVoltageChannels.some((channel) =>
         hasFinitePoint(segment.voltageByChannel[channel] ?? []),
       );
@@ -676,44 +726,34 @@ export function timeCapacityTracesForResult(
         segment.sources[index]?.position ?? "",
         plotlySafeText(shortSourceName(String(segment.sources[index]?.filename ?? ""), 24)),
       ]);
-      const multipleVoltageChannels = selectedVoltageChannels.length > 1;
-      for (const channel of selectedVoltageChannels) {
-        const voltage = segment.voltageByChannel[channel] ?? [];
+      for (const channelStyle of channelStyles) {
+        const voltage = segment.voltageByChannel[channelStyle.channel] ?? [];
         if (!hasFinitePoint(voltage)) continue;
-        const channelLabel = voltageChannelLabel(channel, result.voltage_channels);
-        const channelName = multipleVoltageChannels
-          ? `${name} — ${voltageChannelShortLabel(channel)}`
-          : name;
-        const channelColor = voltageChannelColor(
-          channel,
-          resolved.color,
-          palette,
-          paletteOverflow,
-          multipleVoltageChannels,
-        );
-        const channelKey = `${seriesKey}|${channel}`;
-        const showlegend = !legendShown.has(channelKey) && resolved.showInLegend;
-        legendShown.add(channelKey);
+        const { channelLabel, channelKey, channelResolved, legendKey } = channelStyle;
+        if (channelResolved.hidden) continue;
+        const channelName = channelResolved.name;
+        const showlegend = !legendShown.has(legendKey) && channelResolved.showInLegend;
+        legendShown.add(legendKey);
         out.push({
           x: segment.x,
           y: voltage,
           name: channelName,
           legendgroup: seriesKey,
           showlegend,
-          legendrank: legendRanks.get(seriesKey),
-          opacity: resolved.opacity,
+          legendrank: legendRanks.get(legendKey),
+          opacity: channelResolved.opacity,
           line: {
-            color: channelColor,
-            width: resolved.lineWidth,
-            dash: resolved.lineDash,
-            shape: resolved.lineShape,
+            color: channelResolved.color,
+            width: channelResolved.lineWidth,
+            dash: channelResolved.lineDash,
+            shape: channelResolved.lineShape,
           },
           marker: {
-            color: channelColor,
-            size: resolved.markerSize,
-            symbol: seriesPlotlySymbol(resolved),
+            color: channelResolved.color,
+            size: channelResolved.markerSize,
+            symbol: seriesPlotlySymbol(channelResolved),
           },
-          mode: seriesPlotlyMode(resolved),
+          mode: seriesPlotlyMode(channelResolved),
           type: traceType,
           connectgaps: false,
           customdata: segmentCustomdata,
@@ -880,7 +920,7 @@ export function timeCapacityLayout(
 ): Partial<Plotly.Layout> {
   const style = currentPlotStyle(spec, "time_capacity");
   const cfg = timeCapacityConfig(spec);
-  const xTitle = result?.cell_traces[0] ? timeCapacityX(result.cell_traces[0], spec).title : "Time (min)";
+  const xTitle = result?.cell_traces[0] ? timeCapacityXAxisTitle(cfg) : "Time (min)";
   const leftCurrentLabel = currentAxisLabel(cfg.current_left ?? "current_ma");
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
   const hasRightCurrent = hasRightCurrentValues(result, spec);
@@ -2232,14 +2272,6 @@ function TimeCapacityPlotCardView({
       }),
     [renderSpec]
   );
-  const exportTraces = useMemo(
-    () =>
-      currentResult && !selectedVoltageUnavailable
-        ? timeCapacityTracesForResult(currentResult, renderSpec)
-        : [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentResult, renderSpec, selectedVoltageUnavailable, viewSignature]
-  );
   const activeRefinedResult =
     !panActive &&
     timeCapacityRefinementDisplayIsCurrent(
@@ -2258,6 +2290,19 @@ function TimeCapacityPlotCardView({
         ? timeCapacityTracesForResult(plotResult, renderSpec)
         : [],
     [plotResult, renderSpec, selectedVoltageUnavailable, viewSignature]
+  );
+  const exportTraces = useMemo(
+    () => {
+      if (!currentResult || selectedVoltageUnavailable) return [];
+      // The ordinary view and the export read the same trace model. Reuse the
+      // already-built array instead of walking every point a second time on
+      // every result/style update. A viewport refinement is the only case in
+      // which the plot is showing a different result from the export source.
+      if (plotResult === currentResult) return plotTraces;
+      return timeCapacityTracesForResult(currentResult, renderSpec);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentResult, plotResult, plotTraces, renderSpec, selectedVoltageUnavailable, viewSignature]
   );
   // One shared WebGL subplot is the performance boundary. Each resident
   // buffer is re-zeroed near its own start, which avoids the large per-Cell
