@@ -112,7 +112,7 @@ def time_capacity_request_columns(
     only when their scientific/display transform needs them.  Protocol masks
     add the step-index column.  Source capability facts and descriptors come
     from the indexed source metadata, so auxiliary electrode-potential columns
-    are not needed unless the selected voltage channel uses one.
+    are needed only when the selected voltage/current view includes them.
     """
 
     available = set(available_columns)
@@ -132,12 +132,16 @@ def time_capacity_request_columns(
     normal_view = settings.get("view") == "voltage_current"
     x_axis = settings.get("x_axis")
     if normal_view:
-        voltage_quantity = settings.get("voltage_channel") or canonical_cycling.DEFAULT_VOLTAGE_QUANTITY
-        requested.append(
-            canonical_cycling.VOLTAGE_QUANTITIES.get(
-                voltage_quantity,
-                canonical_cycling.VOLTAGE_QUANTITIES[canonical_cycling.DEFAULT_VOLTAGE_QUANTITY],
-            )
+        configured_channels = settings.get("voltage_channels")
+        voltage_quantities = (
+            configured_channels
+            if isinstance(configured_channels, list)
+            else [settings.get("voltage_channel") or canonical_cycling.DEFAULT_VOLTAGE_QUANTITY]
+        )
+        requested.extend(
+            canonical_cycling.VOLTAGE_QUANTITIES[quantity]
+            for quantity in voltage_quantities
+            if quantity in canonical_cycling.VOLTAGE_QUANTITIES
         )
         needs_capacity = x_axis in {
             "capacity_mah",

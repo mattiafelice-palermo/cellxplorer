@@ -3681,6 +3681,33 @@ class MultiVoltageTimeCapacityTests(unittest.TestCase):
         self.assertEqual(trace["voltage_v"], channel_values["voltage"])
         self.assertAlmostEqual(channel_values["counter_potential"][0], 0.1, places=6)
 
+    def test_multi_voltage_compact_worker_returns_aligned_arrays_for_each_channel(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {
+            "voltage_channels": ["voltage", "working_potential", "counter_potential"]
+        }
+
+        result = time_capacity_workers.try_compute_time_capacity(
+            self.db,
+            spec,
+            None,
+            force_serial=True,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+        )
+
+        self.assertIsNotNone(result)
+        trace = result["cell_traces"][0]
+        channel_values = trace["voltage_v_by_channel"]
+        self.assertEqual(
+            set(channel_values),
+            {"voltage", "working_potential", "counter_potential"},
+        )
+        self.assertEqual(len(channel_values["voltage"]), len(trace["cycle"]))
+        self.assertEqual(trace["voltage_v"], channel_values["voltage"])
+        self.assertIn(round(channel_values["working_potential"][0], 1), (3.3, 3.7))
+
     def test_three_electrode_reference_context_is_reflected_in_generic_labels(self):
         source = self.db.query(SourceFile).filter(SourceFile.hash == self.HASHES["three"]).one()
         source.header_meta = {

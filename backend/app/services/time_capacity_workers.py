@@ -840,11 +840,24 @@ def _cell_result(
         )
     with time_capacity_path.timed_stage(diagnostics, "protocol_masking"):
         plot_mask = np.zeros(len(raw), dtype=bool)
-    voltage_column = analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
-    voltage = (
-        raw[voltage_column].to_numpy(dtype="float64").copy()
-        if voltage_column in raw.columns
-        else np.full(len(raw), np.nan)
+    materialized_voltage_channels = (
+        settings["voltage_channels"]
+        if settings["view"] == "voltage_current"
+        else [settings["voltage_channel"]]
+    )
+    voltage_by_channel = {
+        quantity: (
+            raw[analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES[quantity]]
+            .to_numpy(dtype="float64")
+            .copy()
+            if analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES[quantity] in raw.columns
+            else np.full(len(raw), np.nan)
+        )
+        for quantity in materialized_voltage_channels
+    }
+    voltage = voltage_by_channel.get(
+        settings["voltage_channel"],
+        np.full(len(raw), np.nan),
     )
     current = (
         raw["current_ma"].to_numpy(dtype="float64").copy()
@@ -857,7 +870,16 @@ def _cell_result(
         capacity_area = capacity_area.copy() if capacity_area is not None else None
         derivative_x = derivative_x.copy()
         derivative_y = derivative_y.copy()
-        for values in (voltage, current, capacity, capacity_g, capacity_area, derivative_x, derivative_y):
+        for values in (
+            *voltage_by_channel.values(),
+            voltage,
+            current,
+            capacity,
+            capacity_g,
+            capacity_area,
+            derivative_x,
+            derivative_y,
+        ):
             if values is not None:
                 values[plot_mask] = np.nan
     display_x = analysis_engine._time_capacity_display_x(
@@ -899,6 +921,10 @@ def _cell_result(
         display_x = display_x[take]
         phases = np.asarray(phases)[take].tolist() if phases else []
         plot_mask = plot_mask[take]
+        voltage_by_channel = {
+            quantity: values[take]
+            for quantity, values in voltage_by_channel.items()
+        }
         voltage = voltage[take]
         current = current[take]
         capacity = capacity[take] if capacity is not None else None
@@ -916,10 +942,16 @@ def _cell_result(
         envelope_series = (
             [derivative_x, derivative_y]
             if settings["view"] != "voltage_current"
-            else [voltage]
+            else list(voltage_by_channel.values()) or [voltage]
         )
         primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
-        visible_values = ~plot_mask & np.isfinite(primary_values)
+        if settings["view"] == "voltage_current" and voltage_by_channel:
+            visible_voltage_values = np.zeros(len(raw), dtype=bool)
+            for values in voltage_by_channel.values():
+                visible_voltage_values |= np.isfinite(values)
+            visible_values = ~plot_mask & visible_voltage_values
+        else:
+            visible_values = ~plot_mask & np.isfinite(primary_values)
         with time_capacity_path.timed_stage(diagnostics, "display_downsampling"):
             take = analysis_engine._downsample_indices(
                 len(raw), request.display_max_points_per_cell, visible_values, envelope_series
@@ -928,6 +960,10 @@ def _cell_result(
         raw = raw.iloc[take]
         display_x = display_x[take]
         phases = np.asarray(phases)[take].tolist() if phases else []
+        voltage_by_channel = {
+            quantity: values[take]
+            for quantity, values in voltage_by_channel.items()
+        }
         voltage = voltage[take]
         current = current[take]
         capacity = capacity[take] if capacity is not None else None
@@ -1003,6 +1039,18 @@ def _cell_result(
         "voltage_v": analysis_engine._jsonsafe_plot(voltage, None if full_response else 5)
         if not request.compact or not is_derivative
         else [],
+        **(
+            {
+                "voltage_v_by_channel": {
+                    quantity: analysis_engine._jsonsafe_plot(
+                        values, None if full_response else 5
+                    )
+                    for quantity, values in voltage_by_channel.items()
+                }
+            }
+            if not is_derivative and len(settings["voltage_channels"]) > 1
+            else {}
+        ),
         "current_ma": analysis_engine._jsonsafe_plot(current, None if full_response else 5)
         if not request.compact or not is_derivative
         else [],

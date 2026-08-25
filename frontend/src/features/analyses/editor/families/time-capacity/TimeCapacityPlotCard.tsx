@@ -498,15 +498,24 @@ function compactHoverName(name: string): string {
   return plotlySafeText(shortSourceName(name, 28));
 }
 
-function voltageChannelLineDash(
+const VOLTAGE_CHANNEL_PALETTE_INDEX: Record<VoltageChannel, number> = {
+  voltage: 0,
+  working_potential: 1,
+  counter_potential: 2,
+};
+
+function voltageChannelColor(
   channel: VoltageChannel,
-  baseDash: PlotStyle["line_dash"],
+  baseColor: string,
+  palette: string[],
+  paletteOverflow: "repeat" | "generate",
   multiple: boolean,
-): PlotStyle["line_dash"] {
-  if (!multiple) return baseDash;
-  if (channel === "working_potential") return "dash";
-  if (channel === "counter_potential") return "dot";
-  return baseDash;
+): string {
+  if (!multiple) return baseColor;
+  // Keep a channel's colour stable when another channel is toggled. The
+  // canonical channel order also makes the three-electrode default read as
+  // three palette entries, while the line style remains shared.
+  return paletteColorAt(palette, VOLTAGE_CHANNEL_PALETTE_INDEX[channel], paletteOverflow);
 }
 
 function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: AnalysisSpec): boolean {
@@ -675,6 +684,13 @@ export function timeCapacityTracesForResult(
         const channelName = multipleVoltageChannels
           ? `${name} — ${voltageChannelShortLabel(channel)}`
           : name;
+        const channelColor = voltageChannelColor(
+          channel,
+          resolved.color,
+          palette,
+          paletteOverflow,
+          multipleVoltageChannels,
+        );
         const channelKey = `${seriesKey}|${channel}`;
         const showlegend = !legendShown.has(channelKey) && resolved.showInLegend;
         legendShown.add(channelKey);
@@ -687,13 +703,13 @@ export function timeCapacityTracesForResult(
           legendrank: legendRanks.get(seriesKey),
           opacity: resolved.opacity,
           line: {
-            color: resolved.color,
+            color: channelColor,
             width: resolved.lineWidth,
-            dash: voltageChannelLineDash(channel, resolved.lineDash, multipleVoltageChannels),
+            dash: resolved.lineDash,
             shape: resolved.lineShape,
           },
           marker: {
-            color: resolved.color,
+            color: channelColor,
             size: resolved.markerSize,
             symbol: seriesPlotlySymbol(resolved),
           },
@@ -900,7 +916,10 @@ export function timeCapacityLayout(
     return {
       height: 560,
       hovermode: "closest",
-      hoverdistance: 20,
+      // Search the whole plot in the cross-axis direction. The old 20 px
+      // radius made hover disappear whenever the pointer was between lines or
+      // below the lowest series, even though the x position was meaningful.
+      hoverdistance: -1,
       hoverlabel: hoverLabelLayout(style),
       margin: {
         l: 78 + lm.l + leftGap,
@@ -928,7 +947,9 @@ export function timeCapacityLayout(
   return {
     height: cfg.stacked ? 620 : 560,
     hovermode: "closest",
-    hoverdistance: 20,
+    // Keep one compact nearest-point label while allowing the pointer to
+    // land anywhere in the plot, including the lower half away from a line.
+    hoverdistance: -1,
     margin: {
       l: 70 + lm.l + leftGap,
       r: rightMargin,
@@ -2184,7 +2205,13 @@ function TimeCapacityPlotCardView({
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
   const showComputeProgress = useDelayedFlag(
-    timeResult.isLoading || (timeResult.isFetching && !currentResult)
+    timeResult.isLoading || (timeResult.isFetching && !currentResult),
+    // Channel selection changes the render/cache identity and therefore makes
+    // one compact request even when the indexed data is warm. Keep the normal
+    // sub-second path silent; a genuinely slow miss can still explain the
+    // otherwise empty plot.
+    700,
+    450,
   );
   const loadingWithoutResult = timeResult.isLoading || (timeResult.isFetching && !currentResult);
   const readyForParent =

@@ -2457,7 +2457,9 @@ function AnalysisEditorView({
   const [spec, setSpec] = useState<AnalysisSpec | null>(workspaceState?.spec ?? null);
   const [title, setTitle] = useState(workspaceState?.title ?? "");
   const [dirty, setDirty] = useState(workspaceState?.dirty ?? false);
-  const [activeTab, setActiveTab] = useState<AnalysisTabKey>(workspaceState?.activeTab ?? "cycles");
+  const [activeTab, setActiveTab] = useState<AnalysisTabKey>(
+    workspaceState?.activeTab ?? "time_capacity",
+  );
   const [timeCapacityVisited, setTimeCapacityVisited] = useState(
     workspaceState?.timeCapacityVisited ?? workspaceState?.activeTab === "time_capacity",
   );

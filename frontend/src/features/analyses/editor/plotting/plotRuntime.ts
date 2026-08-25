@@ -53,6 +53,150 @@ export function interactivePlotTraces(traces: Plotly.Data[]): Plotly.Data[] {
   });
 }
 
+type PlotlyHoverNode = Element & {
+  onmousemove: ((event: MouseEvent) => unknown) | null;
+};
+
+type PlotlyHoverPatch = {
+  original: NonNullable<PlotlyHoverNode["onmousemove"]>;
+  patched: NonNullable<PlotlyHoverNode["onmousemove"]>;
+  scale: { x: number; y: number };
+};
+
+const plotlyHoverPatches = new WeakMap<Element, PlotlyHoverPatch>();
+const plotlyHoverRefreshers = new WeakMap<HTMLElement, () => void>();
+
+function cssZoomScale(target: Element): { x: number; y: number } {
+  let x = 1;
+  let y = 1;
+  let current: Element | null = target;
+  while (current) {
+    const style = window.getComputedStyle(current) as CSSStyleDeclaration & { zoom?: string };
+    const zoom = Number.parseFloat(style.zoom ?? "1");
+    if (Number.isFinite(zoom) && zoom > 0) {
+      x *= zoom;
+      y *= zoom;
+    }
+    current = current.parentElement;
+  }
+  return { x, y };
+}
+
+function correctPlotlyHoverEvent(
+  event: MouseEvent,
+  target: Element,
+  scale: { x: number; y: number },
+): MouseEvent {
+  if (
+    Math.abs(scale.x - 1) < 0.0001 &&
+    Math.abs(scale.y - 1) < 0.0001
+  ) {
+    return event;
+  }
+
+  const rect = target.getBoundingClientRect();
+  const corrected = Object.create(event) as MouseEvent;
+  Object.defineProperties(corrected, {
+    clientX: {
+      configurable: true,
+      enumerable: true,
+      value: rect.left + (event.clientX - rect.left) / scale.x,
+      writable: true,
+    },
+    clientY: {
+      configurable: true,
+      enumerable: true,
+      value: rect.top + (event.clientY - rect.top) / scale.y,
+      writable: true,
+    },
+    // Plotly's hover-layer handler retargets the event before calling Fx.hover.
+    // Make the cloned event writable without mutating the browser event.
+    target: {
+      configurable: true,
+      enumerable: true,
+      value: event.target,
+      writable: true,
+    },
+  });
+  return corrected;
+}
+
+function patchPlotlyHoverNode(
+  node: Element,
+  eventTarget: () => Element | null,
+): void {
+  const hoverNode = node as PlotlyHoverNode;
+  const original = hoverNode.onmousemove;
+  if (typeof original !== "function") return;
+  const existing = plotlyHoverPatches.get(node);
+  const currentTarget = eventTarget() ?? node;
+  if (existing?.original === original || existing?.patched === original) {
+    existing.scale = cssZoomScale(currentTarget);
+    return;
+  }
+
+  let patch: PlotlyHoverPatch;
+  const patched = function (this: Element, event: MouseEvent) {
+    const target = eventTarget() ?? node;
+    return original.call(this, correctPlotlyHoverEvent(event, target, patch.scale));
+  };
+  patch = { original, patched, scale: cssZoomScale(currentTarget) };
+  plotlyHoverPatches.set(node, patch);
+  hoverNode.onmousemove = patched;
+}
+
+function refreshPlotlyCssZoomHoverCompensation(graphDiv: HTMLElement): void {
+  const dragNodes = graphDiv.querySelectorAll(".nsewdrag");
+  dragNodes.forEach((node) => patchPlotlyHoverNode(node, () => node));
+
+  const layout = (graphDiv as HTMLElement & {
+    _fullLayout?: {
+      _hoverlayer?: { node?: () => Element | null };
+      _lasthover?: Element | null;
+    };
+  })._fullLayout;
+  const hoverLayer = layout?._hoverlayer?.node?.() ?? null;
+  if (hoverLayer) {
+    patchPlotlyHoverNode(
+      hoverLayer,
+      () => layout?._lasthover ?? graphDiv,
+    );
+  }
+}
+
+/**
+ * Plotly understands CSS transforms when converting pointer coordinates, but
+ * not the CSS `zoom` used by the app's compact UI scaling. Under a zoomed
+ * surface, the drag layer receives physical pixels while Plotly searches in
+ * its unzoomed axis dimensions; hover labels then drift and the lower part of
+ * the plot can fall outside Plotly's perceived hit area. Correct only the
+ * hover event's local coordinates, leaving Plotly's pan/zoom drag handlers
+ * untouched.
+ */
+export function installPlotlyCssZoomHoverCompensation(graphDiv: HTMLElement): void {
+  if (typeof window === "undefined") return;
+  refreshPlotlyCssZoomHoverCompensation(graphDiv);
+  if (!plotlyHoverRefreshers.has(graphDiv)) {
+    const refresh = () => refreshPlotlyCssZoomHoverCompensation(graphDiv);
+    plotlyHoverRefreshers.set(graphDiv, refresh);
+    window.addEventListener("resize", refresh, { passive: true });
+  }
+}
+
+export function disposePlotlyCssZoomHoverCompensation(graphDiv: HTMLElement): void {
+  if (typeof window === "undefined") return;
+  const refresh = plotlyHoverRefreshers.get(graphDiv);
+  if (!refresh) return;
+  window.removeEventListener("resize", refresh);
+  plotlyHoverRefreshers.delete(graphDiv);
+  graphDiv.querySelectorAll(".nsewdrag").forEach((node) => plotlyHoverPatches.delete(node));
+  const layout = (graphDiv as HTMLElement & {
+    _fullLayout?: { _hoverlayer?: { node?: () => Element | null } };
+  })._fullLayout;
+  const hoverLayer = layout?._hoverlayer?.node?.();
+  if (hoverLayer) plotlyHoverPatches.delete(hoverLayer);
+}
+
 
 
 export function newComputeToken(): string {

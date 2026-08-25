@@ -121,6 +121,32 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertEqual(
             time_capacity_path.time_capacity_request_columns(
                 available,
+                {
+                    "view": "voltage_current",
+                    "x_axis": "time",
+                    "voltage_channels": [
+                        "voltage",
+                        "working_potential",
+                        "counter_potential",
+                    ],
+                },
+                precision="standard",
+                compact=True,
+            ),
+            [
+                "record_index",
+                "cycle",
+                "status",
+                "time_s",
+                "voltage_v",
+                "current_ma",
+                "working_potential_v",
+                "counter_potential_v",
+            ],
+        )
+        self.assertEqual(
+            time_capacity_path.time_capacity_request_columns(
+                available,
                 {"view": "dqdv", "x_axis": "capacity_mah"},
                 precision="standard",
                 compact=True,

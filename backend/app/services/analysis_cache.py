@@ -54,7 +54,10 @@ RESULT_SCHEMA_VERSIONS = {
     # deduplicated source table plus row-aligned source indexes.
     # Consecutive capacity display_x now concatenates phase/cycle segments;
     # the payload also carries exact per-cycle origins for bounded refinement.
-    "time_capacity": 8,
+    # Spec 052 follow-up: compact worker responses now include the selected
+    # multi-voltage arrays just like the serial path. Invalidate compact
+    # entries produced before that worker parity fix.
+    "time_capacity": 9,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,
