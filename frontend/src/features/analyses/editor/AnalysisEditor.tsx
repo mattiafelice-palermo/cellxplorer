@@ -279,6 +279,7 @@ import {
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
+  visibilityAfterToggle,
 } from "./policies/analysisVisibility";
 const ASPECT_RATIO_OPTIONS: { value: PlotAspectRatioKey; label: string }[] = [
   { value: "view", label: "Current view" },
@@ -3144,7 +3145,13 @@ function AnalysisEditorView({
       const isHidden = s.selection.exclusions.some((exclusion) =>
         exclusionAppliesToContext(exclusion, cellId, context),
       );
-      setCellVisibilityInDraft(s, sampleGroups, cellId, context, !isHidden);
+      setCellVisibilityInDraft(
+        s,
+        sampleGroups,
+        cellId,
+        context,
+        visibilityAfterToggle(isHidden),
+      );
     });
   };
 

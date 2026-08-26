@@ -12,6 +12,11 @@ export interface AnalysisSampleVisibility {
   excluded?: boolean | null;
 }
 
+/** Convert the current hidden state into the visibility requested by a toggle. */
+export function visibilityAfterToggle(currentlyHidden: boolean): boolean {
+  return currentlyHidden;
+}
+
 function exclusionAppliesToContext(
   exclusion: AnalysisSpec["selection"]["exclusions"][number],
   cellId: number,

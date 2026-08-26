@@ -6,6 +6,7 @@ import {
   isAnalysisSampleHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
+  visibilityAfterToggle,
   type CellSelectionContext,
 } from "../src/features/analyses/editor/policies/analysisVisibility.ts";
 import type { AnalysisSpec } from "../src/api.ts";
@@ -169,4 +170,9 @@ test("segment and series visibility are read from presentation state", () => {
   assert.equal(isAnalysisSegmentHidden(spec, "segment-visible"), false);
   assert.equal(isSeriesHidden(spec, "series-hidden"), true);
   assert.equal(isSeriesHidden(spec, "series-visible"), false);
+});
+
+test("visibility toggles request the opposite of the current hidden state", () => {
+  assert.equal(visibilityAfterToggle(false), false);
+  assert.equal(visibilityAfterToggle(true), true);
 });
