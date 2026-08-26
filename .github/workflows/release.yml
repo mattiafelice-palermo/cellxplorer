@@ -25,6 +25,7 @@ on:
         options:
           - stable
           - beta
+          - alpha
         default: stable
 
 permissions:
@@ -93,41 +94,57 @@ jobs:
         id: channel
         shell: pwsh
         run: |
+          function Write-ChannelOutputs([string] $channel) {
+            switch ($channel) {
+              "stable" {
+                "channel=stable" >> $env:GITHUB_OUTPUT
+                "product_name=CellXplorer" >> $env:GITHUB_OUTPUT
+                "config_args=" >> $env:GITHUB_OUTPUT
+                "channel_manifest=stable/latest.json" >> $env:GITHUB_OUTPUT
+                "is_prerelease=false" >> $env:GITHUB_OUTPUT
+                "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
+              }
+              "beta" {
+                "channel=beta" >> $env:GITHUB_OUTPUT
+                "product_name=CellXplorer Beta" >> $env:GITHUB_OUTPUT
+                "config_args=--config src-tauri/tauri.beta.conf.json" >> $env:GITHUB_OUTPUT
+                "channel_manifest=beta/latest.json" >> $env:GITHUB_OUTPUT
+                "is_prerelease=true" >> $env:GITHUB_OUTPUT
+                "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
+              }
+              "alpha" {
+                "channel=alpha" >> $env:GITHUB_OUTPUT
+                "product_name=CellXplorer Alpha" >> $env:GITHUB_OUTPUT
+                "config_args=--config src-tauri/tauri.alpha.conf.json" >> $env:GITHUB_OUTPUT
+                "channel_manifest=alpha/latest.json" >> $env:GITHUB_OUTPUT
+                "is_prerelease=true" >> $env:GITHUB_OUTPUT
+                "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
+              }
+              default {
+                Write-Error "Unsupported release channel: $channel"
+                exit 1
+              }
+            }
+          }
+
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             python scripts/release_tag.py --tag "$env:GITHUB_REF_NAME"
-            if ($env:GITHUB_REF_NAME -match '-beta(\.\d+|\d+$)') {
-              "channel=beta" >> $env:GITHUB_OUTPUT
-              "product_name=CellXplorer Beta" >> $env:GITHUB_OUTPUT
-              "config_args=--config src-tauri/tauri.beta.conf.json" >> $env:GITHUB_OUTPUT
-              "channel_manifest=beta/latest.json" >> $env:GITHUB_OUTPUT
-              "is_prerelease=true" >> $env:GITHUB_OUTPUT
-              "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $tag = $env:GITHUB_REF_NAME
+            if ($tag -match '^v\d+\.\d+\.\d+-alpha\.(0|[1-9]\d*)$') {
+              Write-ChannelOutputs "alpha"
+            } elseif ($tag -match '^v\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$') {
+              Write-ChannelOutputs "beta"
+            } elseif ($tag -match '^v\d+\.\d+\.\d+$') {
+              Write-ChannelOutputs "stable"
             } else {
-              "channel=stable" >> $env:GITHUB_OUTPUT
-              "product_name=CellXplorer" >> $env:GITHUB_OUTPUT
-              "config_args=" >> $env:GITHUB_OUTPUT
-              "channel_manifest=stable/latest.json" >> $env:GITHUB_OUTPUT
-              "is_prerelease=false" >> $env:GITHUB_OUTPUT
-              "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
+              Write-Error "Could not classify publishable tag $tag as Stable, Beta, or Alpha."
+              exit 1
             }
           } else {
             $selected = "${{ github.event.inputs.channel }}"
             if ([string]::IsNullOrWhiteSpace($selected)) { $selected = "stable" }
-            if ($selected -eq "beta") {
-              "channel=beta" >> $env:GITHUB_OUTPUT
-              "product_name=CellXplorer Beta" >> $env:GITHUB_OUTPUT
-              "config_args=--config src-tauri/tauri.beta.conf.json" >> $env:GITHUB_OUTPUT
-              "channel_manifest=beta/latest.json" >> $env:GITHUB_OUTPUT
-              "is_prerelease=true" >> $env:GITHUB_OUTPUT
-              "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
-            } else {
-              "channel=stable" >> $env:GITHUB_OUTPUT
-              "product_name=CellXplorer" >> $env:GITHUB_OUTPUT
-              "config_args=" >> $env:GITHUB_OUTPUT
-              "channel_manifest=stable/latest.json" >> $env:GITHUB_OUTPUT
-              "is_prerelease=false" >> $env:GITHUB_OUTPUT
-              "updater_key_conf=src-tauri/tauri.conf.json" >> $env:GITHUB_OUTPUT
-            }
+            Write-ChannelOutputs $selected
           }
 
       - name: Resolve release version
@@ -166,19 +183,54 @@ jobs:
             exit 1
           }
 
-      - name: Require Beta targets a future Stable version
-        if: github.ref_type == 'tag' && steps.channel.outputs.channel == 'beta'
+      - name: Resolve published Alpha release history
+        if: github.ref_type == 'tag'
+        id: release_history
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" > published-releases.json
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Could not read published GitHub releases; Beta publication is blocked."
+            Write-Error "Could not read published GitHub releases; release publication is blocked."
             exit 1
           }
+          $payload = Get-Content published-releases.json -Raw | ConvertFrom-Json
+          $rows = @()
+          foreach ($page in @($payload)) {
+            if ($page -is [System.Array]) { $rows += @($page) } else { $rows += $page }
+          }
+          $publishedAlpha = $false
+          foreach ($release in $rows) {
+            if (
+              $release.draft -ne $true -and
+              -not [string]::IsNullOrWhiteSpace([string]$release.published_at) -and
+              ([string]$release.tag_name) -match '^v\d+\.\d+\.\d+-alpha\.(0|[1-9]\d*)$'
+            ) {
+              $publishedAlpha = $true
+              break
+            }
+          }
+          "published_alpha=$($publishedAlpha.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Require Beta targets a future Stable version
+        if: github.ref_type == 'tag' && steps.channel.outputs.channel == 'beta'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           python scripts/release_channel_policy.py `
             --beta-tag "${{ github.ref_name }}" `
+            --published-releases-json published-releases.json
+
+      - name: Require Alpha targets a future Stable version
+        if: github.ref_type == 'tag' && steps.channel.outputs.channel == 'alpha'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/release_channel_policy.py `
+            --alpha-tag "${{ github.ref_name }}" `
             --published-releases-json published-releases.json
 
       - name: Require manifest-only release channel branch
@@ -214,37 +266,48 @@ jobs:
           )
           python scripts/release_channels.py `
             --tree-json release-channels-tree.json `
-            --target-channel "${{ steps.channel.outputs.channel }}"
+            --target-channel "${{ steps.channel.outputs.channel }}" `
+            --published-alpha "${{ steps.release_history.outputs.published_alpha }}"
 
           $targetPath = "${{ steps.channel.outputs.channel_manifest }}"
-          $otherPath = if ($targetPath -eq "stable/latest.json") {
-            "beta/latest.json"
-          } else {
-            "stable/latest.json"
-          }
+          $publishedAlpha = "${{ steps.release_history.outputs.published_alpha }}" -eq "true"
+          $expectedPaths = @("README.md", "stable/latest.json", "beta/latest.json")
+          if ($publishedAlpha) { $expectedPaths += "alpha/latest.json" }
           $targetSha = ""
           $targetEntry = @($treePayload.tree | Where-Object {
             $_.path -eq $targetPath -and $_.type -eq "blob"
           } | Select-Object -First 1)
           if ($targetEntry.Count -eq 1) {
             $targetSha = $targetEntry[0].sha
-          } elseif ("${{ steps.channel.outputs.channel }}" -eq "beta") {
-            Write-Host "The first Beta release will create beta/latest.json."
+          } elseif ("${{ steps.channel.outputs.channel }}" -in @("beta", "alpha") -and -not $publishedAlpha) {
+            Write-Host "The first ${{ steps.channel.outputs.channel }} release will create $targetPath."
           } else {
             Write-Error "The target channel pointer is missing."
             exit 1
           }
-          $otherEntry = @($treePayload.tree | Where-Object {
-            $_.path -eq $otherPath -and $_.type -eq "blob"
-          } | Select-Object -First 1)
-          if ($otherEntry.Count -ne 1) {
-            Write-Error "The non-target channel pointer is missing."
-            exit 1
+          $nonTarget = [ordered]@{}
+          foreach ($path in $expectedPaths) {
+            if ($path -eq $targetPath) { continue }
+            $entry = @($treePayload.tree | Where-Object {
+              $_.path -eq $path -and $_.type -eq "blob"
+            } | Select-Object -First 1)
+            if ($entry.Count -ne 1) {
+              Write-Error "The non-target protected path is missing: $path"
+              exit 1
+            }
+            $nonTarget[$path] = [string]$entry[0].sha
           }
           "target_sha=$targetSha" >> $env:GITHUB_OUTPUT
           "target_ref_sha=$($ref.object.sha)" >> $env:GITHUB_OUTPUT
-          "other_path=$otherPath" >> $env:GITHUB_OUTPUT
-          "other_sha=$($otherEntry[0].sha)" >> $env:GITHUB_OUTPUT
+          $nonTargetJson = $nonTarget | ConvertTo-Json -Compress
+          "non_target_json<<NON_TARGET_EOF" >> $env:GITHUB_OUTPUT
+          $nonTargetJson >> $env:GITHUB_OUTPUT
+          "NON_TARGET_EOF" >> $env:GITHUB_OUTPUT
+          # Preserve the legacy scalar outputs for audit tooling while the JSON map
+          # above protects every non-target path, including README.md.
+          $legacyOtherPath = $nonTarget.Keys | Where-Object { $_ -ne "README.md" } | Select-Object -First 1
+          "other_path=$legacyOtherPath" >> $env:GITHUB_OUTPUT
+          "other_sha=$($nonTarget[$legacyOtherPath])" >> $env:GITHUB_OUTPUT
 
       - name: Refuse to replace an already published release
         if: github.ref_type == 'tag'
@@ -562,15 +625,15 @@ jobs:
             "User-Agent" = "cellxplorer-release-workflow"
           }
 
-          $existingUri = "https://api.github.com/repos/$owner/$repo/contents/${channelPath}?ref=${branch}"
           $expectedSha = "${{ steps.channel_branch.outputs.target_sha }}"
-          if ([string]::IsNullOrWhiteSpace($expectedSha)) {
-            $branchRef = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/git/ref/heads/$branch" -Headers $headers
-            if ($branchRef.object.sha -ne "${{ steps.channel_branch.outputs.target_ref_sha }}") {
-              Write-Error "The release channel branch changed after the first-write gate."
-              exit 1
-            }
-          } else {
+          $expectedRefSha = "${{ steps.channel_branch.outputs.target_ref_sha }}"
+          $branchRef = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/git/ref/heads/$branch" -Headers $headers
+          if ($branchRef.object.sha -ne $expectedRefSha) {
+            Write-Error "The release channel branch changed after the publication gate."
+            exit 1
+          }
+          if (-not [string]::IsNullOrWhiteSpace($expectedSha)) {
+            $existingUri = "https://api.github.com/repos/$owner/$repo/contents/${channelPath}?ref=${branch}"
             $existing = Invoke-RestMethod -Method Get -Uri $existingUri -Headers $headers
             if ($existing.sha -ne $expectedSha) {
               Write-Error "The target channel pointer changed after the release gate. Refusing to overwrite it."
@@ -578,39 +641,90 @@ jobs:
             }
           }
 
-          $commitMessage = if ("${{ steps.channel.outputs.channel }}" -eq "beta") {
-            "Publish CellXplorer beta channel $version"
-          } else {
-            "Publish CellXplorer stable channel $version"
-          }
-          $putBody = @{
-            message = $commitMessage
-            content = $manifestB64
-            branch = $branch
-          }
-          if (-not [string]::IsNullOrWhiteSpace($expectedSha)) { $putBody.sha = $expectedSha }
-          $putJson = $putBody | ConvertTo-Json
-          $putResult = Invoke-RestMethod -Method Put -Uri "https://api.github.com/repos/$owner/$repo/contents/$channelPath" -Headers $headers -Body $putJson -ContentType "application/json"
-          $publishedCommit = $putResult.commit.sha
-          if ([string]::IsNullOrWhiteSpace($publishedCommit)) {
-            Write-Error "GitHub did not return the channel pointer commit SHA."
+          $nonTarget = ConvertFrom-Json '${{ steps.channel_branch.outputs.non_target_json }}'
+          if (-not ($nonTarget.psobject.Properties.Name -contains "README.md")) {
+            Write-Error "README.md was not included in the protected non-target snapshot."
             exit 1
           }
+          foreach ($protected in @($nonTarget.psobject.Properties)) {
+            $protectedPath = $protected.Name
+            $currentProtected = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/${protectedPath}?ref=${branch}" -Headers $headers
+            if ($currentProtected.sha -ne [string]$protected.Value) {
+              Write-Error "The non-target protected path changed after the release gate: $protectedPath"
+              exit 1
+            }
+          }
+
+          $commitMessage = switch ("${{ steps.channel.outputs.channel }}") {
+            "stable" { "Publish CellXplorer stable channel $version"; break }
+            "beta" { "Publish CellXplorer beta channel $version"; break }
+            "alpha" { "Publish CellXplorer alpha channel $version"; break }
+            default { Write-Error "Unsupported release channel for pointer publication."; exit 1 }
+          }
+          # Use the Git data API rather than Contents PUT so both replacement and
+          # first-time creation are protected by an atomic non-force ref update.
+          # Contents PUT cannot express an expected branch tip when the file is absent.
+          $baseCommit = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/git/commits/$expectedRefSha" -Headers $headers
+          $blobBody = @{
+            content = $manifestB64
+            encoding = "base64"
+          } | ConvertTo-Json
+          $blobResult = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$owner/$repo/git/blobs" -Headers $headers -Body $blobBody -ContentType "application/json"
+          if ([string]::IsNullOrWhiteSpace($blobResult.sha)) {
+            Write-Error "GitHub did not return the channel manifest blob SHA."
+            exit 1
+          }
+          $treeBody = @{
+            base_tree = $baseCommit.tree.sha
+            tree = @(@{
+                path = $channelPath
+                mode = "100644"
+                type = "blob"
+                sha = $blobResult.sha
+              })
+          } | ConvertTo-Json -Depth 10
+          $treeResult = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$owner/$repo/git/trees" -Headers $headers -Body $treeBody -ContentType "application/json"
+          if ([string]::IsNullOrWhiteSpace($treeResult.sha)) {
+            Write-Error "GitHub did not return the release-channel tree SHA."
+            exit 1
+          }
+          $commitBody = @{
+            message = $commitMessage
+            tree = $treeResult.sha
+            parents = @($expectedRefSha)
+          } | ConvertTo-Json -Depth 10
+          $commitResult = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$owner/$repo/git/commits" -Headers $headers -Body $commitBody -ContentType "application/json"
+          $newCommitSha = [string]$commitResult.sha
+          if ([string]::IsNullOrWhiteSpace($newCommitSha)) {
+            Write-Error "GitHub did not return the release-channel commit SHA."
+            exit 1
+          }
+          $refBody = @{
+            sha = $newCommitSha
+            force = $false
+          } | ConvertTo-Json
+          $updatedRef = Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$owner/$repo/git/refs/heads/$branch" -Headers $headers -Body $refBody -ContentType "application/json"
+          if ($updatedRef.object.sha -ne $newCommitSha) {
+            Write-Error "GitHub did not update the release-channel ref to the expected commit."
+            exit 1
+          }
+          $publishedCommit = $newCommitSha
 
           $publishedUri = "https://api.github.com/repos/$owner/$repo/contents/${channelPath}?ref=${publishedCommit}"
           $contents = Invoke-RestMethod -Method Get -Uri $publishedUri -Headers $headers
           $remoteBytes = [Convert]::FromBase64String($contents.content.Replace("`n", ""))
           $localBytes = [System.IO.File]::ReadAllBytes("uploaded-latest.json")
-          if ($remoteBytes.Length -ne $localBytes.Length) {
-            Write-Error "Channel manifest bytes mismatch after GitHub contents update."
-            exit 1
-          }
-          for ($i = 0; $i -lt $localBytes.Length; $i++) {
-            if ($remoteBytes[$i] -ne $localBytes[$i]) {
-              Write-Error "Channel manifest content mismatch after GitHub contents update."
-              exit 1
+          function Assert-BytesEqual([byte[]]$expected, [byte[]]$actual, [string]$label) {
+            if ($expected.Length -ne $actual.Length) {
+              throw "$label byte length mismatch."
+            }
+            for ($i = 0; $i -lt $expected.Length; $i++) {
+              if ($expected[$i] -ne $actual[$i]) {
+                throw "$label content mismatch."
+              }
             }
           }
+          Assert-BytesEqual $localBytes $remoteBytes "Channel manifest bytes after Git data API update"
 
           $otherPath = "${{ steps.channel_branch.outputs.other_path }}"
           $other = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/${otherPath}?ref=${publishedCommit}" -Headers $headers
@@ -619,7 +733,45 @@ jobs:
             exit 1
           }
 
+          foreach ($protected in @($nonTarget.psobject.Properties)) {
+            $protectedPath = $protected.Name
+            $publishedProtected = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/${protectedPath}?ref=${publishedCommit}" -Headers $headers
+            if ($publishedProtected.sha -ne [string]$protected.Value) {
+              Write-Error "The non-target protected path changed during publication: $protectedPath"
+              exit 1
+            }
+          }
+
+          $rawUri = "https://raw.githubusercontent.com/$owner/$repo/$branch/$channelPath"
+          $rawMatched = $false
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+            try {
+              Invoke-WebRequest -Method Get -Uri $rawUri -Headers @{ "User-Agent" = "cellxplorer-release-workflow" } -OutFile remote-channel-latest-raw.json
+              $rawBytes = [System.IO.File]::ReadAllBytes("remote-channel-latest-raw.json")
+              Assert-BytesEqual $localBytes $rawBytes "Public raw channel manifest"
+              $rawMatched = $true
+              break
+            } catch {
+              if ($attempt -eq 6) { throw }
+              Start-Sleep -Seconds 5
+            }
+          }
+          if (-not $rawMatched) {
+            throw "Public raw channel manifest did not become available."
+          }
+
           [System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)
+
+          $publishedTreeUri = "https://api.github.com/repos/$owner/$repo/git/trees/$publishedCommit?recursive=1"
+          $publishedTree = Invoke-RestMethod -Method Get -Uri $publishedTreeUri -Headers $headers
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE "published-release-channels-tree.json"),
+            ($publishedTree | ConvertTo-Json -Depth 10)
+          )
+          python scripts/release_channels.py `
+            --tree-json published-release-channels-tree.json `
+            --target-channel "${{ steps.channel.outputs.channel }}" `
+            --published-alpha "${{ steps.release_history.outputs.published_alpha }}"
 
           python scripts/verify_updater_manifest.py `
             --manifest remote-channel-latest.json `

@@ -36,7 +36,7 @@ stale or mismatched stamp, so a build from one channel cannot be bundled into an
 This performs the complete frontend, backend sidecar, and NSIS build. See
 `docs/local-development.md` for incremental options and the expected output path.
 
-### Stable, Beta, and Alpha identities (Specs 021/053.1)
+### Stable, Beta, and Alpha identities (Specs 021/053.1/053.2)
 
 | Property | Stable | Beta | Alpha |
 |---|---|---|---|
@@ -57,14 +57,15 @@ race without killing the other channel.
 `CELLXPLORER_DATA` overrides any root exactly for tests and development. Do not install intermediate
 Beta or Alpha builds against real user data; use disposable `CELLXPLORER_DATA` or a test account.
 
-Alpha starts empty and has no Stable/Beta data-copy or synchronization path. Its updater endpoint is
-configured for identity completeness, but update commands and controls remain disabled until the
-053.2 release child enables Alpha publication.
+Alpha starts empty and has no Stable/Beta data-copy or synchronization path. Its updater uses the
+dedicated Alpha endpoint and shared standard update state; only exact dotted
+`MAJOR.MINOR.PATCH-alpha.N` versions are accepted.
 
-**Release:** Stable and Beta publish to separate SemVer tags. Beta GitHub releases are
-prereleases. Verified updater manifests are copied to the `release-channels` branch
-(`stable/latest.json`, `beta/latest.json`) after draft verification. The first Stable release after
-Spec 023 still ships `latest.json` on the GitHub release for legacy bootstrap clients.
+**Release:** Stable, Beta, and Alpha publish to separate SemVer tag families. Beta and Alpha GitHub
+releases are prereleases. Verified updater manifests are copied to the `release-channels` branch
+(`stable/latest.json`, `beta/latest.json`, `alpha/latest.json`) after draft verification. The first
+Stable release after Spec 023 still ships `latest.json` on the GitHub release for legacy bootstrap
+clients.
 
 Beta icons are generated deterministically:
 
@@ -209,6 +210,7 @@ Production update manifest endpoints are:
 ```text
 Stable: https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json
 Beta:   https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json
+Alpha:  https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/alpha/latest.json
 ```
 
 Only the updater **public key** belongs in `tauri.conf.json`. Store the private key outside the
@@ -233,6 +235,10 @@ Runtime policy validates exact SemVer before pending state changes: Stable accep
 `MAJOR.MINOR.PATCH`; Beta accepts legacy `MAJOR.MINOR.PATCH-beta.N` and compact
 `MAJOR.MINOR.PATCH-betaNNN`. Do not switch back to dotted prereleases within a core version after a
 compact release: SemVer orders `beta.12` below `beta011`, whereas `beta012` follows it correctly.
+Alpha accepts only exact dotted `MAJOR.MINOR.PATCH-alpha.N` versions and rejects leading-zero
+sequence numbers, other prereleases, and build metadata. All three standard update paths use the
+shared `PendingAppUpdate` state; `PendingBetaInstall` remains only for Stable-owned first-Beta
+installation.
 Stable-owned first Beta installation uses a distinct `PendingBetaInstall` newtype and the Beta
 endpoint. It finishes the Stable backend session before launching the verified installer. An
 installed Beta is then updated only by the Beta application's standard updater.
@@ -277,10 +283,9 @@ still perform the normal channel verification.
 
 ## Production GitHub release
 
-Stable and Beta releases are published by pushing exact SemVer tags:
-
-Alpha publication is intentionally not enabled by this child. Do not tag, publish, or modify the
-`release-channels` branch for Alpha; those release rules belong to Spec 053.2.
+Stable, Beta, and Alpha releases are published by pushing exact SemVer tags. Alpha uses
+`vMAJOR.MINOR.PATCH-alpha.N` and is a GitHub prerelease; Beta remains a prerelease and Stable
+remains the normal latest release.
 
 ```powershell
 git tag v0.15.0
@@ -288,18 +293,24 @@ git push origin v0.15.0
 
 git tag v0.16.0-beta.1
 git push origin v0.16.0-beta.1
+
+git tag v0.28.0-alpha.1
+git push origin v0.28.0-alpha.1
 ```
 
 The `.github/workflows/release.yml` workflow then:
 
-1. resolves Stable `vMAJOR.MINOR.PATCH` or Beta `vMAJOR.MINOR.PATCH-beta.N` and requires the tag
-   commit to be reachable from `main`;
-2. for Beta, lists all published releases, ignores drafts/malformed/legacy Beta tags, and requires
-   the Beta core to be strictly greater than the highest exact Stable tag;
+1. resolves Stable `vMAJOR.MINOR.PATCH`, Beta `vMAJOR.MINOR.PATCH-beta.N`/compact Beta, or Alpha
+   `vMAJOR.MINOR.PATCH-alpha.N` and requires the tag commit to be reachable from `main`;
+2. for Beta and Alpha, lists all published releases, ignores drafts/malformed/legacy tags, and
+   requires each core to be strictly greater than the highest exact Stable tag; Beta and Alpha are
+   not ordered against each other;
 3. requires the pre-provisioned orphan `release-channels` branch to contain only its README and
-   channel manifests; the first Beta may create the initially absent Beta pointer, but Stable must
-   already have a valid pointer and the workflow never initializes from `main`;
-4. snapshots both channel blob SHAs so publication can update only the selected pointer;
+   channel manifests. Before the first Alpha release, Alpha may be absent; the first Alpha may
+   create only `alpha/latest.json`. Once a published Alpha release exists, all three pointers are
+   required. The workflow never initializes the branch from `main`;
+4. snapshots every non-target blob SHA, including README, so publication can update only the
+   selected pointer;
 5. refuses to replace an already published non-draft release and requires a public repository;
 6. extracts exact release notes and runs `python scripts/preflight.py --no-cache`;
 7. explicitly builds and verifies the selected frontend channel stamp, then builds the sidecar;
@@ -307,9 +318,9 @@ The `.github/workflows/release.yml` workflow then:
    installer, `.sig`, and workspace-root `latest.json`;
 9. validates exact channel version/product/asset/signature against release metadata with
    `scripts/verify_updater_manifest.py`, reading the shared public key from the base Tauri config;
-10. undrafts as a normal Stable release or true Beta prerelease only after verification;
+10. undrafts as a normal Stable release or true Beta/Alpha prerelease only after verification;
 11. updates only the selected channel pointer using its prior SHA, verifies exact bytes through the
-    Contents API and public raw endpoint, and proves the non-target blob is unchanged.
+    Contents API and public raw endpoint, and proves every non-target blob is unchanged.
 
 Required GitHub repository secrets:
 
@@ -318,9 +329,9 @@ TAURI_SIGNING_PRIVATE_KEY
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-Use **Actions → Publish CellXplorer release → Run workflow** for both Stable and Beta build-only
-rehearsals. Manual dispatch never creates or alters a GitHub Release. Download each artifact and
-record its channel stamp, installer name, icon, and product metadata before release.
+Use **Actions → Publish CellXplorer release → Run workflow** for Stable, Beta, and Alpha build-only
+rehearsals. Manual dispatch never creates or alters a GitHub Release or channel pointer. Download
+each artifact and record its channel stamp, installer name, icon, and product metadata before release.
 
 Published versions are immutable. If a release is wrong, cut a new patch/Beta sequence rather than
 rebuilding the same tag. If pointer publication fails after undraft, the immutable release exists

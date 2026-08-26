@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate cross-release Stable/Beta publication policy."""
+"""Validate cross-release Stable/Beta/Alpha publication policy."""
 
 from __future__ import annotations
 
@@ -30,6 +30,13 @@ def beta_core(tag: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in core.split("."))  # type: ignore[return-value]
 
 
+def alpha_core(tag: str) -> tuple[int, int, int]:
+    tag = release_tag.require_release_tag_for_channel(tag, "alpha")
+    body = tag[1:]
+    core = re.sub(r"-alpha\.\d+$", "", body)
+    return tuple(int(part) for part in core.split("."))  # type: ignore[return-value]
+
+
 def _release_rows(payload: object) -> list[dict]:
     if not isinstance(payload, list):
         raise ReleaseChannelPolicyError("GitHub releases response must be an array.")
@@ -46,7 +53,9 @@ def _release_rows(payload: object) -> list[dict]:
     return rows
 
 
-def latest_real_stable_core(payload: object) -> tuple[int, int, int]:
+def latest_real_stable_core(
+    payload: object, *, blocked_channel: str = "Beta"
+) -> tuple[int, int, int]:
     stable_versions: list[tuple[int, int, int]] = []
     for release in _release_rows(payload):
         if release.get("draft") is True or not release.get("published_at"):
@@ -56,7 +65,7 @@ def latest_real_stable_core(payload: object) -> tuple[int, int, int]:
             stable_versions.append(stable_core(tag))
     if not stable_versions:
         raise ReleaseChannelPolicyError(
-            "No published exact Stable release was found; Beta publication is blocked."
+            f"No published exact Stable release was found; {blocked_channel} publication is blocked."
         )
     return max(stable_versions)
 
@@ -73,9 +82,23 @@ def require_beta_targets_future_stable(tag: str, payload: object) -> None:
         )
 
 
+def require_alpha_targets_future_stable(tag: str, payload: object) -> None:
+    candidate = alpha_core(tag)
+    latest_stable = latest_real_stable_core(payload, blocked_channel="Alpha")
+    if candidate <= latest_stable:
+        candidate_text = ".".join(str(part) for part in candidate)
+        stable_text = ".".join(str(part) for part in latest_stable)
+        raise ReleaseChannelPolicyError(
+            f"Alpha core {candidate_text} must be greater than latest published "
+            f"Stable {stable_text}."
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--beta-tag", required=True)
+    tags = parser.add_mutually_exclusive_group(required=True)
+    tags.add_argument("--beta-tag")
+    tags.add_argument("--alpha-tag")
     parser.add_argument("--published-releases-json", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -83,7 +106,13 @@ def main(argv: list[str] | None = None) -> int:
         payload = json.loads(
             args.published_releases_json.read_text(encoding="utf-8-sig")
         )
-        require_beta_targets_future_stable(args.beta_tag, payload)
+        if args.beta_tag is not None:
+            require_beta_targets_future_stable(args.beta_tag, payload)
+            tag = args.beta_tag
+        else:
+            assert args.alpha_tag is not None
+            require_alpha_targets_future_stable(args.alpha_tag, payload)
+            tag = args.alpha_tag
     except (
         OSError,
         json.JSONDecodeError,
@@ -93,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    print(f"PASS: {args.beta_tag} targets a future Stable core version")
+    print(f"PASS: {tag} targets a future Stable core version")
     return 0
 
 

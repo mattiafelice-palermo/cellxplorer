@@ -66,9 +66,11 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertEqual(endpoints, [EXPECTED_ALPHA_ENDPOINT])
         self.assertNotIn("/releases/latest/", endpoints[0])
 
-    def test_alpha_self_updater_is_explicitly_fail_closed(self):
-        self.assertIn("ALPHA_UPDATER_DISABLED_ERROR", self.app_channel_rs)
-        self.assertIn("ensure_updater_enabled", self.app_updates_rs)
+    def test_alpha_self_updater_uses_the_shared_standard_update_path(self):
+        self.assertNotIn("ALPHA_UPDATER_DISABLED_ERROR", self.app_channel_rs)
+        self.assertNotIn("ensure_updater_enabled", self.app_updates_rs)
+        self.assertIn("validate_release_version", self.app_channel_rs)
+        self.assertIn("AppChannel::Alpha", self.app_channel_rs)
 
     def test_beta_self_updater_gate_is_removed(self):
         source = self.app_updates_rs

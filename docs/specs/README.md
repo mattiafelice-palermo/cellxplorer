@@ -12,8 +12,9 @@
   - [053.2-alpha-updater-release-publication-and-closure.md](053.2-alpha-updater-release-publication-and-closure.md)
     — exact Alpha updater/tag/manifest rules, first-pointer bootstrap, three-channel GitHub release
     automation, all-non-target pointer protection, and cumulative installed/update closure.
+    **Implemented; review pending.**
   **Non-implementable parent. The implementer/reviewer workflow is initialized on
-  `codex/alpha-release-channel` (`053-agent-state.json`); Child 053.1 is the active child.**
+  `codex/alpha-release-channel` (`053-agent-state.json`); Child 053.2 is the active child.**
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
   adds a protocol-family comparison modal beside the protocol selector, distinguishing strict
   semantic identity from workflow and custom comparability without silently merging source-local

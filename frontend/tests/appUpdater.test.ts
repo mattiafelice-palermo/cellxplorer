@@ -419,7 +419,8 @@ test("development mock parsing stays dev-only", () => {
   assert.equal(shouldShowUpdateUi(false, null), false);
   assert.equal(shouldShowUpdateUi(true, null, "beta"), true);
   assert.equal(shouldShowUpdateUi(true, null, "stable"), true);
-  assert.equal(shouldShowUpdateUi(true, "available", "alpha"), false);
+  assert.equal(shouldShowUpdateUi(true, "available", "alpha"), true);
+  assert.equal(shouldShowUpdateUi(false, "available", "alpha"), true);
   assert.equal(shouldShowUpdateUi(false, null, "alpha"), false);
 });
 

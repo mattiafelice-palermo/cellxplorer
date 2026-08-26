@@ -274,8 +274,9 @@ Without it, the main desktop app can open a terminal even if the backend sidecar
 The backend stores Stable data under `%USERPROFILE%\.cellxplorer`, Beta data under
 `%USERPROFILE%\.cellxplorer-beta`, and Alpha data under `%USERPROFILE%\.cellxplorer-alpha`;
 `CELLXPLORER_DATA` overrides any root exactly. Use disposable test data for installer verification.
-Alpha starts empty and has no Stable/Beta copy or synchronization path; its updater controls remain
-disabled until Spec 053.2. The application uses packaged forward-only schema revisions, automatic
+Alpha starts empty and has no Stable/Beta copy or synchronization path; its updater uses the
+dedicated Alpha feed and shared standard update state with exact dotted `-alpha.N` validation. The
+application uses packaged forward-only schema revisions, automatic
 SQLite backups before migration,
 startup compatibility checks, and schema status in diagnostics. See `docs/database-migrations.md`.
 Moving the default data location to `%LOCALAPPDATA%\Cellxplorer` remains a future packaging change.
@@ -285,12 +286,12 @@ Never store the user database or cache under the app install directory.
 ## Release-channel branch invariant
 
 `release-channels` is a pre-provisioned orphan/manifest-only branch; never initialize it from
-`main`. Before the first real Beta release it may contain only `README.md` and the last verified
-`stable/latest.json`; that Beta workflow creates `beta/latest.json` with a race-safe first write.
-Afterward it contains exactly all three files.
-The release workflow validates the complete Git tree and both existing pointers before draft
-staging, updates only the selected file with its prior blob SHA, and proves the other channel blob
-did not change. Missing refs/manifests or unexpected source files block publication.
+`main`. Before the first Alpha release it contains only `README.md`, `stable/latest.json`, and
+`beta/latest.json`; the Alpha workflow creates `alpha/latest.json` with a race-safe first write.
+Afterward it contains exactly all three manifests plus the README. The release workflow validates
+the complete Git tree, snapshots every non-target path, updates only the selected file with its
+prior blob SHA, verifies the public raw endpoint, and proves every protected path did not change.
+Missing refs/manifests, stale published-Alpha evidence, or unexpected source files block publication.
 
 In PowerShell interpolated URLs, brace a variable immediately before a query string, for example
 `.../contents/${channelPath}?ref=${branch}`. Writing `$channelPath?ref=$branch` makes PowerShell

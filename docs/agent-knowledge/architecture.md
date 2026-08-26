@@ -14,7 +14,7 @@ FastAPI processes documented in `docs/local-development.md`. The desktop backend
 available loopback port; frontend requests must use the desktop endpoint discovery helpers rather
 than assuming port `8642`.
 
-## Stable, Beta, and Alpha application channels (Specs 021/053.1)
+## Stable, Beta, and Alpha application channels (Specs 021/053.1/053.2)
 
 The same source tree builds three isolated Windows products from channel-specific configuration:
 
@@ -38,17 +38,17 @@ All editions use separate default data roots after Specs 022/053.1: Stable
 development. Rust passes the resolved root to the sidecar as `CELLXPLORER_DATA`.
 
 Stable self-updates read `release-channels/stable/latest.json`; Beta self-updates read
-`release-channels/beta/latest.json`; Alpha has its dedicated endpoint configured but its updater
-commands and controls fail closed until Spec 053.2 enables publication. Stable may optionally
-notify about and install the separate Beta product through dedicated Rust commands and
-`BetaInstallCoordinator`; it never updates an installed Beta copy, and Alpha never enters this
-flow. Standard self-update state and Stable-owned first-Beta-install state are different Tauri
-managed types (`PendingAppUpdate` and the `PendingBetaInstall` newtype), so they cannot collide or
-clear one another. Rust validates exact channel SemVer before accepting a pending update: Stable is
-`MAJOR.MINOR.PATCH`; Beta accepts legacy `MAJOR.MINOR.PATCH-beta.N` and compact
-`MAJOR.MINOR.PATCH-betaNNN`, with no other prerelease or build metadata. Once a Beta line publishes
-a compact version, keep that form for the rest of the same core version: SemVer orders `beta.12`
-below `beta011`, while `beta012` correctly follows `beta011`.
+`release-channels/beta/latest.json`; Alpha self-updates read
+`release-channels/alpha/latest.json`. All three use the shared `PendingAppUpdate` state and
+standard Rust check/download/install commands. Stable may optionally notify about and install the
+separate Beta product through dedicated Rust commands and `BetaInstallCoordinator`; it never
+updates an installed Beta copy, and Alpha never enters this flow. Rust validates exact channel
+SemVer before accepting a pending update: Stable is `MAJOR.MINOR.PATCH`; Beta accepts legacy
+`MAJOR.MINOR.PATCH-beta.N` and compact `MAJOR.MINOR.PATCH-betaNNN`; Alpha accepts only
+`MAJOR.MINOR.PATCH-alpha.N`, with no other prerelease or build metadata. Alpha sequence numbers
+use the exact dotted form with no leading zero. Once a Beta line publishes a compact version, keep
+that form for the rest of the same core version: SemVer orders `beta.12` below `beta011`, while
+`beta012` correctly follows `beta011`.
 
 NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
 directory being changed — never by shared image name alone — so all three products can run side by
@@ -407,11 +407,10 @@ object and verified installer bytes in `src-tauri/src/app_updates.rs` and expose
 commands: `check_app_update`, `download_app_update`, and `install_app_update`. The frontend must
 not call the generic updater plugin API or store manifest URLs, signatures, or raw installer bytes.
 
-The configured identifier selects the self-update channel. Stable and Beta share the updater state
-machine but accept only their exact channel version shape before pending state can change. Alpha has
-its own identifier, data root, deep-link scheme, updater endpoint, icon, and native/installer brand;
-its three updater commands fail closed with the explicit 053.2-not-enabled error until the Alpha
-release child completes. Stable's separate Beta-discovery commands are Stable-only, use the
+The configured identifier selects the self-update channel. Stable, Beta, and Alpha share the
+standard updater state machine but accept only their exact channel version shape before pending
+state can change. Alpha has its own identifier, data root, deep-link scheme, updater endpoint, icon,
+and native/installer brand. Stable's separate Beta-discovery commands are Stable-only, use the
 Rust-owned Beta endpoint and the distinct `PendingBetaInstall` newtype, and stop offering first
 installation once the exact Beta uninstall registration is present. Alpha never enters the Beta
 bootstrap or Stable-owned Beta-install paths.
@@ -437,8 +436,8 @@ Both Standard self-update and Stable-owned Beta installation finish the backend 
 before installer launch. Session-finish failure is debug-logged and follows the existing updater
 policy of continuing to the verified installer. Automatic Beta discovery uses the same preference
 interval as Standard updates; schedule-change events cancel and recreate its timers rather than
-disabling recurrence. Alpha hides the self-update menu and disables its update settings while this
-child's fail-closed gate is active.
+disabling recurrence. Alpha uses the standard self-update menu and settings path with its dedicated
+endpoint and exact `-alpha.N` validation.
 
 For packaging artifacts, signing keys, and the bootstrap-release limitation, see
 `docs/windows-packaging.md`.

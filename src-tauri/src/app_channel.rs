@@ -20,20 +20,8 @@ pub const ALPHA_CHANNEL_ENDPOINT: &str =
 
 pub const BETA_PRODUCT_NAME: &str = "CellXplorer Beta";
 pub const ALPHA_PRODUCT_NAME: &str = "CellXplorer Alpha";
-pub const ALPHA_UPDATER_DISABLED_ERROR: &str =
-    "CellXplorer Alpha updates are disabled until Spec 053.2 is complete.";
-
-impl AppChannel {
-    pub fn ensure_updater_enabled(&self) -> Result<(), String> {
-        match self {
-            AppChannel::Alpha => Err(ALPHA_UPDATER_DISABLED_ERROR.to_string()),
-            AppChannel::Stable | AppChannel::Beta => Ok(()),
-        }
-    }
-}
 
 pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), String> {
-    channel.ensure_updater_enabled()?;
     let version = semver::Version::parse(value).map_err(|_| {
         format!(
             "{} update version {value:?} is not exact SemVer.",
@@ -73,7 +61,23 @@ pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), 
             }
             Ok(())
         }
-        AppChannel::Alpha => Err(ALPHA_UPDATER_DISABLED_ERROR.to_string()),
+        AppChannel::Alpha => {
+            let prerelease = version.pre.as_str();
+            let sequence = prerelease.strip_prefix("alpha.").ok_or_else(|| {
+                "CellXplorer Alpha accepts only MAJOR.MINOR.PATCH-alpha.N update versions."
+                    .to_string()
+            })?;
+            if sequence.is_empty()
+                || (sequence != "0" && sequence.starts_with('0'))
+                || !sequence.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return Err(
+                    "CellXplorer Alpha accepts only MAJOR.MINOR.PATCH-alpha.N update versions."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -312,14 +316,33 @@ mod tests {
     }
 
     #[test]
-    fn alpha_updates_fail_closed_until_release_child_is_implemented() {
-        assert_eq!(
-            AppChannel::Alpha.ensure_updater_enabled(),
-            Err(ALPHA_UPDATER_DISABLED_ERROR.to_string())
-        );
-        assert_eq!(
-            validate_release_version(AppChannel::Alpha, "0.28.0-alpha.1"),
-            Err(ALPHA_UPDATER_DISABLED_ERROR.to_string())
-        );
+    fn alpha_release_versions_are_exact() {
+        for version in [
+            "0.28.0-alpha.0",
+            "0.28.0-alpha.1",
+            "1.0.0-alpha.12",
+            "12.34.56-alpha.999",
+        ] {
+            assert!(
+                validate_release_version(AppChannel::Alpha, version).is_ok(),
+                "{version}"
+            );
+        }
+        for version in [
+            "0.28.0",
+            "v0.28.0-alpha.1",
+            "0.28.0-alpha",
+            "0.28.0-alpha.01",
+            "0.28.0-alpha1",
+            "0.28.0-alpha.1.extra",
+            "0.28.0-alpha.1+build.1",
+            "0.28.0-ALPHA.1",
+            "0.28.0-beta.1",
+        ] {
+            assert!(
+                validate_release_version(AppChannel::Alpha, version).is_err(),
+                "{version}"
+            );
+        }
     }
 }

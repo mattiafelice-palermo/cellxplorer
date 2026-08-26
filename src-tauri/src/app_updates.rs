@@ -248,7 +248,6 @@ pub async fn check_app_update(
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<Option<AppUpdateRelease>, String> {
     let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
-    channel.ensure_updater_enabled()?;
     let check_revision = {
         let pending = lock_pending(&state)?;
         if pending.downloading {
@@ -285,7 +284,6 @@ pub async fn download_app_update(
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<(), String> {
     let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
-    channel.ensure_updater_enabled()?;
     validate_release_version(channel, &expected_version)?;
     let (update, generation) = {
         let mut pending = lock_pending(&state)?;
@@ -332,7 +330,6 @@ pub fn install_app_update(
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<(), String> {
     let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
-    channel.ensure_updater_enabled()?;
     validate_release_version(channel, &expected_version)?;
     let (update, bytes) = {
         let mut pending = lock_pending(&state)?;

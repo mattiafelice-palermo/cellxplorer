@@ -296,7 +296,7 @@ Cellxplorer/
 │   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
 │   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
-│   ├── test_release_tag_script.py  Exact Stable/Beta tag parser tests
+│   ├── test_release_tag_script.py  Exact Stable/Beta/Alpha tag parser tests
 │   ├── test_release_workflow.py    Release/channel workflow contract tests
 │   ├── test_preflight_script.py    Preflight command unit tests
 │   ├── test_profile_test_suite.py  Exhaustive profiler regression tests (Spec 048.2)
@@ -334,14 +334,14 @@ Cellxplorer/
 │   ├── rust_derivative_kernel/ Isolated Cargo/Rayon benchmark target (Spec 050.10)
 │   ├── rust_time_capacity_display/ Benchmark-only coarse native display boundary (Spec 050.13)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
-│   ├── release_tag.py              Exact Stable/Beta SemVer tag validation
-│   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
-│   ├── release_channels.py         Manifest-only branch contract gate (Spec 023)
+│   ├── release_tag.py              Exact Stable/Beta/Alpha SemVer tag validation
+│   ├── release_channel_policy.py   Future-Stable Beta/Alpha release gate (Specs 023/053.2)
+│   ├── release_channels.py         Manifest-only three-channel branch contract gate (Specs 023/053.2)
 │   ├── verify_updater_manifest.py  Channel-aware latest.json validation
 │   └── run_backend_tests.py        Unified bounded backend/frontend test runner for preflight
 ├── .github/workflows/              GitHub Actions CI and release automation
 │   ├── preflight.yml               Clean Windows preflight on main pushes
-│   └── release.yml                 Signed Stable/Beta publishing on v* tags (Specs 019/023)
+│   └── release.yml                 Signed Stable/Beta/Alpha publishing on v* tags (Specs 019/023/053.2)
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 │   ├── tauri.conf.json              Stable base configuration
@@ -349,7 +349,7 @@ Cellxplorer/
 │   ├── tauri.alpha.conf.json        Alpha identity overlay (Spec 053.1)
 │   ├── icons/, icons-beta/, icons-alpha/ Channel-specific bundle/runtime assets
 │   └── src/
-│       ├── app_channel.rs          Stable/Beta/Alpha identity helpers (Specs 021/053.1)
+│       ├── app_channel.rs          Stable/Beta/Alpha identity and version helpers (Specs 021/053.1/053.2)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
 │       ├── beta_installer.rs       Stable-owned first Beta installation (Spec 023)
 │       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
@@ -428,10 +428,10 @@ Then run preflight and push the release tag.
 
 ## Release workflow
 
-Use this sequence for user-facing Stable or Beta releases unless a spec says otherwise (for
-example a coordinated release train that defers tagging until several specs land). Alpha is
-currently buildable and isolated, but its tag/publication workflow remains owned by Spec 053.2;
-do not tag, publish, or modify `release-channels` for Alpha during Spec 053.1.
+Use this sequence for user-facing Stable, Beta, or Alpha releases unless a spec says otherwise (for
+example a coordinated release train that defers tagging until several specs land). Alpha is fully
+isolated and uses the same signed draft-verify-publish workflow with an exact dotted
+`vMAJOR.MINOR.PATCH-alpha.N` tag.
 
 1. Finish and merge feature work to `main`, or confirm `main` already contains the release scope.
 2. Bump every maintained version declaration and prepend `CHANGELOG.md`:
@@ -441,8 +441,9 @@ do not tag, publish, or modify `release-channels` for Alpha during Spec 053.1.
    ```
 3. Verify declarations: `python scripts\check_versions.py --expected-version <version>`
 4. Before tagging, verify the pre-provisioned orphan `release-channels` branch contains only its
-   README and valid channel manifests. The first Beta may create its initially absent pointer;
-   Stable must already have a valid pointer. Never initialize the branch from `main`.
+   README and valid channel manifests. Before the first published Alpha release, Alpha may be the
+   sole absent pointer; once Alpha is published all three pointers are required. Never initialize
+   the branch from `main`.
 5. Run `python scripts\preflight.py --no-cache` and report the exact result.
 6. Commit the version bump on `main`, push `main`, then create and push the tag:
    ```powershell
@@ -450,15 +451,17 @@ do not tag, publish, or modify `release-channels` for Alpha during Spec 053.1.
    git push origin main
    git push origin v<version>
    ```
-   Tags must pass `python scripts\release_tag.py --tag v<version>`. Stable uses `vX.Y.Z`; Beta
-   prereleases use `vX.Y.Z-beta.N`, and their core must be greater than the highest published exact
-   Stable tag. The tag commit must be reachable from `main`.
+Tags must pass `python scripts\release_tag.py --tag v<version>`. Stable uses `vX.Y.Z`; Beta
+prereleases use `vX.Y.Z-beta.N` (or the established compact form); Alpha prereleases use
+`vX.Y.Z-alpha.N`. Beta and Alpha cores must be greater than the highest published exact Stable tag.
+The tag commit must be reachable from `main`.
 7. Publishing is triggered by `.github/workflows/release.yml` on tag push. Monitor the Actions run;
    if a tag push fails early (for example preflight cancel), fix on `main`, push, delete and
    re-create the tag on the fixed commit, then push the tag again.
 8. Confirm GitHub Release assets: channel-specific NSIS installer, matching `.sig`, and
-   `latest.json`. Beta tags are true GitHub prereleases; Stable remains GitHub's latest normal
-   release. Verify only the selected public raw channel pointer changed.
+   `latest.json`. Beta and Alpha tags are true GitHub prereleases; Stable remains GitHub's latest
+   normal release. Verify only the selected public raw channel pointer changed and every other
+   pointer plus README retained its blob identity.
 9. Do not publish the first channel release until both build-only workflow choices and the complete
    disposable installed/update matrix are recorded and the branch is re-reviewed.
 

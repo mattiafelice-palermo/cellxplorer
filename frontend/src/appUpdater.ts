@@ -189,7 +189,11 @@ export function shouldShowUpdateUi(
   mock: DevUpdateMockMode | null,
   channel: AppChannel = "stable",
 ): boolean {
-  return channel !== "alpha" && (tauri || mock !== null);
+  // All isolated products use the same standard updater UI. Keep the channel
+  // argument for callers that pass branding context, but the Rust command and
+  // endpoint selected by the installed product provide the channel isolation.
+  void channel;
+  return tauri || mock !== null;
 }
 
 export function failurePhaseForLocalUpdatePhase(

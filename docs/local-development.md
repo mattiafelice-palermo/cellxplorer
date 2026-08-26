@@ -45,8 +45,8 @@ answering anything else leaves it running and exits without starting the app.
 ```
 
 Pass `-Channel stable`, `-Channel beta`, or `-Channel alpha` to build the corresponding
-channel-specific installer. Alpha is a fully isolated build with its own product identity and
-`.cellxplorer-alpha` data root; its update controls remain disabled until Spec 053.2.
+channel-specific installer. Alpha is a fully isolated build with its own product identity,
+`.cellxplorer-alpha` data root, and standard updater controls backed by its dedicated feed.
 
 The build command installs npm dependencies, builds the React frontend, freezes the Python backend,
 copies the backend sidecar into Tauri's binaries directory, and creates the NSIS installer.

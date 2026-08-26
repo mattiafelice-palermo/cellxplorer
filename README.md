@@ -59,9 +59,9 @@ installed, it updates itself from the Beta channel; Stable never updates the ins
 On Beta's first launch you choose whether to copy a safe snapshot of the Stable library or start
 empty. The two libraries remain independent afterward.
 
-Alpha starts empty and never copies or synchronizes Stable or Beta data. Its update endpoint is
-reserved for the later Alpha release-channel phase, so update checks are disabled in the current
-build.
+Alpha starts empty and never copies or synchronizes Stable or Beta data. It uses the dedicated
+`release-channels/alpha/latest.json` feed and the same standard updater state as Stable and Beta;
+Alpha versions are exact dotted `MAJOR.MINOR.PATCH-alpha.N` prereleases.
 
 ## Manual run
 

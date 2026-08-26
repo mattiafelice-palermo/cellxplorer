@@ -209,7 +209,6 @@ export function SettingsPage() {
   );
   const appUpdate = useOptionalAppUpdate();
   const betaInstall = useBetaInstall();
-  const alphaUpdatesDisabled = APP_BRANDING.channel === "alpha";
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -1725,13 +1724,6 @@ export function SettingsPage() {
                 </Text>
               </div>
 
-              {alphaUpdatesDisabled ? (
-                <Alert color={APP_BRANDING.primaryColor} title="Alpha updates are not enabled yet">
-                  Alpha update publication is reserved for the next release-channel phase. Update
-                  checks and installation controls are disabled for this build.
-                </Alert>
-              ) : null}
-
               {APP_BRANDING.channel === "beta" ? (
                 <Paper
                   withBorder
@@ -1782,7 +1774,6 @@ export function SettingsPage() {
                               : 365
                       }
                       allowDecimal={false}
-                      disabled={alphaUpdatesDisabled}
                       value={updatePreferences.intervalValue}
                       onChange={(value) =>
                         setUpdatePreferences((current) => ({
@@ -1808,7 +1799,6 @@ export function SettingsPage() {
                         }))
                       }
                       allowDeselect={false}
-                      disabled={alphaUpdatesDisabled}
                       w={180}
                     />
                   </Group>
@@ -1844,7 +1834,6 @@ export function SettingsPage() {
                   </div>
                   <Switch
                     checked={updatePreferences.notificationsEnabled}
-                    disabled={alphaUpdatesDisabled}
                     onChange={(event) =>
                       setUpdatePreferences((current) => ({
                         ...current,
@@ -1925,7 +1914,7 @@ export function SettingsPage() {
               <Group justify="flex-end">
                 <Button
                   leftSection={<IconDeviceFloppy size={16} />}
-                  disabled={alphaUpdatesDisabled || !updatePreferencesDirty}
+                  disabled={!updatePreferencesDirty}
                   onClick={saveUpdatePreferences}
                 >
                   Save settings
