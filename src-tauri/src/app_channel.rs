@@ -4,19 +4,36 @@ use std::path::{Path, PathBuf};
 pub enum AppChannel {
     Stable,
     Beta,
+    Alpha,
 }
 
 pub const STABLE_IDENTIFIER: &str = "com.cellxplorer.desktop";
 pub const BETA_IDENTIFIER: &str = "com.cellxplorer.desktop.beta";
+pub const ALPHA_IDENTIFIER: &str = "com.cellxplorer.desktop.alpha";
 
 pub const STABLE_CHANNEL_ENDPOINT: &str =
     "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json";
 pub const BETA_CHANNEL_ENDPOINT: &str =
     "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json";
+pub const ALPHA_CHANNEL_ENDPOINT: &str =
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/alpha/latest.json";
 
 pub const BETA_PRODUCT_NAME: &str = "CellXplorer Beta";
+pub const ALPHA_PRODUCT_NAME: &str = "CellXplorer Alpha";
+pub const ALPHA_UPDATER_DISABLED_ERROR: &str =
+    "CellXplorer Alpha updates are disabled until Spec 053.2 is complete.";
+
+impl AppChannel {
+    pub fn ensure_updater_enabled(&self) -> Result<(), String> {
+        match self {
+            AppChannel::Alpha => Err(ALPHA_UPDATER_DISABLED_ERROR.to_string()),
+            AppChannel::Stable | AppChannel::Beta => Ok(()),
+        }
+    }
+}
 
 pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), String> {
+    channel.ensure_updater_enabled()?;
     let version = semver::Version::parse(value).map_err(|_| {
         format!(
             "{} update version {value:?} is not exact SemVer.",
@@ -56,6 +73,7 @@ pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), 
             }
             Ok(())
         }
+        AppChannel::Alpha => Err(ALPHA_UPDATER_DISABLED_ERROR.to_string()),
     }
 }
 
@@ -64,6 +82,7 @@ impl AppChannel {
         match identifier {
             STABLE_IDENTIFIER => Ok(AppChannel::Stable),
             BETA_IDENTIFIER => Ok(AppChannel::Beta),
+            ALPHA_IDENTIFIER => Ok(AppChannel::Alpha),
             other => Err(format!(
                 "Unsupported CellXplorer application identifier: {other}"
             )),
@@ -74,6 +93,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => "stable",
             AppChannel::Beta => "beta",
+            AppChannel::Alpha => "alpha",
         }
     }
 
@@ -81,6 +101,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => "CellXplorer",
             AppChannel::Beta => "CellXplorer Beta",
+            AppChannel::Alpha => ALPHA_PRODUCT_NAME,
         }
     }
 
@@ -92,6 +113,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => "cellxplorer",
             AppChannel::Beta => "cellxplorer-beta",
+            AppChannel::Alpha => "cellxplorer-alpha",
         }
     }
 
@@ -108,6 +130,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => 0x0086_b812,
             AppChannel::Beta => 0x00_b7_7836,
+            AppChannel::Alpha => 0x00_e8_4870,
         }
     }
 
@@ -115,6 +138,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => include_bytes!("../icons/icon-256.rgba"),
             AppChannel::Beta => include_bytes!("../icons-beta/icon-256.rgba"),
+            AppChannel::Alpha => include_bytes!("../icons-alpha/icon-256.rgba"),
         }
     }
 
@@ -122,6 +146,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => ".cellxplorer",
             AppChannel::Beta => ".cellxplorer-beta",
+            AppChannel::Alpha => ".cellxplorer-alpha",
         }
     }
 
@@ -153,6 +178,10 @@ mod tests {
             AppChannel::from_identifier(BETA_IDENTIFIER).unwrap(),
             AppChannel::Beta
         );
+        assert_eq!(
+            AppChannel::from_identifier(ALPHA_IDENTIFIER).unwrap(),
+            AppChannel::Alpha
+        );
     }
 
     #[test]
@@ -167,6 +196,10 @@ mod tests {
             AppChannel::Beta.autostart_registry_value(),
             "CellXplorer Beta"
         );
+        assert_eq!(
+            AppChannel::Alpha.autostart_registry_value(),
+            "CellXplorer Alpha"
+        );
     }
 
     #[test]
@@ -177,6 +210,9 @@ mod tests {
         assert!(!stable.accepts_deep_link("cellxplorer-beta://import-analysis"));
         assert!(beta.accepts_deep_link("cellxplorer-beta://import-analysis"));
         assert!(!beta.accepts_deep_link("cellxplorer://import-analysis"));
+        let alpha = AppChannel::Alpha;
+        assert!(alpha.accepts_deep_link("cellxplorer-alpha://import-analysis"));
+        assert!(!alpha.accepts_deep_link("cellxplorer-beta://import-analysis"));
     }
 
     #[test]
@@ -186,6 +222,7 @@ mod tests {
             AppChannel::Beta.frame_color_bgr()
         );
         assert_eq!(AppChannel::Beta.frame_color_bgr(), 0x00_b7_7836);
+        assert_eq!(AppChannel::Alpha.frame_color_bgr(), 0x00_e8_4870);
     }
 
     #[test]
@@ -198,6 +235,10 @@ mod tests {
         assert_eq!(
             AppChannel::Beta.default_data_root(home),
             PathBuf::from(r"C:\Users\example\.cellxplorer-beta")
+        );
+        assert_eq!(
+            AppChannel::Alpha.default_data_root(home),
+            PathBuf::from(r"C:\Users\example\.cellxplorer-alpha")
         );
     }
 
@@ -267,6 +308,18 @@ mod tests {
         assert!(
             dotted_beta_12 < beta_11,
             "do not switch back to dotted prereleases within a compact Beta line"
+        );
+    }
+
+    #[test]
+    fn alpha_updates_fail_closed_until_release_child_is_implemented() {
+        assert_eq!(
+            AppChannel::Alpha.ensure_updater_enabled(),
+            Err(ALPHA_UPDATER_DISABLED_ERROR.to_string())
+        );
+        assert_eq!(
+            validate_release_version(AppChannel::Alpha, "0.28.0-alpha.1"),
+            Err(ALPHA_UPDATER_DISABLED_ERROR.to_string())
         );
     }
 }

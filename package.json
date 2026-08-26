@@ -8,10 +8,12 @@
     "build:backend": "python -m PyInstaller --noconfirm --onedir --noconsole --disable-windowed-traceback --paths backend --add-data \"backend/app/assets/plotly.min.js;app/assets\" --name cellxplorer-backend packaging/backend_entry.py",
     "build:frontend:stable": "python scripts/build_frontend_channel.py stable",
     "build:frontend:beta": "python scripts/build_frontend_channel.py beta",
+    "build:frontend:alpha": "python scripts/build_frontend_channel.py alpha",
     "tauri": "tauri",
     "tauri:build": "tauri build",
     "tauri:build:stable": "python scripts/frontend_channel.py verify --channel stable && tauri build",
-    "tauri:build:beta": "python scripts/frontend_channel.py verify --channel beta && tauri build --config src-tauri/tauri.beta.conf.json"
+    "tauri:build:beta": "python scripts/frontend_channel.py verify --channel beta && tauri build --config src-tauri/tauri.beta.conf.json",
+    "tauri:build:alpha": "python scripts/frontend_channel.py verify --channel alpha && tauri build --config src-tauri/tauri.alpha.conf.json"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

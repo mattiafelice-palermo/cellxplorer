@@ -1,0 +1,36 @@
+{
+  "productName": "CellXplorer Alpha",
+  "identifier": "com.cellxplorer.desktop.alpha",
+  "app": {
+    "windows": [
+      {
+        "title": "CellXplorer Alpha",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 720
+      }
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["cellxplorer-alpha"]
+      }
+    },
+    "updater": {
+      "endpoints": [
+        "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/alpha/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "icon": ["icons-alpha/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons-alpha/icon.ico",
+        "uninstallerIcon": "icons-alpha/icon.ico"
+      }
+    }
+  }
+}

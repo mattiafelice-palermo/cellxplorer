@@ -6,15 +6,23 @@ import os
 from pathlib import Path
 from typing import Literal, Mapping
 
-AppChannel = Literal["stable", "beta"]
+AppChannel = Literal["stable", "beta", "alpha"]
 
 DEEP_LINK_IMPORT_BASE = {
     "stable": "cellxplorer://import-analysis",
     "beta": "cellxplorer-beta://import-analysis",
+    "alpha": "cellxplorer-alpha://import-analysis",
 }
 
 STABLE_DATA_DIR_NAME = ".cellxplorer"
 BETA_DATA_DIR_NAME = ".cellxplorer-beta"
+ALPHA_DATA_DIR_NAME = ".cellxplorer-alpha"
+
+DATA_DIR_NAMES: Mapping[AppChannel, str] = {
+    "stable": STABLE_DATA_DIR_NAME,
+    "beta": BETA_DATA_DIR_NAME,
+    "alpha": ALPHA_DATA_DIR_NAME,
+}
 
 
 def is_packaged_application() -> bool:
@@ -38,8 +46,7 @@ def app_channel() -> AppChannel:
 
 
 def default_data_root(channel: AppChannel, home: Path) -> Path:
-    name = STABLE_DATA_DIR_NAME if channel == "stable" else BETA_DATA_DIR_NAME
-    return home / name
+    return home / DATA_DIR_NAMES[channel]
 
 
 def stable_default_data_root(home: Path) -> Path:
@@ -48,6 +55,10 @@ def stable_default_data_root(home: Path) -> Path:
 
 def beta_default_data_root(home: Path) -> Path:
     return default_data_root("beta", home)
+
+
+def alpha_default_data_root(home: Path) -> Path:
+    return default_data_root("alpha", home)
 
 
 def resolve_data_root(env: Mapping[str, str], home: Path) -> Path:

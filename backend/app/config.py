@@ -1,6 +1,6 @@
 """Application configuration: local data directory layout.
 
-Everything Cellxplorer persists lives under APP_DATA_DIR:
+Everything CellXplorer persists lives under the channel-specific APP_DATA_DIR:
   - cellxplorer.db   SQLite database (the canonical Library)
   - cache/           Parquet caches keyed by (file hash, parser/calc version)
 

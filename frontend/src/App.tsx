@@ -584,9 +584,9 @@ export default function App({
             />
             <Group gap={6} wrap="nowrap" align="center">
               <Title order={4}>{APP_BRANDING.headerTitle}</Title>
-              {APP_BRANDING.isBeta ? (
+              {APP_BRANDING.badgeLabel ? (
                 <Badge size="xs" color={APP_BRANDING.primaryColor} variant="filled" radius="sm">
-                  BETA
+                  {APP_BRANDING.badgeLabel}
                 </Badge>
               ) : null}
             </Group>

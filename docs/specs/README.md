@@ -8,6 +8,7 @@
   - [053.1-alpha-application-identity-isolation-and-packaging.md](053.1-alpha-application-identity-isolation-and-packaging.md)
     — exhaustive runtime channel identity, .cellxplorer-alpha isolation, purple theme/icons, Tauri
     overlay, shared NSIS integration, three-channel build stamps, and side-by-side package evidence.
+    **Implemented; review pending.**
   - [053.2-alpha-updater-release-publication-and-closure.md](053.2-alpha-updater-release-publication-and-closure.md)
     — exact Alpha updater/tag/manifest rules, first-pointer bootstrap, three-channel GitHub release
     automation, all-non-target pointer protection, and cumulative installed/update closure.

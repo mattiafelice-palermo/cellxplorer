@@ -70,8 +70,14 @@ ${StrLoc}
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
-; Channel-specific profile data root (Spec 022). Exact bundle identifiers only —
-; never infer from product-name substrings. Beta must never target .cellxplorer.
+; Channel-specific profile data root (Specs 022/053). Exact bundle identifiers only —
+; never infer from product-name substrings. Each installed application owns its root.
+!if "${BUNDLEID}" == "com.cellxplorer.desktop.alpha"
+  !define CX_PROFILE_DATA_DIR ".cellxplorer-alpha"
+  !define CX_BRAND_RGB "7048E8"
+  ; Windows COLORREF: 0x00BBGGRR for #7048E8.
+  !define CX_BRAND_COLORREF 0x00E84870
+!else
 !if "${BUNDLEID}" == "com.cellxplorer.desktop.beta"
   !define CX_PROFILE_DATA_DIR ".cellxplorer-beta"
   !define CX_BRAND_RGB "3678B7"
@@ -86,6 +92,7 @@ ${StrLoc}
   !else
     !error "Unsupported CellXplorer bundle identifier for profile data directory: ${BUNDLEID}"
   !endif
+!endif
 !endif
 
 Var PassiveMode

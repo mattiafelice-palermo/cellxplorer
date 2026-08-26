@@ -274,6 +274,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const performCheck = useCallback(
     async (source: UpdateCheckSource) => {
+      if (!updateUiEnabled) return;
       if (checkInFlight.current) {
         if (source === "manual") {
           checkFeedbackSource.current = "manual";
@@ -361,7 +362,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       checkInFlight.current = run;
       await run;
     },
-    [applyRelease, devMock, recordCheckCompleted, tauri],
+    [applyRelease, devMock, recordCheckCompleted, tauri, updateUiEnabled],
   );
 
   useEffect(() => {
@@ -404,16 +405,16 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [devMock, performCheck, preferences, updateUiEnabled]);
 
   useEffect(() => {
-    if (devMock === "available") {
+    if (updateUiEnabled && devMock === "available") {
       applyRelease(mockRelease(), "automatic");
     }
-  }, [applyRelease, devMock]);
+  }, [applyRelease, devMock, updateUiEnabled]);
 
   useEffect(() => {
-    if (!devMock || devMock === "available") return;
+    if (!updateUiEnabled || !devMock || devMock === "available") return;
     dispatch({ type: "check_success", source: "manual", release: mockRelease() });
     setModalOpen(true);
-  }, [devMock]);
+  }, [devMock, updateUiEnabled]);
 
   const openUpdateModal = useCallback(() => {
     if (stateRef.current.status === "available") {

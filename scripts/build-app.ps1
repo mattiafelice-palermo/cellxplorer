@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("stable", "beta")]
+    [ValidateSet("stable", "beta", "alpha")]
     [string]$Channel = "stable",
     [switch]$SkipInstall,
     [switch]$SkipFrontend,
@@ -81,17 +81,29 @@ Write-Host "Channel: $Channel" -ForegroundColor Cyan
 
 $tauriConf = Get-Content (Join-Path $repoRoot "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
 $betaConfPath = Join-Path $repoRoot "src-tauri\tauri.beta.conf.json"
-if ($Channel -eq "beta") {
-    if (-not (Test-Path $betaConfPath)) {
-        throw "Missing beta Tauri overlay: $betaConfPath"
+$alphaConfPath = Join-Path $repoRoot "src-tauri\tauri.alpha.conf.json"
+$overlayPath = switch ($Channel) {
+    "beta" { $betaConfPath }
+    "alpha" { $alphaConfPath }
+    default { $null }
+}
+if ($overlayPath) {
+    if (-not (Test-Path $overlayPath)) {
+        throw "Missing $Channel Tauri overlay: $overlayPath"
     }
-    $betaConf = Get-Content $betaConfPath -Raw | ConvertFrom-Json
-    $productName = $betaConf.productName
+    $channelConf = Get-Content $overlayPath -Raw | ConvertFrom-Json
+    $productName = $channelConf.productName
 } else {
     $productName = $tauriConf.productName
 }
 $appVersion = (Get-Content (Join-Path $repoRoot "package.json") -Raw | ConvertFrom-Json).version
-$expectedInstallerName = "$productName" + "_${appVersion}_x64-setup.exe"
+$installerPrefix = switch ($Channel) {
+    "stable" { "CellXplorer" }
+    "beta" { "CellXplorer.Beta" }
+    "alpha" { "CellXplorer.Alpha" }
+}
+$expectedInstallerName = "${installerPrefix}_${appVersion}_x64-setup.exe"
+$tauriInstallerName = "${productName}_${appVersion}_x64-setup.exe"
 
 if (-not $SkipInstall) {
     Write-Host "Installing root npm dependencies..." -ForegroundColor Yellow
@@ -170,13 +182,31 @@ if (-not $SkipInstaller) {
         Write-Host "No TAURI_SIGNING_PRIVATE_KEY; using --no-sign for local packaging." -ForegroundColor Yellow
         $tauriArgs += "--no-sign"
     }
-    if ($Channel -eq "beta") {
-        $tauriArgs += @("--config", "src-tauri/tauri.beta.conf.json")
+    if ($Channel -ne "stable") {
+        $tauriArgs += @("--config", "src-tauri/tauri.$Channel.conf.json")
     }
     Invoke-Checked "npx.cmd" $tauriArgs $repoRoot
 
     $installerDir = Join-Path $repoRoot "src-tauri\target\release\bundle\nsis"
-    $installer = Get-ChildItem $installerDir -Filter $expectedInstallerName -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    $tauriInstaller = Get-ChildItem $installerDir -Filter $tauriInstallerName -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $tauriInstaller) {
+        throw "Tauri did not create the product installer: $tauriInstallerName"
+    }
+
+    # Tauri derives the filename from productName and preserves its spaces,
+    # while the release artifact contract uses dotted channel suffixes.
+    # Normalize only this exact freshly-built artifact; never discover a
+    # merely newest setup executable.
+    $expectedInstallerPath = Join-Path $installerDir $expectedInstallerName
+    if ($tauriInstaller.Name -ne $expectedInstallerName) {
+        Write-Host "Normalizing installer name to $expectedInstallerName" -ForegroundColor Yellow
+        Move-Item -LiteralPath $tauriInstaller.FullName -Destination $expectedInstallerPath -Force
+        $tauriSignaturePath = "$($tauriInstaller.FullName).sig"
+        if (Test-Path -LiteralPath $tauriSignaturePath) {
+            Move-Item -LiteralPath $tauriSignaturePath -Destination "$expectedInstallerPath.sig" -Force
+        }
+    }
+    $installer = Get-Item -LiteralPath $expectedInstallerPath -ErrorAction SilentlyContinue
     if (-not $installer) {
         throw "Tauri did not create the expected installer: $expectedInstallerName"
     }

@@ -34,14 +34,35 @@ const betaBlue = [
   "#265487",
 ] as const;
 
+const alphaPurple = [
+  "#f3f0ff",
+  "#e5dbff",
+  "#d0bfff",
+  "#b197fc",
+  "#9775fa",
+  "#845ef7",
+  "#7950f2",
+  "#7048e8",
+  "#6741d9",
+  "#5f3dc4",
+] as const;
+
+const channelTheme =
+  APP_BRANDING.channel === "beta"
+    ? {
+        colors: { betaBlue },
+        primaryShade: { light: 7, dark: 6 } as const,
+      }
+    : APP_BRANDING.channel === "alpha"
+      ? {
+          colors: { alphaPurple },
+          primaryShade: { light: 7, dark: 6 } as const,
+        }
+      : {};
+
 const theme = createTheme({
   primaryColor: APP_BRANDING.primaryColor,
-  ...(APP_BRANDING.isBeta
-    ? {
-        colors: { betaBlue: [...betaBlue] },
-        primaryShade: { light: 7, dark: 6 },
-      }
-    : {}),
+  ...channelTheme,
   defaultRadius: "md",
 });
 
@@ -64,7 +85,7 @@ startupQueryPersistence.restore(queryClient);
 startupQueryPersistence.start(queryClient);
 
 async function betaBootstrapGateRequired(): Promise<boolean> {
-  if (!APP_BRANDING.isBeta || !isTauriApp()) return false;
+  if (APP_BRANDING.channel !== "beta" || !isTauriApp()) return false;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     return await invoke<boolean>("beta_bootstrap_gate_required");

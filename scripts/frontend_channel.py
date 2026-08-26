@@ -18,8 +18,10 @@ BRANDING_INPUTS = (
     "frontend/src/main.tsx",
     "frontend/public/app-icon.png",
     "frontend/public/app-icon-beta.png",
+    "frontend/public/app-icon-alpha.png",
     "src-tauri/tauri.conf.json",
     "src-tauri/tauri.beta.conf.json",
+    "src-tauri/tauri.alpha.conf.json",
 )
 
 
@@ -41,7 +43,7 @@ def branding_inputs_hash(repo_root: Path) -> str:
 
 
 def write_stamp(repo_root: Path, channel: str) -> Path:
-    if channel not in {"stable", "beta"}:
+    if channel not in {"stable", "beta", "alpha"}:
         raise ValueError(f"Unsupported channel: {channel}")
     dist = repo_root / "frontend" / "dist"
     index = dist / "index.html"
@@ -60,7 +62,7 @@ def write_stamp(repo_root: Path, channel: str) -> Path:
 
 
 def verify_stamp(repo_root: Path, channel: str) -> None:
-    if channel not in {"stable", "beta"}:
+    if channel not in {"stable", "beta", "alpha"}:
         raise ValueError(f"Unsupported channel: {channel}")
     destination = stamp_path(repo_root)
     if not destination.is_file():
@@ -90,10 +92,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     write_cmd = sub.add_parser("write", help="Write stamp after a frontend build")
-    write_cmd.add_argument("--channel", choices=("stable", "beta"), required=True)
+    write_cmd.add_argument("--channel", choices=("stable", "beta", "alpha"), required=True)
 
     verify_cmd = sub.add_parser("verify", help="Verify stamp before packaging")
-    verify_cmd.add_argument("--channel", choices=("stable", "beta"), required=True)
+    verify_cmd.add_argument("--channel", choices=("stable", "beta", "alpha"), required=True)
 
     args = parser.parse_args(argv)
     repo_root = args.repo_root.resolve()

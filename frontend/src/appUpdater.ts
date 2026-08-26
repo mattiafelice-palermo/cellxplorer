@@ -1,3 +1,5 @@
+import type { AppChannel } from "./appChannel";
+
 export const UPDATE_NOTIFIED_VERSION_KEY = "cellxplorer-update-notified-version";
 export const UPDATE_PREFERENCES_KEY = "cellxplorer-update-preferences";
 export const UPDATE_PREFERENCES_CHANGED_EVENT = "cellxplorer-update-preferences-changed";
@@ -185,9 +187,9 @@ export function parseDevUpdateMock(
 export function shouldShowUpdateUi(
   tauri: boolean,
   mock: DevUpdateMockMode | null,
-  _channel: "stable" | "beta" = "stable",
+  channel: AppChannel = "stable",
 ): boolean {
-  return tauri || mock !== null;
+  return channel !== "alpha" && (tauri || mock !== null);
 }
 
 export function failurePhaseForLocalUpdatePhase(

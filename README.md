@@ -31,23 +31,37 @@ To build the installable Windows application:
 
 The installer is created under `src-tauri\target\release\bundle\nsis`.
 
+To build a specific application channel from the shared pipeline:
+
+```powershell
+.\scripts\build-app.ps1 -Channel stable
+.\scripts\build-app.ps1 -Channel beta
+.\scripts\build-app.ps1 -Channel alpha
+```
+
 See [`docs/local-development.md`](docs/local-development.md) for options, troubleshooting, and
 the manual fallback.
 
-## Stable and Beta editions
+## Stable, Beta, and Alpha editions
 
-CellXplorer is available as two separate Windows applications:
+CellXplorer is available as separate Windows applications:
 
 - **CellXplorer** receives Stable updates and stores data under
   `%USERPROFILE%\.cellxplorer`.
 - **CellXplorer Beta** is an opt-in preview application with separate Windows identity,
   installation, updater, and `%USERPROFILE%\.cellxplorer-beta` data root.
+- **CellXplorer Alpha** is a fully isolated early-build application with its own Windows identity,
+  installation, deep link, purple branding, and `%USERPROFILE%\.cellxplorer-alpha` data root.
 
 Stable can notify you when a Beta preview is available and, after explicit confirmation, launch
 the separate Beta installer. Installing Beta does not replace Stable or its library. Once Beta is
 installed, it updates itself from the Beta channel; Stable never updates the installed Beta copy.
 On Beta's first launch you choose whether to copy a safe snapshot of the Stable library or start
 empty. The two libraries remain independent afterward.
+
+Alpha starts empty and never copies or synchronizes Stable or Beta data. Its update endpoint is
+reserved for the later Alpha release-channel phase, so update checks are disabled in the current
+build.
 
 ## Manual run
 
@@ -66,10 +80,11 @@ python backend/seed_demo.py
 ```
 
 Stable app state lives in `%USERPROFILE%\.cellxplorer`; Beta app state lives in
-`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root for development and
-tests. Each root contains `cellxplorer.db` (SQLite) and `cache/` (Parquet, keyed by file hash +
-parser/calc versions). Raw cycler files stay wherever they are — referenced by content hash,
-never copied, except app-managed imports selected for the explicit Stable-to-Beta snapshot.
+`%USERPROFILE%\.cellxplorer-beta`; Alpha app state lives in `%USERPROFILE%\.cellxplorer-alpha`.
+`CELLXPLORER_DATA` overrides any root for development and tests. Each root contains
+`cellxplorer.db` (SQLite) and `cache/` (Parquet, keyed by file hash + parser/calc versions). Raw
+cycler files stay wherever they are — referenced by content hash, never copied, except app-managed
+imports selected for the explicit Stable-to-Beta snapshot.
 
 The SQLite schema is explicitly versioned. Existing databases are backed up
 under `backups/` and migrated before normal background services start; newer,

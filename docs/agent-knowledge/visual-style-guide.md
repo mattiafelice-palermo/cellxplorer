@@ -58,7 +58,7 @@ gradients, glass effects, heavy shadows, or decorative animation.
 
 ```ts
 createTheme({
-  primaryColor: APP_BRANDING.primaryColor, // Stable teal; Beta betaBlue
+  primaryColor: APP_BRANDING.primaryColor, // Stable teal; Beta betaBlue; Alpha alphaPurple
   defaultRadius: "md",
 });
 ```
@@ -67,7 +67,7 @@ Use colors by meaning:
 
 | Meaning | Mantine color | Typical use |
 |---|---|---|
-| Primary / active | current theme primary (`teal` or `betaBlue`) | Main action, active eye, progress, selected state |
+| Primary / active | current theme primary (`teal`, `betaBlue`, or `alphaPurple`) | Main action, active eye, progress, selected state |
 | Semantic success / running | `teal` | Success notification, completed operation, healthy/running state |
 | Draft / unsaved attention | `yellow` | Draft plot, update-pending action, non-destructive attention |
 | Changed / caution | `orange` | Changed source, caution alert, action needing review |

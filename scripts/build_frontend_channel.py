@@ -15,7 +15,7 @@ FRONTEND = ROOT / "frontend"
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("channel", choices=("stable", "beta"))
+    parser.add_argument("channel", choices=("stable", "beta", "alpha"))
     args = parser.parse_args(argv)
 
     env = os.environ.copy()

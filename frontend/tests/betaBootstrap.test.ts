@@ -43,6 +43,7 @@ test("dev mock query parsing is development-only", () => {
 
 test("bootstrap UI is beta-only and requires Tauri or dev mock", () => {
   assert.equal(shouldShowBetaBootstrapUi("stable", true, null), false);
+  assert.equal(shouldShowBetaBootstrapUi("alpha", true, "available"), false);
   assert.equal(shouldShowBetaBootstrapUi("beta", false, null), false);
   assert.equal(shouldShowBetaBootstrapUi("beta", true, null), true);
   assert.equal(shouldShowBetaBootstrapUi("beta", false, "available"), true);

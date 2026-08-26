@@ -144,7 +144,10 @@ A report that describes a different plot than the app rendered is worse than no 
 8. Visually test custom installer and uninstaller pages after NSIS changes. Never test destructive
    uninstall against real user data.
 
-The expected installer is `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`.
+The expected installers are channel-specific: `CellXplorer_<version>_x64-setup.exe`,
+`CellXplorer.Beta_<version>_x64-setup.exe`, and
+`CellXplorer.Alpha_<version>_x64-setup.exe`. Packaging must derive the expected filename from the
+selected overlay and fail if that exact artifact is absent.
 
 ### Packaging cost, measured
 
@@ -178,9 +181,11 @@ and pyarrow 84MB.
    before modifying non-disposable user data.
 5. Run `python -m unittest tests.test_updater_configuration -v` when updater config or Rust
    command wiring changes.
-6. Stable and Beta use the same committed public key from `src-tauri/tauri.conf.json`, but separate
-   fixed `release-channels/stable/latest.json` and `release-channels/beta/latest.json` endpoints.
-   The Beta overlay inherits the key; manifest verification must read the base configuration.
+6. Stable, Beta, and Alpha use the same committed public key from `src-tauri/tauri.conf.json`, but
+   separate fixed `release-channels/stable/latest.json`, `release-channels/beta/latest.json`, and
+   `release-channels/alpha/latest.json` endpoints. The channel overlays inherit the key; manifest
+   verification must read the base configuration. Alpha's updater commands remain fail-closed until
+   the 053.2 release child enables Alpha publication.
 7. Persist GitHub release-asset metadata as the raw `Invoke-WebRequest` response body. Do not
    re-encode with PowerShell `ConvertTo-Json`; that can emit nested arrays or stringified rows and
    fail `verify_updater_manifest.py` with `release asset at index 0 must be an object`.

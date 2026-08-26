@@ -209,6 +209,7 @@ export function SettingsPage() {
   );
   const appUpdate = useOptionalAppUpdate();
   const betaInstall = useBetaInstall();
+  const alphaUpdatesDisabled = APP_BRANDING.channel === "alpha";
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -799,7 +800,7 @@ export function SettingsPage() {
     saveAppUpdatePreferences(window.localStorage, updatePreferences);
     setSavedUpdatePreferences(updatePreferences);
     window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED_EVENT));
-    if (!APP_BRANDING.isBeta && betaOptInEnabled) {
+    if (APP_BRANDING.channel === "stable" && betaOptInEnabled) {
       void betaInstall?.checkForBeta("manual");
     }
     notifications.show({
@@ -1724,7 +1725,14 @@ export function SettingsPage() {
                 </Text>
               </div>
 
-              {APP_BRANDING.isBeta ? (
+              {alphaUpdatesDisabled ? (
+                <Alert color={APP_BRANDING.primaryColor} title="Alpha updates are not enabled yet">
+                  Alpha update publication is reserved for the next release-channel phase. Update
+                  checks and installation controls are disabled for this build.
+                </Alert>
+              ) : null}
+
+              {APP_BRANDING.channel === "beta" ? (
                 <Paper
                   withBorder
                   p="md"
@@ -1774,6 +1782,7 @@ export function SettingsPage() {
                               : 365
                       }
                       allowDecimal={false}
+                      disabled={alphaUpdatesDisabled}
                       value={updatePreferences.intervalValue}
                       onChange={(value) =>
                         setUpdatePreferences((current) => ({
@@ -1799,6 +1808,7 @@ export function SettingsPage() {
                         }))
                       }
                       allowDeselect={false}
+                      disabled={alphaUpdatesDisabled}
                       w={180}
                     />
                   </Group>
@@ -1834,6 +1844,7 @@ export function SettingsPage() {
                   </div>
                   <Switch
                     checked={updatePreferences.notificationsEnabled}
+                    disabled={alphaUpdatesDisabled}
                     onChange={(event) =>
                       setUpdatePreferences((current) => ({
                         ...current,
@@ -1845,7 +1856,7 @@ export function SettingsPage() {
                 </Group>
               </Paper>
 
-              {!APP_BRANDING.isBeta ? (
+              {APP_BRANDING.channel === "stable" ? (
               <Paper
                 withBorder
                 p="md"
@@ -1873,7 +1884,7 @@ export function SettingsPage() {
               </Paper>
               ) : null}
 
-              {!APP_BRANDING.isBeta && betaInstall?.installationInfo?.installed ? (
+              {APP_BRANDING.channel === "stable" && betaInstall?.installationInfo?.installed ? (
                 <Paper withBorder p="md">
                   <Group justify="space-between" wrap="nowrap" align="center">
                     <div>
@@ -1891,7 +1902,7 @@ export function SettingsPage() {
                 </Paper>
               ) : null}
 
-              {!APP_BRANDING.isBeta &&
+              {APP_BRANDING.channel === "stable" &&
               !betaInstall?.installationInfo?.installed &&
               betaInstall?.installState.status === "available" ? (
                 <Paper withBorder p="md">
@@ -1914,7 +1925,7 @@ export function SettingsPage() {
               <Group justify="flex-end">
                 <Button
                   leftSection={<IconDeviceFloppy size={16} />}
-                  disabled={!updatePreferencesDirty}
+                  disabled={alphaUpdatesDisabled || !updatePreferencesDirty}
                   onClick={saveUpdatePreferences}
                 >
                   Save settings

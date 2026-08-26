@@ -9,11 +9,12 @@ into a Windows desktop app with Tauri. Read this before changing the packaging s
   (`frontend/dist/.cellxplorer-channel.json`).
 - The Python/FastAPI backend is frozen with PyInstaller as a Tauri sidecar executable.
 - Tauri bundles the frontend and the backend sidecar into a Windows installer.
-- Two NSIS products share one template: Stable and Beta differ by Tauri overlay, icons, and frontend
-  channel build.
+- Three NSIS products share one template: Stable, Beta, and Alpha differ by Tauri overlay, icons,
+  frontend channel build, and exact profile/brand constants.
 - Default successful installer targets:
   - Stable: `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
   - Beta: `src-tauri/target/release/bundle/nsis/CellXplorer.Beta_<version>_x64-setup.exe`
+  - Alpha: `src-tauri/target/release/bundle/nsis/CellXplorer.Alpha_<version>_x64-setup.exe`
 - MSI generation reached WiX linking, but WiX ICE validation failed in this environment because
   the Windows Installer service was not accessible to the build process. NSIS is the clean default.
 
@@ -42,6 +43,7 @@ Prefer the channel-aware wrapper:
 ```powershell
 .\scripts\build-app.ps1 -Channel stable
 .\scripts\build-app.ps1 -Channel beta
+.\scripts\build-app.ps1 -Channel alpha
 ```
 
 When testing packaging manually:
@@ -51,6 +53,7 @@ npm.cmd install
 
 python scripts\build_frontend_channel.py stable
 # or: python scripts\build_frontend_channel.py beta
+# or: python scripts\build_frontend_channel.py alpha
 
 npm.cmd run build:backend
 New-Item -ItemType Directory -Force src-tauri\binaries
@@ -60,8 +63,8 @@ python scripts\frontend_channel.py verify --channel stable
 npm.cmd run tauri:build:stable
 ```
 
-Direct `npm.cmd run tauri:build:beta` verifies the frontend stamp before packaging. Do not package
-a Beta installer from a Stable-built `frontend/dist` or the inverse.
+Direct `npm.cmd run tauri:build:beta` and `npm.cmd run tauri:build:alpha` verify the frontend stamp
+before packaging. Do not package one channel's installer from another channel's `frontend/dist`.
 
 `npm.cmd run tauri:build:stable|beta` expects the frontend and backend sidecar to already be built.
 
@@ -148,11 +151,13 @@ same command with elevated sandbox permission, then continue the documented buil
   `CommandChild::kill(self)` consumes the child.
 - Tauri requires an `.ico` file for Windows bundling. Stable uses `src-tauri/icons/icon.ico`;
   Beta uses `src-tauri/icons-beta/icon.ico` generated from the Stable source with a blue overlay
-  (`python scripts\build_beta_icons.py`; requires `pip install -r scripts\requirements-dev.txt`).
+  (`python scripts\build_beta_icons.py`; requires `pip install -r scripts\requirements-dev.txt`);
+  Alpha uses `src-tauri/icons-alpha/icon.ico` generated with `python scripts\build_alpha_icons.py`.
 - The runtime window/taskbar icon is set from `src-tauri/icons/icon-256.rgba` (Stable) or
-  `src-tauri/icons-beta/icon-256.rgba` (Beta) in `src-tauri/src/main.rs`.
+  `src-tauri/icons-beta/icon-256.rgba` (Beta) or `src-tauri/icons-alpha/icon-256.rgba` (Alpha) in
+  `src-tauri/src/main.rs`.
 - The visible in-app header icon and favicon are `frontend/public/app-icon.png` (Stable) or
-  `frontend/public/app-icon-beta.png` (Beta).
+  `frontend/public/app-icon-beta.png` (Beta) or `frontend/public/app-icon-alpha.png` (Alpha).
 - The generated NSIS shortcut originally had `IconLocation = ,0`, so Windows inferred
   the icon from the target executable and cached it inconsistently across Start/taskbar.
   `src-tauri/nsis-hooks.nsh` rewrites Start/Desktop shortcuts after install with an explicit
@@ -172,8 +177,8 @@ same command with elevated sandbox permission, then continue the documented buil
   opening Program Files binaries for read/write: an unelevated diagnostic gets access denied even
   when no process owns the file, producing a false lock. Stable process disappearance across the
   bounded quiet period is the completion condition. Do **not** revert to shared
-  `taskkill /IM cellxplorer.exe` cleanup — Stable and Beta
-  share executable image names but install to different folders.
+  `taskkill /IM cellxplorer.exe` cleanup — all three products share executable image names but
+  install to different folders.
 - An upgrade must not execute the previous release's registered `uninstall.exe`: that binary may
   contain the exact packaging defect the new release is meant to repair. When the reinstall page
   selects uninstall-before-install, defer the operation to the Install section, generate the
@@ -266,9 +271,11 @@ Without it, the main desktop app can open a terminal even if the backend sidecar
 
 ## Data location and compatibility
 
-The backend stores Stable data under `%USERPROFILE%\.cellxplorer` and Beta data under
-`%USERPROFILE%\.cellxplorer-beta`; `CELLXPLORER_DATA` overrides either root exactly. Use disposable
-test data for installer verification. It uses packaged forward-only schema revisions, automatic
+The backend stores Stable data under `%USERPROFILE%\.cellxplorer`, Beta data under
+`%USERPROFILE%\.cellxplorer-beta`, and Alpha data under `%USERPROFILE%\.cellxplorer-alpha`;
+`CELLXPLORER_DATA` overrides any root exactly. Use disposable test data for installer verification.
+Alpha starts empty and has no Stable/Beta copy or synchronization path; its updater controls remain
+disabled until Spec 053.2. The application uses packaged forward-only schema revisions, automatic
 SQLite backups before migration,
 startup compatibility checks, and schema status in diagnostics. See `docs/database-migrations.md`.
 Moving the default data location to `%LOCALAPPDATA%\Cellxplorer` remains a future packaging change.

@@ -12,11 +12,13 @@ from app.services import app_channel
 
 
 class BackendAppChannelTests(unittest.TestCase):
-    def test_packaged_stable_and_beta(self):
+    def test_packaged_channels_use_isolated_deep_links(self):
         with patch.dict(os.environ, {"CELLXPLORER_STARTUP_MODE": "manual", "CELLXPLORER_CHANNEL": "stable"}, clear=True):
             self.assertEqual(app_channel.deep_link_import_base(), "cellxplorer://import-analysis")
         with patch.dict(os.environ, {"CELLXPLORER_STARTUP_MODE": "startup", "CELLXPLORER_CHANNEL": "beta"}, clear=True):
             self.assertEqual(app_channel.deep_link_import_base(), "cellxplorer-beta://import-analysis")
+        with patch.dict(os.environ, {"CELLXPLORER_STARTUP_MODE": "manual", "CELLXPLORER_CHANNEL": "alpha"}, clear=True):
+            self.assertEqual(app_channel.deep_link_import_base(), "cellxplorer-alpha://import-analysis")
 
     def test_non_packaged_missing_defaults_stable(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -44,6 +46,10 @@ class BackendAppChannelTests(unittest.TestCase):
         self.assertEqual(
             app_channel.default_data_root("beta", home),
             home / ".cellxplorer-beta",
+        )
+        self.assertEqual(
+            app_channel.default_data_root("alpha", home),
+            home / ".cellxplorer-alpha",
         )
 
     def test_resolve_data_root_honors_override(self):

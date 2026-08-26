@@ -419,6 +419,8 @@ test("development mock parsing stays dev-only", () => {
   assert.equal(shouldShowUpdateUi(false, null), false);
   assert.equal(shouldShowUpdateUi(true, null, "beta"), true);
   assert.equal(shouldShowUpdateUi(true, null, "stable"), true);
+  assert.equal(shouldShowUpdateUi(true, "available", "alpha"), false);
+  assert.equal(shouldShowUpdateUi(false, null, "alpha"), false);
 });
 
 test("modal dismissal rules follow download and install phases", () => {

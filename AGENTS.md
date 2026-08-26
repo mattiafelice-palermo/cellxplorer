@@ -131,7 +131,8 @@ uncommitted or unpushed.
 ## Persistent user data
 
 Stable user state defaults to `%USERPROFILE%\.cellxplorer`; Beta user state defaults to
-`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly:
+`%USERPROFILE%\.cellxplorer-beta`; Alpha user state defaults to `%USERPROFILE%\.cellxplorer-alpha`.
+`CELLXPLORER_DATA` overrides any root exactly:
 
 - `cellxplorer.db`: canonical SQLite database
 - `cache/`: versioned Parquet caches
@@ -242,7 +243,7 @@ Cellxplorer/
 │   │   │       │   ├── recognition/ Recognition job progress hooks and presentation
 │   │   │       │   └── performance/ Time/Capacity opt-in interaction profiling
 │   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
-│   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
+│   │   ├── appChannel.ts           Stable/Beta/Alpha channel branding (Specs 021/053.1)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
@@ -289,7 +290,7 @@ Cellxplorer/
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)
 │   ├── test_continuations.py       Continuation inspect, ordering, and lifecycle validation (Specs 034.2/034.3)
-│   ├── test_app_channels.py        Stable/Beta identity and build contract tests (Spec 021)
+│   ├── test_app_channels.py        Stable/Beta/Alpha identity and build contract tests (Specs 021/053.1)
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
@@ -313,6 +314,7 @@ Cellxplorer/
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
 │   ├── build_beta_icons.py         Derive Beta icon assets from Stable source art (Spec 021)
+│   ├── build_alpha_icons.py        Derive Alpha icon assets from Stable source art (Spec 053.1)
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── benchmark_test_runners.py  Diagnostic A/B/C backend runner benchmark (Spec 048.2)
 │   ├── check_versions.py           Read-only version declaration consistency check
@@ -341,8 +343,12 @@ Cellxplorer/
 │   └── release.yml                 Signed Stable/Beta publishing on v* tags (Specs 019/023)
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
+│   ├── tauri.conf.json              Stable base configuration
+│   ├── tauri.beta.conf.json         Beta identity overlay (Spec 021)
+│   ├── tauri.alpha.conf.json        Alpha identity overlay (Spec 053.1)
+│   ├── icons/, icons-beta/, icons-alpha/ Channel-specific bundle/runtime assets
 │   └── src/
-│       ├── app_channel.rs          Stable/Beta identity helpers (Spec 021)
+│       ├── app_channel.rs          Stable/Beta/Alpha identity helpers (Specs 021/053.1)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
 │       ├── beta_installer.rs       Stable-owned first Beta installation (Spec 023)
 │       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
@@ -422,7 +428,9 @@ Then run preflight and push the release tag.
 ## Release workflow
 
 Use this sequence for user-facing Stable or Beta releases unless a spec says otherwise (for
-example a coordinated release train that defers tagging until several specs land).
+example a coordinated release train that defers tagging until several specs land). Alpha is
+currently buildable and isolated, but its tag/publication workflow remains owned by Spec 053.2;
+do not tag, publish, or modify `release-channels` for Alpha during Spec 053.1.
 
 1. Finish and merge feature work to `main`, or confirm `main` already contains the release scope.
 2. Bump every maintained version declaration and prepend `CHANGELOG.md`:
