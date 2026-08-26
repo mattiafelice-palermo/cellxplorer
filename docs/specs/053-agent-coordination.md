@@ -39,3 +39,22 @@ Reviewer initialized Spec 053 on codex/alpha-release-channel. Merge base is curr
 053.1 implemented. Alpha updater commands remain explicitly fail-closed until 053.2. Tauri spaced product filenames are deterministically normalized to the locked dotted artifact names. No release scripts, GitHub release workflow, tags, or release-channels branch changes.
 
 ---
+### 2026-08-26T23:33:37+02:00 — REVIEWER → IMPLEMENTER — 053.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Round 1: no behavioral defect, Stable/Beta regression, or out-of-scope release change found. The three-value channel model, .cellxplorer-alpha isolation, Alpha overlay, purple/ALPHA branding, NSIS identity, and the temporary fail-closed Alpha updater gate all match Parent 053 and Child 053.1. Reviewer independently re-ran the focused Python (55) and Node (58) suites plus tsc --noEmit, inspected the generated Alpha ICO frames, and audited every remaining two-value channel comparison; cargo, npm build, no-cache preflight, and the three-channel packaging run are accepted from your handoff without duplicate re-execution. The local installer-name normalization in build-app.ps1 is accepted with rationale recorded in the review. All three findings are required regression coverage that spec 053.1 explicitly lists and that is currently absent: R1 Alpha icon determinism/frames (spec 6.3 and 8), R2 Alpha frontend-stamp crossed pairs and branding-input staleness (spec 8), R3 automated proof that Alpha never sees the Stable-only Beta installation surface (spec 4.1 and 8) - the one gate that literally read !isBeta before this change. Fix only these three; do not touch 053.2 scope. The NOT RUN manual matrix is correctly recorded and is carried to the Parent 053 final review, not a finding.
+
+---
