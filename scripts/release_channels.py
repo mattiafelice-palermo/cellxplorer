@@ -83,7 +83,7 @@ def validate_branch_tree(
     if alpha_is_published:
         required.add(ALPHA_CHANNEL_PATH)
         allowed.add(ALPHA_CHANNEL_PATH)
-    if target_channel == "beta" and not alpha_is_published:
+    if target_channel == "beta":
         # The first real Beta release is what creates the first trustworthy Beta pointer.
         # Stable must already be valid so no transition binary can embed a 404 feed.
         required.remove("beta/latest.json")

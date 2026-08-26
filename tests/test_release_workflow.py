@@ -249,6 +249,15 @@ class ReleaseChannelBranchTests(unittest.TestCase):
                 published_alpha=False,
             )
 
+    def test_first_alpha_post_publication_state_passes_with_new_pointer(self):
+        release_channels.validate_branch_tree(
+            self.valid_tree(), target_channel="alpha", published_alpha=False
+        )
+        blobs = release_channels.validate_branch_tree(
+            self.valid_tree_with_alpha(), target_channel="alpha", published_alpha=True
+        )
+        self.assertEqual(set(blobs), release_channels.ALL_CHANNEL_PATHS)
+
     def test_post_alpha_tree_requires_alpha_and_rejects_missing_or_extra_files(self):
         blobs = release_channels.validate_branch_tree(
             self.valid_tree_with_alpha(),
@@ -256,9 +265,29 @@ class ReleaseChannelBranchTests(unittest.TestCase):
             published_alpha=True,
         )
         self.assertEqual(set(blobs), release_channels.ALL_CHANNEL_PATHS)
+        for target_channel in ("stable", "beta", "alpha"):
+            with self.subTest(target_channel=target_channel):
+                with self.assertRaises(release_channels.ReleaseChannelBranchError):
+                    release_channels.validate_branch_tree(
+                        self.valid_tree(),
+                        target_channel=target_channel,
+                        published_alpha=True,
+                    )
+
+    def test_beta_bootstrap_does_not_depend_on_alpha_history(self):
+        missing_beta = self.valid_tree_with_alpha()
+        missing_beta["tree"] = [
+            entry
+            for entry in missing_beta["tree"]
+            if entry["path"] not in {"beta", "beta/latest.json"}
+        ]
+        blobs = release_channels.validate_branch_tree(
+            missing_beta, target_channel="beta", published_alpha=True
+        )
+        self.assertNotIn("beta/latest.json", blobs)
         with self.assertRaises(release_channels.ReleaseChannelBranchError):
             release_channels.validate_branch_tree(
-                self.valid_tree(), target_channel="stable", published_alpha=True
+                missing_beta, target_channel="alpha", published_alpha=False
             )
 
     def test_rejects_source_tree_or_truncated_response(self):
@@ -567,6 +596,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("remote-channel-latest-raw.json", publish)
         self.assertIn("published-release-channels-tree.json", publish)
         self.assertIn("--published-alpha", publish)
+        self.assertIn("$postPublishedAlpha", publish)
+        self.assertIn(
+            '--published-alpha "$($postPublishedAlpha.ToString().ToLowerInvariant())"',
+            publish,
+        )
+        self.assertIn(
+            '} elseif ("${{ steps.channel.outputs.channel }}" -eq "beta") {',
+            self.release,
+        )
+        self.assertIn(
+            '} elseif ("${{ steps.channel.outputs.channel }}" -eq "alpha" -and -not $publishedAlpha) {',
+            self.release,
+        )
         self.assertNotIn("-Method Put -Uri \"https://api.github.com/repos/$owner/$repo/contents/$channelPath\"", publish)
         self.assertNotRegex(publish, r"\$[A-Za-z_][A-Za-z0-9_]*\?ref=")
         self.assertIn('[System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)', publish)

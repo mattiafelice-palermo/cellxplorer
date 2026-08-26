@@ -279,8 +279,10 @@ jobs:
           } | Select-Object -First 1)
           if ($targetEntry.Count -eq 1) {
             $targetSha = $targetEntry[0].sha
-          } elseif ("${{ steps.channel.outputs.channel }}" -in @("beta", "alpha") -and -not $publishedAlpha) {
-            Write-Host "The first ${{ steps.channel.outputs.channel }} release will create $targetPath."
+          } elseif ("${{ steps.channel.outputs.channel }}" -eq "beta") {
+            Write-Host "The first Beta release will create $targetPath."
+          } elseif ("${{ steps.channel.outputs.channel }}" -eq "alpha" -and -not $publishedAlpha) {
+            Write-Host "The first Alpha release will create $targetPath."
           } else {
             Write-Error "The target channel pointer is missing."
             exit 1
@@ -768,10 +770,17 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE "published-release-channels-tree.json"),
             ($publishedTree | ConvertTo-Json -Depth 10)
           )
+          # The successful undraft above is authoritative for the Alpha release
+          # created by this job, even if the initial release-history listing was
+          # captured before GitHub exposed that newly published release.
+          $postPublishedAlpha = (
+            "${{ steps.release_history.outputs.published_alpha }}" -eq "true" -or
+            "${{ steps.channel.outputs.channel }}" -eq "alpha"
+          )
           python scripts/release_channels.py `
             --tree-json published-release-channels-tree.json `
             --target-channel "${{ steps.channel.outputs.channel }}" `
-            --published-alpha "${{ steps.release_history.outputs.published_alpha }}"
+            --published-alpha "$($postPublishedAlpha.ToString().ToLowerInvariant())"
 
           python scripts/verify_updater_manifest.py `
             --manifest remote-channel-latest.json `

@@ -319,8 +319,15 @@ The `.github/workflows/release.yml` workflow then:
 9. validates exact channel version/product/asset/signature against release metadata with
    `scripts/verify_updater_manifest.py`, reading the shared public key from the base Tauri config;
 10. undrafts as a normal Stable release or true Beta/Alpha prerelease only after verification;
-11. updates only the selected channel pointer using its prior SHA, verifies exact bytes through the
-    Contents API and public raw endpoint, and proves every non-target blob is unchanged.
+11. updates only the selected channel pointer through an atomic non-force Git-data-API ref move
+    based on the captured branch tip, verifies exact bytes through the Contents API and public raw
+    endpoint, and proves every non-target blob is unchanged.
+
+Before the first production Alpha tag, obtain explicit release-preparation authorization and make a
+separate focused manifest-only commit on the orphan `release-channels` branch that updates its
+`README.md` to document Stable, Beta, and Alpha. This preparation is pending and is not performed
+by the Alpha implementation. The publication workflow treats `README.md` as protected and verifies
+that its blob is unchanged during every pointer update.
 
 Required GitHub repository secrets:
 
