@@ -60,10 +60,12 @@ export function isCellHiddenInAnalysis(
   );
 }
 
-/**
- * Resolve the visibility of one result row against the live analysis draft.
- * The server flag remains a fast authoritative path, while the draft check
- * makes retained/placeholder results respond to the sidebar immediately.
+/** Resolve one retained result row against the live analysis draft.
+ *
+ * Visibility is display-only, so cycle and Time/Capacity queries may retain a
+ * result whose `excluded` flag reflects an older draft. The live selection is
+ * therefore authoritative in both directions: it must be possible to hide a
+ * visible cached row and to reveal a cached row that was previously hidden.
  */
 export function isAnalysisSampleHidden(
   spec: AnalysisSpec,
@@ -77,9 +79,12 @@ export function isAnalysisSampleHidden(
           entry_kind: "replicate_group",
           entry_ref_id: sample.group_id,
         };
-  return Boolean(
-    sample.excluded || isCellHiddenInAnalysis(spec, sample.cell_id, [context]),
+  const occurrenceIsSelected = (spec.selection.entries ?? []).some(
+    (entry) =>
+      entry.kind === context.entry_kind && entry.ref_id === context.entry_ref_id,
   );
+  if (!occurrenceIsSelected) return true;
+  return isCellHiddenInAnalysis(spec, sample.cell_id, [context]);
 }
 
 /** Display-only: has this analysis segment been hidden across all cells? */
