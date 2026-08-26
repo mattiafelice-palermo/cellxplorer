@@ -1,5 +1,17 @@
 # Feature specs
 
+- [053-alpha-application-release-channel.md](053-alpha-application-release-channel.md)
+  adds CellXplorer Alpha as a fully isolated third Windows product from the shared source tree:
+  separate installation identity, profile root, deep link, updater feed, release tag family, purple
+  branding, and manifest pointer while preserving Stable/Beta behavior. Implement sequentially on
+  codex/alpha-release-channel:
+  - [053.1-alpha-application-identity-isolation-and-packaging.md](053.1-alpha-application-identity-isolation-and-packaging.md)
+    — exhaustive runtime channel identity, .cellxplorer-alpha isolation, purple theme/icons, Tauri
+    overlay, shared NSIS integration, three-channel build stamps, and side-by-side package evidence.
+  - [053.2-alpha-updater-release-publication-and-closure.md](053.2-alpha-updater-release-publication-and-closure.md)
+    — exact Alpha updater/tag/manifest rules, first-pointer bootstrap, three-channel GitHub release
+    automation, all-non-target pointer protection, and cumulative installed/update closure.
+  **Plan — non-implementable parent; begin with Child 053.1 after reviewer workflow initialization.**
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
   adds a protocol-family comparison modal beside the protocol selector, distinguishing strict
   semantic identity from workflow and custom comparability without silently merging source-local
