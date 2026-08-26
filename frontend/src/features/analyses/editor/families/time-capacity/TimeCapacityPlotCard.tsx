@@ -61,6 +61,9 @@ import {
   timeCapacityPlaceholderData,
   timeCapacityRetainedPanResult,
 } from "../../policies/timeCapacityQueryPolicy";
+import {
+  isAnalysisSampleHidden,
+} from "../../policies/analysisVisibility";
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
 import {
@@ -526,12 +529,19 @@ function voltageChannelColor(
   return paletteColorAt(palette, VOLTAGE_CHANNEL_PALETTE_INDEX[channel], paletteOverflow);
 }
 
+export function timeCapacityTraceIsHidden(
+  trace: Pick<TimeCapacityTrace, "cell_id" | "group_id" | "excluded">,
+  spec: AnalysisSpec,
+): boolean {
+  return isAnalysisSampleHidden(spec, trace);
+}
+
 function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: AnalysisSpec): boolean {
   if (!result) return false;
   const cfg = timeCapacityConfig(spec);
   if (!cfg.stacked || !cfg.current_right || cfg.current_right === "none") return false;
   return result.cell_traces.some((trace) => {
-    if (trace.excluded) return false;
+    if (timeCapacityTraceIsHidden(trace, spec)) return false;
     const area = cfg.electrode_area_cm2 ?? trace.electrode_area_cm2 ?? null;
     const nominal = trace.nominal_capacity_mah ?? null;
     return trace.current_ma.some((value, index) => {
@@ -599,7 +609,7 @@ export function timeCapacityTracesForResult(
 
   if (cfg.view !== "voltage_current") {
     for (const trace of result.cell_traces) {
-      if (trace.excluded) continue;
+      if (timeCapacityTraceIsHidden(trace, spec)) continue;
       const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
       const color = pick(seriesKey);
       const baseName = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
@@ -677,7 +687,7 @@ export function timeCapacityTracesForResult(
   }
 
   for (const trace of result.cell_traces) {
-    if (trace.excluded) continue;
+    if (timeCapacityTraceIsHidden(trace, spec)) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     const color = pick(seriesKey);
     const descriptor = timeCapacitySeriesDescriptor(trace);
@@ -2118,10 +2128,18 @@ function TimeCapacityPlotCardView({
   const currentResult = retainedQueryResult;
   const resultIsRetainedPanFallback = !queryResult && Boolean(retainedQueryResult);
   const resolvedPlotSpecRef = useRef<AnalysisSpec>(spec);
-  const renderSpec =
+  const renderSpecBase =
     timeResult.isPlaceholderData || resultIsRetainedPanFallback
       ? resolvedPlotSpecRef.current
       : requestSpec;
+  // A retained/placeholder result deliberately keeps its old data and display
+  // range while a replacement request is in flight. Visibility is a local
+  // draft concern, though, so carry the current selection into that retained
+  // render spec and let the plot hide the toggled trace immediately.
+  const renderSpec =
+    renderSpecBase.selection === spec.selection
+      ? renderSpecBase
+      : { ...renderSpecBase, selection: spec.selection };
   const renderCfg = timeCapacityConfig(renderSpec);
   useEffect(() => {
     if (!timeResult.isPlaceholderData && queryResult) {

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   isAnalysisSegmentHidden,
+  isAnalysisSampleHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
   type CellSelectionContext,
@@ -104,6 +105,29 @@ test("a direct occurrence can be hidden independently", () => {
     isCellHiddenInAnalysis(spec, 7, [
       { cell_id: 7, entry_kind: "cell", entry_ref_id: 7 },
     ]),
+    true,
+  );
+});
+
+test("result-row visibility uses the live draft and exact occurrence context", () => {
+  const spec = specWithVisibility([
+    { cell_id: 7, entry_kind: "replicate_group", entry_ref_id: 42 },
+  ]);
+
+  assert.equal(
+    isAnalysisSampleHidden(spec, { cell_id: 7, group_id: 42, excluded: false }),
+    true,
+  );
+  assert.equal(
+    isAnalysisSampleHidden(spec, { cell_id: 7, group_id: null, excluded: false }),
+    false,
+  );
+  assert.equal(
+    isAnalysisSampleHidden(specWithVisibility([]), {
+      cell_id: 7,
+      group_id: null,
+      excluded: true,
+    }),
     true,
   );
 });

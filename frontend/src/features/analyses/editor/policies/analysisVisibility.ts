@@ -6,6 +6,12 @@ export interface CellSelectionContext {
   entry_ref_id: number;
 }
 
+export interface AnalysisSampleVisibility {
+  cell_id: number;
+  group_id: number | null;
+  excluded?: boolean | null;
+}
+
 function exclusionAppliesToContext(
   exclusion: AnalysisSpec["selection"]["exclusions"][number],
   cellId: number,
@@ -51,6 +57,28 @@ export function isCellHiddenInAnalysis(
       exclusions.some((exclusion) =>
         exclusionAppliesToContext(exclusion, cellId, context),
       ),
+  );
+}
+
+/**
+ * Resolve the visibility of one result row against the live analysis draft.
+ * The server flag remains a fast authoritative path, while the draft check
+ * makes retained/placeholder results respond to the sidebar immediately.
+ */
+export function isAnalysisSampleHidden(
+  spec: AnalysisSpec,
+  sample: AnalysisSampleVisibility,
+): boolean {
+  const context: CellSelectionContext =
+    sample.group_id == null
+      ? { cell_id: sample.cell_id, entry_kind: "cell", entry_ref_id: sample.cell_id }
+      : {
+          cell_id: sample.cell_id,
+          entry_kind: "replicate_group",
+          entry_ref_id: sample.group_id,
+        };
+  return Boolean(
+    sample.excluded || isCellHiddenInAnalysis(spec, sample.cell_id, [context]),
   );
 }
 

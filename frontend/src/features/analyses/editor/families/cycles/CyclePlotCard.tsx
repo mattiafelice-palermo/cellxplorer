@@ -83,6 +83,9 @@ import {
 } from "../../plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
+  isAnalysisSampleHidden,
+} from "../../policies/analysisVisibility";
+import {
   aggregateSeriesDescriptor,
   cellSeriesDescriptor,
   composeSeriesKey,
@@ -392,11 +395,18 @@ export function withoutDiagnosticCycles(
   };
 }
 
+export function cycleSeriesIsHidden(
+  series: Pick<ComputeResult["cell_series"][number], "cell_id" | "group_id" | "excluded">,
+  spec: AnalysisSpec,
+): boolean {
+  return isAnalysisSampleHidden(spec, series);
+}
+
 /** The diagnostic cycles this spec asks to hide, or an empty set when off. */
 export function diagnosticCyclesFor(result: ComputeResult, spec: AnalysisSpec): Set<number> {
   if (!spec.presentation.hide_diagnostic_cycles) return new Set();
   return findDiagnosticCyclesAcross(
-    result.cell_series.filter((s) => !s.excluded),
+    result.cell_series.filter((s) => !cycleSeriesIsHidden(s, spec)),
     {
       tolerance: spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance,
       formationCycles: spec.computation.formation_cycles,
@@ -481,7 +491,7 @@ export function cycleTracesForResult(
     }
   }
   for (const s of result.cell_series) {
-    if (s.excluded || !soloOrIndividual(s)) continue;
+    if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
     const descriptor = cellSeriesDescriptor(s);
     colorKeyFor.set(descriptor.key, grouped ? `g${s.group_id}` : `c${s.cell_id}`);
@@ -651,7 +661,7 @@ export function cycleTracesForResult(
   }
 
   for (const s of result.cell_series) {
-    if (s.excluded || !soloOrIndividual(s)) continue;
+    if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
     const cellKey = `c${s.cell_id}`;
     const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
@@ -1207,6 +1217,10 @@ export function CyclePlotCard({
         reindexDiagnostics: spec.presentation.reindex_diagnostic_cycles ?? false,
         diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
         formationCycles: spec.computation.formation_cycles,
+        visibility: {
+          exclusions: spec.selection.exclusions,
+          hiddenReplicateGroups: spec.selection.hidden_replicate_group_ids ?? [],
+        },
         style: currentPlotStyle(spec, "cycles"),
       }),
     [spec],
@@ -1223,12 +1237,13 @@ export function CyclePlotCard({
     if (!result || !spec.presentation.hide_diagnostic_cycles) return null;
     const hidden = diagnosticCyclesFor(result, spec);
     const everyCycle = result.cell_series
-      .filter((s) => !s.excluded)
+      .filter((s) => !cycleSeriesIsHidden(s, spec))
       .flatMap((s) => s.x);
     return summarizeHidden(everyCycle, hidden);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     result,
+    viewSignature,
     spec.computation.formation_cycles,
     spec.presentation.hide_diagnostic_cycles,
     spec.presentation.diagnostic_tolerance,
