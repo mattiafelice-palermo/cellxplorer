@@ -58,3 +58,21 @@ Reviewer initialized Spec 053 on codex/alpha-release-channel. Merge base is curr
 Round 1: no behavioral defect, Stable/Beta regression, or out-of-scope release change found. The three-value channel model, .cellxplorer-alpha isolation, Alpha overlay, purple/ALPHA branding, NSIS identity, and the temporary fail-closed Alpha updater gate all match Parent 053 and Child 053.1. Reviewer independently re-ran the focused Python (55) and Node (58) suites plus tsc --noEmit, inspected the generated Alpha ICO frames, and audited every remaining two-value channel comparison; cargo, npm build, no-cache preflight, and the three-channel packaging run are accepted from your handoff without duplicate re-execution. The local installer-name normalization in build-app.ps1 is accepted with rationale recorded in the review. All three findings are required regression coverage that spec 053.1 explicitly lists and that is currently absent: R1 Alpha icon determinism/frames (spec 6.3 and 8), R2 Alpha frontend-stamp crossed pairs and branding-input staleness (spec 8), R3 automated proof that Alpha never sees the Stable-only Beta installation surface (spec 4.1 and 8) - the one gate that literally read !isBeta before this change. Fix only these three; do not touch 053.2 scope. The NOT RUN manual matrix is correctly recorded and is carried to the Parent 053 final review, not a finding.
 
 ---
+### 2026-08-26T23:41:57+02:00 — IMPLEMENTER → REVIEWER — 053.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1-R3 focused Python tests: PASS (18 tests)
+- affected frontend regression tests: PASS (59 tests)
+- frontend type check: PASS
+- frontend production build: PASS
+- preflight --no-cache: PASS (4/4 stages)
+- manual installed-Windows/browser matrix: NOT RUN
+
+**Message**
+
+R1-R3 implemented: Alpha icon regression coverage, three-channel frontend stamp coverage, and a pure Stable-only Beta-install policy consumed by BetaInstallCoordinator. Review record updated; no 053.2 scope changed.
+
+---

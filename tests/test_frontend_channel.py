@@ -57,10 +57,45 @@ class FrontendChannelStampTests(unittest.TestCase):
         frontend_channel.write_stamp(self.root, "beta")
         frontend_channel.verify_stamp(self.root, "beta")
 
+    def test_write_and_verify_matching_alpha_channel(self):
+        frontend_channel.write_stamp(self.root, "alpha")
+        frontend_channel.verify_stamp(self.root, "alpha")
+
     def test_verify_rejects_channel_mismatch(self):
         frontend_channel.write_stamp(self.root, "stable")
         with self.assertRaisesRegex(RuntimeError, "built for channel 'stable'"):
             frontend_channel.verify_stamp(self.root, "beta")
+
+    def test_verify_rejects_every_crossed_channel_pair(self):
+        channels = ("stable", "beta", "alpha")
+        for written in channels:
+            frontend_channel.write_stamp(self.root, written)
+            for verified in channels:
+                if written == verified:
+                    continue
+                with self.subTest(written=written, verified=verified):
+                    with self.assertRaisesRegex(RuntimeError, f"built for channel '{written}'"):
+                        frontend_channel.verify_stamp(self.root, verified)
+
+    def test_alpha_branding_inputs_invalidate_alpha_stamp(self):
+        for relative in (
+            "frontend/public/app-icon-alpha.png",
+            "src-tauri/tauri.alpha.conf.json",
+        ):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                original = path.read_bytes()
+                frontend_channel.write_stamp(self.root, "alpha")
+                path.write_bytes(original + b" changed")
+                with self.assertRaisesRegex(RuntimeError, "stale relative to current branding inputs"):
+                    frontend_channel.verify_stamp(self.root, "alpha")
+                path.write_bytes(original)
+
+    def test_stamp_rejects_invalid_channel_values(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported channel"):
+            frontend_channel.write_stamp(self.root, "preview")
+        with self.assertRaisesRegex(ValueError, "Unsupported channel"):
+            frontend_channel.verify_stamp(self.root, "preview")
 
     def test_verify_rejects_missing_stamp(self):
         with self.assertRaisesRegex(RuntimeError, "Missing frontend channel stamp"):
@@ -81,6 +116,22 @@ class FrontendChannelStampTests(unittest.TestCase):
         self.assertEqual(calls[0][1], build_frontend_channel.FRONTEND)
         self.assertEqual(calls[0][2]["VITE_CELLXPLORER_CHANNEL"], "beta")
         self.assertEqual(calls[1][0][-3:], ["write", "--channel", "beta"])
+
+    def test_alpha_channel_builder_consumes_requested_channel_and_writes_stamp(self):
+        completed = type("Completed", (), {"returncode": 0})()
+        calls: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+        def fake_run(command, *, cwd, env=None, check=False):
+            del check
+            calls.append((command, cwd, env))
+            return completed
+
+        with patch.object(build_frontend_channel.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(build_frontend_channel.main(["alpha"]), 0)
+
+        self.assertEqual(calls[0][1], build_frontend_channel.FRONTEND)
+        self.assertEqual(calls[0][2]["VITE_CELLXPLORER_CHANNEL"], "alpha")
+        self.assertEqual(calls[1][0][-3:], ["write", "--channel", "alpha"])
 
     def test_channel_builder_rejects_invalid_channel_before_build(self):
         with self.assertRaises(SystemExit):

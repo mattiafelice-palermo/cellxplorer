@@ -40,6 +40,7 @@ import {
   openBetaApplicationTauri,
   readBetaNotifiedVersion,
   resolveBetaDiscoveryFeedback,
+  shouldShowBetaInstallUi,
   shouldRunBetaAvailabilityCheck,
   showBetaInstallNotificationTauri,
   startBetaCheckSchedule,
@@ -78,7 +79,7 @@ function confirmBetaInstall(title: string, body: string): Promise<boolean> {
 }
 
 export function BetaInstallProvider({ children }: { children: ReactNode }) {
-  const enabled = APP_CHANNEL === "stable" && isTauriApp();
+  const enabled = shouldShowBetaInstallUi(APP_CHANNEL, isTauriApp());
   const [state, dispatch] = useReducer(betaInstallReducer, { status: "idle" });
   const [modalOpen, setModalOpen] = useState(false);
   const [installationInfo, setInstallationInfo] = useState<BetaInstallationInfo | null>(null);

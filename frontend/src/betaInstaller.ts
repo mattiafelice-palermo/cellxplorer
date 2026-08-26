@@ -10,6 +10,7 @@ import {
   type TauriUpdateReleaseResponse,
   type UpdateCheckSource,
 } from "./appUpdater.ts";
+import type { AppChannel } from "./appChannel";
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -88,6 +89,10 @@ export function shouldRunBetaAvailabilityCheck(options: {
   betaInstalled: boolean;
 }): boolean {
   return options.betaUpdatesEnabled && !options.betaInstalled;
+}
+
+export function shouldShowBetaInstallUi(channel: AppChannel, tauri: boolean): boolean {
+  return tauri && channel === "stable";
 }
 
 export function getBetaInstallRelease(state: BetaInstallState): AppUpdateRelease | null {
