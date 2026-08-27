@@ -191,9 +191,11 @@ Cellxplorer/
 │       ├── assets/                 Bundled browser assets for portable reports
 │       ├── migrations/             Forward-only database migration registry and revisions
 │       ├── routers/                FastAPI `/api` endpoint modules
-│       │   └── automation.py       Pause/resume for background automation
+│       │   ├── automation.py       Pause/resume for background automation
+│       │   └── beta_bootstrap.py   Shared Beta/Alpha first-launch setup routes (Specs 022/053.3)
 │       └── services/               Parsing, caches, calculations, analysis, imports, jobs
 │           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
+│           ├── beta_bootstrap.py   Shared Beta/Alpha first-launch library bootstrap (Specs 022/053.3)
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
@@ -226,6 +228,7 @@ Cellxplorer/
 │   │   │   ├── PlaceInFoldersModal.tsx
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
+│   │   │   ├── BetaBootstrapCoordinator.tsx Shared Beta/Alpha first-launch setup (Specs 022/053.3)
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   ├── FolderTrackingSettingsModal.tsx  Continued-Cell folder tracking settings (Spec 047.4)
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
@@ -291,6 +294,7 @@ Cellxplorer/
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)
 │   ├── test_continuations.py       Continuation inspect, ordering, and lifecycle validation (Specs 034.2/034.3)
 │   ├── test_app_channels.py        Stable/Beta/Alpha identity and build contract tests (Specs 021/053.1)
+│   ├── test_alpha_bootstrap.py     Alpha Stable/Beta copy and isolation tests (Spec 053.3)
 │   ├── test_build_alpha_icons.py   Alpha icon determinism and frame contract tests (Spec 053.1)
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_bump_version_script.py   Version bump script tests
@@ -350,8 +354,9 @@ Cellxplorer/
 │   ├── icons/, icons-beta/, icons-alpha/ Channel-specific bundle/runtime assets
 │   └── src/
 │       ├── app_channel.rs          Stable/Beta/Alpha identity and version helpers (Specs 021/053.1/053.2)
+│       ├── beta_bootstrap.rs       Shared Beta/Alpha activation and rollback (Specs 022/053.3)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
-│       ├── beta_installer.rs       Stable-owned first Beta installation (Spec 023)
+│       ├── beta_installer.rs       Channel-scoped install identity lookup (Specs 023/053.3)
 │       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
 │       └── update_notifications.rs Windows toast display and activation event (Spec 020)
 ├── run.py                          Runs FastAPI with the built frontend

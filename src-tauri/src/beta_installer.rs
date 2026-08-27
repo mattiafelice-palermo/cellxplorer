@@ -84,10 +84,14 @@ fn strip_registry_quotes(value: &str) -> String {
 }
 
 #[cfg(windows)]
-fn read_uninstall_value(root: &winreg::RegKey, value_name: &str) -> Option<String> {
+fn read_uninstall_value(
+    root: &winreg::RegKey,
+    product_name: &str,
+    value_name: &str,
+) -> Option<String> {
     let uninstall = root
         .open_subkey(format!(
-            r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{BETA_PRODUCT_NAME}"
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{product_name}"
         ))
         .ok()?;
     uninstall.get_value(value_name).ok()
@@ -99,7 +103,7 @@ fn read_installed_version_from_registry() -> Option<String> {
 
     for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         let root = winreg::RegKey::predef(hive);
-        if let Some(version) = read_uninstall_value(&root, "DisplayVersion") {
+        if let Some(version) = read_uninstall_value(&root, BETA_PRODUCT_NAME, "DisplayVersion") {
             let version = version.trim();
             if !version.is_empty() {
                 return Some(version.to_string());
@@ -110,12 +114,14 @@ fn read_installed_version_from_registry() -> Option<String> {
 }
 
 #[cfg(windows)]
-pub fn current_beta_install_instance_id() -> Option<String> {
+pub fn current_install_instance_id(channel: AppChannel) -> Option<String> {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
     for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         let root = winreg::RegKey::predef(hive);
-        if let Some(value) = read_uninstall_value(&root, "InstallInstanceId") {
+        if let Some(value) =
+            read_uninstall_value(&root, channel.product_name(), "InstallInstanceId")
+        {
             let value = value.trim();
             if !value.is_empty() {
                 return Some(value.to_string());
@@ -126,8 +132,12 @@ pub fn current_beta_install_instance_id() -> Option<String> {
 }
 
 #[cfg(not(windows))]
-pub fn current_beta_install_instance_id() -> Option<String> {
+pub fn current_install_instance_id(_channel: AppChannel) -> Option<String> {
     None
+}
+
+pub fn current_beta_install_instance_id() -> Option<String> {
+    current_install_instance_id(AppChannel::Beta)
 }
 
 #[cfg(windows)]
@@ -136,13 +146,15 @@ fn resolve_beta_executable_from_registry() -> Option<PathBuf> {
 
     for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         let root = winreg::RegKey::predef(hive);
-        if let Some(display_icon) = read_uninstall_value(&root, "DisplayIcon") {
+        if let Some(display_icon) = read_uninstall_value(&root, BETA_PRODUCT_NAME, "DisplayIcon") {
             let path = PathBuf::from(strip_registry_quotes(&display_icon));
             if path.is_file() {
                 return Some(path);
             }
         }
-        if let Some(install_location) = read_uninstall_value(&root, "InstallLocation") {
+        if let Some(install_location) =
+            read_uninstall_value(&root, BETA_PRODUCT_NAME, "InstallLocation")
+        {
             let dir = PathBuf::from(strip_registry_quotes(&install_location));
             let candidate = dir.join("cellxplorer.exe");
             if candidate.is_file() {

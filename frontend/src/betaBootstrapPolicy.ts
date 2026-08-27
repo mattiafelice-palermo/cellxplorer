@@ -1,5 +1,12 @@
 import type { AppChannel } from "./appChannel";
-import type { BackgroundJob, BetaBootstrapStatus } from "./api";
+import type {
+  AlphaBootstrapStatus,
+  BackgroundJob,
+  BetaBootstrapStatus,
+} from "./api";
+
+export type BootstrapChannel = "beta" | "alpha";
+export type BootstrapStatus = BetaBootstrapStatus | AlphaBootstrapStatus;
 
 export type DevBetaBootstrapMockMode =
   | "available"
@@ -7,7 +14,10 @@ export type DevBetaBootstrapMockMode =
   | "copy-error"
   | "loading"
   | "corrupt-marker"
-  | "status-error";
+  | "status-error"
+  | "stable-blocked"
+  | "beta-blocked"
+  | "both-blocked";
 
 export type BetaBootstrapSetupState =
   | "loading"
@@ -18,16 +28,23 @@ export type BetaBootstrapSetupState =
 export function parseDevBetaBootstrapMock(
   search: string,
   dev: boolean,
+  channel: BootstrapChannel = "beta",
 ): DevBetaBootstrapMockMode | null {
   if (!dev) return null;
-  const value = new URLSearchParams(search).get("mockBetaBootstrap");
+  const params = new URLSearchParams(search);
+  const value =
+    params.get(channel === "alpha" ? "mockAlphaBootstrap" : "mockBetaBootstrap") ??
+    params.get("mockBetaBootstrap");
   if (
     value === "available" ||
     value === "blocked" ||
     value === "copy-error" ||
     value === "loading" ||
     value === "corrupt-marker" ||
-    value === "status-error"
+    value === "status-error" ||
+    value === "stable-blocked" ||
+    value === "beta-blocked" ||
+    value === "both-blocked"
   ) {
     return value;
   }
@@ -39,13 +56,70 @@ export function shouldShowBetaBootstrapUi(
   tauri: boolean,
   mock: DevBetaBootstrapMockMode | null,
 ): boolean {
-  if (channel !== "beta") {
+  if (channel !== "beta" && channel !== "alpha") {
     return false;
   }
   return tauri || mock !== null;
 }
 
-export function mockBetaBootstrapStatus(mode: DevBetaBootstrapMockMode): BetaBootstrapStatus {
+export function mockBetaBootstrapStatus(
+  mode: DevBetaBootstrapMockMode,
+  channel: BootstrapChannel = "beta",
+): BootstrapStatus {
+  if (channel === "alpha") {
+    const sourceBlocked = (source: "stable" | "beta") =>
+      mode === "both-blocked" ||
+      (mode === "stable-blocked" && source === "stable") ||
+      (mode === "beta-blocked" && source === "beta") ||
+      (mode === "blocked" && source === "stable");
+    const sources = (["stable", "beta"] as const).map((source) => {
+      const blocked = sourceBlocked(source);
+      const productName: "CellXplorer" | "CellXplorer Beta" =
+        source === "stable" ? "CellXplorer" : "CellXplorer Beta";
+      return {
+        channel: source,
+        productName,
+        databasePath:
+          source === "stable"
+            ? "C:\\Users\\example\\.cellxplorer\\cellxplorer.db"
+            : "C:\\Users\\example\\.cellxplorer-beta\\cellxplorer.db",
+        exists: true,
+        compatible: !blocked,
+        blockingReason: blocked
+          ? `The ${productName} library uses a newer schema than this Alpha build supports.`
+          : null,
+        schemaRevision: blocked ? "future" : "0012",
+      };
+    });
+    return {
+      channel: "alpha",
+      setupState:
+        mode === "corrupt-marker" || mode === "status-error"
+          ? "blocked-error"
+          : "choice-required",
+      decision: null,
+      needsChoice: mode !== "corrupt-marker" && mode !== "status-error",
+      alphaPristine: true,
+      alphaHasExistingLibrary: false,
+      acknowledgedAppVersion: null,
+      acknowledgedInstallInstanceId: null,
+      sources,
+      setupError:
+        mode === "corrupt-marker"
+          ? "CellXplorer Alpha setup metadata is corrupt. Remove alpha-bootstrap.json or contact support."
+          : mode === "status-error"
+            ? "Could not load CellXplorer Alpha setup status."
+            : null,
+      blockingReason:
+        mode === "corrupt-marker"
+          ? "CellXplorer Alpha setup metadata is corrupt. Remove alpha-bootstrap.json or contact support."
+          : mode === "status-error"
+            ? "Could not load CellXplorer Alpha setup status."
+            : null,
+      outstandingStageToken: null,
+      applyFailureMessage: null,
+    };
+  }
   if (mode === "corrupt-marker" || mode === "status-error") {
     return {
       channel: "beta",
@@ -112,7 +186,7 @@ export function mockBetaBootstrapStatus(mode: DevBetaBootstrapMockMode): BetaBoo
 export function resolveBetaBootstrapSetupState(args: {
   enabled: boolean;
   mock: DevBetaBootstrapMockMode | null;
-  status?: BetaBootstrapStatus;
+  status?: BootstrapStatus;
   statusLoading: boolean;
   statusError: boolean;
 }): BetaBootstrapSetupState | "inactive" {
@@ -144,23 +218,25 @@ export function betaBootstrapGateOpen(
 export function betaBootstrapLoadingStatus(
   backendReady: boolean,
   elapsedSeconds: number,
+  channel: BootstrapChannel = "beta",
 ): { title: string; detail: string } {
+  const productName = channel === "alpha" ? "Alpha" : "Beta";
   if (!backendReady) {
     return {
       title: "Starting the local database service…",
-      detail: "Setup will continue automatically as soon as the Beta library is available.",
+      detail: `Setup will continue automatically as soon as the ${productName} library is available.`,
     };
   }
   if (elapsedSeconds < 3) {
     return {
-      title: "Reading Beta setup state…",
-      detail: "Checking the installation decision and the current Beta library.",
+      title: `Reading ${productName} setup state…`,
+      detail: `Checking the installation decision and the current ${productName} library.`,
     };
   }
   if (elapsedSeconds < 8) {
     return {
       title: "Checking local library compatibility…",
-      detail: "CellXplorer is validating whether the Stable library can be copied safely.",
+      detail: `CellXplorer is validating whether the available libraries can be copied safely.`,
     };
   }
   return {
@@ -178,6 +254,30 @@ export function copyStableLibraryDisabled(
   if (mock === "blocked") return true;
   if (!status) return true;
   return !status.stableDatabaseCompatible;
+}
+
+export function alphaSourceCopyDisabled(
+  status: AlphaBootstrapStatus | undefined,
+  source: "stable" | "beta",
+  busy: boolean,
+  mock: DevBetaBootstrapMockMode | null,
+): boolean {
+  if (busy) return true;
+  if (mock === "both-blocked" || mock === `${source}-blocked`) return true;
+  const sourceStatus = status?.sources.find((item) => item.channel === source);
+  return !sourceStatus?.compatible;
+}
+
+export function alphaSourceBlockingReason(
+  status: AlphaBootstrapStatus | undefined,
+  source: "stable" | "beta",
+  mock: DevBetaBootstrapMockMode | null,
+): string | null {
+  if (mock === "both-blocked" || mock === `${source}-blocked`) {
+    const productName = source === "stable" ? "CellXplorer" : "CellXplorer Beta";
+    return `The ${productName} library uses a newer schema than this Alpha build supports.`;
+  }
+  return status?.sources.find((item) => item.channel === source)?.blockingReason ?? null;
 }
 
 export function shouldRetryExistingStage(token: string | null | undefined): boolean {

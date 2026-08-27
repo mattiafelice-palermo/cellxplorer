@@ -37,6 +37,19 @@ All editions use separate default data roots after Specs 022/053.1: Stable
 `%USERPROFILE%\.cellxplorer-alpha`. `CELLXPLORER_DATA` overrides any root exactly for tests and
 development. Rust passes the resolved root to the sidecar as `CELLXPLORER_DATA`.
 
+Beta and Alpha first-launch setup share the implementation in
+`backend/app/services/beta_bootstrap.py`, `backend/app/routers/beta_bootstrap.py`,
+`src-tauri/src/beta_bootstrap.rs`, and `frontend/src/components/BetaBootstrapCoordinator.tsx`.
+Beta retains its released Stable-copy contract and `beta-bootstrap.json` marker. Alpha uses
+`alpha-bootstrap.json` and `alpha-bootstrap-apply-error.json` in its own root and offers exactly
+Start empty, Copy Stable library, or Copy Beta library. A copy is a one-time SQLite-backup
+snapshot: it receives a new database instance UUID, rewrites only managed import paths into the
+Alpha `imports/` tree, preserves external paths, and records the source channel. Source databases
+are inspected through a private sidecar-preserving snapshot so opening a live WAL database cannot
+change the source `-wal` or `-shm`; the source root is never written and no synchronization follows.
+The historical `beta.scientific_preparation` app-setting key is intentionally shared by both
+destinations; its name is compatibility history, not a Beta-only data boundary.
+
 Stable self-updates read `release-channels/stable/latest.json`; Beta self-updates read
 `release-channels/beta/latest.json`; Alpha self-updates read
 `release-channels/alpha/latest.json`. All three use the shared `PendingAppUpdate` state and

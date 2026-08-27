@@ -59,9 +59,12 @@ installed, it updates itself from the Beta channel; Stable never updates the ins
 On Beta's first launch you choose whether to copy a safe snapshot of the Stable library or start
 empty. The two libraries remain independent afterward.
 
-Alpha starts empty and never copies or synchronizes Stable or Beta data. It uses the dedicated
-`release-channels/alpha/latest.json` feed and the same standard updater state as Stable and Beta;
-Alpha versions are exact dotted `MAJOR.MINOR.PATCH-alpha.N` prereleases.
+On Alpha's first launch you choose exactly one of **Copy Stable library**, **Copy Beta library**, or
+**Start empty**. Alpha copies are one-time snapshots: the selected source is not modified, managed
+imports are rewritten into `%USERPROFILE%\.cellxplorer-alpha\imports`, and Alpha never synchronizes
+with Stable or Beta afterward. It uses the dedicated `release-channels/alpha/latest.json` feed and
+the same standard updater state as Stable and Beta; Alpha versions are exact dotted
+`MAJOR.MINOR.PATCH-alpha.N` prereleases.
 
 ## Manual run
 
@@ -84,7 +87,7 @@ Stable app state lives in `%USERPROFILE%\.cellxplorer`; Beta app state lives in
 `CELLXPLORER_DATA` overrides any root for development and tests. Each root contains
 `cellxplorer.db` (SQLite) and `cache/` (Parquet, keyed by file hash + parser/calc versions). Raw
 cycler files stay wherever they are — referenced by content hash, never copied, except app-managed
-imports selected for the explicit Stable-to-Beta snapshot.
+imports selected for the explicit Stable-to-Beta or Stable/Beta-to-Alpha snapshot.
 
 The SQLite schema is explicitly versioned. Existing databases are backed up
 under `backups/` and migrated before normal background services start; newer,

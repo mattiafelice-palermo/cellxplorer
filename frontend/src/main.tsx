@@ -85,10 +85,15 @@ startupQueryPersistence.restore(queryClient);
 startupQueryPersistence.start(queryClient);
 
 async function betaBootstrapGateRequired(): Promise<boolean> {
-  if (APP_BRANDING.channel !== "beta" || !isTauriApp()) return false;
+  if ((APP_BRANDING.channel !== "beta" && APP_BRANDING.channel !== "alpha") || !isTauriApp()) {
+    return false;
+  }
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<boolean>("beta_bootstrap_gate_required");
+    if (APP_BRANDING.channel === "beta") {
+      return await invoke<boolean>("beta_bootstrap_gate_required");
+    }
+    return await invoke<boolean>("alpha_bootstrap_gate_required");
   } catch {
     // Fail closed on the first render. The coordinator's backend status
     // request provides the actionable error and recovery controls.

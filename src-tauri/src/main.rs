@@ -221,7 +221,7 @@ fn apply_beta_bootstrap(
     )?;
 
     // Establish relaunch capability before stopping the backend or changing data.
-    relaunch::schedule_relaunch()?;
+    schedule_bootstrap_relaunch()?;
 
     if let Some(lifecycle) = app.try_state::<LifecycleState>() {
         lifecycle.quitting.store(true, Ordering::SeqCst);
@@ -264,6 +264,78 @@ fn beta_bootstrap_gate_required(app: AppHandle) -> Result<bool, String> {
     }
     let install_instance_id = beta_installer::current_beta_install_instance_id();
     Ok(beta_bootstrap::bootstrap_gate_required(
+        &app_data_dir_for_channel(channel),
+        install_instance_id.as_deref(),
+        &app.package_info().version.to_string(),
+    ))
+}
+
+#[tauri::command]
+fn apply_alpha_bootstrap(
+    app: AppHandle,
+    token: String,
+    confirm_replace_existing_library: bool,
+) -> Result<(), String> {
+    let channel = channel_for_app(&app)?;
+    if channel != AppChannel::Alpha {
+        return Err("Alpha bootstrap is only available in the Alpha channel.".to_string());
+    }
+    let alpha_root = app_data_dir_for_channel(channel);
+
+    // Pre-stop validation may return to the frontend. Nothing is mutated yet.
+    let _ = beta_bootstrap::validate_alpha_staged_copy_for_activation(
+        &alpha_root,
+        &token,
+        confirm_replace_existing_library,
+    )?;
+
+    schedule_bootstrap_relaunch()?;
+
+    if let Some(lifecycle) = app.try_state::<LifecycleState>() {
+        lifecycle.quitting.store(true, Ordering::SeqCst);
+    }
+    stop_backend(&app);
+
+    match (|| {
+        let paths = beta_bootstrap::validate_alpha_staged_copy_for_activation(
+            &alpha_root,
+            &token,
+            confirm_replace_existing_library,
+        )?;
+        let install_instance_id = beta_installer::current_install_instance_id(AppChannel::Alpha);
+        beta_bootstrap::activate_staged_copy_for_channel(
+            &alpha_root,
+            &paths,
+            install_instance_id.as_deref(),
+            beta_bootstrap::BootstrapChannel::Alpha,
+        )?;
+        Ok::<(), String>(())
+    })() {
+        Ok(()) => {
+            beta_bootstrap::clear_alpha_apply_failure_marker(&alpha_root);
+            let _ = beta_bootstrap::remove_consumed_stage(&alpha_root, &token);
+        }
+        Err(error) => {
+            let _ = beta_bootstrap::write_alpha_apply_failure_marker(&alpha_root, &error);
+        }
+    }
+    app.exit(0);
+    Ok(())
+}
+
+fn schedule_bootstrap_relaunch() -> Result<(), String> {
+    relaunch::schedule_relaunch()?;
+    Ok(())
+}
+
+#[tauri::command]
+fn alpha_bootstrap_gate_required(app: AppHandle) -> Result<bool, String> {
+    let channel = channel_for_app(&app)?;
+    if channel != AppChannel::Alpha {
+        return Ok(false);
+    }
+    let install_instance_id = beta_installer::current_install_instance_id(AppChannel::Alpha);
+    Ok(beta_bootstrap::alpha_bootstrap_gate_required(
         &app_data_dir_for_channel(channel),
         install_instance_id.as_deref(),
         &app.package_info().version.to_string(),
@@ -550,6 +622,8 @@ fn main() {
             beta_installer::open_beta_application,
             apply_beta_bootstrap,
             beta_bootstrap_gate_required,
+            apply_alpha_bootstrap,
+            alpha_bootstrap_gate_required,
             backend_api_base,
             is_autostart_enabled,
             is_main_window_visible,
@@ -573,10 +647,10 @@ fn main() {
             let backend_port = available_backend_port()?;
             app.manage(BackendEndpoint(format!("http://127.0.0.1:{backend_port}")));
             let version = app.package_info().version.to_string();
-            let install_instance_id = if app_channel == AppChannel::Beta {
-                beta_installer::current_beta_install_instance_id()
-            } else {
-                None
+            let install_instance_id = match app_channel {
+                AppChannel::Beta => beta_installer::current_beta_install_instance_id(),
+                AppChannel::Alpha => beta_installer::current_install_instance_id(app_channel),
+                AppChannel::Stable => None,
             };
             // The backend ships as a PyInstaller onedir folder (spec 030), not a
             // single-file externalBin sidecar: onefile re-extracted 85 MB to a temp

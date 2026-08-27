@@ -218,3 +218,41 @@ Resuming from BLOCKED at the user's direction, not because the installed matrix 
 Child 053.3 scheduled by the 2026-08-27 user amendment to Parent 053 section 6.1, which supersedes the original no-cross-product-copy rule and its section 13 exclusion. Implement docs/specs/053.3-alpha-first-launch-database-bootstrap.md: Alpha's blocking first-launch setup with exactly start-empty, copy-Stable, and copy-Beta. Generalize the verified Beta bootstrap machinery over a source channel - do not fork an alpha_bootstrap module, router, or coordinator. Beta's released behavior must stay byte-exact: same marker filenames, same /api/beta-bootstrap paths and payloads, same command names and gating, same decision vocabulary, and the complete existing tests/test_beta_bootstrap.py suite passing unchanged without weakened assertions. The copy must carry Cells with ordered SourceFiles, Analyses with saved plots, Folders/Projects, replicate groups, and managed imports; the source root must be provably byte-identical afterwards; the copied library becomes Alpha-local with a new database instance UUID and Alpha import paths; and no ongoing synchronization may exist in either direction. Two concrete traps the spec calls out: current_beta_install_instance_id reads the uninstall key hardcoded to BETA_PRODUCT_NAME and main.rs passes None for every non-Beta channel, so Alpha needs a channel-scoped lookup of its own key; and SCIENTIFIC_PREPARATION_KEY must keep its literal beta.scientific_preparation value because it is persisted inside copied databases. Children 053.1 and 053.2 are not reopened. Do not touch release automation, tags, or the release-channels branch, and do not merge.
 
 ---
+### 2026-08-27T23:57:44+02:00 — IMPLEMENTER → REVIEWER — 053.3
+
+**Result:** Implementation complete; review requested
+
+**Findings**
+
+- None.
+
+**Implementation**
+
+- Generalized the existing Beta bootstrap service, router, Rust activation/rollback path, install
+  identity lookup, frontend policy, and coordinator for Alpha without adding a parallel Alpha
+  module or coordinator.
+- Alpha now offers exactly Start empty, Copy Stable library, and Copy Beta library, with Alpha-only
+  markers, per-source status/reasons, explicit replacement confirmation, sidecar-safe source
+  snapshots, new database UUIDs, managed-import rewriting, retry/discard, and preserved rollback.
+- Beta marker names, endpoints, payloads, commands, gating, decisions, existing tests, and the
+  historical `beta.scientific_preparation` key remain unchanged. No release automation, tag,
+  release, or `release-channels` mutation was performed.
+
+**Verification**
+
+- Focused Python suite: `tests.test_beta_bootstrap`, `tests.test_app_channels`, and
+  `tests.test_app_channel_backend` — 63 tests passed.
+- Alpha Python suite: `tests.test_alpha_bootstrap` — 6 tests passed.
+- Frontend channel/bootstrap tests — 15 passed; Rust tests — 54 passed; Rust check passed;
+  frontend typecheck and production build passed.
+- Canonical `python scripts\\preflight.py --no-cache` — PASS, all 4 stages; all 158 backend/
+  frontend test files/modules passed.
+- Manual installed/browser/disposable acceptance matrix: NOT RUN.
+
+**Message**
+
+Implementation is committed and ready for Child 053.3 review. Review the implementation and then
+continue the cumulative Parent 053 review; the external installed/update/uninstall matrix remains
+an acceptance gate and must not be treated as complete from automated evidence.
+
+---

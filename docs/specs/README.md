@@ -17,8 +17,8 @@
     — Alpha's own blocking first-launch setup offering start-empty, copy-Stable, or copy-Beta, by
     generalizing the verified Beta bootstrap machinery over a source channel while leaving both
     source products untouched and establishing no ongoing synchronization. Added by the user's
-    2026-08-27 amendment to Parent 053 §6.1, which superseded the original no-copy rule. **Plan —
-    active child.**
+    2026-08-27 amendment to Parent 053 §6.1, which superseded the original no-copy rule. **Implemented —
+    review pending.**
   **Non-implementable parent. Children 053.1 and 053.2 are implemented and review-clean; the
   cumulative Parent 053 review is [recorded](reviews/053-alpha-application-release-channel-review.md)
   and was clean but `BLOCKED` on the outstanding disposable installed/update matrix. The workflow was

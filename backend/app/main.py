@@ -194,6 +194,7 @@ app.include_router(automation.router)
 app.include_router(cache_management.router)
 app.include_router(diagnostics.router)
 app.include_router(beta_bootstrap.router)
+app.include_router(beta_bootstrap.alpha_router)
 
 
 @app.get("/api/health")
