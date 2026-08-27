@@ -12,9 +12,18 @@
   - [053.2-alpha-updater-release-publication-and-closure.md](053.2-alpha-updater-release-publication-and-closure.md)
     — exact Alpha updater/tag/manifest rules, first-pointer bootstrap, three-channel GitHub release
     automation, all-non-target pointer protection, and cumulative installed/update closure.
-    **Implemented; review pending.**
-  **Non-implementable parent. The implementer/reviewer workflow is initialized on
-  `codex/alpha-release-channel` (`053-agent-state.json`); Child 053.2 is the active child.**
+    **Implemented — review-clean.** Review: [053.2 review](reviews/053.2-alpha-updater-release-publication-and-closure-review.md).
+  - [053.3-alpha-first-launch-database-bootstrap.md](053.3-alpha-first-launch-database-bootstrap.md)
+    — Alpha's own blocking first-launch setup offering start-empty, copy-Stable, or copy-Beta, by
+    generalizing the verified Beta bootstrap machinery over a source channel while leaving both
+    source products untouched and establishing no ongoing synchronization. Added by the user's
+    2026-08-27 amendment to Parent 053 §6.1, which superseded the original no-copy rule. **Plan —
+    active child.**
+  **Non-implementable parent. Children 053.1 and 053.2 are implemented and review-clean; the
+  cumulative Parent 053 review is [recorded](reviews/053-alpha-application-release-channel-review.md)
+  and was clean but `BLOCKED` on the outstanding disposable installed/update matrix. The workflow was
+  resumed on `codex/alpha-release-channel` (`053-agent-state.json`) to schedule Child 053.3, which is
+  now the active child; the parent review must be repeated once it lands.**
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
   adds a protocol-family comparison modal beside the protocol selector, distinguishing strict
   semantic identity from workflow and custom comparability without silently merging source-local

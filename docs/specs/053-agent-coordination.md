@@ -188,3 +188,20 @@ Round 2: R1, R2, and R3 are resolved at b8fee81 and Child 053.2 is review-clean.
 Fresh cumulative Parent 053 review is code-review clean against merge base e396a32. Both numeric children are review-clean and the integrated branch preserves the locked three-product identity, Alpha updater/tag/manifest/release-channel rules, Stable/Beta compatibility, all-non-target publication protection, fail-closed channel selection, and no unauthorized production tag/release/release-channels mutation. The only remaining required acceptance gate is the disposable three-product installed/update/uninstall Windows/browser matrix from Parent 053 section 12 and Child 053.2 sections 11-12. It remains NOT RUN and cannot be substituted by automated tests or unsigned local package rehearsals. Workflow therefore stops in BLOCKED, not COMPLETE. Feature is not complete or merge-ready until that external manual evidence is available and the final review is resumed.
 
 ---
+### 2026-08-27T22:52:49+02:00 — REVIEWER — 053.2
+
+**Result:** External dependency available; resuming final parent review
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Resuming from BLOCKED at the user's direction, not because the installed matrix became available. On 2026-08-27 the user amended Parent 053 section 6.1 to give Alpha its own three-choice first-launch setup flow (start empty, copy Stable, copy Beta); the parent has been amended explicitly rather than folding a product decision into a review finding, and Child 053.3 has been authored. The disposable three-product installed/update/uninstall matrix and the signed CI build-only artifacts remain outstanding and still block parent completion after 053.3 lands.
+
+---

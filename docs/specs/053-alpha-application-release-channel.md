@@ -6,6 +6,9 @@ Target branch: codex/alpha-release-channel
 Depends on: Specs 021, 022, and 023
 User decision: Alpha is a fully isolated third Windows application, not an additional feed inside
 Stable or Beta.
+User amendment 2026-08-27: Alpha gains its own first-launch setup flow offering three explicit
+choices — start empty, copy the Stable library, or copy the Beta library. This supersedes the
+original "no cross-product copy" rule in §6.1 and the matching §13 exclusion. Child 053.3 owns it.
 
 ## 1. Goal
 
@@ -38,8 +41,11 @@ The work has two independently reviewable ownership boundaries:
 2. **053.2 — Alpha updater, release publication, and closure**
    extends tag policy, manifest validation, GitHub automation, the manifest-only channel branch,
    and the complete three-product installed/update matrix.
+3. **053.3 — Alpha first-launch database bootstrap** (added by the 2026-08-27 user amendment)
+   gives Alpha its own three-choice first-run setup flow — start empty, copy Stable, or copy Beta —
+   by generalizing the verified Beta bootstrap machinery rather than duplicating it.
 
-Both children use the shared target branch. Implement and review 053.1 before beginning 053.2.
+All children use the shared target branch. Implement and review them in numeric order.
 Do not merge between children.
 
 ## 3. Locked definition of “fully isolated”
@@ -129,19 +135,45 @@ colors, thumbnails, and exports remain unchanged.
 
 ## 6. Locked application behavior
 
-### 6.1 Alpha starts as an independent empty product
+### 6.1 Alpha owns its first-launch library decision
 
-Alpha does not copy, migrate, synchronize, or overwrite Stable or Beta profile data. It starts from
-its own empty .cellxplorer-alpha root unless CELLXPLORER_DATA explicitly points elsewhere.
+**Amended 2026-08-27 by explicit user decision.** The original rule — Alpha never copies from
+another product and the Beta bootstrap flow is not reused — is superseded by this section. Children
+053.1 and 053.2 were implemented under the original rule and remain correct; Child 053.3 introduces
+the amended behavior.
 
-Do not reuse the Beta bootstrap flow for Alpha. Users can move information through existing
-explicit import/export facilities, but no Alpha-specific cross-product database copy belongs to
-this feature.
+Alpha lives entirely in its own `.cellxplorer-alpha` root unless `CELLXPLORER_DATA` explicitly
+points elsewhere. On first launch, Alpha shows a blocking setup choice of exactly three options:
+
+1. start with an empty Alpha library;
+2. copy a one-time snapshot of the Stable library;
+3. copy a one-time snapshot of the Beta library.
+
+Locked rules for that copy:
+
+- it is one-time, explicit, and user-initiated; copying is never automatic;
+- exactly one source may be chosen, and only from Stable or Beta;
+- the copy carries the user's Cells and their ordered SourceFiles, Analyses and saved plots,
+  Folders/Projects, replicate groups, and app-managed `imports/` payload;
+- the source product's database, imports, and profile root are opened read-only and are never
+  modified, moved, or deleted;
+- the copied library becomes Alpha-local immediately: new database instance UUID, Alpha-local
+  managed import paths, Alpha-local caches regenerated normally;
+- there is no ongoing synchronization, mirroring, or write-back in either direction afterwards;
+- if a source is absent, corrupt, or schema-incompatible, that option is disabled with a reason and
+  the remaining options stay available;
+- `Start empty` is always available;
+- after any choice, a durable Alpha-local marker records it and the prompt never appears again.
+
+Alpha must reuse the verified Beta bootstrap machinery by generalizing it over the source channel.
+Do not fork a parallel copy of the staging, activation, or verification code.
 
 ### 6.2 No cross-product installer coordinator
 
 Stable retains its existing explicit first-Beta installation feature. Beta retains its bootstrap
-behavior. Alpha must not:
+behavior, unchanged. Alpha's own first-launch setup flow (§6.1, Child 053.3) is Alpha-local and is
+not an installer coordinator: it never installs, launches, updates, or registers another product.
+Alpha must not:
 
 - show Stable's Beta opt-in/install controls;
 - run Beta bootstrap checks or render Beta bootstrap UI;
@@ -274,6 +306,20 @@ Depends on a clean 053.1 review. Owns:
 
 It must not push a production tag or publish a release without a separate explicit user instruction.
 
+### 053.3 — Alpha first-launch database bootstrap
+
+Added by the 2026-08-27 user amendment; depends on a clean 053.2 review. Owns:
+
+- the channel-generalized bootstrap service, staging, activation, and marker model;
+- Alpha's three-choice first-launch setup surface and its per-source availability reasons;
+- Stable-source and Beta-source snapshot, managed-import rewrite, and read-only source guarantees;
+- Alpha-local install-instance acknowledgement;
+- focused tests for both sources plus unchanged Beta bootstrap behavior;
+- documentation of the amended §6.1 model.
+
+It must not change Beta's released bootstrap behavior, marker filenames, or endpoints, and must not
+introduce any ongoing cross-product synchronization.
+
 ## 11. Parent-level verification
 
 The final child must run and record:
@@ -295,10 +341,12 @@ not implied by automated tests.
 
 ## 12. Parent acceptance
 
-- [ ] Both children are implemented sequentially and review-clean.
+- [ ] All children are implemented sequentially and review-clean.
 - [ ] Stable and Beta contracts remain backward compatible.
 - [ ] Alpha is a distinct installed Windows product with the locked identity matrix.
-- [ ] Alpha uses only .cellxplorer-alpha by default and never starts Beta bootstrap.
+- [ ] Alpha uses only .cellxplorer-alpha by default and never starts Beta's bootstrap flow.
+- [ ] Alpha's own first-launch setup offers exactly start-empty, copy-Stable, and copy-Beta,
+      leaves both source products untouched, and establishes no ongoing synchronization.
 - [ ] Stable, Beta, and Alpha can run simultaneously and retain channel-local single-instance behavior.
 - [ ] Deep links, autostart values, shortcuts, uninstall keys, and install directories do not collide.
 - [ ] Alpha uses the locked purple theme, icon treatment, native frame, installer color, and ALPHA badge.
@@ -316,7 +364,9 @@ not implied by automated tests.
 ## 13. Out of scope
 
 - separate repository, frontend tree, backend package, Rust crate, or NSIS template;
-- Stable/Beta-to-Alpha database copy or ongoing synchronization;
+- ongoing Stable/Beta-to-Alpha synchronization, mirroring, or write-back of any kind
+  (the one-time explicit first-launch copy is in scope under the amended §6.1);
+- Alpha-to-Stable or Alpha-to-Beta copying in any direction;
 - Alpha installation offered from Stable or Beta;
 - automatic promotion between Alpha, Beta, and Stable;
 - canary/nightly channels;
@@ -329,7 +379,8 @@ not implied by automated tests.
 
 ## 14. Parent handoff
 
-Implement only the active numeric child selected by the Spec 053 workflow.
+Implement only the active numeric child selected by the Spec 053 workflow. Children 053.1 and
+053.2 predate the 2026-08-27 amendment and must not be reopened by it.
 
 Read this parent first, then the active child in full. Also read AGENTS.md,
 docs/specs/README.md, docs/specs/workflow/README.md, docs/agent-knowledge/README.md,
