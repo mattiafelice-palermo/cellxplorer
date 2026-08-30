@@ -86,3 +86,21 @@ R1 and R2 are addressed. The corrected helper basename was exercised by real pac
 R1 is resolved at 66e9ce4: the packaged predicate basename now matches the helper import, the regression tests compare the runtime basenames directly, preflight is reported green, and the corrected helper was exercised by packaged update/uninstall paths. Matrix rows 1, 5, and 6 are accepted, and row 7 remains an explicitly accepted NOT RUN limitation under the prior review contract. R2 remains open only because rows 2-4 record sibling frontend PIDs surviving but do not record the explicit Spec 054.1 requirement that each non-target backend remained alive and responsive after the target update. No code change is required unless that verification fails. Record backend PID/path identity plus a backend/API responsiveness result for Beta+Alpha after Stable update, Stable+Alpha after Beta update, and Stable+Beta after Alpha update, then hand back for review. See the updated canonical 054.1 review file for exact acceptance criteria.
 
 ---
+### 2026-08-30T19:23:33+02:00 — IMPLEMENTER → REVIEWER — 054.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R2 backend follow-up: fresh version 0.27.0-beta.12 Stable/Beta/Alpha packages installed side by side in disposable roots with exit 0; each frontend was Responding=True and initial backend health was HTTP PASS with status=ok and database.status=ready.
+- Stable target row: Stable frontend/backend target path was fully reaped by /UPDATE (target backend listener PID 31756, path ...\\stable\\binaries\\backend\\cellxplorer-backend.exe, plus 7 target-path backend processes before update); Beta frontend PID 21336 remained Responding=True and backend PID 15872 at ...\\beta\\binaries\\backend\\cellxplorer-backend.exe on port 61228 returned /api/health HTTP PASS status=ok/database.status=ready; Alpha frontend PID 2340 remained Responding=True and backend PID 36656 at ...\\alpha\\binaries\\backend\\cellxplorer-backend.exe on port 61234 returned HTTP PASS status=ok/database.status=ready.
+- Beta target row: Beta /UPDATE exited 0 and reaped all 8 Beta target-path processes; Stable frontend PID 39704 remained Responding=True and backend PID 47604 at ...\\stable\\binaries\\backend\\cellxplorer-backend.exe on port 54375 returned /api/health HTTP PASS status=ok/database.status=ready; Alpha frontend PID 2340 remained Responding=True and backend PID 36656 at ...\\alpha\\binaries\\backend\\cellxplorer-backend.exe on port 61234 returned HTTP PASS status=ok/database.status=ready.
+- Alpha target row: Alpha /UPDATE exited 0 and reaped all 8 Alpha target-path processes; Stable frontend PID 39704 remained Responding=True and backend PID 47604 at ...\\stable\\binaries\\backend\\cellxplorer-backend.exe on port 54375 returned /api/health HTTP PASS status=ok/database.status=ready; Beta frontend PID 38456 remained Responding=True and backend PID 36252 at ...\\beta\\binaries\\backend\\cellxplorer-backend.exe on port 54652 returned HTTP PASS status=ok/database.status=ready.
+- The earlier accepted R2 evidence remains recorded for row 5 orphan Stable backend reaping and row 6 active Alpha2 pre-uninstall target-only cleanup; row 7 remains the explicitly accepted NOT RUN visual limitation because no safe desktop screenshot/control surface was available.
+- Focused process-scope/config suite: PASS (32 tests); canonical python scripts\\preflight.py after R1: PREFLIGHT PASSED, 4/4 stages completed successfully, all 85 backend modules passed.
+
+**Message**
+
+R2 backend evidence is now complete. The fresh packaged matrix proves the non-target backend executable path/PID identity and live /api/health status after Stable, Beta, and Alpha target updates. Please recover this pushed coordination checkpoint and review 054.1 again; if satisfied, close R2 and advance the active child through the repository workflow.
+
+---
