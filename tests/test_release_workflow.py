@@ -102,9 +102,17 @@ def sample_manifest(**overrides) -> dict:
     return payload
 
 
-def sample_assets(*, asset_id: int = ASSET_ID, name: str = SETUP_EXE) -> list[dict]:
+def sample_assets(
+    *, asset_id: int = ASSET_ID, name: str = SETUP_EXE, version: str = "0.15.0"
+) -> list[dict]:
     return [
-        {"id": asset_id, "name": name},
+        {
+            "id": asset_id,
+            "name": name,
+            "browser_download_url": (
+                f"https://github.com/{OWNER}/{REPO}/releases/download/v{version}/{name}"
+            ),
+        },
         {"id": asset_id + 1, "name": f"{name}.sig"},
         {"id": asset_id + 2, "name": "latest.json"},
     ]
@@ -589,6 +597,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("The release channel branch changed after the publication gate", publish)
         self.assertIn("The non-target channel pointer changed", publish)
         self.assertIn("$publishedCommit = $newCommitSha", publish)
+        self.assertIn(
+            "$publishedTreeUri = \"https://api.github.com/repos/$owner/$repo/git/trees/$($treeResult.sha)?recursive=1\"",
+            publish,
+        )
+        self.assertNotIn("git/trees/$publishedCommit?recursive=1", publish)
         self.assertIn("contents/${channelPath}?ref=${branch}", publish)
         self.assertIn("contents/${channelPath}?ref=${publishedCommit}", publish)
         self.assertIn("contents/${otherPath}?ref=${publishedCommit}", publish)
@@ -676,6 +689,26 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn(
             'Where-Object { $_.name -like "*.exe.sig" }',
             self.release,
+        )
+
+    def test_draft_manifest_is_rewritten_to_public_download_urls(self):
+        rewrite = self.release.split(
+            "Rewrite draft updater manifest to public download URL", 1
+        )[1].split("Download staged draft manifest", 1)[0]
+        self.assertIn("browser_download_url", rewrite)
+        self.assertIn("public-latest.json", rewrite)
+        self.assertIn("Invoke-RestMethod -Method Delete", rewrite)
+        self.assertIn("uploads.github.com", rewrite)
+        self.assertIn("publicManifestBytes", rewrite)
+        self.assertIn("Invoke-WebRequest -Method Get", rewrite)
+        self.assertIn('WriteAllText(\n            (Join-Path $env:GITHUB_WORKSPACE "release-assets.json")', rewrite)
+        self.assertLess(
+            step_index(self.release, "Export draft release assets metadata"),
+            step_index(self.release, "Rewrite draft updater manifest to public download URL"),
+        )
+        self.assertLess(
+            step_index(self.release, "Rewrite draft updater manifest to public download URL"),
+            step_index(self.release, "Download staged draft manifest and signature"),
         )
 
     def test_release_assets_metadata_persists_raw_github_json(self):
@@ -954,19 +987,50 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
                 "0.28.0-alpha.1", "beta"
             )
 
-    def test_rejects_browser_download_url_shape(self):
+    def test_accepts_public_browser_download_url(self):
         manifest = sample_manifest()
         manifest["platforms"]["windows-x86_64"]["url"] = (
             f"https://github.com/{OWNER}/{REPO}/releases/download/v0.15.0/{SETUP_EXE}"
         )
+        verify_updater_manifest.verify_manifest(
+            manifest,
+            expected_version="0.15.0",
+            expected_notes=NOTES,
+            expected_owner=OWNER,
+            expected_repo=REPO,
+            release_assets=sample_assets(),
+        )
+
+    def test_rejects_public_browser_download_url_with_wrong_tag_or_metadata(self):
+        wrong_tag = sample_manifest()
+        wrong_tag["platforms"]["windows-x86_64"]["url"] = (
+            f"https://github.com/{OWNER}/{REPO}/releases/download/v0.15.1/{SETUP_EXE}"
+        )
         with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
             verify_updater_manifest.verify_manifest(
-                manifest,
+                wrong_tag,
                 expected_version="0.15.0",
                 expected_notes=NOTES,
                 expected_owner=OWNER,
                 expected_repo=REPO,
                 release_assets=sample_assets(),
+            )
+
+        mismatched_metadata = sample_manifest()
+        direct_url = (
+            f"https://github.com/{OWNER}/{REPO}/releases/download/v0.15.0/{SETUP_EXE}"
+        )
+        mismatched_metadata["platforms"]["windows-x86_64"]["url"] = direct_url
+        assets = sample_assets()
+        assets[0]["browser_download_url"] = direct_url + ".wrong"
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                mismatched_metadata,
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=assets,
             )
 
     def test_rejects_wrong_owner_repo_or_asset_name(self):

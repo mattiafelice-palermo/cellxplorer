@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 SECRET_MARKERS = (
@@ -20,10 +20,16 @@ SECRET_MARKERS = (
     "gho_",
 )
 
-# Tauri action v1 writes api.github.com asset URLs, not browser download URLs.
+# Tauri action v1 initially writes api.github.com asset URLs. The final public
+# channel manifest uses the browser download URL so Tauri can fetch the public
+# release asset without GitHub API-specific headers.
 GITHUB_API_ASSET_RE = re.compile(
     r"^https://api\.github\.com/repos/"
     r"(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/assets/(?P<asset_id>\d+)/?$"
+)
+GITHUB_BROWSER_DOWNLOAD_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/download/"
+    r"(?P<tag>[^/?#]+)/(?P<asset_name>[^/?#]+)$"
 )
 STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 BETA_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$")
@@ -134,6 +140,22 @@ def parse_github_api_asset_url(url: str) -> tuple[str, str, int]:
     return match.group("owner"), match.group("repo"), int(match.group("asset_id"))
 
 
+def parse_github_browser_download_url(url: str) -> tuple[str, str, str, str]:
+    match = GITHUB_BROWSER_DOWNLOAD_RE.fullmatch(url.strip())
+    if not match:
+        raise ManifestVerificationError(
+            "Windows platform URL must be either a GitHub API release-asset URL "
+            "or a public browser download URL "
+            "(https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>)."
+        )
+    return (
+        match.group("owner"),
+        match.group("repo"),
+        match.group("tag"),
+        unquote(match.group("asset_name")),
+    )
+
+
 def find_asset_by_id(assets: list[dict], asset_id: int) -> dict:
     for asset in assets:
         raw_id = asset.get("id")
@@ -164,6 +186,22 @@ def require_named_asset(assets: list[dict], name: str) -> dict:
         except ManifestVerificationError:
             continue
     raise ManifestVerificationError(f"Release assets metadata is missing {name!r}.")
+
+
+def find_asset_by_browser_download_url(
+    assets: list[dict], url: str, asset_name: str
+) -> dict:
+    """Find a release asset and reject metadata that disagrees with its public URL."""
+
+    named_asset = require_named_asset(assets, asset_name)
+    metadata_url = named_asset.get("browser_download_url")
+    if isinstance(metadata_url, str) and metadata_url.strip():
+        if metadata_url.strip() != url.strip():
+            raise ManifestVerificationError(
+                f"Release asset {asset_name!r} has browser URL {metadata_url!r}, "
+                f"not {url!r}."
+            )
+    return named_asset
 
 
 def _minisign_data_line(decoded_text: str, *, kind: str) -> str:
@@ -274,14 +312,32 @@ def verify_manifest(
     if parsed.scheme != "https":
         raise ManifestVerificationError("Windows platform URL must use HTTPS.")
 
-    owner, repo, asset_id = parse_github_api_asset_url(url)
-    if owner != expected_owner or repo != expected_repo:
-        raise ManifestVerificationError(
-            f"Windows platform URL repository {owner}/{repo} does not match "
-            f"expected {expected_owner}/{expected_repo}."
+    try:
+        owner, repo, asset_id = parse_github_api_asset_url(url)
+    except ManifestVerificationError:
+        browser_owner, browser_repo, browser_tag, browser_asset_name = (
+            parse_github_browser_download_url(url)
         )
-
-    asset = find_asset_by_id(release_assets, asset_id)
+        if browser_owner != expected_owner or browser_repo != expected_repo:
+            raise ManifestVerificationError(
+                f"Windows platform URL repository {browser_owner}/{browser_repo} does not match "
+                f"expected {expected_owner}/{expected_repo}."
+            )
+        expected_tag = f"v{target_version}"
+        if browser_tag != expected_tag:
+            raise ManifestVerificationError(
+                f"Windows platform URL tag {browser_tag!r} does not match expected {expected_tag!r}."
+            )
+        asset = find_asset_by_browser_download_url(
+            release_assets, url, browser_asset_name
+        )
+    else:
+        if owner != expected_owner or repo != expected_repo:
+            raise ManifestVerificationError(
+                f"Windows platform URL repository {owner}/{repo} does not match "
+                f"expected {expected_owner}/{expected_repo}."
+            )
+        asset = find_asset_by_id(release_assets, asset_id)
     asset_name = asset_display_name(asset)
     if asset_name != setup_name:
         raise ManifestVerificationError(
