@@ -136,6 +136,25 @@ class BumpVersionScriptTests(unittest.TestCase):
             changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
             self.assertIn("## 0.16.2-beta.1 -", changelog)
 
+    def test_explicit_alpha_version_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_min_repo(root, "0.27.0-beta.12")
+            code = bump_version.main(
+                [
+                    "0.27.0-alpha.1",
+                    "--notes",
+                    "Alpha release probe.",
+                    "--repo-root",
+                    str(root),
+                ]
+            )
+            self.assertEqual(code, 0)
+            sources = bump_version.collect_version_sources(root)
+            self.assertTrue(all(source.version == "0.27.0-alpha.1" for source in sources))
+            changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+            self.assertIn("## 0.27.0-alpha.1 -", changelog)
+
     def test_rejects_duplicate_changelog_section(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
