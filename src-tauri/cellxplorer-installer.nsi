@@ -689,9 +689,17 @@ Function CellXplorerNativeCancel
 FunctionEnd
 
 Function CxBeforeInstFiles
-  !insertmacro CxShowNativeControl 1
-  !insertmacro CxShowNativeControl 2
-  !insertmacro CxShowNativeControl 3
+  ; Passive updater runs skip the branded welcome/location/reinstall pages,
+  ; so initialize the outer frame and fonts before the stock progress page
+  ; tries to use them. Keep its native actions hidden because /P is
+  ; intentionally non-interactive; normal installs still show them here.
+  ${If} $PassiveMode = 1
+    Call CxPrepareWindow
+  ${Else}
+    !insertmacro CxShowNativeControl 1
+    !insertmacro CxShowNativeControl 2
+    !insertmacro CxShowNativeControl 3
+  ${EndIf}
 FunctionEnd
 
 ; The stock file-copy page positions its controls for the small default
@@ -708,6 +716,14 @@ FunctionEnd
   !insertmacro CxHideNativeControl 1036
   !insertmacro CxHideNativeControl 1046
   !insertmacro CxHideNativeControl 1256
+
+  ; The pre-hook keeps passive updater actions hidden even if MUI restores
+  ; the stock page controls while creating the install-files dialog.
+  ${If} $PassiveMode = 1
+    !insertmacro CxHideNativeControl 1
+    !insertmacro CxHideNativeControl 2
+    !insertmacro CxHideNativeControl 3
+  ${EndIf}
 
   ; $0 = inner page dialog
   FindWindow $0 "#32770" "" $HWNDPARENT

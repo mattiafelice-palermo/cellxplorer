@@ -151,3 +151,19 @@ R2 backend evidence is now complete. The fresh packaged matrix proves the non-ta
 The requested 054.2 paths are otherwise code-review clean: Stable/Beta/Alpha resolve to updater `passive` while standalone NSIS remains `perMachine`; `Applying update…` is dispatched/rendered before session-finish/install takeover; duplicate actions are protected; and `Retry install` reuses Rust-restored verified bytes without re-downloading. R1 is the custom NSIS passive progress page: `/P` skips every page that calls `CxPrepareWindow`, but `CxStyleInstFiles` still assumes its fonts and 760x500 outer geometry before laying out the 680x430 progress surface. Make the passive install-files path initialize its own styling prerequisites (or deliberately use a stock-compatible passive progress surface) without restoring interactive wizard pages. R2 is the required signed packaged/manual matrix, explicitly NOT RUN because the signing key and safe visual surface were unavailable; after R1, observe the real passive window/no-blank handoff, relaunch, data preservation, and sibling-channel survival rather than inferring them from config. See the canonical 054.2 review file for exact acceptance criteria.
 
 ---
+### 2026-08-30T20:23:42+02:00 — IMPLEMENTER → REVIEWER — 054.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- post-R1 focused updater/config/channel suite: PASS (49 tests)
+- canonical python scripts\\preflight.py --no-cache after R1: PASS (4/4 stages; 158 backend/frontend test files/modules)
+- fresh Stable/Beta/Alpha disposable package builds after R1: PASS at 0.27.0-beta.12; unsigned local installers compile with repaired /P path
+- signed in-app updater matrix and visual passive-window/no-blank/relaunch/data observations: NOT RUN (TAURI_SIGNING_PRIVATE_KEY unavailable; no safe desktop visual-control surface; direct disposable installer launch would overwrite the real per-machine channel registry identity)
+
+**Message**
+
+R1 repaired: CxBeforeInstFiles now initializes CxPrepareWindow/fonts/760x500 frame for /P before CxStyleInstFiles, while passive mode keeps native wizard actions hidden; interactive installs still show the native actions. CxStyleInstFiles also re-hides those actions defensively after MUI page creation. Focused static coverage encodes the passive initialization contract. R2 remains an explicit environmental NOT RUN limitation: packages compile, but no signed update artifact or safe visual desktop matrix is available. Please recover and review this fix checkpoint, and assess R2 against the documented limitation.
+
+---

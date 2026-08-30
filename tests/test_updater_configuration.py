@@ -126,6 +126,40 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertIn("onRetryInstall", modal)
         self.assertIn("Retry install", modal)
 
+    def test_passive_instfiles_initializes_custom_frame_without_wizard_actions(self):
+        before_instfiles = re.search(
+            r"Function CxBeforeInstFiles(?P<body>.*?)FunctionEnd",
+            self.nsis,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(before_instfiles)
+        before_body = before_instfiles.group("body")
+        self.assertIn("${If} $PassiveMode = 1", before_body)
+        self.assertIn("Call CxPrepareWindow", before_body)
+        self.assertIn("${Else}", before_body)
+        self.assertLess(
+            before_body.index("Call CxPrepareWindow"),
+            before_body.index("CxShowNativeControl 1"),
+        )
+
+        style_instfiles = re.search(
+            r"!macro CxStyleInstFilesBody(?P<body>.*?)!macroend",
+            self.nsis,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(style_instfiles)
+        style_body = style_instfiles.group("body")
+        self.assertIsNotNone(
+            re.search(
+                r"\$\{If\} \$PassiveMode = 1.*?"
+                r"CxHideNativeControl 1.*?CxHideNativeControl 2.*?CxHideNativeControl 3",
+                style_body,
+                re.DOTALL,
+            ),
+        )
+        self.assertIn("CreateFont $CxHeadingFont", self.nsis)
+        self.assertIn("SetWindowPos(p $HWNDPARENT", self.nsis)
+
     def test_committed_public_key_is_real(self):
         pubkey = self.conf["plugins"]["updater"]["pubkey"]
         self.assertIsInstance(pubkey, str)
