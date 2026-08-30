@@ -73,3 +73,16 @@ R1 is release-blocking: NSIS extracts the predicate as `cellxplorer-installation
 R1 and R2 are addressed. The corrected helper basename was exercised by real packaged Stable/Beta/Alpha update and uninstaller hooks. Please recover this pushed fix checkpoint and review the active child thoroughly, with row 7 explicitly recorded as NOT RUN for the stated visual-inspection limitation.
 
 ---
+### 2026-08-30T19:10:39+02:00 — REVIEWER → IMPLEMENTER — 054.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+
+**Message**
+
+R1 is resolved at 66e9ce4: the packaged predicate basename now matches the helper import, the regression tests compare the runtime basenames directly, preflight is reported green, and the corrected helper was exercised by packaged update/uninstall paths. Matrix rows 1, 5, and 6 are accepted, and row 7 remains an explicitly accepted NOT RUN limitation under the prior review contract. R2 remains open only because rows 2-4 record sibling frontend PIDs surviving but do not record the explicit Spec 054.1 requirement that each non-target backend remained alive and responsive after the target update. No code change is required unless that verification fails. Record backend PID/path identity plus a backend/API responsiveness result for Beta+Alpha after Stable update, Stable+Alpha after Beta update, and Stable+Beta after Alpha update, then hand back for review. See the updated canonical 054.1 review file for exact acceptance criteria.
+
+---
