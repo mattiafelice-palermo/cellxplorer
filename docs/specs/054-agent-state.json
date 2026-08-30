@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "spec": "054",
+  "branch": "feature/updater-lifecycle-hardening",
+  "active_child": "054.1",
+  "children": [
+    "054.1",
+    "054.2"
+  ],
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-30T17:22:37+02:00"
+}
