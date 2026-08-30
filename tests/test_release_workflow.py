@@ -700,6 +700,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.release,
         )
 
+    def test_manifest_verification_surfaces_safe_failure_detail(self):
+        verify = self.release.split("Verify updater manifest", 1)[1].split(
+            "Publish verified draft release", 1
+        )[0]
+        self.assertIn("$verificationOutput", verify)
+        self.assertIn("$verificationExitCode = $LASTEXITCODE", verify)
+        self.assertIn("2>&1", verify)
+        self.assertIn(
+            "::error title=Updater manifest verification::",
+            verify,
+        )
+
     def test_draft_manifest_is_rewritten_to_public_download_urls(self):
         rewrite = self.release.split(
             "Rewrite draft updater manifest to public download URL", 1

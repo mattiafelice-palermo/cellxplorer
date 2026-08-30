@@ -672,7 +672,7 @@ jobs:
         shell: pwsh
         run: |
           $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
-          python scripts/verify_updater_manifest.py `
+          $verificationOutput = @(& python scripts/verify_updater_manifest.py `
             --manifest uploaded-latest.json `
             --expected-version "${{ steps.version.outputs.version }}" `
             --notes-file release-notes.md `
@@ -683,7 +683,18 @@ jobs:
             --uploaded-signature uploaded-setup.sig `
             --setup-exe-name "${{ steps.staged_assets.outputs.setup_name }}" `
             --channel ${{ steps.channel.outputs.channel }} `
-            --expected-product-name "${{ steps.channel.outputs.product_name }}"
+            --expected-product-name "${{ steps.channel.outputs.product_name }}" 2>&1)
+          $verificationExitCode = $LASTEXITCODE
+          $verificationOutput | ForEach-Object { Write-Host $_ }
+          if ($verificationExitCode -ne 0) {
+            $diagnostic = ($verificationOutput | ForEach-Object { "$($_)" }) -join " "
+            if ([string]::IsNullOrWhiteSpace($diagnostic)) {
+              $diagnostic = "Verifier exited with code $verificationExitCode without diagnostic output."
+            }
+            $diagnostic = $diagnostic.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Updater manifest verification::$diagnostic"
+            exit $verificationExitCode
+          }
 
       - name: Publish verified draft release
         if: github.ref_type == 'tag'
