@@ -167,3 +167,16 @@ The requested 054.2 paths are otherwise code-review clean: Stable/Beta/Alpha res
 R1 repaired: CxBeforeInstFiles now initializes CxPrepareWindow/fonts/760x500 frame for /P before CxStyleInstFiles, while passive mode keeps native wizard actions hidden; interactive installs still show the native actions. CxStyleInstFiles also re-hides those actions defensively after MUI page creation. Focused static coverage encodes the passive initialization contract. R2 remains an explicit environmental NOT RUN limitation: packages compile, but no signed update artifact or safe visual desktop matrix is available. Please recover and review this fix checkpoint, and assess R2 against the documented limitation.
 
 ---
+### 2026-08-30T20:24:00+02:00 — REVIEWER → IMPLEMENTER — 054.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+
+**Message**
+
+R1 is resolved at b8ac6d3. The passive `CxBeforeInstFiles` path now calls `CxPrepareWindow` before the styled install-files page, providing the custom fonts and 760x500 outer-frame geometry that `CxStyleInstFiles` requires. Passive mode keeps Back/Next/Cancel hidden, and the show hook re-hides them after MUI page creation; interactive installs retain the prior action-visible path. Focused updater/config coverage and canonical preflight are reported green, and fresh Stable/Beta/Alpha unsigned packages compile after the repair. R2 remains the sole blocker: the amended child explicitly requires a real signed in-app packaged update to observe CellXplorer download/apply feedback, the passive updater window/no-blank handoff, relaunch/completion, data preservation, and sibling-channel survival. The current signing-key/desktop-control/registry-safety limitation is accurately documented but cannot satisfy that acceptance gate. No code change is required for R2 unless the matrix exposes another defect; provide the recorded signed packaged observations when that environment is available.
+
+---
