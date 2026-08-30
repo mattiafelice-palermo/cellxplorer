@@ -440,7 +440,11 @@ ends the process, so no further checks or notifications occur afterward.
 Every checked update is built with the updater plugin's Windows `on_before_exit` hook, which sets
 the shell quitting flag and runs the existing PyInstaller sidecar process-tree cleanup through
 `prepare_exit_for_update` in `src-tauri/src/main.rs`. Check and download never stop the backend.
-Pre-hook install errors can return to the frontend with the backend still alive. Once
+NSIS install and uninstall hooks then perform a separate path-scoped cleanup against the exact
+target `$INSTDIR`; the reusable PowerShell predicate rejects sibling installations and protects
+the helper's ancestor chain. They must not use the stock shared executable-name shutdown check,
+because Stable, Beta, and Alpha intentionally share image names while remaining independently
+installable. Pre-hook install errors can return to the frontend with the backend still alive. Once
 `on_before_exit` runs on Windows, Tauri exits the process regardless of whether `ShellExecuteW`
 successfully opened the installer — there is no post-hook frontend recovery path. User database,
 caches, and source files are not touched by update infrastructure.

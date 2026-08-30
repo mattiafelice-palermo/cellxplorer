@@ -1467,7 +1467,8 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ; The path-scoped pre-install hook above owns shutdown for this exact
+  ; installation directory. Do not use a shared executable-name check.
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
@@ -1630,11 +1631,9 @@ FunctionEnd
 
 Section Uninstall
 
-  ; Let NSIS close the foreground application first. The custom hook that
-  ; follows is intentionally scoped to orphaned backend processes.
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
-
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
+    ; The path-scoped hook protects its own uninstaller ancestry and stops the
+    ; target installation before files are removed.
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
 

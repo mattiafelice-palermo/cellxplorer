@@ -162,23 +162,25 @@ same command with elevated sandbox permission, then continue the documented buil
   the icon from the target executable and cached it inconsistently across Start/taskbar.
   `src-tauri/nsis-hooks.nsh` rewrites Start/Desktop shortcuts after install with an explicit
   icon location: `$INSTDIR\cellxplorer.exe,0`.
-- Pre-install and pre-uninstall hooks embed and execute `kill_installation_processes.ps1` from
-  NSIS's private plugin directory. Keep the PowerShell logic in that script instead of a long
-  inline `-Command`: NSIS variable expansion can corrupt PowerShell variables. The script
-  repeatedly stops only processes whose executable path is under the exact `$INSTDIR`, waits up to
-  ten seconds, and requires five consecutive process-free checks before copying. The quiet period
-  matters because Windows may remove a killed PyInstaller process from the process snapshot just
-  before releasing its executable image. It aborts if the installation does not remain quiet. The
-  helper must exclude its own ancestor chain: upgrade flows launch
-  `uninstall.exe` directly from `$INSTDIR` with `_?=`, and killing that ancestor causes the
-  already-installed/uninstall pages to loop without removing anything. On uninstall, run the
-  standard NSIS foreground-app check first and invoke the helper in backend-only mode; the custom
-  hook exists there only to reap orphaned PyInstaller processes. Do not probe executable locks by
-  opening Program Files binaries for read/write: an unelevated diagnostic gets access denied even
-  when no process owns the file, producing a false lock. Stable process disappearance across the
-  bounded quiet period is the completion condition. Do **not** revert to shared
-  `taskkill /IM cellxplorer.exe` cleanup — all three products share executable image names but
-  install to different folders.
+- Pre-install and pre-uninstall hooks embed and execute the reusable
+  `installation_process_scope.ps1` boundary together with
+  `kill_installation_processes.ps1` from NSIS's private plugin directory. Keep the PowerShell
+  logic in those scripts instead of a long inline `-Command`: NSIS variable expansion can corrupt
+  PowerShell variables. The shared predicate normalizes Windows separators, requires the process
+  executable path to be under the exact `$INSTDIR` with a directory boundary, compares
+  case-insensitively, and can restrict a caller to backend images. The cleanup script repeatedly
+  stops only target-installation processes, waits up to ten seconds, and requires five consecutive
+  process-free checks before copying. The quiet period matters because Windows may remove a killed
+  PyInstaller process from the process snapshot just before releasing its executable image. It
+  aborts if the installation does not remain quiet. The helper must exclude its own ancestor chain:
+  upgrade flows launch `uninstall.exe` directly from `$INSTDIR` with `_?=`, and killing that
+  ancestor causes the already-installed/uninstall pages to loop without removing anything. The
+  same complete path-scoped cleanup runs during uninstall, with ancestor protection ensuring that
+  the active uninstaller survives. Do not probe executable locks by opening Program Files binaries
+  for read/write: an unelevated diagnostic gets access denied even when no process owns the file,
+  producing a false lock. Stable process disappearance across the bounded quiet period is the
+  completion condition. Do **not** revert to shared `taskkill /IM cellxplorer.exe` cleanup — all
+  three products share executable image names but install to different folders.
 - An upgrade must not execute the previous release's registered `uninstall.exe`: that binary may
   contain the exact packaging defect the new release is meant to repair. When the reinstall page
   selects uninstall-before-install, defer the operation to the Install section, generate the

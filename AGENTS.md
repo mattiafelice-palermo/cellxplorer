@@ -294,6 +294,7 @@ Cellxplorer/
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)
 │   ├── test_continuations.py       Continuation inspect, ordering, and lifecycle validation (Specs 034.2/034.3)
 │   ├── test_app_channels.py        Stable/Beta/Alpha identity and build contract tests (Specs 021/053.1)
+│   ├── test_installation_process_scope.py  PowerShell install-root ownership contract tests (Spec 054.1)
 │   ├── test_alpha_bootstrap.py     Alpha Stable/Beta copy and isolation tests (Spec 053.3)
 │   ├── test_build_alpha_icons.py   Alpha icon determinism and frame contract tests (Spec 053.1)
 │   ├── test_check_versions_script.py Version declaration consistency checker tests

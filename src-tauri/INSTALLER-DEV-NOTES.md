@@ -12,12 +12,14 @@ uninstall page with keep-data/remove-data radios.
 - `src-tauri/cellxplorer-installer.nsi` — full custom Tauri NSIS template
   (wired via `bundle.windows.nsis.template` in `tauri.conf.json`). Started
   by ChatGPT, heavily reworked in this session.
-- `src-tauri/nsis-hooks.nsh` — `NSIS_HOOK_PREINSTALL`/`PREUNINSTALL` kill
-  `cellxplorer.exe` and `cellxplorer-backend.exe` with `taskkill /F /T`
-  before any file op (the PyInstaller **onefile** sidecar re-executes
-  itself; killing only the launcher leaves an inner process that locks the
-  installed exe — this was the "upgrade fails to remove backend" bug).
-  `NSIS_HOOK_POSTINSTALL` refreshes shortcuts.
+- `src-tauri/nsis-hooks.nsh` — `NSIS_HOOK_PREINSTALL`/`PREUNINSTALL` embed a
+  reusable install-root predicate and run `kill_installation_processes.ps1`
+  before any file op. The predicate matches only executable paths under the
+  exact `$INSTDIR` (case-insensitive, with a directory boundary), while the
+  cleanup loop also protects its own ancestor chain. This keeps the PyInstaller
+  **onefile** sidecar's inner process from locking the installed exe without
+  terminating another channel that shares the image name. `NSIS_HOOK_POSTINSTALL`
+  refreshes shortcuts.
 - `src-tauri/nsis-header.bmp`, `nsis-sidebar.bmp` — generated brand
   bitmaps (only used by stock MUI pages now; template mostly ignores
   them). Generator: scratchpad `make_installer_art.py`.

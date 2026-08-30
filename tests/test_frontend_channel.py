@@ -12,6 +12,7 @@ SCRIPT = ROOT / "scripts" / "frontend_channel.py"
 BUILD_SCRIPT = ROOT / "scripts" / "build_frontend_channel.py"
 NSIS_HOOKS = ROOT / "src-tauri" / "nsis-hooks.nsh"
 KILL_SCRIPT = ROOT / "src-tauri" / "kill_installation_processes.ps1"
+SCOPE_SCRIPT = ROOT / "src-tauri" / "installation_process_scope.ps1"
 
 
 def load_frontend_channel():
@@ -150,17 +151,20 @@ class NsisProcessCleanupTests(unittest.TestCase):
 
     def test_kill_script_scopes_to_install_prefix(self):
         script = KILL_SCRIPT.read_text(encoding="utf-8")
+        scope = SCOPE_SCRIPT.read_text(encoding="utf-8")
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
-        self.assertIn("StartsWith($prefix", script)
+        self.assertIn("installation_process_scope.ps1", hooks)
+        self.assertIn("Get-InstallationProcessPathPrefix", script)
+        self.assertIn("Test-InstallationProcessCandidate", script)
+        self.assertIn("Test-InstallationOwnedExecutablePath", scope)
+        self.assertIn("Test-BackendExecutablePath", scope)
         self.assertIn("AddSeconds(10)", script)
         self.assertIn("$remaining.Count", script)
         self.assertIn("$protectedProcessIds", script)
         self.assertIn("ParentProcessId", script)
-        self.assertIn("[switch]$BackendOnly", script)
-        self.assertIn('-like "cellxplorer-backend*.exe"', script)
         self.assertIn("$quietChecksRequired = 5", script)
         self.assertIn("$quietChecks -lt $quietChecksRequired", script)
-        self.assertIn('KillInstallationProcesses "-BackendOnly"', hooks)
+        self.assertEqual(hooks.count('KillInstallationProcesses ""'), 2)
         self.assertNotIn("[System.IO.File]::Open", script)
         self.assertNotIn("/IM cellxplorer", script)
 
@@ -170,10 +174,8 @@ class NsisProcessCleanupTests(unittest.TestCase):
         uninstall_section = template.split("Section Uninstall", 1)[1].split(
             "SectionEnd", 1
         )[0]
-        self.assertLess(
-            uninstall_section.index("CheckIfAppIsRunning"),
-            uninstall_section.index("NSIS_HOOK_PREUNINSTALL"),
-        )
+        self.assertIn("NSIS_HOOK_PREUNINSTALL", uninstall_section)
+        self.assertNotIn("CheckIfAppIsRunning", template)
         self.assertIn("Var RunCurrentUninstaller", template)
         self.assertIn(
             'WriteUninstaller "$PLUGINSDIR\\cellxplorer-current-uninstall.exe"',

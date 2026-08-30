@@ -142,19 +142,25 @@ class AppChannelConfigurationTests(unittest.TestCase):
         helper = (
             ROOT / "src-tauri" / "kill_installation_processes.ps1"
         ).read_text(encoding="utf-8")
+        scope = (
+            ROOT / "src-tauri" / "installation_process_scope.ps1"
+        ).read_text(encoding="utf-8")
         template = (
             ROOT / "src-tauri" / "cellxplorer-installer.nsi"
         ).read_text(encoding="utf-8")
         self.assertIn("kill_installation_processes.ps1", hooks)
-        self.assertIn("StartsWith", helper)
+        self.assertIn("installation_process_scope.ps1", hooks)
+        self.assertIn("Get-InstallationProcessPathPrefix", helper)
+        self.assertIn("Test-InstallationProcessCandidate", helper)
+        self.assertIn("Test-InstallationOwnedExecutablePath", scope)
+        self.assertIn("Test-BackendExecutablePath", scope)
         self.assertIn("$protectedProcessIds", helper)
         self.assertIn("ParentProcessId", helper)
-        self.assertIn("[switch]$BackendOnly", helper)
-        self.assertIn('-like "cellxplorer-backend*.exe"', helper)
         self.assertIn("$quietChecksRequired = 5", helper)
         self.assertIn("$quietChecks -lt $quietChecksRequired", helper)
-        self.assertIn('KillInstallationProcesses "-BackendOnly"', hooks)
+        self.assertEqual(hooks.count('KillInstallationProcesses ""'), 2)
         self.assertNotIn("[System.IO.File]::Open", helper)
+        self.assertNotIn("CheckIfAppIsRunning", template)
         self.assertIn("$INSTDIR", hooks)
         combined = hooks + helper
         self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", combined)
