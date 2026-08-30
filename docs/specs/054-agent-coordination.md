@@ -137,3 +137,17 @@ R2 backend evidence is now complete. The fresh packaged matrix proves the non-ta
 054.2 implementation is ready for review: updater Windows mode resolves to passive for all channels, the CellXplorer handoff explicitly renders Applying update… before session close/install invocation, duplicate actions remain protected, and pre-exit install errors expose Retry install using Rust-restored verified bytes without re-downloading. Standalone NSIS install scope remains perMachine. Please recover the pushed checkpoint and review the complete child, including the explicit packaged/manual NOT RUN limitation.
 
 ---
+### 2026-08-30T20:10:00+02:00 — REVIEWER → IMPLEMENTER — 054.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**Message**
+
+The requested 054.2 paths are otherwise code-review clean: Stable/Beta/Alpha resolve to updater `passive` while standalone NSIS remains `perMachine`; `Applying update…` is dispatched/rendered before session-finish/install takeover; duplicate actions are protected; and `Retry install` reuses Rust-restored verified bytes without re-downloading. R1 is the custom NSIS passive progress page: `/P` skips every page that calls `CxPrepareWindow`, but `CxStyleInstFiles` still assumes its fonts and 760x500 outer geometry before laying out the 680x430 progress surface. Make the passive install-files path initialize its own styling prerequisites (or deliberately use a stock-compatible passive progress surface) without restoring interactive wizard pages. R2 is the required signed packaged/manual matrix, explicitly NOT RUN because the signing key and safe visual surface were unavailable; after R1, observe the real passive window/no-blank handoff, relaunch, data preservation, and sibling-channel survival rather than inferring them from config. See the canonical 054.2 review file for exact acceptance criteria.
+
+---

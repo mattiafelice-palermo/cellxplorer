@@ -7,9 +7,12 @@
     "054.1",
     "054.2"
   ],
-  "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [],
-  "resume_review": null,
-  "updated_at": "2026-08-30T20:00:26+02:00"
+  "turn": "IMPLEMENTER",
+  "action": "FIX_REVIEW",
+  "findings": [
+    "R1",
+    "R2"
+  ],
+  "resume_review": "REVIEW",
+  "updated_at": "2026-08-30T20:10:00+02:00"
 }
