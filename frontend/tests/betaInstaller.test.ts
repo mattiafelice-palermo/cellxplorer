@@ -9,6 +9,7 @@ import {
   mergeBetaCheckResult,
   readBetaNotifiedVersion,
   resolveBetaDiscoveryFeedback,
+  shouldShowBetaInstallUi,
   shouldNotifyForBetaVersion,
   shouldRunBetaAvailabilityCheck,
   startBetaCheckSchedule,
@@ -17,6 +18,19 @@ import {
 import { mockRelease } from "../src/appUpdater.ts";
 
 const storage = new Map<string, string>();
+
+test("Beta installation UI is available only in the Stable Tauri app", () => {
+  const channels = ["stable", "beta", "alpha"] as const;
+  for (const channel of channels) {
+    for (const tauri of [true, false]) {
+      assert.equal(
+        shouldShowBetaInstallUi(channel, tauri),
+        channel === "stable" && tauri,
+        `${channel} / tauri=${tauri}`,
+      );
+    }
+  }
+});
 
 test("beta availability checks require opt-in and no installed copy", () => {
   assert.equal(

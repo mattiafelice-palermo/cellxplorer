@@ -21,10 +21,15 @@ release_tag = load_release_tag()
 
 
 class ReleaseTagScriptTests(unittest.TestCase):
-    def test_accepts_exact_stable_and_beta_tags(self):
+    def test_accepts_exact_stable_beta_and_alpha_tags(self):
         self.assertTrue(release_tag.is_stable_release_tag("v0.17.0"))
         self.assertTrue(release_tag.is_beta_release_tag("v0.17.0-beta.1"))
         self.assertTrue(release_tag.is_beta_release_tag("v0.17.0-beta011"))
+        self.assertTrue(release_tag.is_alpha_release_tag("v0.18.0-alpha.1"))
+        self.assertTrue(release_tag.is_publishable_release_tag("v0.18.0-alpha.1"))
+        self.assertEqual(
+            release_tag.release_channel_for_tag("v0.18.0-alpha.1"), "alpha"
+        )
         self.assertEqual(
             release_tag.require_publishable_release_tag("v0.17.0-beta.1"),
             "v0.17.0-beta.1",
@@ -32,6 +37,10 @@ class ReleaseTagScriptTests(unittest.TestCase):
         self.assertEqual(
             release_tag.require_publishable_release_tag("v0.17.0-beta011"),
             "v0.17.0-beta011",
+        )
+        self.assertEqual(
+            release_tag.require_release_tag_for_channel("v0.18.0-alpha.1", "alpha"),
+            "v0.18.0-alpha.1",
         )
 
     def test_rejects_crossed_or_loose_semver(self):
@@ -41,6 +50,9 @@ class ReleaseTagScriptTests(unittest.TestCase):
             "v0.17.0-rc.1",
             "v0.17.0-beta",
             "v0.17.0-beta.1+build.1",
+            "v0.17.0-alpha",
+            "v0.17.0-alpha.01",
+            "v0.17.0-alpha.1+build.1",
         ):
             with self.subTest(value=value):
                 with self.assertRaises(release_tag.ReleaseTagError):

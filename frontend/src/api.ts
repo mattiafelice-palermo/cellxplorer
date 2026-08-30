@@ -256,6 +256,44 @@ export interface BetaBootstrapStatus {
   scientificPreparationPending?: boolean;
 }
 
+export interface AlphaBootstrapSourceStatus {
+  channel: "stable" | "beta";
+  productName: "CellXplorer" | "CellXplorer Beta";
+  databasePath: string;
+  exists: boolean;
+  compatible: boolean;
+  blockingReason: string | null;
+  schemaRevision: string | null;
+}
+
+export interface AlphaBootstrapStatus {
+  channel: "alpha";
+  setupState?: "choice-required" | "complete" | "blocked-error";
+  decision: "empty" | "copied-stable" | "copied-beta" | "current" | null;
+  needsChoice: boolean;
+  alphaPristine: boolean;
+  alphaHasExistingLibrary: boolean;
+  acknowledgedAppVersion?: string | null;
+  acknowledgedInstallInstanceId?: string | null;
+  sources: AlphaBootstrapSourceStatus[];
+  setupError?: string | null;
+  blockingReason: string | null;
+  outstandingStageToken?: string | null;
+  applyFailureMessage?: string | null;
+  scientificPreparation?: {
+    schemaVersion: number;
+    status: "pending" | "running" | "complete" | "failed";
+    reason?: string;
+    jobId?: number;
+    total?: number;
+    completed?: number;
+    failed?: number;
+    createdAt?: string;
+    updatedAt?: string;
+  } | null;
+  scientificPreparationPending?: boolean;
+}
+
 export interface BetaScientificPreparationStatus {
   pending: boolean;
   state: BetaBootstrapStatus["scientificPreparation"];
@@ -268,6 +306,18 @@ export interface BetaBootstrapStageCopyResult {
   copiedImports: number;
   externalSourcePaths: number;
   replaceExistingBeta: boolean;
+  restartRequired: boolean;
+}
+
+export interface AlphaBootstrapStageCopyResult {
+  token: string;
+  sourceChannel: "stable" | "beta";
+  sourceDatabaseInstanceId: string | null;
+  sourceSchemaRevision: string | null;
+  copiedImports: number;
+  externalSourcePaths: number;
+  replaceExistingAlpha: boolean;
+  replaceExistingLibrary: boolean;
   restartRequired: boolean;
 }
 

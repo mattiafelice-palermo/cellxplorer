@@ -131,7 +131,8 @@ uncommitted or unpushed.
 ## Persistent user data
 
 Stable user state defaults to `%USERPROFILE%\.cellxplorer`; Beta user state defaults to
-`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly:
+`%USERPROFILE%\.cellxplorer-beta`; Alpha user state defaults to `%USERPROFILE%\.cellxplorer-alpha`.
+`CELLXPLORER_DATA` overrides any root exactly:
 
 - `cellxplorer.db`: canonical SQLite database
 - `cache/`: versioned Parquet caches
@@ -190,9 +191,11 @@ Cellxplorer/
 │       ├── assets/                 Bundled browser assets for portable reports
 │       ├── migrations/             Forward-only database migration registry and revisions
 │       ├── routers/                FastAPI `/api` endpoint modules
-│       │   └── automation.py       Pause/resume for background automation
+│       │   ├── automation.py       Pause/resume for background automation
+│       │   └── beta_bootstrap.py   Shared Beta/Alpha first-launch setup routes (Specs 022/053.3)
 │       └── services/               Parsing, caches, calculations, analysis, imports, jobs
 │           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
+│           ├── beta_bootstrap.py   Shared Beta/Alpha first-launch library bootstrap (Specs 022/053.3)
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
@@ -225,6 +228,7 @@ Cellxplorer/
 │   │   │   ├── PlaceInFoldersModal.tsx
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
+│   │   │   ├── BetaBootstrapCoordinator.tsx Shared Beta/Alpha first-launch setup (Specs 022/053.3)
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   ├── FolderTrackingSettingsModal.tsx  Continued-Cell folder tracking settings (Spec 047.4)
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
@@ -242,7 +246,7 @@ Cellxplorer/
 │   │   │       │   ├── recognition/ Recognition job progress hooks and presentation
 │   │   │       │   └── performance/ Time/Capacity opt-in interaction profiling
 │   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
-│   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
+│   │   ├── appChannel.ts           Stable/Beta/Alpha channel branding (Specs 021/053.1)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
@@ -289,12 +293,15 @@ Cellxplorer/
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)
 │   ├── test_continuations.py       Continuation inspect, ordering, and lifecycle validation (Specs 034.2/034.3)
-│   ├── test_app_channels.py        Stable/Beta identity and build contract tests (Spec 021)
+│   ├── test_app_channels.py        Stable/Beta/Alpha identity and build contract tests (Specs 021/053.1)
+│   ├── test_installation_process_scope.py  PowerShell install-root ownership contract tests (Spec 054.1)
+│   ├── test_alpha_bootstrap.py     Alpha Stable/Beta copy and isolation tests (Spec 053.3)
+│   ├── test_build_alpha_icons.py   Alpha icon determinism and frame contract tests (Spec 053.1)
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
 │   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
-│   ├── test_release_tag_script.py  Exact Stable/Beta tag parser tests
+│   ├── test_release_tag_script.py  Exact Stable/Beta/Alpha tag parser tests
 │   ├── test_release_workflow.py    Release/channel workflow contract tests
 │   ├── test_preflight_script.py    Preflight command unit tests
 │   ├── test_profile_test_suite.py  Exhaustive profiler regression tests (Spec 048.2)
@@ -313,6 +320,7 @@ Cellxplorer/
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
 │   ├── build_beta_icons.py         Derive Beta icon assets from Stable source art (Spec 021)
+│   ├── build_alpha_icons.py        Derive Alpha icon assets from Stable source art (Spec 053.1)
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── benchmark_test_runners.py  Diagnostic A/B/C backend runner benchmark (Spec 048.2)
 │   ├── check_versions.py           Read-only version declaration consistency check
@@ -331,20 +339,25 @@ Cellxplorer/
 │   ├── rust_derivative_kernel/ Isolated Cargo/Rayon benchmark target (Spec 050.10)
 │   ├── rust_time_capacity_display/ Benchmark-only coarse native display boundary (Spec 050.13)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
-│   ├── release_tag.py              Exact Stable/Beta SemVer tag validation
-│   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
-│   ├── release_channels.py         Manifest-only branch contract gate (Spec 023)
+│   ├── release_tag.py              Exact Stable/Beta/Alpha SemVer tag validation
+│   ├── release_channel_policy.py   Future-Stable Beta/Alpha release gate (Specs 023/053.2)
+│   ├── release_channels.py         Manifest-only three-channel branch contract gate (Specs 023/053.2)
 │   ├── verify_updater_manifest.py  Channel-aware latest.json validation
 │   └── run_backend_tests.py        Unified bounded backend/frontend test runner for preflight
 ├── .github/workflows/              GitHub Actions CI and release automation
 │   ├── preflight.yml               Clean Windows preflight on main pushes
-│   └── release.yml                 Signed Stable/Beta publishing on v* tags (Specs 019/023)
+│   └── release.yml                 Signed Stable/Beta/Alpha publishing on v* tags (Specs 019/023/053.2)
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
+│   ├── tauri.conf.json              Stable base configuration
+│   ├── tauri.beta.conf.json         Beta identity overlay (Spec 021)
+│   ├── tauri.alpha.conf.json        Alpha identity overlay (Spec 053.1)
+│   ├── icons/, icons-beta/, icons-alpha/ Channel-specific bundle/runtime assets
 │   └── src/
-│       ├── app_channel.rs          Stable/Beta identity helpers (Spec 021)
+│       ├── app_channel.rs          Stable/Beta/Alpha identity and version helpers (Specs 021/053.1/053.2)
+│       ├── beta_bootstrap.rs       Shared Beta/Alpha activation and rollback (Specs 022/053.3)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
-│       ├── beta_installer.rs       Stable-owned first Beta installation (Spec 023)
+│       ├── beta_installer.rs       Channel-scoped install identity lookup (Specs 023/053.3)
 │       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
 │       └── update_notifications.rs Windows toast display and activation event (Spec 020)
 ├── run.py                          Runs FastAPI with the built frontend
@@ -421,8 +434,10 @@ Then run preflight and push the release tag.
 
 ## Release workflow
 
-Use this sequence for user-facing Stable or Beta releases unless a spec says otherwise (for
-example a coordinated release train that defers tagging until several specs land).
+Use this sequence for user-facing Stable, Beta, or Alpha releases unless a spec says otherwise (for
+example a coordinated release train that defers tagging until several specs land). Alpha is fully
+isolated and uses the same signed draft-verify-publish workflow with an exact dotted
+`vMAJOR.MINOR.PATCH-alpha.N` tag.
 
 1. Finish and merge feature work to `main`, or confirm `main` already contains the release scope.
 2. Bump every maintained version declaration and prepend `CHANGELOG.md`:
@@ -432,8 +447,9 @@ example a coordinated release train that defers tagging until several specs land
    ```
 3. Verify declarations: `python scripts\check_versions.py --expected-version <version>`
 4. Before tagging, verify the pre-provisioned orphan `release-channels` branch contains only its
-   README and valid channel manifests. The first Beta may create its initially absent pointer;
-   Stable must already have a valid pointer. Never initialize the branch from `main`.
+   README and valid channel manifests. Before the first published Alpha release, Alpha may be the
+   sole absent pointer; once Alpha is published all three pointers are required. Never initialize
+   the branch from `main`.
 5. Run `python scripts\preflight.py --no-cache` and report the exact result.
 6. Commit the version bump on `main`, push `main`, then create and push the tag:
    ```powershell
@@ -441,15 +457,17 @@ example a coordinated release train that defers tagging until several specs land
    git push origin main
    git push origin v<version>
    ```
-   Tags must pass `python scripts\release_tag.py --tag v<version>`. Stable uses `vX.Y.Z`; Beta
-   prereleases use `vX.Y.Z-beta.N`, and their core must be greater than the highest published exact
-   Stable tag. The tag commit must be reachable from `main`.
+Tags must pass `python scripts\release_tag.py --tag v<version>`. Stable uses `vX.Y.Z`; Beta
+prereleases use `vX.Y.Z-beta.N` (or the established compact form); Alpha prereleases use
+`vX.Y.Z-alpha.N`. Beta and Alpha cores must be greater than the highest published exact Stable tag.
+The tag commit must be reachable from `main`.
 7. Publishing is triggered by `.github/workflows/release.yml` on tag push. Monitor the Actions run;
    if a tag push fails early (for example preflight cancel), fix on `main`, push, delete and
    re-create the tag on the fixed commit, then push the tag again.
 8. Confirm GitHub Release assets: channel-specific NSIS installer, matching `.sig`, and
-   `latest.json`. Beta tags are true GitHub prereleases; Stable remains GitHub's latest normal
-   release. Verify only the selected public raw channel pointer changed.
+   `latest.json`. Beta and Alpha tags are true GitHub prereleases; Stable remains GitHub's latest
+   normal release. Verify only the selected public raw channel pointer changed and every other
+   pointer plus README retained its blob identity.
 9. Do not publish the first channel release until both build-only workflow choices and the complete
    disposable installed/update matrix are recorded and the branch is re-reviewed.
 

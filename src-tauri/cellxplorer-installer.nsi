@@ -70,8 +70,14 @@ ${StrLoc}
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
-; Channel-specific profile data root (Spec 022). Exact bundle identifiers only —
-; never infer from product-name substrings. Beta must never target .cellxplorer.
+; Channel-specific profile data root (Specs 022/053). Exact bundle identifiers only —
+; never infer from product-name substrings. Each installed application owns its root.
+!if "${BUNDLEID}" == "com.cellxplorer.desktop.alpha"
+  !define CX_PROFILE_DATA_DIR ".cellxplorer-alpha"
+  !define CX_BRAND_RGB "7048E8"
+  ; Windows COLORREF: 0x00BBGGRR for #7048E8.
+  !define CX_BRAND_COLORREF 0x00E84870
+!else
 !if "${BUNDLEID}" == "com.cellxplorer.desktop.beta"
   !define CX_PROFILE_DATA_DIR ".cellxplorer-beta"
   !define CX_BRAND_RGB "3678B7"
@@ -86,6 +92,7 @@ ${StrLoc}
   !else
     !error "Unsupported CellXplorer bundle identifier for profile data directory: ${BUNDLEID}"
   !endif
+!endif
 !endif
 
 Var PassiveMode
@@ -682,9 +689,17 @@ Function CellXplorerNativeCancel
 FunctionEnd
 
 Function CxBeforeInstFiles
-  !insertmacro CxShowNativeControl 1
-  !insertmacro CxShowNativeControl 2
-  !insertmacro CxShowNativeControl 3
+  ; Passive updater runs skip the branded welcome/location/reinstall pages,
+  ; so initialize the outer frame and fonts before the stock progress page
+  ; tries to use them. Keep its native actions hidden because /P is
+  ; intentionally non-interactive; normal installs still show them here.
+  ${If} $PassiveMode = 1
+    Call CxPrepareWindow
+  ${Else}
+    !insertmacro CxShowNativeControl 1
+    !insertmacro CxShowNativeControl 2
+    !insertmacro CxShowNativeControl 3
+  ${EndIf}
 FunctionEnd
 
 ; The stock file-copy page positions its controls for the small default
@@ -701,6 +716,14 @@ FunctionEnd
   !insertmacro CxHideNativeControl 1036
   !insertmacro CxHideNativeControl 1046
   !insertmacro CxHideNativeControl 1256
+
+  ; The pre-hook keeps passive updater actions hidden even if MUI restores
+  ; the stock page controls while creating the install-files dialog.
+  ${If} $PassiveMode = 1
+    !insertmacro CxHideNativeControl 1
+    !insertmacro CxHideNativeControl 2
+    !insertmacro CxHideNativeControl 3
+  ${EndIf}
 
   ; $0 = inner page dialog
   FindWindow $0 "#32770" "" $HWNDPARENT
@@ -1460,7 +1483,8 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ; The path-scoped pre-install hook above owns shutdown for this exact
+  ; installation directory. Do not use a shared executable-name check.
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
@@ -1623,11 +1647,9 @@ FunctionEnd
 
 Section Uninstall
 
-  ; Let NSIS close the foreground application first. The custom hook that
-  ; follows is intentionally scoped to orphaned backend processes.
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
-
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
+    ; The path-scoped hook protects its own uninstaller ancestry and stops the
+    ; target installation before files are removed.
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
 

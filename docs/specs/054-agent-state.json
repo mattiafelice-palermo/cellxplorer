@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "spec": "054",
+  "branch": "feature/updater-lifecycle-hardening",
+  "active_child": "054.2",
+  "children": [
+    "054.1",
+    "054.2"
+  ],
+  "turn": "REVIEWER",
+  "action": "BLOCKED",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-30T21:53:05+02:00"
+}

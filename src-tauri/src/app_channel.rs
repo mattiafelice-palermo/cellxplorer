@@ -4,17 +4,22 @@ use std::path::{Path, PathBuf};
 pub enum AppChannel {
     Stable,
     Beta,
+    Alpha,
 }
 
 pub const STABLE_IDENTIFIER: &str = "com.cellxplorer.desktop";
 pub const BETA_IDENTIFIER: &str = "com.cellxplorer.desktop.beta";
+pub const ALPHA_IDENTIFIER: &str = "com.cellxplorer.desktop.alpha";
 
 pub const STABLE_CHANNEL_ENDPOINT: &str =
     "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json";
 pub const BETA_CHANNEL_ENDPOINT: &str =
     "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json";
+pub const ALPHA_CHANNEL_ENDPOINT: &str =
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/alpha/latest.json";
 
 pub const BETA_PRODUCT_NAME: &str = "CellXplorer Beta";
+pub const ALPHA_PRODUCT_NAME: &str = "CellXplorer Alpha";
 
 pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), String> {
     let version = semver::Version::parse(value).map_err(|_| {
@@ -56,6 +61,23 @@ pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), 
             }
             Ok(())
         }
+        AppChannel::Alpha => {
+            let prerelease = version.pre.as_str();
+            let sequence = prerelease.strip_prefix("alpha.").ok_or_else(|| {
+                "CellXplorer Alpha accepts only MAJOR.MINOR.PATCH-alpha.N update versions."
+                    .to_string()
+            })?;
+            if sequence.is_empty()
+                || (sequence != "0" && sequence.starts_with('0'))
+                || !sequence.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return Err(
+                    "CellXplorer Alpha accepts only MAJOR.MINOR.PATCH-alpha.N update versions."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -64,6 +86,7 @@ impl AppChannel {
         match identifier {
             STABLE_IDENTIFIER => Ok(AppChannel::Stable),
             BETA_IDENTIFIER => Ok(AppChannel::Beta),
+            ALPHA_IDENTIFIER => Ok(AppChannel::Alpha),
             other => Err(format!(
                 "Unsupported CellXplorer application identifier: {other}"
             )),
@@ -74,6 +97,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => "stable",
             AppChannel::Beta => "beta",
+            AppChannel::Alpha => "alpha",
         }
     }
 
@@ -81,6 +105,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => "CellXplorer",
             AppChannel::Beta => "CellXplorer Beta",
+            AppChannel::Alpha => ALPHA_PRODUCT_NAME,
         }
     }
 
@@ -92,6 +117,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => "cellxplorer",
             AppChannel::Beta => "cellxplorer-beta",
+            AppChannel::Alpha => "cellxplorer-alpha",
         }
     }
 
@@ -108,6 +134,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => 0x0086_b812,
             AppChannel::Beta => 0x00_b7_7836,
+            AppChannel::Alpha => 0x00_e8_4870,
         }
     }
 
@@ -115,6 +142,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => include_bytes!("../icons/icon-256.rgba"),
             AppChannel::Beta => include_bytes!("../icons-beta/icon-256.rgba"),
+            AppChannel::Alpha => include_bytes!("../icons-alpha/icon-256.rgba"),
         }
     }
 
@@ -122,6 +150,7 @@ impl AppChannel {
         match self {
             AppChannel::Stable => ".cellxplorer",
             AppChannel::Beta => ".cellxplorer-beta",
+            AppChannel::Alpha => ".cellxplorer-alpha",
         }
     }
 
@@ -153,6 +182,10 @@ mod tests {
             AppChannel::from_identifier(BETA_IDENTIFIER).unwrap(),
             AppChannel::Beta
         );
+        assert_eq!(
+            AppChannel::from_identifier(ALPHA_IDENTIFIER).unwrap(),
+            AppChannel::Alpha
+        );
     }
 
     #[test]
@@ -167,6 +200,10 @@ mod tests {
             AppChannel::Beta.autostart_registry_value(),
             "CellXplorer Beta"
         );
+        assert_eq!(
+            AppChannel::Alpha.autostart_registry_value(),
+            "CellXplorer Alpha"
+        );
     }
 
     #[test]
@@ -177,6 +214,9 @@ mod tests {
         assert!(!stable.accepts_deep_link("cellxplorer-beta://import-analysis"));
         assert!(beta.accepts_deep_link("cellxplorer-beta://import-analysis"));
         assert!(!beta.accepts_deep_link("cellxplorer://import-analysis"));
+        let alpha = AppChannel::Alpha;
+        assert!(alpha.accepts_deep_link("cellxplorer-alpha://import-analysis"));
+        assert!(!alpha.accepts_deep_link("cellxplorer-beta://import-analysis"));
     }
 
     #[test]
@@ -186,6 +226,7 @@ mod tests {
             AppChannel::Beta.frame_color_bgr()
         );
         assert_eq!(AppChannel::Beta.frame_color_bgr(), 0x00_b7_7836);
+        assert_eq!(AppChannel::Alpha.frame_color_bgr(), 0x00_e8_4870);
     }
 
     #[test]
@@ -198,6 +239,10 @@ mod tests {
         assert_eq!(
             AppChannel::Beta.default_data_root(home),
             PathBuf::from(r"C:\Users\example\.cellxplorer-beta")
+        );
+        assert_eq!(
+            AppChannel::Alpha.default_data_root(home),
+            PathBuf::from(r"C:\Users\example\.cellxplorer-alpha")
         );
     }
 
@@ -268,5 +313,36 @@ mod tests {
             dotted_beta_12 < beta_11,
             "do not switch back to dotted prereleases within a compact Beta line"
         );
+    }
+
+    #[test]
+    fn alpha_release_versions_are_exact() {
+        for version in [
+            "0.28.0-alpha.0",
+            "0.28.0-alpha.1",
+            "1.0.0-alpha.12",
+            "12.34.56-alpha.999",
+        ] {
+            assert!(
+                validate_release_version(AppChannel::Alpha, version).is_ok(),
+                "{version}"
+            );
+        }
+        for version in [
+            "0.28.0",
+            "v0.28.0-alpha.1",
+            "0.28.0-alpha",
+            "0.28.0-alpha.01",
+            "0.28.0-alpha1",
+            "0.28.0-alpha.1.extra",
+            "0.28.0-alpha.1+build.1",
+            "0.28.0-ALPHA.1",
+            "0.28.0-beta.1",
+        ] {
+            assert!(
+                validate_release_version(AppChannel::Alpha, version).is_err(),
+                "{version}"
+            );
+        }
     }
 }

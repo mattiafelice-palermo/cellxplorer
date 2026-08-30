@@ -640,6 +640,21 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertIn(b"cellxplorer-beta://import-analysis", html)
         self.assertNotIn(b"cellxplorer://import-analysis", html)
 
+    def test_export_uses_alpha_deep_link_scheme_when_channel_is_alpha(self):
+        db, analysis, _, _, _ = self.create_analysis()
+        destination = self.root / "alpha-portable.html"
+        with patch.dict(os.environ, {"CELLXPLORER_CHANNEL": "alpha"}, clear=False):
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                destination,
+                include_original_files=False,
+            )
+        html = destination.read_bytes()
+        self.assertIn(b"cellxplorer-alpha://import-analysis", html)
+        self.assertNotIn(b"cellxplorer-beta://import-analysis", html)
+        self.assertNotIn(b"cellxplorer://import-analysis", html)
+
     def test_packaged_invalid_channel_fails_for_portable_deep_link(self):
         with patch.dict(
             os.environ,

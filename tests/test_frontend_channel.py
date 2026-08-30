@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ SCRIPT = ROOT / "scripts" / "frontend_channel.py"
 BUILD_SCRIPT = ROOT / "scripts" / "build_frontend_channel.py"
 NSIS_HOOKS = ROOT / "src-tauri" / "nsis-hooks.nsh"
 KILL_SCRIPT = ROOT / "src-tauri" / "kill_installation_processes.ps1"
+SCOPE_SCRIPT = ROOT / "src-tauri" / "installation_process_scope.ps1"
 
 
 def load_frontend_channel():
@@ -57,10 +59,45 @@ class FrontendChannelStampTests(unittest.TestCase):
         frontend_channel.write_stamp(self.root, "beta")
         frontend_channel.verify_stamp(self.root, "beta")
 
+    def test_write_and_verify_matching_alpha_channel(self):
+        frontend_channel.write_stamp(self.root, "alpha")
+        frontend_channel.verify_stamp(self.root, "alpha")
+
     def test_verify_rejects_channel_mismatch(self):
         frontend_channel.write_stamp(self.root, "stable")
         with self.assertRaisesRegex(RuntimeError, "built for channel 'stable'"):
             frontend_channel.verify_stamp(self.root, "beta")
+
+    def test_verify_rejects_every_crossed_channel_pair(self):
+        channels = ("stable", "beta", "alpha")
+        for written in channels:
+            frontend_channel.write_stamp(self.root, written)
+            for verified in channels:
+                if written == verified:
+                    continue
+                with self.subTest(written=written, verified=verified):
+                    with self.assertRaisesRegex(RuntimeError, f"built for channel '{written}'"):
+                        frontend_channel.verify_stamp(self.root, verified)
+
+    def test_alpha_branding_inputs_invalidate_alpha_stamp(self):
+        for relative in (
+            "frontend/public/app-icon-alpha.png",
+            "src-tauri/tauri.alpha.conf.json",
+        ):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                original = path.read_bytes()
+                frontend_channel.write_stamp(self.root, "alpha")
+                path.write_bytes(original + b" changed")
+                with self.assertRaisesRegex(RuntimeError, "stale relative to current branding inputs"):
+                    frontend_channel.verify_stamp(self.root, "alpha")
+                path.write_bytes(original)
+
+    def test_stamp_rejects_invalid_channel_values(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported channel"):
+            frontend_channel.write_stamp(self.root, "preview")
+        with self.assertRaisesRegex(ValueError, "Unsupported channel"):
+            frontend_channel.verify_stamp(self.root, "preview")
 
     def test_verify_rejects_missing_stamp(self):
         with self.assertRaisesRegex(RuntimeError, "Missing frontend channel stamp"):
@@ -82,6 +119,22 @@ class FrontendChannelStampTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["VITE_CELLXPLORER_CHANNEL"], "beta")
         self.assertEqual(calls[1][0][-3:], ["write", "--channel", "beta"])
 
+    def test_alpha_channel_builder_consumes_requested_channel_and_writes_stamp(self):
+        completed = type("Completed", (), {"returncode": 0})()
+        calls: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+        def fake_run(command, *, cwd, env=None, check=False):
+            del check
+            calls.append((command, cwd, env))
+            return completed
+
+        with patch.object(build_frontend_channel.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(build_frontend_channel.main(["alpha"]), 0)
+
+        self.assertEqual(calls[0][1], build_frontend_channel.FRONTEND)
+        self.assertEqual(calls[0][2]["VITE_CELLXPLORER_CHANNEL"], "alpha")
+        self.assertEqual(calls[1][0][-3:], ["write", "--channel", "alpha"])
+
     def test_channel_builder_rejects_invalid_channel_before_build(self):
         with self.assertRaises(SystemExit):
             build_frontend_channel.main(["preview"])
@@ -99,17 +152,30 @@ class NsisProcessCleanupTests(unittest.TestCase):
 
     def test_kill_script_scopes_to_install_prefix(self):
         script = KILL_SCRIPT.read_text(encoding="utf-8")
+        scope = SCOPE_SCRIPT.read_text(encoding="utf-8")
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
-        self.assertIn("StartsWith($prefix", script)
+        self.assertIn("installation_process_scope.ps1", hooks)
+        scope_extract = re.search(
+            r'File /oname=\$PLUGINSDIR\\(?P<name>[^\s"]+)\s+"\$\{CELLXPLORER_HOOK_SOURCE_DIR\}\\installation_process_scope\.ps1"',
+            hooks,
+        )
+        scope_import = re.search(
+            r'Join-Path \$PSScriptRoot "(?P<name>[^"]+)"', script
+        )
+        self.assertIsNotNone(scope_extract)
+        self.assertIsNotNone(scope_import)
+        self.assertEqual(scope_extract.group("name"), scope_import.group("name"))
+        self.assertIn("Get-InstallationProcessPathPrefix", script)
+        self.assertIn("Test-InstallationProcessCandidate", script)
+        self.assertIn("Test-InstallationOwnedExecutablePath", scope)
+        self.assertIn("Test-BackendExecutablePath", scope)
         self.assertIn("AddSeconds(10)", script)
         self.assertIn("$remaining.Count", script)
         self.assertIn("$protectedProcessIds", script)
         self.assertIn("ParentProcessId", script)
-        self.assertIn("[switch]$BackendOnly", script)
-        self.assertIn('-like "cellxplorer-backend*.exe"', script)
         self.assertIn("$quietChecksRequired = 5", script)
         self.assertIn("$quietChecks -lt $quietChecksRequired", script)
-        self.assertIn('KillInstallationProcesses "-BackendOnly"', hooks)
+        self.assertEqual(hooks.count('KillInstallationProcesses ""'), 2)
         self.assertNotIn("[System.IO.File]::Open", script)
         self.assertNotIn("/IM cellxplorer", script)
 
@@ -119,10 +185,8 @@ class NsisProcessCleanupTests(unittest.TestCase):
         uninstall_section = template.split("Section Uninstall", 1)[1].split(
             "SectionEnd", 1
         )[0]
-        self.assertLess(
-            uninstall_section.index("CheckIfAppIsRunning"),
-            uninstall_section.index("NSIS_HOOK_PREUNINSTALL"),
-        )
+        self.assertIn("NSIS_HOOK_PREUNINSTALL", uninstall_section)
+        self.assertNotIn("CheckIfAppIsRunning", template)
         self.assertIn("Var RunCurrentUninstaller", template)
         self.assertIn(
             'WriteUninstaller "$PLUGINSDIR\\cellxplorer-current-uninstall.exe"',

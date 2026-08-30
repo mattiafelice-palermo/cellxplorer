@@ -799,7 +799,7 @@ export function SettingsPage() {
     saveAppUpdatePreferences(window.localStorage, updatePreferences);
     setSavedUpdatePreferences(updatePreferences);
     window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED_EVENT));
-    if (!APP_BRANDING.isBeta && betaOptInEnabled) {
+    if (APP_BRANDING.channel === "stable" && betaOptInEnabled) {
       void betaInstall?.checkForBeta("manual");
     }
     notifications.show({
@@ -1724,7 +1724,7 @@ export function SettingsPage() {
                 </Text>
               </div>
 
-              {APP_BRANDING.isBeta ? (
+              {APP_BRANDING.channel === "beta" ? (
                 <Paper
                   withBorder
                   p="md"
@@ -1845,7 +1845,7 @@ export function SettingsPage() {
                 </Group>
               </Paper>
 
-              {!APP_BRANDING.isBeta ? (
+              {APP_BRANDING.channel === "stable" ? (
               <Paper
                 withBorder
                 p="md"
@@ -1873,7 +1873,7 @@ export function SettingsPage() {
               </Paper>
               ) : null}
 
-              {!APP_BRANDING.isBeta && betaInstall?.installationInfo?.installed ? (
+              {APP_BRANDING.channel === "stable" && betaInstall?.installationInfo?.installed ? (
                 <Paper withBorder p="md">
                   <Group justify="space-between" wrap="nowrap" align="center">
                     <div>
@@ -1891,7 +1891,7 @@ export function SettingsPage() {
                 </Paper>
               ) : null}
 
-              {!APP_BRANDING.isBeta &&
+              {APP_BRANDING.channel === "stable" &&
               !betaInstall?.installationInfo?.installed &&
               betaInstall?.installState.status === "available" ? (
                 <Paper withBorder p="md">

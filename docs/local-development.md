@@ -44,6 +44,10 @@ answering anything else leaves it running and exits without starting the app.
 .\scripts\build-app.cmd
 ```
 
+Pass `-Channel stable`, `-Channel beta`, or `-Channel alpha` to build the corresponding
+channel-specific installer. Alpha is a fully isolated build with its own product identity,
+`.cellxplorer-alpha` data root, and standard updater controls backed by its dedicated feed.
+
 The build command installs npm dependencies, builds the React frontend, freezes the Python backend,
 copies the backend sidecar into Tauri's binaries directory, and creates the NSIS installer.
 
@@ -52,6 +56,9 @@ The installer is written to:
 ```text
 src-tauri\target\release\bundle\nsis\CellXplorer_<version>_x64-setup.exe
 ```
+
+Beta and Alpha builds use `CellXplorer.Beta_<version>_x64-setup.exe` and
+`CellXplorer.Alpha_<version>_x64-setup.exe` respectively.
 
 Useful options for repeat builds:
 

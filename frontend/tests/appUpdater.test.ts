@@ -7,6 +7,8 @@ import {
   UPDATE_NOTIFIED_VERSION_KEY,
   UPDATE_NOTIFICATION_KIND,
   UPDATE_NOTIFICATION_TAG,
+  UPDATE_APPLYING_DESCRIPTION,
+  UPDATE_APPLYING_LABEL,
   UPDATE_PREFERENCES_KEY,
   acceptUpdateReleaseForPreferences,
   accumulateDownloadProgress,
@@ -251,6 +253,15 @@ test("installation failure marks lifecycleMayNeedRestart", () => {
   }
 });
 
+test("application handoff has explicit passive-progress copy and remains protected", () => {
+  assert.equal(UPDATE_APPLYING_LABEL, "Applying update…");
+  assert.match(UPDATE_APPLYING_DESCRIPTION, /passive updater window/i);
+  const applying = { status: "launching" as const, release: mockRelease("0.16.0") };
+  assert.equal(isProtectedUpdateFlow(applying), true);
+  assert.equal(canDismissUpdateModal(applying), false);
+  assert.equal(isUpdateMenuDisabled(applying), true);
+});
+
 test("safe release-note parsing preserves mixed text and bullets", () => {
   assert.deepEqual(parseReleaseNoteLines(null), [
     { kind: "text", text: "This release includes improvements and bug fixes." },
@@ -419,6 +430,9 @@ test("development mock parsing stays dev-only", () => {
   assert.equal(shouldShowUpdateUi(false, null), false);
   assert.equal(shouldShowUpdateUi(true, null, "beta"), true);
   assert.equal(shouldShowUpdateUi(true, null, "stable"), true);
+  assert.equal(shouldShowUpdateUi(true, "available", "alpha"), true);
+  assert.equal(shouldShowUpdateUi(false, "available", "alpha"), true);
+  assert.equal(shouldShowUpdateUi(false, null, "alpha"), false);
 });
 
 test("modal dismissal rules follow download and install phases", () => {

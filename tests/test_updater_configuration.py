@@ -1,6 +1,7 @@
 import json
 import re
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 
@@ -9,6 +10,7 @@ TAURI_CONF = ROOT / "src-tauri" / "tauri.conf.json"
 CARGO_TOML = ROOT / "src-tauri" / "Cargo.toml"
 MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
 APP_UPDATES_RS = ROOT / "src-tauri" / "src" / "app_updates.rs"
+APP_CHANNEL_RS = ROOT / "src-tauri" / "src" / "app_channel.rs"
 CAPABILITIES = ROOT / "src-tauri" / "capabilities" / "default.json"
 NSIS = ROOT / "src-tauri" / "cellxplorer-installer.nsi"
 
@@ -20,7 +22,14 @@ EXPECTED_BETA_ENDPOINT = (
     "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/"
     "release-channels/beta/latest.json"
 )
+EXPECTED_ALPHA_ENDPOINT = (
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/"
+    "release-channels/alpha/latest.json"
+)
 BETA_OVERLAY = ROOT / "src-tauri" / "tauri.beta.conf.json"
+ALPHA_OVERLAY = ROOT / "src-tauri" / "tauri.alpha.conf.json"
+APP_UPDATE_COORDINATOR = ROOT / "frontend" / "src" / "components" / "AppUpdateCoordinator.tsx"
+APP_UPDATE_MODAL = ROOT / "frontend" / "src" / "components" / "AppUpdateModal.tsx"
 PLACEHOLDER_PATTERNS = (
     "CONTENT FROM PUBLICKEY.PEM",
     "your public key",
@@ -29,12 +38,23 @@ PLACEHOLDER_PATTERNS = (
 )
 
 
+def deep_merge(base: dict, overlay: dict) -> dict:
+    merged = deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class UpdaterConfigurationTests(unittest.TestCase):
     def setUp(self):
         self.conf = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
         self.cargo = CARGO_TOML.read_text(encoding="utf-8")
         self.main_rs = MAIN_RS.read_text(encoding="utf-8")
         self.app_updates_rs = APP_UPDATES_RS.read_text(encoding="utf-8")
+        self.app_channel_rs = APP_CHANNEL_RS.read_text(encoding="utf-8")
         self.capabilities = json.loads(CAPABILITIES.read_text(encoding="utf-8"))
         self.nsis = NSIS.read_text(encoding="utf-8")
 
@@ -53,6 +73,18 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertEqual(endpoints, [EXPECTED_BETA_ENDPOINT])
         self.assertNotIn("/releases/latest/", endpoints[0])
 
+    def test_resolved_alpha_config_uses_alpha_channel_endpoint(self):
+        overlay = json.loads(ALPHA_OVERLAY.read_text(encoding="utf-8"))
+        endpoints = overlay["plugins"]["updater"]["endpoints"]
+        self.assertEqual(endpoints, [EXPECTED_ALPHA_ENDPOINT])
+        self.assertNotIn("/releases/latest/", endpoints[0])
+
+    def test_alpha_self_updater_uses_the_shared_standard_update_path(self):
+        self.assertNotIn("ALPHA_UPDATER_DISABLED_ERROR", self.app_channel_rs)
+        self.assertNotIn("ensure_updater_enabled", self.app_updates_rs)
+        self.assertIn("validate_release_version", self.app_channel_rs)
+        self.assertIn("AppChannel::Alpha", self.app_channel_rs)
+
     def test_beta_self_updater_gate_is_removed(self):
         source = self.app_updates_rs
         self.assertNotIn("reject_beta_channel_updates", source)
@@ -63,9 +95,70 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertNotIn("dangerousAcceptInvalidCerts", updater)
         self.assertNotIn("dangerousAcceptInvalidHostnames", updater)
 
-    def test_windows_install_mode_is_basic_ui(self):
+    def test_windows_install_mode_is_passive(self):
         install_mode = self.conf["plugins"]["updater"]["windows"]["installMode"]
-        self.assertEqual(install_mode, "basicUi")
+        self.assertEqual(install_mode, "passive")
+
+    def test_all_channel_updater_modes_resolve_to_passive(self):
+        beta = deep_merge(self.conf, json.loads(BETA_OVERLAY.read_text(encoding="utf-8")))
+        alpha = deep_merge(self.conf, json.loads(ALPHA_OVERLAY.read_text(encoding="utf-8")))
+        expected_endpoints = {
+            "stable": EXPECTED_STABLE_ENDPOINT,
+            "beta": EXPECTED_BETA_ENDPOINT,
+            "alpha": EXPECTED_ALPHA_ENDPOINT,
+        }
+        for channel, config in (("stable", self.conf), ("beta", beta), ("alpha", alpha)):
+            with self.subTest(channel=channel):
+                updater = config["plugins"]["updater"]
+                self.assertEqual(updater["windows"]["installMode"], "passive")
+                self.assertNotIn(updater["windows"]["installMode"], {"basicUi", "quiet"})
+                self.assertEqual(updater["endpoints"], [expected_endpoints[channel]])
+        self.assertEqual(self.conf["bundle"]["windows"]["nsis"]["installMode"], "perMachine")
+
+    def test_update_handoff_is_visible_and_install_retry_is_wired(self):
+        coordinator = APP_UPDATE_COORDINATOR.read_text(encoding="utf-8")
+        modal = APP_UPDATE_MODAL.read_text(encoding="utf-8")
+        self.assertIn("retryInstall", coordinator)
+        self.assertIn('dispatch({ type: "launching", release });', coordinator)
+        self.assertIn("await installAppUpdateTauri(release.version);", coordinator)
+        self.assertIn("UPDATE_APPLYING_LABEL", modal)
+        self.assertIn("UPDATE_APPLYING_DESCRIPTION", modal)
+        self.assertIn("onRetryInstall", modal)
+        self.assertIn("Retry install", modal)
+
+    def test_passive_instfiles_initializes_custom_frame_without_wizard_actions(self):
+        before_instfiles = re.search(
+            r"Function CxBeforeInstFiles(?P<body>.*?)FunctionEnd",
+            self.nsis,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(before_instfiles)
+        before_body = before_instfiles.group("body")
+        self.assertIn("${If} $PassiveMode = 1", before_body)
+        self.assertIn("Call CxPrepareWindow", before_body)
+        self.assertIn("${Else}", before_body)
+        self.assertLess(
+            before_body.index("Call CxPrepareWindow"),
+            before_body.index("CxShowNativeControl 1"),
+        )
+
+        style_instfiles = re.search(
+            r"!macro CxStyleInstFilesBody(?P<body>.*?)!macroend",
+            self.nsis,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(style_instfiles)
+        style_body = style_instfiles.group("body")
+        self.assertIsNotNone(
+            re.search(
+                r"\$\{If\} \$PassiveMode = 1.*?"
+                r"CxHideNativeControl 1.*?CxHideNativeControl 2.*?CxHideNativeControl 3",
+                style_body,
+                re.DOTALL,
+            ),
+        )
+        self.assertIn("CreateFont $CxHeadingFont", self.nsis)
+        self.assertIn("SetWindowPos(p $HWNDPARENT", self.nsis)
 
     def test_committed_public_key_is_real(self):
         pubkey = self.conf["plugins"]["updater"]["pubkey"]

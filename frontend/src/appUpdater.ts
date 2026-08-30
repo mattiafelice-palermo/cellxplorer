@@ -1,3 +1,5 @@
+import type { AppChannel } from "./appChannel";
+
 export const UPDATE_NOTIFIED_VERSION_KEY = "cellxplorer-update-notified-version";
 export const UPDATE_PREFERENCES_KEY = "cellxplorer-update-preferences";
 export const UPDATE_PREFERENCES_CHANGED_EVENT = "cellxplorer-update-preferences-changed";
@@ -111,6 +113,10 @@ export type AppUpdateRelease = {
   publishedAt: string | null;
 };
 
+export const UPDATE_APPLYING_LABEL = "Applying update…";
+export const UPDATE_APPLYING_DESCRIPTION =
+  "CellXplorer will close and restart. A compact passive updater window will remain visible while installation finishes.";
+
 export type AppUpdateState =
   | { status: "idle" }
   | { status: "checking"; source: UpdateCheckSource }
@@ -185,8 +191,12 @@ export function parseDevUpdateMock(
 export function shouldShowUpdateUi(
   tauri: boolean,
   mock: DevUpdateMockMode | null,
-  _channel: "stable" | "beta" = "stable",
+  channel: AppChannel = "stable",
 ): boolean {
+  // All isolated products use the same standard updater UI. Keep the channel
+  // argument for callers that pass branding context, but the Rust command and
+  // endpoint selected by the installed product provide the channel isolation.
+  void channel;
   return tauri || mock !== null;
 }
 

@@ -1,5 +1,29 @@
 # Feature specs
 
+- [053-alpha-application-release-channel.md](053-alpha-application-release-channel.md)
+  adds CellXplorer Alpha as a fully isolated third Windows product from the shared source tree:
+  separate installation identity, profile root, deep link, updater feed, release tag family, purple
+  branding, and manifest pointer while preserving Stable/Beta behavior. Implement sequentially on
+  codex/alpha-release-channel:
+  - [053.1-alpha-application-identity-isolation-and-packaging.md](053.1-alpha-application-identity-isolation-and-packaging.md)
+    — exhaustive runtime channel identity, .cellxplorer-alpha isolation, purple theme/icons, Tauri
+    overlay, shared NSIS integration, three-channel build stamps, and side-by-side package evidence.
+    **Implemented; review pending.**
+  - [053.2-alpha-updater-release-publication-and-closure.md](053.2-alpha-updater-release-publication-and-closure.md)
+    — exact Alpha updater/tag/manifest rules, first-pointer bootstrap, three-channel GitHub release
+    automation, all-non-target pointer protection, and cumulative installed/update closure.
+    **Implemented — review-clean.** Review: [053.2 review](reviews/053.2-alpha-updater-release-publication-and-closure-review.md).
+  - [053.3-alpha-first-launch-database-bootstrap.md](053.3-alpha-first-launch-database-bootstrap.md)
+    — Alpha's own blocking first-launch setup offering start-empty, copy-Stable, or copy-Beta, by
+    generalizing the verified Beta bootstrap machinery over a source channel while leaving both
+    source products untouched and establishing no ongoing synchronization. Added by the user's
+    2026-08-27 amendment to Parent 053 §6.1, which superseded the original no-copy rule. **Implemented —
+    review pending.**
+  **Non-implementable parent. Children 053.1 and 053.2 are implemented and review-clean; the
+  cumulative Parent 053 review is [recorded](reviews/053-alpha-application-release-channel-review.md)
+  and was clean but `BLOCKED` on the outstanding disposable installed/update matrix. The workflow was
+  resumed on `codex/alpha-release-channel` (`053-agent-state.json`) to schedule Child 053.3, which is
+  now the active child; the parent review must be repeated once it lands.**
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
   adds a protocol-family comparison modal beside the protocol selector, distinguishing strict
   semantic identity from workflow and custom comparability without silently merging source-local

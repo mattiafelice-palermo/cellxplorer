@@ -16,6 +16,8 @@ REQUIRED_CHANNEL_PATHS = frozenset(
         "beta/latest.json",
     }
 )
+ALPHA_CHANNEL_PATH = "alpha/latest.json"
+ALL_CHANNEL_PATHS = REQUIRED_CHANNEL_PATHS | {ALPHA_CHANNEL_PATH}
 
 
 class ReleaseChannelBranchError(Exception):
@@ -23,8 +25,22 @@ class ReleaseChannelBranchError(Exception):
 
 
 def validate_branch_tree(
-    payload: object, *, target_channel: str | None = None
+    payload: object,
+    *,
+    target_channel: str | None = None,
+    published_alpha: bool | None = None,
 ) -> dict[str, str]:
+    if target_channel not in (None, "stable", "beta", "alpha"):
+        raise ReleaseChannelBranchError(
+            f"Unsupported release channel: {target_channel!r}."
+        )
+    if target_channel is not None and published_alpha is None:
+        raise ReleaseChannelBranchError(
+            "Authoritative published-Alpha evidence is required when validating a target channel."
+        )
+    if published_alpha is not None and not isinstance(published_alpha, bool):
+        raise ReleaseChannelBranchError("published_alpha evidence must be a boolean.")
+    alpha_is_published = bool(published_alpha)
     if not isinstance(payload, dict):
         raise ReleaseChannelBranchError("Git tree response must be a JSON object.")
     if payload.get("truncated") is True:
@@ -46,22 +62,34 @@ def validate_branch_tree(
         if not isinstance(path, str) or not path:
             raise ReleaseChannelBranchError("Git tree entry is missing a path.")
         if kind == "tree":
+            if path in directories:
+                raise ReleaseChannelBranchError(
+                    f"Git tree contains a duplicate entry for {path!r}."
+                )
             directories.add(path)
             continue
         if kind != "blob" or not isinstance(sha, str) or not sha:
             raise ReleaseChannelBranchError(
                 f"Unexpected Git tree entry for {path!r}: expected a blob."
             )
+        if path in blobs or path in directories:
+            raise ReleaseChannelBranchError(
+                f"Git tree contains a duplicate entry for {path!r}."
+            )
         blobs[path] = sha
 
     required = set(REQUIRED_CHANNEL_PATHS)
+    allowed = set(REQUIRED_CHANNEL_PATHS)
+    if alpha_is_published:
+        required.add(ALPHA_CHANNEL_PATH)
+        allowed.add(ALPHA_CHANNEL_PATH)
     if target_channel == "beta":
         # The first real Beta release is what creates the first trustworthy Beta pointer.
-        # Stable must already be valid so no Stable transition binary can embed a 404 feed.
+        # Stable must already be valid so no transition binary can embed a 404 feed.
         required.remove("beta/latest.json")
     actual = set(blobs)
     missing = sorted(required - actual)
-    unexpected = sorted(actual - REQUIRED_CHANNEL_PATHS)
+    unexpected = sorted(actual - allowed)
     if missing:
         raise ReleaseChannelBranchError(
             "release-channels is not provisioned; missing: " + ", ".join(missing)
@@ -83,12 +111,24 @@ def validate_branch_tree(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree-json", type=Path, required=True)
-    parser.add_argument("--target-channel", choices=("stable", "beta"), required=True)
+    parser.add_argument(
+        "--target-channel", choices=("stable", "beta", "alpha"), required=True
+    )
+    parser.add_argument(
+        "--published-alpha",
+        choices=("true", "false"),
+        required=True,
+        help="Authoritative GitHub release-history evidence for whether Alpha was published.",
+    )
     args = parser.parse_args(argv)
 
     try:
         payload = json.loads(args.tree_json.read_text(encoding="utf-8"))
-        blobs = validate_branch_tree(payload, target_channel=args.target_channel)
+        blobs = validate_branch_tree(
+            payload,
+            target_channel=args.target_channel,
+            published_alpha=args.published_alpha == "true",
+        )
     except (OSError, json.JSONDecodeError, ReleaseChannelBranchError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

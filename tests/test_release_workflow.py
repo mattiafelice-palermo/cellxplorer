@@ -53,6 +53,7 @@ def step_index(workflow: str, name: str) -> int:
 NOTES = "- Signed in-app updates through the power menu.\n"
 SETUP_EXE = "CellXplorer_0.15.0_x64-setup.exe"
 BETA_SETUP_EXE = "CellXplorer.Beta_0.16.0-beta.1_x64-setup.exe"
+ALPHA_SETUP_EXE = "CellXplorer.Alpha_0.28.0-alpha.1_x64-setup.exe"
 OWNER = "mattiafelice-palermo"
 REPO = "cellxplorer"
 ASSET_ID = 987654321
@@ -124,6 +125,25 @@ class ReleaseTagTests(unittest.TestCase):
         )
         self.assertFalse(release_tag.is_stable_release_tag("v0.16.2-beta.1"))
 
+    def test_accepts_alpha_tags_and_classifies_each_channel(self):
+        self.assertTrue(release_tag.is_alpha_release_tag("v0.28.0-alpha.1"))
+        self.assertTrue(release_tag.is_publishable_release_tag("v0.28.0-alpha.1"))
+        self.assertEqual(
+            release_tag.require_release_tag_for_channel(
+                "v0.28.0-alpha.1", "alpha"
+            ),
+            "v0.28.0-alpha.1",
+        )
+        self.assertEqual(
+            release_tag.release_channel_for_tag("v0.15.0"), "stable"
+        )
+        self.assertEqual(
+            release_tag.release_channel_for_tag("v0.16.2-beta.1"), "beta"
+        )
+        self.assertEqual(
+            release_tag.release_channel_for_tag("v0.28.0-alpha.1"), "alpha"
+        )
+
     def test_rejects_prerelease_and_malformed_tags(self):
         for tag in (
             "v0.15",
@@ -133,7 +153,9 @@ class ReleaseTagTests(unittest.TestCase):
             "vfoo",
             "0.15.0",
             "v0.16.2-beta",
-            "v0.16.2-alpha.1",
+            "v0.16.2-alpha.01",
+            "v0.16.2-alpha",
+            "v0.16.2-alpha.1+build.1",
         ):
             with self.subTest(tag=tag):
                 self.assertFalse(release_tag.is_publishable_release_tag(tag))
@@ -162,6 +184,20 @@ class ReleaseChannelBranchTests(unittest.TestCase):
             ],
         }
 
+    def valid_tree_with_alpha(self) -> dict:
+        payload = self.valid_tree()
+        payload["tree"].extend(
+            [
+                {"path": "alpha", "type": "tree", "sha": "alpha-tree"},
+                {
+                    "path": "alpha/latest.json",
+                    "type": "blob",
+                    "sha": "alpha-manifest",
+                },
+            ]
+        )
+        return payload
+
     def test_accepts_exact_manifest_only_tree(self):
         blobs = release_channels.validate_branch_tree(self.valid_tree())
         self.assertEqual(set(blobs), release_channels.REQUIRED_CHANNEL_PATHS)
@@ -177,13 +213,13 @@ class ReleaseChannelBranchTests(unittest.TestCase):
             entry for entry in missing_manifest["tree"] if entry["path"] != "beta"
         ]
         blobs = release_channels.validate_branch_tree(
-            missing_manifest, target_channel="beta"
+            missing_manifest, target_channel="beta", published_alpha=False
         )
         self.assertNotIn("beta/latest.json", blobs)
 
         with self.assertRaises(release_channels.ReleaseChannelBranchError):
             release_channels.validate_branch_tree(
-                missing_manifest, target_channel="stable"
+                missing_manifest, target_channel="stable", published_alpha=False
             )
 
         missing_stable = self.valid_tree()
@@ -194,7 +230,64 @@ class ReleaseChannelBranchTests(unittest.TestCase):
         ]
         with self.assertRaises(release_channels.ReleaseChannelBranchError):
             release_channels.validate_branch_tree(
-                missing_stable, target_channel="beta"
+                missing_stable, target_channel="beta", published_alpha=False
+            )
+
+    def test_alpha_bootstrap_requires_explicit_history_and_allows_only_first_pointer(self):
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(
+                self.valid_tree(), target_channel="alpha"
+            )
+        blobs = release_channels.validate_branch_tree(
+            self.valid_tree(), target_channel="alpha", published_alpha=False
+        )
+        self.assertNotIn("alpha/latest.json", blobs)
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(
+                self.valid_tree_with_alpha(),
+                target_channel="stable",
+                published_alpha=False,
+            )
+
+    def test_first_alpha_post_publication_state_passes_with_new_pointer(self):
+        release_channels.validate_branch_tree(
+            self.valid_tree(), target_channel="alpha", published_alpha=False
+        )
+        blobs = release_channels.validate_branch_tree(
+            self.valid_tree_with_alpha(), target_channel="alpha", published_alpha=True
+        )
+        self.assertEqual(set(blobs), release_channels.ALL_CHANNEL_PATHS)
+
+    def test_post_alpha_tree_requires_alpha_and_rejects_missing_or_extra_files(self):
+        blobs = release_channels.validate_branch_tree(
+            self.valid_tree_with_alpha(),
+            target_channel="alpha",
+            published_alpha=True,
+        )
+        self.assertEqual(set(blobs), release_channels.ALL_CHANNEL_PATHS)
+        for target_channel in ("stable", "beta", "alpha"):
+            with self.subTest(target_channel=target_channel):
+                with self.assertRaises(release_channels.ReleaseChannelBranchError):
+                    release_channels.validate_branch_tree(
+                        self.valid_tree(),
+                        target_channel=target_channel,
+                        published_alpha=True,
+                    )
+
+    def test_beta_bootstrap_does_not_depend_on_alpha_history(self):
+        missing_beta = self.valid_tree_with_alpha()
+        missing_beta["tree"] = [
+            entry
+            for entry in missing_beta["tree"]
+            if entry["path"] not in {"beta", "beta/latest.json"}
+        ]
+        blobs = release_channels.validate_branch_tree(
+            missing_beta, target_channel="beta", published_alpha=True
+        )
+        self.assertNotIn("beta/latest.json", blobs)
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(
+                missing_beta, target_channel="alpha", published_alpha=False
             )
 
     def test_rejects_source_tree_or_truncated_response(self):
@@ -248,6 +341,15 @@ class ReleaseChannelPolicyTests(unittest.TestCase):
             )
         release_channel_policy.require_beta_targets_future_stable(
             "v0.18.1-beta.1", self.releases()
+        )
+
+    def test_alpha_core_must_be_strictly_greater_than_latest_stable(self):
+        with self.assertRaises(release_channel_policy.ReleaseChannelPolicyError):
+            release_channel_policy.require_alpha_targets_future_stable(
+                "v0.18.0-alpha.1", self.releases()
+            )
+        release_channel_policy.require_alpha_targets_future_stable(
+            "v0.18.1-alpha.1", self.releases()
         )
 
     def test_legacy_beta_drafts_and_malformed_tags_are_not_stable_baselines(self):
@@ -367,13 +469,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("channel:", self.release)
         self.assertIn("- stable", self.release)
         self.assertIn("- beta", self.release)
+        self.assertIn("- alpha", self.release)
 
     def test_release_resolves_stable_and_beta_channels(self):
         self.assertIn("Resolve release channel", self.release)
         self.assertIn("channel_manifest=stable/latest.json", self.release)
         self.assertIn("channel_manifest=beta/latest.json", self.release)
+        self.assertIn("channel_manifest=alpha/latest.json", self.release)
+        self.assertIn("product_name=CellXplorer Alpha", self.release)
+        self.assertIn("config_args=--config src-tauri/tauri.alpha.conf.json", self.release)
         self.assertIn("VITE_CELLXPLORER_CHANNEL", self.release)
         self.assertIn("tauri.beta.conf.json", self.release)
+        self.assertIn("tauri.alpha.conf.json", self.release)
+        self.assertIn("Could not classify publishable tag", self.release)
 
     def test_requested_frontend_channel_is_built_and_verified_before_packaging(self):
         build = step_index(self.release, "Build requested frontend channel")
@@ -402,6 +510,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_beta_tags_publish_as_prereleases(self):
         self.assertIn("is_prerelease=true", self.release)
         self.assertIn("prerelease: ${{ steps.channel.outputs.is_prerelease == 'true' }}", self.release)
+        self.assertIn('"is_prerelease=true" >> $env:GITHUB_OUTPUT', self.release)
+
+    def test_alpha_tags_publish_as_prereleases(self):
+        self.assertIn(
+            "^v\\d+\\.\\d+\\.\\d+-alpha\\.(0|[1-9]\\d*)$", self.release
+        )
+        self.assertIn(
+            "steps.channel.outputs.channel == 'alpha'", self.release
+        )
+        self.assertIn('"is_prerelease=true" >> $env:GITHUB_OUTPUT', self.release)
 
     def test_channel_manifest_is_published_after_verification(self):
         self.assertIn("Publish channel manifest pointer", self.release)
@@ -443,18 +561,55 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.release,
         )
 
+    def test_alpha_future_stable_policy_runs_before_draft_staging(self):
+        self.assertLess(
+            step_index(self.release, "Require Alpha targets a future Stable version"),
+            step_index(self.release, "Stage signed draft release"),
+        )
+        self.assertIn("--alpha-tag", self.release)
+        self.assertIn(
+            "steps.channel.outputs.channel == 'alpha'",
+            self.release,
+        )
+
     def test_channel_pointer_update_is_optimistic_and_preserves_other_channel(self):
         publish = self.release.split("Publish channel manifest pointer", 1)[1]
         self.assertIn("steps.channel_branch.outputs.target_sha", publish)
         self.assertIn("steps.channel_branch.outputs.target_ref_sha", publish)
         self.assertIn("steps.channel_branch.outputs.other_sha", publish)
+        self.assertIn("steps.channel_branch.outputs.non_target_json", publish)
+        self.assertIn("README.md", publish)
+        self.assertIn("git/blobs", publish)
+        self.assertIn("git/trees", publish)
+        self.assertIn("git/commits", publish)
+        self.assertIn("git/refs/heads/$branch", publish)
+        self.assertIn("force = $false", publish)
+        self.assertIn("Contents PUT cannot express an expected branch tip", publish)
         self.assertIn("The target channel pointer changed", publish)
-        self.assertIn("The release channel branch changed after the first-write gate", publish)
+        self.assertIn("The release channel branch changed after the publication gate", publish)
         self.assertIn("The non-target channel pointer changed", publish)
-        self.assertIn("$publishedCommit = $putResult.commit.sha", publish)
+        self.assertIn("$publishedCommit = $newCommitSha", publish)
         self.assertIn("contents/${channelPath}?ref=${branch}", publish)
         self.assertIn("contents/${channelPath}?ref=${publishedCommit}", publish)
         self.assertIn("contents/${otherPath}?ref=${publishedCommit}", publish)
+        self.assertIn("raw.githubusercontent.com", publish)
+        self.assertIn("remote-channel-latest-raw.json", publish)
+        self.assertIn("published-release-channels-tree.json", publish)
+        self.assertIn("--published-alpha", publish)
+        self.assertIn("$postPublishedAlpha", publish)
+        self.assertIn(
+            '--published-alpha "$($postPublishedAlpha.ToString().ToLowerInvariant())"',
+            publish,
+        )
+        self.assertIn(
+            '} elseif ("${{ steps.channel.outputs.channel }}" -eq "beta") {',
+            self.release,
+        )
+        self.assertIn(
+            '} elseif ("${{ steps.channel.outputs.channel }}" -eq "alpha" -and -not $publishedAlpha) {',
+            self.release,
+        )
+        self.assertNotIn("-Method Put -Uri \"https://api.github.com/repos/$owner/$repo/contents/$channelPath\"", publish)
         self.assertNotRegex(publish, r"\$[A-Za-z_][A-Za-z0-9_]*\?ref=")
         self.assertIn('[System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)', publish)
 
@@ -760,6 +915,44 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             pubkey_b64=PUBKEY,
             uploaded_signature_text=SIGNATURE,
         )
+
+    def test_accepts_exact_alpha_manifest_and_product(self):
+        verify_updater_manifest.verify_manifest(
+            sample_manifest(version="0.28.0-alpha.1"),
+            expected_version="v0.28.0-alpha.1",
+            expected_notes=NOTES,
+            expected_owner=OWNER,
+            expected_repo=REPO,
+            release_assets=sample_assets(name=ALPHA_SETUP_EXE),
+            setup_exe_name=ALPHA_SETUP_EXE,
+            pubkey_b64=PUBKEY,
+            uploaded_signature_text=SIGNATURE,
+            channel="alpha",
+            expected_product_name="CellXplorer Alpha",
+        )
+
+    def test_rejects_crossed_or_non_exact_alpha_versions(self):
+        for version in (
+            "0.28.0",
+            "0.28.0-beta.1",
+            "0.28.0-alpha",
+            "0.28.0-alpha.01",
+            "0.28.0-alpha1",
+            "0.28.0-alpha.1+build.1",
+            "v0.28.0-alpha.1",
+        ):
+            with self.subTest(version=version):
+                with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+                    verify_updater_manifest.assert_channel_version(version, "alpha")
+
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.assert_channel_version(
+                "0.28.0-alpha.1", "stable"
+            )
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.assert_channel_version(
+                "0.28.0-alpha.1", "beta"
+            )
 
     def test_rejects_browser_download_url_shape(self):
         manifest = sample_manifest()

@@ -144,7 +144,10 @@ A report that describes a different plot than the app rendered is worse than no 
 8. Visually test custom installer and uninstaller pages after NSIS changes. Never test destructive
    uninstall against real user data.
 
-The expected installer is `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`.
+The expected installers are channel-specific: `CellXplorer_<version>_x64-setup.exe`,
+`CellXplorer.Beta_<version>_x64-setup.exe`, and
+`CellXplorer.Alpha_<version>_x64-setup.exe`. Packaging must derive the expected filename from the
+selected overlay and fail if that exact artifact is absent.
 
 ### Packaging cost, measured
 
@@ -178,9 +181,11 @@ and pyarrow 84MB.
    before modifying non-disposable user data.
 5. Run `python -m unittest tests.test_updater_configuration -v` when updater config or Rust
    command wiring changes.
-6. Stable and Beta use the same committed public key from `src-tauri/tauri.conf.json`, but separate
-   fixed `release-channels/stable/latest.json` and `release-channels/beta/latest.json` endpoints.
-   The Beta overlay inherits the key; manifest verification must read the base configuration.
+6. Stable, Beta, and Alpha use the same committed public key from `src-tauri/tauri.conf.json`, but
+   separate fixed `release-channels/stable/latest.json`, `release-channels/beta/latest.json`, and
+   `release-channels/alpha/latest.json` endpoints. The channel overlays inherit the key; manifest
+   verification reads the base configuration. Alpha uses the shared standard updater commands with
+   exact dotted `MAJOR.MINOR.PATCH-alpha.N` validation.
 7. Persist GitHub release-asset metadata as the raw `Invoke-WebRequest` response body. Do not
    re-encode with PowerShell `ConvertTo-Json`; that can emit nested arrays or stringified rows and
    fail `verify_updater_manifest.py` with `release asset at index 0 must be an object`.
@@ -214,13 +219,15 @@ multi-spec release train), operate on `main` after the relevant features are mer
 
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
    Use `python scripts\bump_version.py --patch --notes "..."` for Stable, or an explicit version
-   such as `python scripts\bump_version.py 0.16.2-beta.1 --notes "..."` for Beta prereleases.
+   such as `python scripts\bump_version.py 0.16.2-beta.1 --notes "..."` for Beta prereleases or
+   `0.28.0-alpha.1` for Alpha prereleases.
    Within a Beta core that has already used compact `betaNNN`, continue with compact successors;
    a dotted `beta.N` candidate compares lower than the existing compact version under SemVer.
 2. Before any production tag, pre-provision and verify the orphan `release-channels` branch. Never
-   derive it from `main`. For the first Beta it contains `README.md` plus the valid current
-   `stable/latest.json`; the workflow creates the first verified Beta pointer safely. Thereafter it
-   contains exactly both manifests and the README.
+   derive it from `main`. Before the first Alpha publication it contains `README.md` plus valid
+   `stable/latest.json` and `beta/latest.json`; the Alpha workflow creates the first verified
+   `alpha/latest.json` pointer safely. Thereafter it contains exactly all three manifests and the
+   README. A published-Alpha release-history result is the authoritative transition evidence.
 3. Run `python scripts/check_versions.py --expected-version <version>` and
    `python scripts/preflight.py --no-cache` locally. Report the exact preflight result.
 4. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
@@ -231,15 +238,17 @@ multi-spec release train), operate on `main` after the relevant features are mer
    git push origin v<version>
    ```
    Validate the tag with `python scripts\release_tag.py --tag v<version>`. Stable tags use
-   `vX.Y.Z`; Beta uses `vX.Y.Z-beta.N`. The tagged commit must be reachable from `main`. Tag push
-   triggers `.github/workflows/release.yml`. A Beta core must be strictly greater than the highest
-   published exact Stable tag; legacy Beta tags are not Stable baselines. Do not re-run a published
-   tag to replace binaries.
+   `vX.Y.Z`; Beta uses `vX.Y.Z-beta.N` or its established compact form; Alpha uses
+   `vX.Y.Z-alpha.N`. The tagged commit must be reachable from `main`. Tag push triggers
+   `.github/workflows/release.yml`. A Beta or Alpha core must be strictly greater than the highest
+   published exact Stable tag; Beta and Alpha are not ordered against each other. Do not re-run a
+   published tag to replace binaries.
    If the workflow fails on an early step, fix on `main`, push, move the tag to the fixed commit,
    and push the tag again.
 6. The workflow runs no-cache preflight, explicitly builds/stamps the selected frontend channel,
    stages a draft, verifies the installer/signature/manifest with the base public key, and only then
-   undrafts. Beta releases are GitHub prereleases; Stable remains GitHub's normal latest release.
+   undrafts. Beta and Alpha releases are GitHub prereleases; Stable remains GitHub's normal latest
+   release.
 7. Inspect the GitHub Release assets: product-specific NSIS setup executable, matching `.sig`, and
    `latest.json`. Confirm only the selected channel pointer changed and the public raw pointer
    verifies.
@@ -247,7 +256,8 @@ multi-spec release train), operate on `main` after the relevant features are mer
    `/releases/latest/download/latest.json` endpoint serves its Stable manifest while the new binary
    embeds the Stable channel-branch endpoint.
 9. Complete the disposable installed matrix: side-by-side identities/data, Stable-owned first Beta
-   install, channel-specific N→N+1 updates, crossed-manifest rejection, and uninstall isolation.
+   install, channel-specific N→N+1 updates for Stable/Beta/Alpha, crossed-manifest rejection, and
+   uninstall isolation.
 10. If release verification fails before undraft, fix `main` and move the unpublished tag. If
    pointer publication fails after undraft, do not replace release assets; repair the pre-provisioned
    branch with optimistic SHA protection and rerun exact manifest verification.

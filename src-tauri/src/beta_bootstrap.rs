@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 
 pub const MARKER_NAME: &str = "beta-bootstrap.json";
 pub const APPLY_FAILURE_NAME: &str = "beta-bootstrap-apply-error.json";
+pub const ALPHA_MARKER_NAME: &str = "alpha-bootstrap.json";
+pub const ALPHA_APPLY_FAILURE_NAME: &str = "alpha-bootstrap-apply-error.json";
 pub const BOOTSTRAP_SUBDIR: &str = "bootstrap";
 pub const MANIFEST_NAME: &str = "manifest.json";
 pub const STAGED_DB_NAME: &str = "staged-cellxplorer.db";
@@ -47,6 +49,10 @@ struct BootstrapManifest {
     imports: Vec<ImportInventoryEntry>,
     #[serde(rename = "replaceExistingBeta", default)]
     replace_existing_beta: bool,
+    #[serde(rename = "replaceExistingAlpha", default)]
+    replace_existing_alpha: bool,
+    #[serde(rename = "sourceChannel", default)]
+    source_channel: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -76,12 +82,42 @@ pub enum ApplyPhase {
     ActivationFailed,
 }
 
-pub fn marker_acknowledges_install(
-    beta_root: &Path,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootstrapChannel {
+    Beta,
+    Alpha,
+}
+
+impl BootstrapChannel {
+    fn marker_name(self) -> &'static str {
+        match self {
+            Self::Beta => MARKER_NAME,
+            Self::Alpha => ALPHA_MARKER_NAME,
+        }
+    }
+
+    fn apply_failure_name(self) -> &'static str {
+        match self {
+            Self::Beta => APPLY_FAILURE_NAME,
+            Self::Alpha => ALPHA_APPLY_FAILURE_NAME,
+        }
+    }
+
+    fn product_name(self) -> &'static str {
+        match self {
+            Self::Beta => "CellXplorer Beta",
+            Self::Alpha => "CellXplorer Alpha",
+        }
+    }
+}
+
+fn marker_acknowledges_install_for_channel(
+    root: &Path,
+    channel: BootstrapChannel,
     install_instance_id: Option<&str>,
     app_version: &str,
 ) -> bool {
-    let Ok(body) = fs::read_to_string(beta_root.join(MARKER_NAME)) else {
+    let Ok(body) = fs::read_to_string(root.join(channel.marker_name())) else {
         return false;
     };
     let Ok(marker) = serde_json::from_str::<serde_json::Value>(&body) else {
@@ -92,10 +128,26 @@ pub fn marker_acknowledges_install(
     {
         return false;
     }
-    if !matches!(
-        marker.get("decision").and_then(|value| value.as_str()),
-        Some("copied" | "empty" | "current")
-    ) {
+    let valid_decision = match channel {
+        BootstrapChannel::Beta => matches!(
+            marker.get("decision").and_then(|value| value.as_str()),
+            Some("copied" | "empty" | "current")
+        ),
+        BootstrapChannel::Alpha => {
+            let Some(decision) = marker.get("decision").and_then(|value| value.as_str()) else {
+                return false;
+            };
+            match decision {
+                "empty" | "current" => true,
+                "copied-stable" | "copied-beta" => matches!(
+                    marker.get("sourceChannel").and_then(|value| value.as_str()),
+                    Some("stable" | "beta")
+                ),
+                _ => false,
+            }
+        }
+    };
+    if !valid_decision {
         return false;
     }
     if let Some(install_instance_id) = install_instance_id {
@@ -105,6 +157,19 @@ pub fn marker_acknowledges_install(
             == Some(install_instance_id);
     }
     marker.get("appVersion").and_then(|value| value.as_str()) == Some(app_version)
+}
+
+pub fn marker_acknowledges_install(
+    beta_root: &Path,
+    install_instance_id: Option<&str>,
+    app_version: &str,
+) -> bool {
+    marker_acknowledges_install_for_channel(
+        beta_root,
+        BootstrapChannel::Beta,
+        install_instance_id,
+        app_version,
+    )
 }
 
 pub fn scientific_preparation_pending(beta_root: &Path) -> bool {
@@ -138,8 +203,35 @@ pub fn bootstrap_gate_required(
     install_instance_id: Option<&str>,
     app_version: &str,
 ) -> bool {
-    !marker_acknowledges_install(beta_root, install_instance_id, app_version)
-        || scientific_preparation_pending(beta_root)
+    bootstrap_gate_required_for_channel(
+        beta_root,
+        BootstrapChannel::Beta,
+        install_instance_id,
+        app_version,
+    )
+}
+
+pub fn alpha_bootstrap_gate_required(
+    alpha_root: &Path,
+    install_instance_id: Option<&str>,
+    app_version: &str,
+) -> bool {
+    bootstrap_gate_required_for_channel(
+        alpha_root,
+        BootstrapChannel::Alpha,
+        install_instance_id,
+        app_version,
+    )
+}
+
+pub fn bootstrap_gate_required_for_channel(
+    root: &Path,
+    channel: BootstrapChannel,
+    install_instance_id: Option<&str>,
+    app_version: &str,
+) -> bool {
+    !marker_acknowledges_install_for_channel(root, channel, install_instance_id, app_version)
+        || scientific_preparation_pending(root)
 }
 
 pub fn validate_stage_token(token: &str) -> Result<(), TokenValidationError> {
@@ -216,9 +308,12 @@ fn ensure_within_root(path: &Path, root: &Path) -> Result<(), String> {
 fn normalize_relative(path: &str) -> Result<String, String> {
     let candidate = Path::new(path);
     if candidate.is_absolute()
-        || candidate
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        || candidate.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
     {
         return Err("Staged import path is invalid.".to_string());
     }
@@ -274,13 +369,11 @@ fn imports_has_payload(import_dir: &Path) -> bool {
     walk(import_dir)
 }
 
-fn sqlite_user_content_counts(db_path: &Path) -> Result<i64, String> {
+fn sqlite_user_content_counts_for(db_path: &Path, product_name: &str) -> Result<i64, String> {
     reject_symlink(db_path)?;
-    let connection = rusqlite::Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .map_err(|error| format!("Could not open Beta database: {error}"))?;
+    let connection =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| format!("Could not open {product_name} database: {error}"))?;
     let tables = [
         "source_files",
         "tests",
@@ -302,8 +395,10 @@ fn sqlite_user_content_counts(db_path: &Path) -> Result<i64, String> {
             continue;
         }
         let count: i64 = connection
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
-            .map_err(|error| format!("Could not inspect Beta database: {error}"))?;
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| format!("Could not inspect {product_name} database: {error}"))?;
         total += count;
     }
     Ok(total)
@@ -311,11 +406,9 @@ fn sqlite_user_content_counts(db_path: &Path) -> Result<i64, String> {
 
 fn sqlite_integrity_ok(db_path: &Path) -> Result<(), String> {
     reject_symlink(db_path)?;
-    let connection = rusqlite::Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .map_err(|error| format!("Could not open staged database: {error}"))?;
+    let connection =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| format!("Could not open staged database: {error}"))?;
     let result: String = connection
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(|error| format!("Staged database integrity check failed: {error}"))?;
@@ -325,22 +418,40 @@ fn sqlite_integrity_ok(db_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn live_beta_is_pristine(beta_root: &Path) -> Result<(), String> {
+fn sqlite_user_content_counts(db_path: &Path) -> Result<i64, String> {
+    sqlite_user_content_counts_for(db_path, "CellXplorer Beta")
+}
+
+fn live_library_is_pristine(root: &Path, channel: BootstrapChannel) -> Result<(), String> {
     // A setup marker records the user's decision, not library content. In
     // particular, an interrupted activation can leave a valid staged copy
     // beside an acknowledged but still-empty Beta library. The actual
     // database and managed-import tree remain the overwrite safety boundary.
-    if imports_has_payload(&beta_root.join("imports")) {
-        return Err("Beta already contains imported source files.".to_string());
+    if imports_has_payload(&root.join("imports")) {
+        return Err(format!(
+            "{} already contains imported source files.",
+            channel.product_name()
+        ));
     }
-    let live_db = beta_root.join(LIVE_DB_NAME);
+    let live_db = root.join(LIVE_DB_NAME);
     if live_db.is_file() {
-        let count = sqlite_user_content_counts(&live_db)?;
+        let count = sqlite_user_content_counts_for(&live_db, channel.product_name())?;
         if count > 0 {
-            return Err("Beta already contains library data.".to_string());
+            return Err(format!(
+                "{} already contains library data.",
+                channel.product_name()
+            ));
         }
     }
     Ok(())
+}
+
+pub fn live_beta_is_pristine(beta_root: &Path) -> Result<(), String> {
+    live_library_is_pristine(beta_root, BootstrapChannel::Beta)
+}
+
+pub fn live_alpha_is_pristine(alpha_root: &Path) -> Result<(), String> {
+    live_library_is_pristine(alpha_root, BootstrapChannel::Alpha)
 }
 
 fn collect_staged_files(stage_imports: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
@@ -349,7 +460,11 @@ fn collect_staged_files(stage_imports: &Path) -> Result<BTreeMap<String, PathBuf
         return Ok(found);
     }
     reject_symlink(stage_imports)?;
-    fn walk(root: &Path, current: &Path, found: &mut BTreeMap<String, PathBuf>) -> Result<(), String> {
+    fn walk(
+        root: &Path,
+        current: &Path,
+        found: &mut BTreeMap<String, PathBuf>,
+    ) -> Result<(), String> {
         reject_symlink(current)?;
         for entry in fs::read_dir(current).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
@@ -374,15 +489,16 @@ fn collect_staged_files(stage_imports: &Path) -> Result<BTreeMap<String, PathBuf
     Ok(found)
 }
 
-fn resolve_and_verify_stage_with_confirmation(
-    beta_root: &Path,
+fn resolve_and_verify_stage_for_channel(
+    root: &Path,
     token: &str,
-    confirm_replace_existing_beta: bool,
+    confirm_replace_existing: bool,
+    channel: BootstrapChannel,
 ) -> Result<StagePaths, String> {
     validate_stage_token(token).map_err(token_error_message)?;
-    fs::create_dir_all(beta_root).map_err(|error| error.to_string())?;
-    let stage_dir = beta_root.join(BOOTSTRAP_SUBDIR).join(token);
-    ensure_within_root(&stage_dir, beta_root)?;
+    fs::create_dir_all(root).map_err(|error| error.to_string())?;
+    let stage_dir = root.join(BOOTSTRAP_SUBDIR).join(token);
+    ensure_within_root(&stage_dir, root)?;
     reject_symlink(&stage_dir)?;
 
     let manifest_path = stage_dir.join(MANIFEST_NAME);
@@ -405,10 +521,15 @@ fn resolve_and_verify_stage_with_confirmation(
     if manifest.copied_imports != manifest.imports.len() {
         return Err("The staged import inventory count does not match.".to_string());
     }
+    if channel == BootstrapChannel::Alpha {
+        if !matches!(manifest.source_channel.as_deref(), Some("stable" | "beta")) {
+            return Err("The Alpha staged copy does not name a valid source channel.".to_string());
+        }
+    }
 
     let staged_db = stage_dir.join(STAGED_DB_NAME);
     reject_symlink(&staged_db)?;
-    ensure_within_root(&staged_db, beta_root)?;
+    ensure_within_root(&staged_db, root)?;
     if !staged_db.is_file() {
         return Err("The staged database is missing.".to_string());
     }
@@ -424,9 +545,11 @@ fn resolve_and_verify_stage_with_confirmation(
     for entry in &manifest.imports {
         let relative = normalize_relative(&entry.relative_path)?;
         expected.insert(relative.clone());
-        let path = staged_imports.join(Path::new(&relative.replace('/', std::path::MAIN_SEPARATOR_STR)));
+        let path = staged_imports.join(Path::new(
+            &relative.replace('/', std::path::MAIN_SEPARATOR_STR),
+        ));
         reject_symlink(&path)?;
-        ensure_within_root(&path, beta_root)?;
+        ensure_within_root(&path, root)?;
         if !path.is_file() {
             return Err(format!("Staged import is missing: {relative}"));
         }
@@ -450,8 +573,12 @@ fn resolve_and_verify_stage_with_confirmation(
         }
     }
 
-    if !manifest.replace_existing_beta && !confirm_replace_existing_beta {
-        live_beta_is_pristine(beta_root)?;
+    let replacement_requested = match channel {
+        BootstrapChannel::Beta => manifest.replace_existing_beta,
+        BootstrapChannel::Alpha => manifest.replace_existing_alpha,
+    };
+    if !replacement_requested && !confirm_replace_existing {
+        live_library_is_pristine(root, channel)?;
     }
 
     Ok(StagePaths {
@@ -463,8 +590,58 @@ fn resolve_and_verify_stage_with_confirmation(
     })
 }
 
+fn resolve_and_verify_stage_with_confirmation(
+    beta_root: &Path,
+    token: &str,
+    confirm_replace_existing_beta: bool,
+) -> Result<StagePaths, String> {
+    resolve_and_verify_stage_for_channel(
+        beta_root,
+        token,
+        confirm_replace_existing_beta,
+        BootstrapChannel::Beta,
+    )
+}
+
 pub fn resolve_and_verify_stage(beta_root: &Path, token: &str) -> Result<StagePaths, String> {
     resolve_and_verify_stage_with_confirmation(beta_root, token, false)
+}
+
+pub fn resolve_and_verify_alpha_stage(
+    alpha_root: &Path,
+    token: &str,
+    confirm_replace_existing_library: bool,
+) -> Result<StagePaths, String> {
+    resolve_and_verify_stage_for_channel(
+        alpha_root,
+        token,
+        confirm_replace_existing_library,
+        BootstrapChannel::Alpha,
+    )
+}
+
+fn write_bootstrap_marker_for_channel(
+    root: &Path,
+    channel: BootstrapChannel,
+    decision: &str,
+    install_instance_id: Option<&str>,
+    source_channel: Option<&str>,
+    source_database_instance_id: Option<&str>,
+    source_schema_revision: Option<&str>,
+) -> Result<(), String> {
+    let mut payload = serde_json::json!({
+        "schemaVersion": 1,
+        "decision": decision,
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "installInstanceId": install_instance_id,
+        "completedAt": utc_now_iso(),
+        "sourceDatabaseInstanceId": source_database_instance_id,
+        "sourceSchemaRevision": source_schema_revision,
+    });
+    if channel == BootstrapChannel::Alpha {
+        payload["sourceChannel"] = serde_json::json!(source_channel);
+    }
+    atomic_write_json(&root.join(channel.marker_name()), &payload)
 }
 
 pub fn write_bootstrap_marker(
@@ -473,29 +650,71 @@ pub fn write_bootstrap_marker(
     source_database_instance_id: Option<&str>,
     source_schema_revision: Option<&str>,
 ) -> Result<(), String> {
-    let payload = serde_json::json!({
-        "schemaVersion": 1,
-        "decision": "copied",
-        "appVersion": env!("CARGO_PKG_VERSION"),
-        "installInstanceId": install_instance_id,
-        "completedAt": utc_now_iso(),
-        "sourceDatabaseInstanceId": source_database_instance_id,
-        "sourceSchemaRevision": source_schema_revision,
-    });
-    atomic_write_json(&beta_root.join(MARKER_NAME), &payload)
+    write_bootstrap_marker_for_channel(
+        beta_root,
+        BootstrapChannel::Beta,
+        "copied",
+        install_instance_id,
+        None,
+        source_database_instance_id,
+        source_schema_revision,
+    )
+}
+
+pub fn write_alpha_bootstrap_marker(
+    alpha_root: &Path,
+    install_instance_id: Option<&str>,
+    source_channel: &str,
+    source_database_instance_id: Option<&str>,
+    source_schema_revision: Option<&str>,
+) -> Result<(), String> {
+    let decision = match source_channel {
+        "stable" => "copied-stable",
+        "beta" => "copied-beta",
+        _ => return Err("The Alpha staged copy does not name a valid source channel.".to_string()),
+    };
+    write_bootstrap_marker_for_channel(
+        alpha_root,
+        BootstrapChannel::Alpha,
+        decision,
+        install_instance_id,
+        Some(source_channel),
+        source_database_instance_id,
+        source_schema_revision,
+    )
 }
 
 pub fn write_apply_failure_marker(beta_root: &Path, message: &str) -> Result<(), String> {
+    write_apply_failure_marker_for_channel(beta_root, BootstrapChannel::Beta, message)
+}
+
+pub fn write_alpha_apply_failure_marker(alpha_root: &Path, message: &str) -> Result<(), String> {
+    write_apply_failure_marker_for_channel(alpha_root, BootstrapChannel::Alpha, message)
+}
+
+fn write_apply_failure_marker_for_channel(
+    root: &Path,
+    channel: BootstrapChannel,
+    message: &str,
+) -> Result<(), String> {
     let payload = serde_json::json!({
         "schemaVersion": 1,
         "failedAt": utc_now_iso(),
         "message": message,
     });
-    atomic_write_json(&beta_root.join(APPLY_FAILURE_NAME), &payload)
+    atomic_write_json(&root.join(channel.apply_failure_name()), &payload)
 }
 
 pub fn clear_apply_failure_marker(beta_root: &Path) {
-    let _ = fs::remove_file(beta_root.join(APPLY_FAILURE_NAME));
+    clear_apply_failure_marker_for_channel(beta_root, BootstrapChannel::Beta);
+}
+
+pub fn clear_alpha_apply_failure_marker(alpha_root: &Path) {
+    clear_apply_failure_marker_for_channel(alpha_root, BootstrapChannel::Alpha);
+}
+
+fn clear_apply_failure_marker_for_channel(root: &Path, channel: BootstrapChannel) {
+    let _ = fs::remove_file(root.join(channel.apply_failure_name()));
 }
 
 fn atomic_write_json(path: &Path, payload: &serde_json::Value) -> Result<(), String> {
@@ -506,7 +725,8 @@ fn atomic_write_json(path: &Path, payload: &serde_json::Value) -> Result<(), Str
     {
         let mut file = fs::File::create(&temp).map_err(|error| error.to_string())?;
         let body = serde_json::to_string_pretty(payload).map_err(|error| error.to_string())?;
-        file.write_all(body.as_bytes()).map_err(|error| error.to_string())?;
+        file.write_all(body.as_bytes())
+            .map_err(|error| error.to_string())?;
         file.write_all(b"\n").map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
@@ -566,15 +786,24 @@ fn restore_imports(_beta_root: &Path, rollback_imports: &Path, live_imports: &Pa
     }
 }
 
-pub fn activate_staged_copy(
-    beta_root: &Path,
+fn staged_source_channel(stage_dir: &Path) -> Result<Option<String>, String> {
+    let manifest_path = stage_dir.join(MANIFEST_NAME);
+    let raw = fs::read_to_string(manifest_path).map_err(|error| error.to_string())?;
+    let manifest: BootstrapManifest = serde_json::from_str(&raw)
+        .map_err(|_| "The staged copy manifest is invalid.".to_string())?;
+    Ok(manifest.source_channel)
+}
+
+pub fn activate_staged_copy_for_channel(
+    root: &Path,
     paths: &StagePaths,
     install_instance_id: Option<&str>,
+    channel: BootstrapChannel,
 ) -> Result<(), String> {
-    let live_db = beta_root.join(LIVE_DB_NAME);
-    let rollback_db = beta_root.join(ROLLBACK_DB_NAME);
-    let live_imports = beta_root.join("imports");
-    let rollback_imports = beta_root.join(IMPORTS_ROLLBACK_NAME);
+    let live_db = root.join(LIVE_DB_NAME);
+    let rollback_db = root.join(ROLLBACK_DB_NAME);
+    let live_imports = root.join("imports");
+    let rollback_imports = root.join(IMPORTS_ROLLBACK_NAME);
 
     if rollback_db.exists() {
         remove_tree(&rollback_db)?;
@@ -606,19 +835,35 @@ pub fn activate_staged_copy(
             }
             moved_imports = true;
         }
-        if let Err(error) = write_bootstrap_marker(
-            beta_root,
-            install_instance_id,
-            paths.source_database_instance_id.as_deref(),
-            paths.source_schema_revision.as_deref(),
-        ) {
+        let marker_result = match channel {
+            BootstrapChannel::Beta => write_bootstrap_marker(
+                root,
+                install_instance_id,
+                paths.source_database_instance_id.as_deref(),
+                paths.source_schema_revision.as_deref(),
+            ),
+            BootstrapChannel::Alpha => match staged_source_channel(&paths.stage_dir) {
+                Ok(Some(source_channel)) => write_alpha_bootstrap_marker(
+                    root,
+                    install_instance_id,
+                    &source_channel,
+                    paths.source_database_instance_id.as_deref(),
+                    paths.source_schema_revision.as_deref(),
+                ),
+                Ok(None) => {
+                    Err("The Alpha staged copy does not name a source channel.".to_string())
+                }
+                Err(error) => Err(error),
+            },
+        };
+        if let Err(error) = marker_result {
             break Some(error);
         }
         break None;
     };
 
     if let Some(error) = activation_error {
-        let _ = fs::remove_file(beta_root.join(MARKER_NAME));
+        let _ = fs::remove_file(root.join(channel.marker_name()));
         if moved_imports && live_imports.exists() && !paths.staged_imports.exists() {
             let _ = fs::rename(&live_imports, &paths.staged_imports);
         }
@@ -630,15 +875,28 @@ pub fn activate_staged_copy(
         if rollback_db.is_file() {
             let _ = fs::rename(&rollback_db, &live_db);
         }
-        restore_imports(beta_root, &rollback_imports, &live_imports);
+        restore_imports(root, &rollback_imports, &live_imports);
         return Err(error);
     }
 
     let _ = remove_tree(&rollback_db);
     remove_sqlite_sidecars(&rollback_db);
     let _ = remove_tree(&rollback_imports);
-    clear_stage_lock(beta_root);
+    clear_stage_lock(root);
     Ok(())
+}
+
+pub fn activate_staged_copy(
+    beta_root: &Path,
+    paths: &StagePaths,
+    install_instance_id: Option<&str>,
+) -> Result<(), String> {
+    activate_staged_copy_for_channel(
+        beta_root,
+        paths,
+        install_instance_id,
+        BootstrapChannel::Beta,
+    )
 }
 
 /// Pure helper for lifecycle tests: encode the required ordering constraints.
@@ -661,11 +919,15 @@ pub fn validate_staged_copy_for_activation(
     token: &str,
     confirm_replace_existing_beta: bool,
 ) -> Result<StagePaths, String> {
-    resolve_and_verify_stage_with_confirmation(
-        beta_root,
-        token,
-        confirm_replace_existing_beta,
-    )
+    resolve_and_verify_stage_with_confirmation(beta_root, token, confirm_replace_existing_beta)
+}
+
+pub fn validate_alpha_staged_copy_for_activation(
+    alpha_root: &Path,
+    token: &str,
+    confirm_replace_existing_library: bool,
+) -> Result<StagePaths, String> {
+    resolve_and_verify_alpha_stage(alpha_root, token, confirm_replace_existing_library)
 }
 
 #[cfg(test)]
@@ -700,7 +962,9 @@ mod tests {
         let (digest, size) = sha256_file(db_path).unwrap();
         let mut inventory = Vec::new();
         for (relative, bytes) in imports {
-            let path = stage_dir.join("imports").join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+            let path = stage_dir
+                .join("imports")
+                .join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
@@ -735,6 +999,26 @@ mod tests {
         write_manifest_with_replacement(stage_dir, token, db_path, imports, false);
     }
 
+    fn write_alpha_manifest(
+        stage_dir: &Path,
+        token: &str,
+        db_path: &Path,
+        source_channel: &str,
+        imports: &[(&str, &[u8])],
+    ) {
+        write_manifest(stage_dir, token, db_path, imports);
+        let manifest_path = stage_dir.join(MANIFEST_NAME);
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        payload["sourceChannel"] = serde_json::json!(source_channel);
+        payload["replaceExistingAlpha"] = serde_json::json!(false);
+        fs::write(
+            manifest_path,
+            serde_json::to_string_pretty(&payload).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn write_library_row(db_path: &Path) {
         let connection = rusqlite::Connection::open(db_path).unwrap();
         connection
@@ -756,8 +1040,7 @@ mod tests {
     #[test]
     fn apply_phase_ordering_rejects_illegal_transitions() {
         assert!(next_apply_phase(ApplyPhase::PreStopValidation, "validation_fail").is_err());
-        let scheduled =
-            next_apply_phase(ApplyPhase::PreStopValidation, "validation_ok").unwrap();
+        let scheduled = next_apply_phase(ApplyPhase::PreStopValidation, "validation_ok").unwrap();
         assert_eq!(scheduled, ApplyPhase::RelaunchScheduled);
         let stopped = next_apply_phase(scheduled, "backend_stopped").unwrap();
         assert_eq!(
@@ -787,6 +1070,28 @@ mod tests {
         ));
         assert!(marker_acknowledges_install(&beta_root, None, "1.2.3"));
         assert!(!marker_acknowledges_install(&beta_root, None, "1.2.4"));
+    }
+
+    #[test]
+    fn alpha_setup_gate_uses_alpha_marker_and_source_decisions() {
+        let (_dir, alpha_root) = temp_root();
+        fs::write(
+            alpha_root.join(ALPHA_MARKER_NAME),
+            r#"{"schemaVersion":1,"decision":"copied-beta","sourceChannel":"beta","appVersion":"1.2.3","installInstanceId":"alpha-a"}"#,
+        )
+        .unwrap();
+
+        assert!(!alpha_bootstrap_gate_required(
+            &alpha_root,
+            Some("alpha-a"),
+            "1.2.3",
+        ));
+        assert!(!marker_acknowledges_install(
+            &alpha_root,
+            Some("alpha-a"),
+            "1.2.3",
+        ));
+        assert!(!alpha_root.join(MARKER_NAME).exists());
     }
 
     #[test]
@@ -853,7 +1158,9 @@ mod tests {
         let error = resolve_and_verify_stage(&beta_root, token).expect_err("tamper");
         assert!(error.contains("checksum"));
         assert_eq!(
-            fs::read(&beta_root.join(LIVE_DB_NAME)).ok().map(|bytes| bytes.len()),
+            fs::read(&beta_root.join(LIVE_DB_NAME))
+                .ok()
+                .map(|bytes| bytes.len()),
             Some(fs::metadata(beta_root.join(LIVE_DB_NAME)).unwrap().len() as usize)
                 .filter(|_| true)
         );
@@ -951,6 +1258,46 @@ mod tests {
     }
 
     #[test]
+    fn successful_alpha_activation_uses_alpha_marker_and_decision() {
+        let (_dir, alpha_root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        let stage_dir = alpha_root.join(BOOTSTRAP_SUBDIR).join(token);
+        fs::create_dir_all(&stage_dir).unwrap();
+        let staged_db = stage_dir.join(STAGED_DB_NAME);
+        write_sqlite_file(&staged_db, "staged");
+        write_alpha_manifest(&stage_dir, token, &staged_db, "beta", &[]);
+        let paths = resolve_and_verify_alpha_stage(&alpha_root, token, false).expect("validate");
+        activate_staged_copy_for_channel(
+            &alpha_root,
+            &paths,
+            Some("alpha-install"),
+            BootstrapChannel::Alpha,
+        )
+        .expect("activate");
+
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(alpha_root.join(ALPHA_MARKER_NAME)).unwrap())
+                .unwrap();
+        assert_eq!(marker["decision"], "copied-beta");
+        assert_eq!(marker["sourceChannel"], "beta");
+        assert!(!alpha_root.join(MARKER_NAME).exists());
+    }
+
+    #[test]
+    fn alpha_stage_validation_requires_an_allowed_source_channel() {
+        let (_dir, alpha_root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        let stage_dir = alpha_root.join(BOOTSTRAP_SUBDIR).join(token);
+        fs::create_dir_all(&stage_dir).unwrap();
+        let staged_db = stage_dir.join(STAGED_DB_NAME);
+        write_sqlite_file(&staged_db, "staged");
+        write_alpha_manifest(&stage_dir, token, &staged_db, "alpha", &[]);
+        let error = resolve_and_verify_alpha_stage(&alpha_root, token, false)
+            .expect_err("Alpha must never copy from Alpha");
+        assert!(error.contains("source channel"));
+    }
+
+    #[test]
     fn rejects_non_pristine_live_beta_before_mutation() {
         let (_dir, beta_root) = temp_root();
         let token = "0123456789abcdef0123456789abcdef";
@@ -1009,7 +1356,8 @@ mod tests {
             .unwrap();
         assert_eq!(value, "staged");
         let marker: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(beta_root.join(MARKER_NAME)).unwrap()).unwrap();
+            serde_json::from_str(&fs::read_to_string(beta_root.join(MARKER_NAME)).unwrap())
+                .unwrap();
         assert_eq!(marker["decision"], "copied");
         assert_eq!(marker["appVersion"], env!("CARGO_PKG_VERSION"));
         assert_eq!(marker["installInstanceId"], "test-install");

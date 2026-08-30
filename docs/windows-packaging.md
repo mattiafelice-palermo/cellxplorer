@@ -26,41 +26,46 @@ From the repository root, run:
 ```powershell
 .\scripts\build-app.cmd -Channel stable
 .\scripts\build-app.cmd -Channel beta
+.\scripts\build-app.cmd -Channel alpha
 ```
 
 `-Channel` defaults to `stable`. Each channel builds its own frontend (`VITE_CELLXPLORER_CHANNEL`)
 and writes a fail-closed stamp at `frontend/dist/.cellxplorer-channel.json`. Packaging rejects a
-stale or mismatched stamp, so a Stable-built `frontend/dist` cannot be bundled into Beta and vice
-versa.
+stale or mismatched stamp, so a build from one channel cannot be bundled into another.
 
 This performs the complete frontend, backend sidecar, and NSIS build. See
 `docs/local-development.md` for incremental options and the expected output path.
 
-### Stable and Beta identities (Spec 021)
+### Stable, Beta, and Alpha identities (Specs 021/053.1/053.2)
 
-| Property | Stable | Beta |
-|---|---|---|
-| Product name | CellXplorer | CellXplorer Beta |
-| Identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
-| Deep link | `cellxplorer://` | `cellxplorer-beta://` |
-| Default install folder | `Program Files\CellXplorer` | `Program Files\CellXplorer Beta` |
-| Updater | `release-channels/stable/latest.json` | `release-channels/beta/latest.json` |
+| Property | Stable | Beta | Alpha |
+|---|---|---|---|
+| Product name | CellXplorer | CellXplorer Beta | CellXplorer Alpha |
+| Identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` | `com.cellxplorer.desktop.alpha` |
+| Deep link | `cellxplorer://` | `cellxplorer-beta://` | `cellxplorer-alpha://` |
+| Default install folder | `Program Files\CellXplorer` | `Program Files\CellXplorer Beta` | `Program Files\CellXplorer Alpha` |
+| Updater | `release-channels/stable/latest.json` | `release-channels/beta/latest.json` | `release-channels/alpha/latest.json` |
 
-Both editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
+All three editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
 kill only processes whose executable path is under the installation directory being changed — never
 by shared image name alone. After the last matching process disappears, the helper requires five
 consecutive quiet checks before NSIS overwrites binaries; this covers the short Windows image-release
 race without killing the other channel.
 
 **Data root:** Stable defaults to `%USERPROFILE%\.cellxplorer`; Beta defaults to
-`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly for tests and
-development. Do not install intermediate Beta builds against real user data; use disposable
-`CELLXPLORER_DATA` or a test account.
+`%USERPROFILE%\.cellxplorer-beta`; Alpha defaults to `%USERPROFILE%\.cellxplorer-alpha`.
+`CELLXPLORER_DATA` overrides any root exactly for tests and development. Do not install intermediate
+Beta or Alpha builds against real user data; use disposable `CELLXPLORER_DATA` or a test account.
 
-**Release:** Stable and Beta publish to separate SemVer tags. Beta GitHub releases are
-prereleases. Verified updater manifests are copied to the `release-channels` branch
-(`stable/latest.json`, `beta/latest.json`) after draft verification. The first Stable release after
-Spec 023 still ships `latest.json` on the GitHub release for legacy bootstrap clients.
+Alpha starts empty and has no Stable/Beta data-copy or synchronization path. Its updater uses the
+dedicated Alpha endpoint and shared standard update state; only exact dotted
+`MAJOR.MINOR.PATCH-alpha.N` versions are accepted.
+
+**Release:** Stable, Beta, and Alpha publish to separate SemVer tag families. Beta and Alpha GitHub
+releases are prereleases. Verified updater manifests are copied to the `release-channels` branch
+(`stable/latest.json`, `beta/latest.json`, `alpha/latest.json`) after draft verification. The first
+Stable release after Spec 023 still ships `latest.json` on the GitHub release for legacy bootstrap
+clients.
 
 Beta icons are generated deterministically:
 
@@ -73,24 +78,36 @@ Committed outputs live under `frontend/public/app-icon-beta.png` and `src-tauri/
 Large Beta frames contain a high-contrast `BETA` badge; 16/24/32 px ICO frames use a separately
 rendered `B` badge. Stable icons under `src-tauri/icons/` must remain unchanged.
 
+Alpha icons are generated with `python scripts\build_alpha_icons.py`; committed outputs live under
+`frontend/public/app-icon-alpha.png` and `src-tauri/icons-alpha/`. Large Alpha frames contain a
+high-contrast `ALPHA` badge; 16/24/32 px ICO frames use a separately rendered `A` badge.
+
 Expected outputs:
 
 - `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
 - `src-tauri/target/release/bundle/nsis/CellXplorer.Beta_<version>_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer.Alpha_<version>_x64-setup.exe`
+
+Tauri derives Beta and Alpha's intermediate filenames from their spaced product names. The
+repository build script matches that exact product-specific output and then normalizes only the
+freshly built installer (and signature, when present) to the dotted channel artifact name above.
+It never selects an arbitrary newest installer.
 
 The Stable app icon is sourced from `frontend/public/app-icon.png`. The Tauri bundle uses
-`src-tauri/icons/icon.ico` (Stable) or `src-tauri/icons-beta/icon.ico` (Beta overlay). The runtime
-window/taskbar icon is set from the matching `icon-256.rgba` in `src-tauri/src/main.rs`.
+`src-tauri/icons/icon.ico` (Stable), `src-tauri/icons-beta/icon.ico` (Beta overlay), or
+`src-tauri/icons-alpha/icon.ico` (Alpha overlay). The runtime window/taskbar icon is set from the
+matching `icon-256.rgba` in `src-tauri/src/main.rs`.
 
 ## Manual build sequence
 
-Prefer `.\scripts\build-app.ps1 -Channel stable|beta`. When building manually:
+Prefer `.\scripts\build-app.ps1 -Channel stable|beta|alpha`. When building manually:
 
 ```powershell
 npm.cmd install
 
 python scripts\build_frontend_channel.py stable
 # or: python scripts\build_frontend_channel.py beta
+# or: python scripts\build_frontend_channel.py alpha
 
 npm.cmd run build:backend
 New-Item -ItemType Directory -Force src-tauri\binaries
@@ -100,7 +117,7 @@ python scripts\frontend_channel.py verify --channel stable
 npm.cmd run tauri:build:stable
 ```
 
-Direct `tauri:build:beta` verifies the frontend stamp before packaging.
+Direct `tauri:build:beta` and `tauri:build:alpha` verify the frontend stamp before packaging.
 
 The backend build includes `backend/app/assets/plotly.min.js`. This offline runtime is embedded
 once in each portable HTML analysis so serialized Plotly figures remain interactive without an
@@ -123,12 +140,14 @@ Expected output, once the toolchain is installed:
 
 - Stable: `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
 - Beta: `src-tauri/target/release/bundle/nsis/CellXplorer.Beta_<version>_x64-setup.exe`
+- Alpha: `src-tauri/target/release/bundle/nsis/CellXplorer.Alpha_<version>_x64-setup.exe`
 
 The Stable app icon is sourced from `frontend/public/app-icon.png`.
-The Tauri bundle uses channel-specific icons under `src-tauri/icons/` (Stable) or
-`src-tauri/icons-beta/` (Beta overlay), and the runtime window/taskbar icon uses the matching
-`icon-256.rgba`. Regenerate Beta assets with `python scripts\build_beta_icons.py` after changing
-the Stable source icon; Stable committed assets must remain byte-for-byte unchanged unless
+The Tauri bundle uses channel-specific icons under `src-tauri/icons/` (Stable),
+`src-tauri/icons-beta/` (Beta overlay), or `src-tauri/icons-alpha/` (Alpha overlay), and the
+runtime window/taskbar icon uses the matching `icon-256.rgba`. Regenerate preview assets with
+`python scripts\build_beta_icons.py` or `python scripts\build_alpha_icons.py` after changing the
+Stable source icon; Stable committed assets must remain byte-for-byte unchanged unless
 intentionally replaced.
 
 ## Branded NSIS installer
@@ -139,9 +158,10 @@ use it through `bundle.windows.nsis.template` in `src-tauri/tauri.conf.json`. Th
 installer page is the location step; it includes the three-step progress indicator, desktop and
 startup options, and the custom CellXplorer actions. Uninstall preserves the product's own profile
 data root by default (`%USERPROFILE%\.cellxplorer` for Stable, `%USERPROFILE%\.cellxplorer-beta`
-for Beta) and offers deletion only as an explicit, confirmed destructive choice. The destructive
+for Beta, `%USERPROFILE%\.cellxplorer-alpha` for Alpha) and offers deletion only as an explicit,
+confirmed destructive choice. The destructive
 path deletes only that product's `CX_PROFILE_DATA_DIR` derived from the exact bundle identifier —
-Beta must never remove `.cellxplorer`.
+no channel may remove another channel's root.
 
 The template is version-coupled to the Tauri CLI. When upgrading Tauri, compare it with the exact
 upstream template for the new CLI before carrying the branded sections forward. A template can
@@ -150,9 +170,9 @@ the installer and uninstaller after template or NSIS changes. Never test the des
 choice against a real user data directory.
 
 The template also derives visual brand constants from the exact bundle identifier. Stable uses
-RGB `12B886` / COLORREF `0x0086B812`; Beta uses RGB `3678B7` / COLORREF `0x00B77836`. All branded
-installer controls must consume these constants, while unsupported identifiers fail at compile
-time.
+RGB `12B886` / COLORREF `0x0086B812`; Beta uses RGB `3678B7` / COLORREF `0x00B77836`; Alpha uses
+RGB `7048E8` / COLORREF `0x00E84870`. All branded installer controls must consume these constants,
+while unsupported identifiers fail at compile time.
 
 Manual restart and Beta database-copy apply share the parent-process-aware relaunch helper in
 `src-tauri/src/relaunch.rs`. It is invoked before backend shutdown and handled before Tauri or the
@@ -190,6 +210,7 @@ Production update manifest endpoints are:
 ```text
 Stable: https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json
 Beta:   https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json
+Alpha:  https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/alpha/latest.json
 ```
 
 Only the updater **public key** belongs in `tauri.conf.json`. Store the private key outside the
@@ -214,6 +235,10 @@ Runtime policy validates exact SemVer before pending state changes: Stable accep
 `MAJOR.MINOR.PATCH`; Beta accepts legacy `MAJOR.MINOR.PATCH-beta.N` and compact
 `MAJOR.MINOR.PATCH-betaNNN`. Do not switch back to dotted prereleases within a core version after a
 compact release: SemVer orders `beta.12` below `beta011`, whereas `beta012` follows it correctly.
+Alpha accepts only exact dotted `MAJOR.MINOR.PATCH-alpha.N` versions and rejects leading-zero
+sequence numbers, other prereleases, and build metadata. All three standard update paths use the
+shared `PendingAppUpdate` state; `PendingBetaInstall` remains only for Stable-owned first-Beta
+installation.
 Stable-owned first Beta installation uses a distinct `PendingBetaInstall` newtype and the Beta
 endpoint. It finishes the Stable backend session before launching the verified installer. An
 installed Beta is then updated only by the Beta application's standard updater.
@@ -258,7 +283,9 @@ still perform the normal channel verification.
 
 ## Production GitHub release
 
-Stable and Beta releases are published by pushing exact SemVer tags:
+Stable, Beta, and Alpha releases are published by pushing exact SemVer tags. Alpha uses
+`vMAJOR.MINOR.PATCH-alpha.N` and is a GitHub prerelease; Beta remains a prerelease and Stable
+remains the normal latest release.
 
 ```powershell
 git tag v0.15.0
@@ -266,18 +293,24 @@ git push origin v0.15.0
 
 git tag v0.16.0-beta.1
 git push origin v0.16.0-beta.1
+
+git tag v0.28.0-alpha.1
+git push origin v0.28.0-alpha.1
 ```
 
 The `.github/workflows/release.yml` workflow then:
 
-1. resolves Stable `vMAJOR.MINOR.PATCH` or Beta `vMAJOR.MINOR.PATCH-beta.N` and requires the tag
-   commit to be reachable from `main`;
-2. for Beta, lists all published releases, ignores drafts/malformed/legacy Beta tags, and requires
-   the Beta core to be strictly greater than the highest exact Stable tag;
+1. resolves Stable `vMAJOR.MINOR.PATCH`, Beta `vMAJOR.MINOR.PATCH-beta.N`/compact Beta, or Alpha
+   `vMAJOR.MINOR.PATCH-alpha.N` and requires the tag commit to be reachable from `main`;
+2. for Beta and Alpha, lists all published releases, ignores drafts/malformed/legacy tags, and
+   requires each core to be strictly greater than the highest exact Stable tag; Beta and Alpha are
+   not ordered against each other;
 3. requires the pre-provisioned orphan `release-channels` branch to contain only its README and
-   channel manifests; the first Beta may create the initially absent Beta pointer, but Stable must
-   already have a valid pointer and the workflow never initializes from `main`;
-4. snapshots both channel blob SHAs so publication can update only the selected pointer;
+   channel manifests. Before the first Alpha release, Alpha may be absent; the first Alpha may
+   create only `alpha/latest.json`. Once a published Alpha release exists, all three pointers are
+   required. The workflow never initializes the branch from `main`;
+4. snapshots every non-target blob SHA, including README, so publication can update only the
+   selected pointer;
 5. refuses to replace an already published non-draft release and requires a public repository;
 6. extracts exact release notes and runs `python scripts/preflight.py --no-cache`;
 7. explicitly builds and verifies the selected frontend channel stamp, then builds the sidecar;
@@ -285,9 +318,16 @@ The `.github/workflows/release.yml` workflow then:
    installer, `.sig`, and workspace-root `latest.json`;
 9. validates exact channel version/product/asset/signature against release metadata with
    `scripts/verify_updater_manifest.py`, reading the shared public key from the base Tauri config;
-10. undrafts as a normal Stable release or true Beta prerelease only after verification;
-11. updates only the selected channel pointer using its prior SHA, verifies exact bytes through the
-    Contents API and public raw endpoint, and proves the non-target blob is unchanged.
+10. undrafts as a normal Stable release or true Beta/Alpha prerelease only after verification;
+11. updates only the selected channel pointer through an atomic non-force Git-data-API ref move
+    based on the captured branch tip, verifies exact bytes through the Contents API and public raw
+    endpoint, and proves every non-target blob is unchanged.
+
+Before the first production Alpha tag, obtain explicit release-preparation authorization and make a
+separate focused manifest-only commit on the orphan `release-channels` branch that updates its
+`README.md` to document Stable, Beta, and Alpha. This preparation is pending and is not performed
+by the Alpha implementation. The publication workflow treats `README.md` as protected and verifies
+that its blob is unchanged during every pointer update.
 
 Required GitHub repository secrets:
 
@@ -296,9 +336,9 @@ TAURI_SIGNING_PRIVATE_KEY
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-Use **Actions → Publish CellXplorer release → Run workflow** for both Stable and Beta build-only
-rehearsals. Manual dispatch never creates or alters a GitHub Release. Download each artifact and
-record its channel stamp, installer name, icon, and product metadata before release.
+Use **Actions → Publish CellXplorer release → Run workflow** for Stable, Beta, and Alpha build-only
+rehearsals. Manual dispatch never creates or alters a GitHub Release or channel pointer. Download
+each artifact and record its channel stamp, installer name, icon, and product metadata before release.
 
 Published versions are immutable. If a release is wrong, cut a new patch/Beta sequence rather than
 rebuilding the same tag. If pointer publication fails after undraft, the immutable release exists

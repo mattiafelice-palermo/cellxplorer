@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-alpha.1 - 2026-08-30
+
+### New features
+
+- Publish the isolated CellXplorer Alpha channel for updater and first-launch testing.
+- Use passive Windows update installation with visible in-app progress.
+
 ## 0.27.0-beta.12 - 2026-08-20
 
 - Inline continued-import findings and remove the continuity review ceremony.

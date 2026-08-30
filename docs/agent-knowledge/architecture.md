@@ -14,41 +14,58 @@ FastAPI processes documented in `docs/local-development.md`. The desktop backend
 available loopback port; frontend requests must use the desktop endpoint discovery helpers rather
 than assuming port `8642`.
 
-## Stable and Beta application channels (Spec 021)
+## Stable, Beta, and Alpha application channels (Specs 021/053.1/053.2)
 
-The same source tree builds two Windows products from channel-specific configuration:
+The same source tree builds three isolated Windows products from channel-specific configuration:
 
-| Property | Stable | Beta |
-|---|---|---|
-| Product name | CellXplorer | CellXplorer Beta |
-| Tauri identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
-| Deep link | `cellxplorer://` | `cellxplorer-beta://` |
-| Frontend build env | `VITE_CELLXPLORER_CHANNEL=stable` | `VITE_CELLXPLORER_CHANNEL=beta` |
-| Mantine primary | `teal` | `betaBlue` |
+| Property | Stable | Beta | Alpha |
+|---|---|---|---|
+| Product name | CellXplorer | CellXplorer Beta | CellXplorer Alpha |
+| Tauri identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` | `com.cellxplorer.desktop.alpha` |
+| Deep link | `cellxplorer://` | `cellxplorer-beta://` | `cellxplorer-alpha://` |
+| Frontend build env | `VITE_CELLXPLORER_CHANNEL=stable` | `VITE_CELLXPLORER_CHANNEL=beta` | `VITE_CELLXPLORER_CHANNEL=alpha` |
+| Mantine primary | `teal` | `betaBlue` | `alphaPurple` |
 
-Build either channel with `.\scripts\build-app.ps1 -Channel stable|beta`. Each frontend build writes
+Build a channel with `.\scripts\build-app.ps1 -Channel stable|beta|alpha`. Each frontend build writes
 `frontend/dist/.cellxplorer-channel.json`; packaging verifies the stamp so a Stable-built dist cannot
-be bundled into Beta and vice versa. The PyInstaller sidecar is shared; Rust passes
+be bundled into another channel. The PyInstaller sidecar is shared; Rust passes
 `CELLXPLORER_CHANNEL` to it. Packaged backend startup requires a valid channel and fails closed on
 missing or unsupported values.
 
-Both editions use separate default data roots after Spec 022: Stable `%USERPROFILE%\.cellxplorer`,
-Beta `%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides both exactly for tests and
+All editions use separate default data roots after Specs 022/053.1: Stable
+`%USERPROFILE%\.cellxplorer`, Beta `%USERPROFILE%\.cellxplorer-beta`, and Alpha
+`%USERPROFILE%\.cellxplorer-alpha`. `CELLXPLORER_DATA` overrides any root exactly for tests and
 development. Rust passes the resolved root to the sidecar as `CELLXPLORER_DATA`.
 
+Beta and Alpha first-launch setup share the implementation in
+`backend/app/services/beta_bootstrap.py`, `backend/app/routers/beta_bootstrap.py`,
+`src-tauri/src/beta_bootstrap.rs`, and `frontend/src/components/BetaBootstrapCoordinator.tsx`.
+Beta retains its released Stable-copy contract and `beta-bootstrap.json` marker. Alpha uses
+`alpha-bootstrap.json` and `alpha-bootstrap-apply-error.json` in its own root and offers exactly
+Start empty, Copy Stable library, or Copy Beta library. A copy is a one-time SQLite-backup
+snapshot: it receives a new database instance UUID, rewrites only managed import paths into the
+Alpha `imports/` tree, preserves external paths, and records the source channel. Source databases
+are inspected through a private sidecar-preserving snapshot so opening a live WAL database cannot
+change the source `-wal` or `-shm`; the source root is never written and no synchronization follows.
+The historical `beta.scientific_preparation` app-setting key is intentionally shared by both
+destinations; its name is compatibility history, not a Beta-only data boundary.
+
 Stable self-updates read `release-channels/stable/latest.json`; Beta self-updates read
-`release-channels/beta/latest.json`. Stable may optionally notify about and install the separate
-Beta product through dedicated Rust commands and `BetaInstallCoordinator`; it never updates an
-installed Beta copy. Standard self-update state and Stable-owned first-Beta-install state are
-different Tauri managed types (`PendingAppUpdate` and the `PendingBetaInstall` newtype), so they
-cannot collide or clear one another. Rust validates exact channel SemVer before accepting a pending
-update: Stable is `MAJOR.MINOR.PATCH`; Beta accepts legacy `MAJOR.MINOR.PATCH-beta.N` and compact
-`MAJOR.MINOR.PATCH-betaNNN`, with no other prerelease or build metadata. Once a Beta line publishes
-a compact version, keep that form for the rest of the same core version: SemVer orders `beta.12`
-below `beta011`, while `beta012` correctly follows `beta011`.
+`release-channels/beta/latest.json`; Alpha self-updates read
+`release-channels/alpha/latest.json`. All three use the shared `PendingAppUpdate` state and
+standard Rust check/download/install commands. Stable may optionally notify about and install the
+separate Beta product through dedicated Rust commands and `BetaInstallCoordinator`; it never
+updates an installed Beta copy, and Alpha never enters this flow. Rust validates exact channel
+SemVer before accepting a pending update: Stable is `MAJOR.MINOR.PATCH`; Beta accepts legacy
+`MAJOR.MINOR.PATCH-beta.N` and compact `MAJOR.MINOR.PATCH-betaNNN`; Alpha accepts only
+`MAJOR.MINOR.PATCH-alpha.N`, with no other prerelease or build metadata. Alpha sequence numbers
+use the exact dotted form with no leading zero. Once a Beta line publishes a compact version, keep
+that form for the rest of the same core version: SemVer orders `beta.12` below `beta011`, while
+`beta012` correctly follows `beta011`.
 
 NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
-directory being changed — never by shared image name alone — so Stable and Beta can run side by side.
+directory being changed — never by shared image name alone — so all three products can run side by
+side.
 
 See `docs/windows-packaging.md` for the full identity matrix and build commands.
 
@@ -403,11 +420,13 @@ object and verified installer bytes in `src-tauri/src/app_updates.rs` and expose
 commands: `check_app_update`, `download_app_update`, and `install_app_update`. The frontend must
 not call the generic updater plugin API or store manifest URLs, signatures, or raw installer bytes.
 
-The configured identifier selects the self-update channel. Stable and Beta share the updater state
-machine but accept only their exact channel version shape before pending state can change. Stable's
-separate Beta-discovery commands are Stable-only, use the Rust-owned Beta endpoint and the distinct
-`PendingBetaInstall` newtype, and stop offering first installation once the exact Beta uninstall
-registration is present.
+The configured identifier selects the self-update channel. Stable, Beta, and Alpha share the
+standard updater state machine but accept only their exact channel version shape before pending
+state can change. Alpha has its own identifier, data root, deep-link scheme, updater endpoint, icon,
+and native/installer brand. Stable's separate Beta-discovery commands are Stable-only, use the
+Rust-owned Beta endpoint and the distinct `PendingBetaInstall` newtype, and stop offering first
+installation once the exact Beta uninstall registration is present. Alpha never enters the Beta
+bootstrap or Stable-owned Beta-install paths.
 
 Automatic background discovery may emit one native Windows notification per new version when the
 user preference is enabled. Display and body-click activation are owned by Rust
@@ -421,7 +440,11 @@ ends the process, so no further checks or notifications occur afterward.
 Every checked update is built with the updater plugin's Windows `on_before_exit` hook, which sets
 the shell quitting flag and runs the existing PyInstaller sidecar process-tree cleanup through
 `prepare_exit_for_update` in `src-tauri/src/main.rs`. Check and download never stop the backend.
-Pre-hook install errors can return to the frontend with the backend still alive. Once
+NSIS install and uninstall hooks then perform a separate path-scoped cleanup against the exact
+target `$INSTDIR`; the reusable PowerShell predicate rejects sibling installations and protects
+the helper's ancestor chain. They must not use the stock shared executable-name shutdown check,
+because Stable, Beta, and Alpha intentionally share image names while remaining independently
+installable. Pre-hook install errors can return to the frontend with the backend still alive. Once
 `on_before_exit` runs on Windows, Tauri exits the process regardless of whether `ShellExecuteW`
 successfully opened the installer — there is no post-hook frontend recovery path. User database,
 caches, and source files are not touched by update infrastructure.
@@ -430,7 +453,8 @@ Both Standard self-update and Stable-owned Beta installation finish the backend 
 before installer launch. Session-finish failure is debug-logged and follows the existing updater
 policy of continuing to the verified installer. Automatic Beta discovery uses the same preference
 interval as Standard updates; schedule-change events cancel and recreate its timers rather than
-disabling recurrence.
+disabling recurrence. Alpha uses the standard self-update menu and settings path with its dedicated
+endpoint and exact `-alpha.N` validation.
 
 For packaging artifacts, signing keys, and the bootstrap-release limitation, see
 `docs/windows-packaging.md`.

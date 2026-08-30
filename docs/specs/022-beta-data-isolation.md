@@ -20,6 +20,10 @@ After this specification:
 
 This specification does not synchronize the two databases and does not publish Beta releases.
 
+Child Spec 053.3 extends this implementation to Alpha by parameterizing the source and destination
+channel. It adds Alpha-only endpoints, markers, and the Stable/Beta three-choice setup flow while
+leaving the Beta paths, payloads, decisions, and `beta.scientific_preparation` key unchanged.
+
 ### 1.1 July 2026 startup-choice amendment
 
 The shipped workflow now supersedes the original one-time/pristine-only clauses in sections 3,

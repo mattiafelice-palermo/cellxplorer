@@ -1,13 +1,13 @@
-; Stop only processes running from this installation directory. Stable and Beta
-; share executable image names but install to different folders; never taskkill
-; by shared process name alone. PyInstaller runs a launcher and an inner backend
-; process, so keep reaping and waiting until every installation-owned process
-; has released its executable instead of relying on one snapshot and a fixed
-; 400 ms delay.
+; Stop only processes running from this installation directory. Stable, Beta,
+; and Alpha share executable image names but install to different folders;
+; never taskkill by shared process name alone. PyInstaller runs a launcher and
+; an inner backend process, so keep reaping and waiting until every
+; installation-owned process has released its executable.
 !define CELLXPLORER_HOOK_SOURCE_DIR "${__FILEDIR__}"
 
 !macro KillInstallationProcesses MODE_ARGUMENT
   InitPluginsDir
+  File /oname=$PLUGINSDIR\installation_process_scope.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\installation_process_scope.ps1"
   File /oname=$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\kill_installation_processes.ps1"
   nsExec::ExecToStack 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1" -InstallDir "$INSTDIR" ${MODE_ARGUMENT}'
   Pop $0
@@ -23,10 +23,10 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; The active uninstaller itself runs from $INSTDIR. NSIS handles the main
-  ; application immediately before this hook; only reap orphaned PyInstaller
-  ; backend processes here so uninstall.exe can never become a cleanup target.
-  !insertmacro KillInstallationProcesses "-BackendOnly"
+  ; The helper protects its own complete ancestor chain, including an active
+  ; uninstaller launched from $INSTDIR, while stopping the target installation's
+  ; application and backend processes before file removal.
+  !insertmacro KillInstallationProcesses ""
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

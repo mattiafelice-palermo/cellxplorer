@@ -25,6 +25,9 @@ GITHUB_API_ASSET_RE = re.compile(
     r"^https://api\.github\.com/repos/"
     r"(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/assets/(?P<asset_id>\d+)/?$"
 )
+STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+BETA_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$")
+ALPHA_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-alpha\.(?:0|[1-9]\d*)$")
 
 
 class ManifestVerificationError(Exception):
@@ -224,7 +227,12 @@ def verify_manifest(
     channel: str | None = None,
     expected_product_name: str | None = None,
 ) -> None:
-    version = normalize_version(str(manifest.get("version", "")))
+    raw_version = str(manifest.get("version", ""))
+    if channel == "alpha" and raw_version.strip().startswith("v"):
+        raise ManifestVerificationError(
+            "Alpha manifest versions must not include a leading 'v'."
+        )
+    version = normalize_version(raw_version)
     target_version = normalize_version(expected_version)
     if version != target_version:
         raise ManifestVerificationError(
@@ -311,20 +319,31 @@ def infer_setup_exe_name_for_channel(version: str, channel: str) -> str:
         return infer_setup_exe_name(version, product_name="CellXplorer Beta")
     if channel == "stable":
         return infer_setup_exe_name(version, product_name="CellXplorer")
+    if channel == "alpha":
+        return infer_setup_exe_name(version, product_name="CellXplorer Alpha")
     raise ManifestVerificationError(f"Unsupported release channel: {channel!r}.")
 
 
 def assert_channel_version(version: str, channel: str) -> None:
-    normalized = normalize_version(version)
-    is_beta = bool(re.search(r"-beta(?:\.\d+|\d+)$", normalized))
-    if channel == "stable" and is_beta:
+    if channel == "alpha" and version.strip().startswith("v"):
         raise ManifestVerificationError(
-            f"Stable channel manifest cannot contain a beta version ({normalized!r})."
+            "Alpha channel versions must not include a leading 'v'."
         )
-    if channel == "beta" and not is_beta:
+    normalized = normalize_version(version)
+    if channel == "stable" and not STABLE_VERSION_RE.fullmatch(normalized):
+        raise ManifestVerificationError(
+            f"Stable channel manifest must contain an exact MAJOR.MINOR.PATCH version ({normalized!r})."
+        )
+    if channel == "beta" and not BETA_VERSION_RE.fullmatch(normalized):
         raise ManifestVerificationError(
             f"Beta channel manifest must contain a -beta.N version ({normalized!r})."
         )
+    if channel == "alpha" and not ALPHA_VERSION_RE.fullmatch(normalized):
+        raise ManifestVerificationError(
+            f"Alpha channel manifest must contain an exact -alpha.N version ({normalized!r})."
+        )
+    if channel not in {"stable", "beta", "alpha"}:
+        raise ManifestVerificationError(f"Unsupported release channel: {channel!r}.")
 
 
 def load_pubkey_from_tauri_conf(path: Path) -> str:
@@ -371,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--channel",
-        choices=("stable", "beta"),
+        choices=("stable", "beta", "alpha"),
         default=None,
         help="Expected release channel for SemVer and installer naming checks.",
     )

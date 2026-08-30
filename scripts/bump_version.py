@@ -25,7 +25,9 @@ from check_versions import (
 
 
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-PUBLISHABLE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta(?:\.(\d+)|(\d+)))?$")
+PUBLISHABLE_VERSION_RE = re.compile(
+    r"^(\d+)\.(\d+)\.(\d+)(?:-(?:beta|alpha)(?:\.(\d+)|(\d+)))?$"
+)
 CHANGELOG_HEADING_RE = re.compile(
     r"^##\s+(?:\[)?(?P<version>v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\])?"
 )
@@ -64,12 +66,12 @@ def parse_semver(value: str) -> tuple[int, int, int]:
 
 
 def parse_publishable_version(value: str) -> str:
-    """Accept stable X.Y.Z or beta X.Y.Z-beta.N versions."""
+    """Accept stable, Beta, or Alpha publishable versions."""
     normalized = normalize_expected_version(value.strip())
     if not PUBLISHABLE_VERSION_RE.fullmatch(normalized):
         raise BumpVersionError(
-            f"Version must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N / "
-            f"MAJOR.MINOR.PATCH-betaNNN, got {value!r}."
+            f"Version must be MAJOR.MINOR.PATCH, MAJOR.MINOR.PATCH-beta.N / "
+            f"MAJOR.MINOR.PATCH-betaNNN, or MAJOR.MINOR.PATCH-alpha.N, got {value!r}."
         )
     return normalized
 
@@ -317,7 +319,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "new_version",
         nargs="?",
-        help="Target version (MAJOR.MINOR.PATCH). Omit with --patch, --minor, or --major.",
+        help=(
+            "Target version (MAJOR.MINOR.PATCH, -beta.N, or -alpha.N). "
+            "Omit with --patch, --minor, or --major."
+        ),
     )
     bump = parser.add_mutually_exclusive_group()
     bump.add_argument("--patch", action="store_true", help="Increment patch from the current version.")

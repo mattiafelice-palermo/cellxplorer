@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STABLE_CONF = ROOT / "src-tauri" / "tauri.conf.json"
 BETA_OVERLAY = ROOT / "src-tauri" / "tauri.beta.conf.json"
+ALPHA_OVERLAY = ROOT / "src-tauri" / "tauri.alpha.conf.json"
 BUILD_SCRIPT = ROOT / "scripts" / "build-app.ps1"
 PACKAGE_JSON = ROOT / "package.json"
 NSIS = ROOT / "src-tauri" / "cellxplorer-installer.nsi"
@@ -33,6 +35,8 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.stable = json.loads(STABLE_CONF.read_text(encoding="utf-8"))
         self.overlay = json.loads(BETA_OVERLAY.read_text(encoding="utf-8"))
         self.beta = deep_merge(self.stable, self.overlay)
+        self.alpha_overlay = json.loads(ALPHA_OVERLAY.read_text(encoding="utf-8"))
+        self.alpha = deep_merge(self.stable, self.alpha_overlay)
 
     def test_stable_identity_matrix_unchanged(self):
         self.assertEqual(self.stable["productName"], "CellXplorer")
@@ -58,11 +62,25 @@ class AppChannelConfigurationTests(unittest.TestCase):
             "icons-beta/icon.ico",
         )
 
-    def test_both_channels_share_nsis_template_and_backend_resource(self):
+    def test_resolved_alpha_config_matches_identity_matrix(self):
+        self.assertEqual(self.alpha["productName"], "CellXplorer Alpha")
+        self.assertEqual(self.alpha["identifier"], "com.cellxplorer.desktop.alpha")
+        self.assertEqual(self.alpha["app"]["windows"][0]["title"], "CellXplorer Alpha")
+        self.assertEqual(
+            self.alpha["plugins"]["deep-link"]["desktop"]["schemes"],
+            ["cellxplorer-alpha"],
+        )
+        self.assertEqual(self.alpha["bundle"]["icon"], ["icons-alpha/icon.ico"])
+        self.assertEqual(
+            self.alpha["bundle"]["windows"]["nsis"]["installerIcon"],
+            "icons-alpha/icon.ico",
+        )
+
+    def test_all_channels_share_nsis_template_and_backend_resource(self):
         # Spec 030: the backend ships as a PyInstaller onedir folder bundled as a
         # resource, not a single-file externalBin sidecar (onefile re-extracted
         # 85 MB to temp on every launch).
-        for config in (self.stable, self.beta):
+        for config in (self.stable, self.beta, self.alpha):
             self.assertEqual(
                 config["bundle"]["windows"]["nsis"]["template"],
                 "cellxplorer-installer.nsi",
@@ -79,12 +97,16 @@ class AppChannelConfigurationTests(unittest.TestCase):
 
     def test_build_script_supports_explicit_channels(self):
         script = BUILD_SCRIPT.read_text(encoding="utf-8")
-        self.assertIn('[ValidateSet("stable", "beta")]', script)
+        self.assertIn('[ValidateSet("stable", "beta", "alpha")]', script)
         self.assertIn('[string]$Channel = "stable"', script)
         self.assertIn("VITE_CELLXPLORER_CHANNEL", script)
         self.assertIn("frontend_channel.py", script)
         self.assertIn("tauri.beta.conf.json", script)
+        self.assertIn("tauri.alpha.conf.json", script)
         self.assertIn("--no-sign", script)
+        self.assertIn("$tauriInstallerName", script)
+        self.assertIn("Move-Item -LiteralPath $tauriInstaller.FullName", script)
+        self.assertIn("merely newest setup executable.", script)
         self.assertIn("$expectedInstallerName", script)
 
     def test_backend_only_build_does_not_require_frontend_stamp(self):
@@ -113,25 +135,43 @@ class AppChannelConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(scripts["build:frontend:stable"], "python scripts/build_frontend_channel.py stable")
         self.assertEqual(scripts["build:frontend:beta"], "python scripts/build_frontend_channel.py beta")
+        self.assertEqual(scripts["tauri:build:alpha"], "python scripts/frontend_channel.py verify --channel alpha && tauri build --config src-tauri/tauri.alpha.conf.json")
+        self.assertEqual(scripts["build:frontend:alpha"], "python scripts/build_frontend_channel.py alpha")
 
     def test_nsis_hooks_scope_process_cleanup_to_install_dir(self):
         hooks = (ROOT / "src-tauri" / "nsis-hooks.nsh").read_text(encoding="utf-8")
         helper = (
             ROOT / "src-tauri" / "kill_installation_processes.ps1"
         ).read_text(encoding="utf-8")
+        scope = (
+            ROOT / "src-tauri" / "installation_process_scope.ps1"
+        ).read_text(encoding="utf-8")
         template = (
             ROOT / "src-tauri" / "cellxplorer-installer.nsi"
         ).read_text(encoding="utf-8")
         self.assertIn("kill_installation_processes.ps1", hooks)
-        self.assertIn("StartsWith", helper)
+        self.assertIn("installation_process_scope.ps1", hooks)
+        scope_extract = re.search(
+            r'File /oname=\$PLUGINSDIR\\(?P<name>[^\s"]+)\s+"\$\{CELLXPLORER_HOOK_SOURCE_DIR\}\\installation_process_scope\.ps1"',
+            hooks,
+        )
+        scope_import = re.search(
+            r'Join-Path \$PSScriptRoot "(?P<name>[^"]+)"', helper
+        )
+        self.assertIsNotNone(scope_extract)
+        self.assertIsNotNone(scope_import)
+        self.assertEqual(scope_extract.group("name"), scope_import.group("name"))
+        self.assertIn("Get-InstallationProcessPathPrefix", helper)
+        self.assertIn("Test-InstallationProcessCandidate", helper)
+        self.assertIn("Test-InstallationOwnedExecutablePath", scope)
+        self.assertIn("Test-BackendExecutablePath", scope)
         self.assertIn("$protectedProcessIds", helper)
         self.assertIn("ParentProcessId", helper)
-        self.assertIn("[switch]$BackendOnly", helper)
-        self.assertIn('-like "cellxplorer-backend*.exe"', helper)
         self.assertIn("$quietChecksRequired = 5", helper)
         self.assertIn("$quietChecks -lt $quietChecksRequired", helper)
-        self.assertIn('KillInstallationProcesses "-BackendOnly"', hooks)
+        self.assertEqual(hooks.count('KillInstallationProcesses ""'), 2)
         self.assertNotIn("[System.IO.File]::Open", helper)
+        self.assertNotIn("CheckIfAppIsRunning", template)
         self.assertIn("$INSTDIR", hooks)
         combined = hooks + helper
         self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", combined)
@@ -144,15 +184,19 @@ class AppChannelConfigurationTests(unittest.TestCase):
         )
         self.assertIn("StrCpy $RunCurrentUninstaller 1", template)
 
-    def test_stable_and_beta_updater_endpoints_are_channel_specific(self):
+    def test_all_updater_endpoints_are_channel_specific(self):
         stable = json.loads(STABLE_CONF.read_text(encoding="utf-8"))
         beta = deep_merge(stable, json.loads(BETA_OVERLAY.read_text(encoding="utf-8")))
         stable_endpoint = stable["plugins"]["updater"]["endpoints"][0]
         beta_endpoint = beta["plugins"]["updater"]["endpoints"][0]
+        alpha = deep_merge(stable, json.loads(ALPHA_OVERLAY.read_text(encoding="utf-8")))
+        alpha_endpoint = alpha["plugins"]["updater"]["endpoints"][0]
         self.assertIn("release-channels/stable/latest.json", stable_endpoint)
         self.assertIn("release-channels/beta/latest.json", beta_endpoint)
+        self.assertIn("release-channels/alpha/latest.json", alpha_endpoint)
         self.assertNotIn("/releases/latest/", stable_endpoint)
         self.assertNotIn("/releases/latest/", beta_endpoint)
+        self.assertNotIn("/releases/latest/", alpha_endpoint)
 
     def test_beta_self_updater_gate_is_removed(self):
         source = APP_UPDATES_RS.read_text(encoding="utf-8")
@@ -169,10 +213,14 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertIn("!define CX_BRAND_COLORREF 0x00B77836", nsis)
         self.assertIn('!define CX_BRAND_RGB "12B886"', nsis)
         self.assertIn("!define CX_BRAND_COLORREF 0x0086B812", nsis)
+        self.assertIn('!define CX_BRAND_RGB "7048E8"', nsis)
+        self.assertIn("!define CX_BRAND_COLORREF 0x00E84870", nsis)
         self.assertGreaterEqual(nsis.count("${CX_BRAND_RGB}"), 8)
         self.assertIn("${CX_BRAND_COLORREF}", nsis)
         self.assertEqual(nsis.count('"12B886"'), 1)
         self.assertEqual(nsis.count("0x0086B812"), 1)
+        self.assertEqual(nsis.count('"7048E8"'), 1)
+        self.assertEqual(nsis.count("0x00E84870"), 1)
 
     def test_each_installer_run_records_a_new_installation_identity(self):
         nsis = NSIS.read_text(encoding="utf-8")
@@ -317,8 +365,10 @@ class AppChannelConfigurationTests(unittest.TestCase):
         nsis = NSIS.read_text(encoding="utf-8")
         self.assertIn('!define CX_PROFILE_DATA_DIR ".cellxplorer-beta"', nsis)
         self.assertIn('!define CX_PROFILE_DATA_DIR ".cellxplorer"', nsis)
+        self.assertIn('!define CX_PROFILE_DATA_DIR ".cellxplorer-alpha"', nsis)
         self.assertIn('com.cellxplorer.desktop.beta', nsis)
         self.assertIn('com.cellxplorer.desktop', nsis)
+        self.assertIn('com.cellxplorer.desktop.alpha', nsis)
         self.assertIn(r'RmDir /r "$PROFILE\${CX_PROFILE_DATA_DIR}"', nsis)
         self.assertIn(r'"$PROFILE\${CX_PROFILE_DATA_DIR}"', nsis)
         self.assertNotIn(r'RmDir /r "$PROFILE\.cellxplorer"', nsis)

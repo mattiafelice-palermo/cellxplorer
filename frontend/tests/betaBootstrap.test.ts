@@ -5,6 +5,8 @@ import type { BetaBootstrapStatus } from "../src/api.ts";
 import {
   betaBootstrapGateOpen,
   betaBootstrapLoadingStatus,
+  alphaSourceBlockingReason,
+  alphaSourceCopyDisabled,
   copyStableLibraryDisabled,
   mockBetaBootstrapStatus,
   parseDevBetaBootstrapMock,
@@ -38,11 +40,18 @@ test("dev mock query parsing is development-only", () => {
   assert.equal(parseDevBetaBootstrapMock("?mockBetaBootstrap=available", true), "available");
   assert.equal(parseDevBetaBootstrapMock("?mockBetaBootstrap=loading", true), "loading");
   assert.equal(parseDevBetaBootstrapMock("?mockBetaBootstrap=corrupt-marker", true), "corrupt-marker");
+  assert.equal(
+    parseDevBetaBootstrapMock("?mockAlphaBootstrap=both-blocked", true, "alpha"),
+    "both-blocked",
+  );
   assert.equal(parseDevBetaBootstrapMock("?mockBetaBootstrap=unknown", true), null);
 });
 
-test("bootstrap UI is beta-only and requires Tauri or dev mock", () => {
+test("bootstrap UI is channel-aware and requires Tauri or dev mock", () => {
   assert.equal(shouldShowBetaBootstrapUi("stable", true, null), false);
+  assert.equal(shouldShowBetaBootstrapUi("alpha", true, "available"), true);
+  assert.equal(shouldShowBetaBootstrapUi("alpha", false, null), false);
+  assert.equal(shouldShowBetaBootstrapUi("alpha", false, "available"), true);
   assert.equal(shouldShowBetaBootstrapUi("beta", false, null), false);
   assert.equal(shouldShowBetaBootstrapUi("beta", true, null), true);
   assert.equal(shouldShowBetaBootstrapUi("beta", false, "available"), true);
@@ -113,6 +122,17 @@ test("blocked copy keeps Start empty enabled but disables copy", () => {
   assert.equal(copyStableLibraryDisabled(blocked, false, "blocked"), true);
   assert.equal(copyStableLibraryDisabled(availableStatus, true, null), true);
   assert.equal(copyStableLibraryDisabled(availableStatus, false, null), false);
+});
+
+test("Alpha copy sources are independently blocked while Start empty remains available", () => {
+  const stableBlocked = mockBetaBootstrapStatus("stable-blocked", "alpha");
+  assert.equal(alphaSourceCopyDisabled(stableBlocked, "stable", false, "stable-blocked"), true);
+  assert.equal(alphaSourceCopyDisabled(stableBlocked, "beta", false, "stable-blocked"), false);
+  assert.match(
+    alphaSourceBlockingReason(stableBlocked, "stable", "stable-blocked") ?? "",
+    /CellXplorer library/,
+  );
+  assert.equal(alphaSourceCopyDisabled(stableBlocked, "stable", true, null), true);
 });
 
 test("outstanding stage tokens are lower-hex only", () => {

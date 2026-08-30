@@ -1,6 +1,6 @@
 """Application configuration: local data directory layout.
 
-Everything Cellxplorer persists lives under APP_DATA_DIR:
+Everything CellXplorer persists lives under the channel-specific APP_DATA_DIR:
   - cellxplorer.db   SQLite database (the canonical Library)
   - cache/           Parquet caches keyed by (file hash, parser/calc version)
 
@@ -27,7 +27,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
-APP_VERSION = "0.27.0-beta.12"
+APP_VERSION = "0.27.0-alpha.1"
 INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").strip() or None
 
 # Version of our derived per-cycle calculation code. Bump when the

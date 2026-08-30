@@ -6,12 +6,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$root = $InstallDir.TrimEnd('\', '/')
-if (-not $root) {
-    exit 0
+. (Join-Path $PSScriptRoot "installation_process_scope.ps1")
+$prefix = Get-InstallationProcessPathPrefix -InstallDir $InstallDir
+if (-not $prefix) {
+    throw "The installation directory is required for process cleanup."
 }
-
-$prefix = "$root\"
 
 # NSIS may run uninstall.exe directly from $INSTDIR when another installer
 # launches it with _?=<install-dir>. The PowerShell helper is its child, so a
@@ -33,19 +32,12 @@ while ($ancestorProcessId -gt 0 -and $protectedProcessIds.Add($ancestorProcessId
 
 function Get-InstallationOwnedProcesses {
     return @(Get-CimInstance Win32_Process | Where-Object {
-        if (
-            -not $_.ExecutablePath -or
-            -not $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) -or
-            $protectedProcessIds.Contains([int]$_.ProcessId)
-        ) {
-            return $false
-        }
-
-        if ($BackendOnly) {
-            return [System.IO.Path]::GetFileName($_.ExecutablePath) -like "cellxplorer-backend*.exe"
-        }
-
-        return $true
+        return Test-InstallationProcessCandidate `
+            -ProcessId ([int]$_.ProcessId) `
+            -ExecutablePath $_.ExecutablePath `
+            -InstallPathPrefix $prefix `
+            -ProtectedProcessIds $protectedProcessIds `
+            -BackendOnly:$BackendOnly
     })
 }
 
