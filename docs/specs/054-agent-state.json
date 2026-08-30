@@ -8,8 +8,8 @@
     "054.2"
   ],
   "turn": "REVIEWER",
-  "action": "FINAL_REVIEW",
+  "action": "BLOCKED",
   "findings": [],
   "resume_review": null,
-  "updated_at": "2026-08-30T21:50:40+02:00"
+  "updated_at": "2026-08-30T21:53:05+02:00"
 }
