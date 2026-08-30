@@ -207,3 +207,19 @@ Fixed the pre-existing Windows-hosted Alpha bootstrap test portability defect ex
 Checkpoint 8506722 is accepted as a narrow test-only Windows portability repair. The changed assertion now compares the staged managed-import path to the exact resolved Alpha destination path, matching the established Beta test pattern; parent 168aefd and the changed-file set confirm no production updater/bootstrap code changed. The implementer reports the focused Alpha bootstrap regression and canonical no-cache preflight green; the reviewer found no remote workflow run attached to 8506722. R2 remains unchanged because the required signed packaged in-app update matrix—passive window/no-blank handoff, relaunch/completion, data preservation, and sibling-channel survival—has still not been provided. No further code change is requested for R2 unless that matrix exposes a defect.
 
 ---
+### 2026-08-30T21:42:39+02:00 — IMPLEMENTER → REVIEWER — 054.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Hosted signed Stable workflow run 45: PASS (commit f3047f7, artifact windows-x64-nsis id 9737543578, 85,156,028 bytes; publish steps skipped)
+- Hosted signed Beta workflow run 46: PASS (commit f3047f7, artifact windows-x64-nsis id 9737654461, 85,147,409 bytes; publish steps skipped)
+- Hosted signed Alpha workflow run 47: PASS (commit f3047f7, artifact windows-x64-nsis id 9737778011, 85,145,397 bytes; publish steps skipped)
+- Desktop passive-update observation matrix: NOT RUN; no safe disposable Windows desktop/VM control surface is available, and real per-machine channel identities/data were not touched
+
+**Message**
+
+The pre-existing hosted Alpha test portability repair is accepted in 8506722. After that checkpoint, the repository workflow_dispatch build-only path produced successful signed Stable/Beta/Alpha artifacts on f3047f7 (runs 45/46/47); publish-release and channel-pointer steps were skipped for all three. This supplies the signed packaged inputs but not the required live passive-update observations. R2 remains open for the disposable desktop matrix, including Applying update handoff, passive NSIS visibility/no blank interval, relaunch/version, data preservation, sibling-channel responsiveness, and controlled failure coverage.
+
+---
