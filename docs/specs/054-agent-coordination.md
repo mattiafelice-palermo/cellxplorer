@@ -33,7 +33,7 @@ Begin Spec 054. Implement only child 054.1 first. Spec 054 is intentionally base
 
 **Message**
 
-Implemented 054.1 with an exact, case-insensitive, directory-boundary-safe  ownership predicate shared by the NSIS cleanup helper; removed the generic executable-name shutdown macro from install and uninstall paths; preserved protected installer ancestry and tracked-PID Rust backend teardown. The separate workflow-test repair is already pushed as b9c84a6. Please perform the required packaged Stable/Beta/Alpha concurrent-channel matrix during review.
+Implemented 054.1 with an exact, case-insensitive, directory-boundary-safe ownership predicate shared by the NSIS cleanup helper; removed the generic executable-name shutdown macro from install and uninstall paths; preserved protected installer ancestry and tracked-PID Rust backend teardown. The separate workflow-test repair is already pushed as b9c84a6. Please perform the required packaged Stable/Beta/Alpha concurrent-channel matrix during review.
 
 ---
 ### 2026-08-30T18:16:07+02:00 — REVIEWER → IMPLEMENTER — 054.1
@@ -93,14 +93,27 @@ R1 is resolved at 66e9ce4: the packaged predicate basename now matches the helpe
 **Verification**
 
 - R2 backend follow-up: fresh version 0.27.0-beta.12 Stable/Beta/Alpha packages installed side by side in disposable roots with exit 0; each frontend was Responding=True and initial backend health was HTTP PASS with status=ok and database.status=ready.
-- Stable target row: Stable frontend/backend target path was fully reaped by /UPDATE (target backend listener PID 31756, path ...\\stable\\binaries\\backend\\cellxplorer-backend.exe, plus 7 target-path backend processes before update); Beta frontend PID 21336 remained Responding=True and backend PID 15872 at ...\\beta\\binaries\\backend\\cellxplorer-backend.exe on port 61228 returned /api/health HTTP PASS status=ok/database.status=ready; Alpha frontend PID 2340 remained Responding=True and backend PID 36656 at ...\\alpha\\binaries\\backend\\cellxplorer-backend.exe on port 61234 returned HTTP PASS status=ok/database.status=ready.
-- Beta target row: Beta /UPDATE exited 0 and reaped all 8 Beta target-path processes; Stable frontend PID 39704 remained Responding=True and backend PID 47604 at ...\\stable\\binaries\\backend\\cellxplorer-backend.exe on port 54375 returned /api/health HTTP PASS status=ok/database.status=ready; Alpha frontend PID 2340 remained Responding=True and backend PID 36656 at ...\\alpha\\binaries\\backend\\cellxplorer-backend.exe on port 61234 returned HTTP PASS status=ok/database.status=ready.
-- Alpha target row: Alpha /UPDATE exited 0 and reaped all 8 Alpha target-path processes; Stable frontend PID 39704 remained Responding=True and backend PID 47604 at ...\\stable\\binaries\\backend\\cellxplorer-backend.exe on port 54375 returned /api/health HTTP PASS status=ok/database.status=ready; Beta frontend PID 38456 remained Responding=True and backend PID 36252 at ...\\beta\\binaries\\backend\\cellxplorer-backend.exe on port 54652 returned HTTP PASS status=ok/database.status=ready.
+- Stable target row: Stable frontend/backend target path was fully reaped by /UPDATE (target backend listener PID 31756, path ...\stable\binaries\backend\cellxplorer-backend.exe, plus 7 target-path backend processes before update); Beta frontend PID 21336 remained Responding=True and backend PID 15872 at ...\beta\binaries\backend\cellxplorer-backend.exe on port 61228 returned /api/health HTTP PASS status=ok/database.status=ready; Alpha frontend PID 2340 remained Responding=True and backend PID 36656 at ...\alpha\binaries\backend\cellxplorer-backend.exe on port 61234 returned HTTP PASS status=ok/database.status=ready.
+- Beta target row: Beta /UPDATE exited 0 and reaped all 8 Beta target-path processes; Stable frontend PID 39704 remained Responding=True and backend PID 47604 at ...\stable\binaries\backend\cellxplorer-backend.exe on port 54375 returned /api/health HTTP PASS status=ok/database.status=ready; Alpha frontend PID 2340 remained Responding=True and backend PID 36656 at ...\alpha\binaries\backend\cellxplorer-backend.exe on port 61234 returned HTTP PASS status=ok/database.status=ready.
+- Alpha target row: Alpha /UPDATE exited 0 and reaped all 8 Alpha target-path processes; Stable frontend PID 39704 remained Responding=True and backend PID 47604 at ...\stable\binaries\backend\cellxplorer-backend.exe on port 54375 returned /api/health HTTP PASS status=ok/database.status=ready; Beta frontend PID 38456 remained Responding=True and backend PID 36252 at ...\beta\binaries\backend\cellxplorer-backend.exe on port 54652 returned HTTP PASS status=ok/database.status=ready.
 - The earlier accepted R2 evidence remains recorded for row 5 orphan Stable backend reaping and row 6 active Alpha2 pre-uninstall target-only cleanup; row 7 remains the explicitly accepted NOT RUN visual limitation because no safe desktop screenshot/control surface was available.
-- Focused process-scope/config suite: PASS (32 tests); canonical python scripts\\preflight.py after R1: PREFLIGHT PASSED, 4/4 stages completed successfully, all 85 backend modules passed.
+- Focused process-scope/config suite: PASS (32 tests); canonical python scripts\preflight.py after R1: PREFLIGHT PASSED, 4/4 stages completed successfully, all 85 backend modules passed.
 
 **Message**
 
 R2 backend evidence is now complete. The fresh packaged matrix proves the non-target backend executable path/PID identity and live /api/health status after Stable, Beta, and Alpha target updates. Please recover this pushed coordination checkpoint and review 054.1 again; if satisfied, close R2 and advance the active child through the repository workflow.
+
+---
+### 2026-08-30T19:33:22+02:00 — REVIEWER → IMPLEMENTER — 054.1
+
+**Result:** Review clean; next child 054.2
+
+**Findings**
+
+- None.
+
+**Message**
+
+054.1 is accepted. R1 is resolved by the packaged helper basename repair and regression coverage; R2 is resolved by the recorded Stable/Beta/Alpha post-update sibling backend PID/path plus live /api/health evidence. Row 7 remains an explicitly accepted NOT RUN visual limitation from the prior review contract. Per the user's 2026-08-30 decision, 054.2 has also been amended before implementation: Windows in-app updates must use Tauri updater `installMode: "passive"` when supported, preserving visible progress from CellXplorer download/apply UI through the passive NSIS progress window while the main app is closed. Begin only 054.2 and use clarification messaging if the pinned Tauri updater behavior differs from that contract.
 
 ---

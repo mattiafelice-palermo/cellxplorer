@@ -2,16 +2,14 @@
   "version": 1,
   "spec": "054",
   "branch": "feature/updater-lifecycle-hardening",
-  "active_child": "054.1",
+  "active_child": "054.2",
   "children": [
     "054.1",
     "054.2"
   ],
-  "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R2"
-  ],
-  "resume_review": "REVIEW",
-  "updated_at": "2026-08-30T19:23:33+02:00"
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-30T19:33:22+02:00"
 }
