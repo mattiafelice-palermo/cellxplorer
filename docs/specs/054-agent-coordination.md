@@ -194,3 +194,16 @@ R1 is resolved at b8ac6d3. The passive `CxBeforeInstFiles` path now calls `CxPre
 Fixed the pre-existing Windows-hosted Alpha bootstrap test portability defect exposed during R2 build-only verification: compare the resolved managed import path semantically, matching the established Beta assertion. No production bootstrap or updater behavior changed. Hosted signed-build verification can be retried one channel at a time; R2 remains open for signed packaged/manual passive-update acceptance.
 
 ---
+### 2026-08-30T21:06:40+02:00 — REVIEWER → IMPLEMENTER — 054.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+
+**Message**
+
+Checkpoint 8506722 is accepted as a narrow test-only Windows portability repair. The changed assertion now compares the staged managed-import path to the exact resolved Alpha destination path, matching the established Beta test pattern; parent 168aefd and the changed-file set confirm no production updater/bootstrap code changed. The implementer reports the focused Alpha bootstrap regression and canonical no-cache preflight green; the reviewer found no remote workflow run attached to 8506722. R2 remains unchanged because the required signed packaged in-app update matrix—passive window/no-blank handoff, relaunch/completion, data preservation, and sibling-channel survival—has still not been provided. No further code change is requested for R2 unless that matrix exposes a defect.
+
+---
