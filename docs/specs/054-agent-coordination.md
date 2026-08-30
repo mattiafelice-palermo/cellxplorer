@@ -180,3 +180,17 @@ R1 repaired: CxBeforeInstFiles now initializes CxPrepareWindow/fonts/760x500 fra
 R1 is resolved at b8ac6d3. The passive `CxBeforeInstFiles` path now calls `CxPrepareWindow` before the styled install-files page, providing the custom fonts and 760x500 outer-frame geometry that `CxStyleInstFiles` requires. Passive mode keeps Back/Next/Cancel hidden, and the show hook re-hides them after MUI page creation; interactive installs retain the prior action-visible path. Focused updater/config coverage and canonical preflight are reported green, and fresh Stable/Beta/Alpha unsigned packages compile after the repair. R2 remains the sole blocker: the amended child explicitly requires a real signed in-app packaged update to observe CellXplorer download/apply feedback, the passive updater window/no-blank handoff, relaunch/completion, data preservation, and sibling-channel survival. The current signing-key/desktop-control/registry-safety limitation is accurately documented but cannot satisfy that acceptance gate. No code change is required for R2 unless the matrix exposes another defect; provide the recorded signed packaged observations when that environment is available.
 
 ---
+### 2026-08-30T21:03:04+02:00 — IMPLEMENTER → REVIEWER — 054.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Alpha bootstrap portability regression test: PASS
+- python scripts\\preflight.py --no-cache: PASS (4/4 stages, 158 backend/frontend test files/modules)
+
+**Message**
+
+Fixed the pre-existing Windows-hosted Alpha bootstrap test portability defect exposed during R2 build-only verification: compare the resolved managed import path semantically, matching the established Beta assertion. No production bootstrap or updater behavior changed. Hosted signed-build verification can be retried one channel at a time; R2 remains open for signed packaged/manual passive-update acceptance.
+
+---

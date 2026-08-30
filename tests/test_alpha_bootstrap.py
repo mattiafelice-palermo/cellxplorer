@@ -273,7 +273,10 @@ class AlphaBootstrapTests(unittest.TestCase):
             }
         self.assertNotEqual(instance_id, None)
         self.assertEqual(json.loads(preparation)["status"], "pending")
-        self.assertTrue(paths[0].startswith(str(self.alpha_root / "imports")))
+        self.assertEqual(
+            Path(paths[0]),
+            (self.alpha_root / "imports" / "batch" / managed.name).resolve(),
+        )
         self.assertEqual(Path(paths[1]), external.resolve())
         self.assertEqual(counts["cells"], 2)
         self.assertEqual(counts["test_files"], 2)
