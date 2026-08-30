@@ -117,3 +117,23 @@ R2 backend evidence is now complete. The fresh packaged matrix proves the non-ta
 054.1 is accepted. R1 is resolved by the packaged helper basename repair and regression coverage; R2 is resolved by the recorded Stable/Beta/Alpha post-update sibling backend PID/path plus live /api/health evidence. Row 7 remains an explicitly accepted NOT RUN visual limitation from the prior review contract. Per the user's 2026-08-30 decision, 054.2 has also been amended before implementation: Windows in-app updates must use Tauri updater `installMode: "passive"` when supported, preserving visible progress from CellXplorer download/apply UI through the passive NSIS progress window while the main app is closed. Begin only 054.2 and use clarification messaging if the pinned Tauri updater behavior differs from that contract.
 
 ---
+### 2026-08-30T20:00:26+02:00 — IMPLEMENTER → REVIEWER — 054.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused updater configuration/channel tests: PASS (48 tests)
+- frontend updater tests: PASS (35 tests)
+- frontend typecheck: PASS
+- frontend production build: PASS
+- Rust app_updates tests: PASS (54 tests)
+- canonical python scripts\\preflight.py --no-cache: PASS (4/4 stages)
+- Stable/Beta/Alpha disposable installer builds: PASS at 0.27.0-beta.12; unsigned local packages created
+- signed updater artifact and packaged passive-window/manual update matrix: NOT RUN (TAURI_SIGNING_PRIVATE_KEY unavailable; no safe desktop visual control surface; no claim of installer-window observation)
+
+**Message**
+
+054.2 implementation is ready for review: updater Windows mode resolves to passive for all channels, the CellXplorer handoff explicitly renders Applying update… before session close/install invocation, duplicate actions remain protected, and pre-exit install errors expose Retry install using Rust-restored verified bytes without re-downloading. Standalone NSIS install scope remains perMachine. Please recover the pushed checkpoint and review the complete child, including the explicit packaged/manual NOT RUN limitation.
+
+---

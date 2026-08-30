@@ -113,6 +113,10 @@ export type AppUpdateRelease = {
   publishedAt: string | null;
 };
 
+export const UPDATE_APPLYING_LABEL = "Applying update…";
+export const UPDATE_APPLYING_DESCRIPTION =
+  "CellXplorer will close and restart. A compact passive updater window will remain visible while installation finishes.";
+
 export type AppUpdateState =
   | { status: "idle" }
   | { status: "checking"; source: UpdateCheckSource }

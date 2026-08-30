@@ -22,7 +22,6 @@ import {
   firstAutomaticCheckDelayMs,
   loadAppUpdatePreferences,
   downloadAppUpdateTauri,
-  failurePhaseForLocalUpdatePhase,
   getCurrentRelease,
   installAppUpdateTauri,
   appUpdateIntervalMs,
@@ -70,6 +69,7 @@ type AppUpdateContextValue = {
   handleMenuClick: () => void;
   downloadAndLaunchInstaller: () => Promise<void>;
   retryDownload: () => Promise<void>;
+  retryInstall: () => Promise<void>;
   restartAfterInstallFailure: () => Promise<void>;
 };
 
@@ -447,29 +447,15 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     void performCheck("manual");
   }, [performCheck]);
 
-  const runDownload = useCallback(
+  const runVerifiedInstall = useCallback(
     async (release: AppUpdateRelease) => {
-      if (downloadInFlight.current) return;
-      downloadInFlight.current = true;
-      checkEpochRef.current += 1;
-      dispatch({ type: "download_started", release });
-      let phase: "download" | "install" = "download";
+      if (!mountedRef.current) return;
 
-      const pushProgress = (event: AppUpdateDownloadEvent) => {
-        dispatch({ type: "download_event", release, event });
-      };
+      // Render the handoff state before the session close and installer launch so the
+      // user sees that the verified update is being applied while CellXplorer is alive.
+      dispatch({ type: "launching", release });
 
       try {
-        if (devMock) {
-          await runDevUpdateMock(devMock, pushProgress);
-        } else {
-          await downloadAppUpdateTauri(release.version, pushProgress);
-        }
-
-        if (!mountedRef.current) return;
-        phase = "install";
-        dispatch({ type: "launching", release });
-
         try {
           await post("/api/session/finish");
         } catch (error) {
@@ -492,29 +478,50 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // Successful Windows install invocation is non-returning after on_before_exit.
+        // On Windows the passive NSIS updater takes over and the current process exits.
         await installAppUpdateTauri(release.version);
       } catch (error) {
         if (!mountedRef.current) return;
-        const message = normalizeUpdaterError(error, "Could not complete the update.");
-        const failurePhase = failurePhaseForLocalUpdatePhase(
-          phase === "install" || devMock === "install-error" ? "install" : "download",
-        );
-        if (failurePhase === "install") {
-          dispatch({
-            type: "install_error",
-            release,
-            message,
-            lifecycleMayNeedRestart: true,
-          });
+        dispatch({
+          type: "install_error",
+          release,
+          message: normalizeUpdaterError(error, "Could not apply the update."),
+          lifecycleMayNeedRestart: true,
+        });
+      }
+    },
+    [devMock],
+  );
+
+  const runDownload = useCallback(
+    async (release: AppUpdateRelease) => {
+      if (downloadInFlight.current) return;
+      downloadInFlight.current = true;
+      checkEpochRef.current += 1;
+      dispatch({ type: "download_started", release });
+
+      const pushProgress = (event: AppUpdateDownloadEvent) => {
+        dispatch({ type: "download_event", release, event });
+      };
+
+      try {
+        if (devMock) {
+          await runDevUpdateMock(devMock, pushProgress);
         } else {
-          dispatch({ type: "download_error", release, message });
+          await downloadAppUpdateTauri(release.version, pushProgress);
         }
+
+        if (!mountedRef.current) return;
+        await runVerifiedInstall(release);
+      } catch (error) {
+        if (!mountedRef.current) return;
+        const message = normalizeUpdaterError(error, "Could not complete the update.");
+        dispatch({ type: "download_error", release, message });
       } finally {
         downloadInFlight.current = false;
       }
     },
-    [devMock],
+    [runVerifiedInstall, devMock],
   );
 
   const downloadAndLaunchInstaller = useCallback(async () => {
@@ -541,6 +548,24 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "reset_available", release: current.release });
     await runDownload(current.release);
   }, [runDownload]);
+
+  const retryInstall = useCallback(async () => {
+    const current = stateRef.current;
+    if (current.status !== "error" || !current.release || current.phase !== "install") {
+      return;
+    }
+    if (downloadInFlight.current) return;
+    downloadInFlight.current = true;
+    checkEpochRef.current += 1;
+    setModalOpen(true);
+    try {
+      // Rust restores the verified bytes after a pre-exit install error, so this
+      // retry starts the installer again without downloading the release again.
+      await runVerifiedInstall(current.release);
+    } finally {
+      downloadInFlight.current = false;
+    }
+  }, [runVerifiedInstall]);
 
   const restartAfterInstallFailure = useCallback(async () => {
     try {
@@ -583,6 +608,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       handleMenuClick,
       downloadAndLaunchInstaller,
       retryDownload,
+      retryInstall,
       restartAfterInstallFailure,
     }),
     [
@@ -596,6 +622,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       performCheck,
       restartAfterInstallFailure,
       retryDownload,
+      retryInstall,
       state,
       updateUiEnabled,
     ],
@@ -612,6 +639,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         onClose={closeUpdateModal}
         onDownload={() => void downloadAndLaunchInstaller()}
         onRetry={() => void retryDownload()}
+        onRetryInstall={() => void retryInstall()}
         onRetryCheck={retryCheck}
         onRestart={() => void restartAfterInstallFailure()}
       />

@@ -16,6 +16,8 @@ import {
   computeDownloadProgress,
   describeUpdateCheckFailure,
   explainUpdateCheckFailure,
+  UPDATE_APPLYING_DESCRIPTION,
+  UPDATE_APPLYING_LABEL,
   type AppUpdateRelease,
   type AppUpdateState,
 } from "../appUpdater";
@@ -29,6 +31,7 @@ type AppUpdateModalProps = {
   onClose: () => void;
   onDownload: () => void;
   onRetry: () => void;
+  onRetryInstall: () => void;
   onRetryCheck: () => void;
   onRestart: () => void;
 };
@@ -50,6 +53,7 @@ export function AppUpdateModal({
   onClose,
   onDownload,
   onRetry,
+  onRetryInstall,
   onRetryCheck,
   onRestart,
 }: AppUpdateModalProps) {
@@ -142,7 +146,7 @@ export function AppUpdateModal({
       onClose={onClose}
       title={
         <Group gap="sm" wrap="nowrap">
-          <Text fw={600}>Update available</Text>
+          <Text fw={600}>{launching ? UPDATE_APPLYING_LABEL : "Update available"}</Text>
           <Badge color={APP_BRANDING.primaryColor} variant="light">
             v{release!.version}
           </Badge>
@@ -189,9 +193,16 @@ export function AppUpdateModal({
         {launching ? (
           <Stack gap={8}>
             <Text size="sm" fw={500}>
-              Download complete. Launching installer…
+              {UPDATE_APPLYING_LABEL}
             </Text>
-            <Progress value={100} color={APP_BRANDING.primaryColor} size="md" />
+            <Text size="sm">{UPDATE_APPLYING_DESCRIPTION}</Text>
+            <Progress
+              value={100}
+              animated
+              striped
+              color={APP_BRANDING.primaryColor}
+              size="md"
+            />
           </Stack>
         ) : null}
 
@@ -201,9 +212,9 @@ export function AppUpdateModal({
           </Alert>
         ) : null}
 
-        {!downloading && !launching ? (
+        {state.status === "available" ? (
           <Text size="xs" c="dimmed">
-            After download completes, the installer will launch automatically.
+            After download completes, CellXplorer will close and the passive updater will finish installation automatically.
           </Text>
         ) : null}
 
@@ -235,9 +246,14 @@ export function AppUpdateModal({
           ) : null}
 
           {state.status === "error" && state.phase === "install" ? (
-            <Button color={APP_BRANDING.primaryColor} onClick={onRestart}>
-              Restart CellXplorer
-            </Button>
+            <>
+              <Button variant="default" onClick={onRestart}>
+                Restart CellXplorer
+              </Button>
+              <Button color={APP_BRANDING.primaryColor} onClick={onRetryInstall}>
+                Retry install
+              </Button>
+            </>
           ) : null}
         </Group>
       </Stack>

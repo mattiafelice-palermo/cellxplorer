@@ -7,6 +7,8 @@ import {
   UPDATE_NOTIFIED_VERSION_KEY,
   UPDATE_NOTIFICATION_KIND,
   UPDATE_NOTIFICATION_TAG,
+  UPDATE_APPLYING_DESCRIPTION,
+  UPDATE_APPLYING_LABEL,
   UPDATE_PREFERENCES_KEY,
   acceptUpdateReleaseForPreferences,
   accumulateDownloadProgress,
@@ -249,6 +251,15 @@ test("installation failure marks lifecycleMayNeedRestart", () => {
     assert.equal(next.phase, "install");
     assert.equal(next.lifecycleMayNeedRestart, true);
   }
+});
+
+test("application handoff has explicit passive-progress copy and remains protected", () => {
+  assert.equal(UPDATE_APPLYING_LABEL, "Applying update…");
+  assert.match(UPDATE_APPLYING_DESCRIPTION, /passive updater window/i);
+  const applying = { status: "launching" as const, release: mockRelease("0.16.0") };
+  assert.equal(isProtectedUpdateFlow(applying), true);
+  assert.equal(canDismissUpdateModal(applying), false);
+  assert.equal(isUpdateMenuDisabled(applying), true);
 });
 
 test("safe release-note parsing preserves mixed text and bullets", () => {

@@ -1,6 +1,7 @@
 import json
 import re
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 
@@ -27,12 +28,24 @@ EXPECTED_ALPHA_ENDPOINT = (
 )
 BETA_OVERLAY = ROOT / "src-tauri" / "tauri.beta.conf.json"
 ALPHA_OVERLAY = ROOT / "src-tauri" / "tauri.alpha.conf.json"
+APP_UPDATE_COORDINATOR = ROOT / "frontend" / "src" / "components" / "AppUpdateCoordinator.tsx"
+APP_UPDATE_MODAL = ROOT / "frontend" / "src" / "components" / "AppUpdateModal.tsx"
 PLACEHOLDER_PATTERNS = (
     "CONTENT FROM PUBLICKEY.PEM",
     "your public key",
     "placeholder",
     "changeme",
 )
+
+
+def deep_merge(base: dict, overlay: dict) -> dict:
+    merged = deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 class UpdaterConfigurationTests(unittest.TestCase):
@@ -82,9 +95,36 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertNotIn("dangerousAcceptInvalidCerts", updater)
         self.assertNotIn("dangerousAcceptInvalidHostnames", updater)
 
-    def test_windows_install_mode_is_basic_ui(self):
+    def test_windows_install_mode_is_passive(self):
         install_mode = self.conf["plugins"]["updater"]["windows"]["installMode"]
-        self.assertEqual(install_mode, "basicUi")
+        self.assertEqual(install_mode, "passive")
+
+    def test_all_channel_updater_modes_resolve_to_passive(self):
+        beta = deep_merge(self.conf, json.loads(BETA_OVERLAY.read_text(encoding="utf-8")))
+        alpha = deep_merge(self.conf, json.loads(ALPHA_OVERLAY.read_text(encoding="utf-8")))
+        expected_endpoints = {
+            "stable": EXPECTED_STABLE_ENDPOINT,
+            "beta": EXPECTED_BETA_ENDPOINT,
+            "alpha": EXPECTED_ALPHA_ENDPOINT,
+        }
+        for channel, config in (("stable", self.conf), ("beta", beta), ("alpha", alpha)):
+            with self.subTest(channel=channel):
+                updater = config["plugins"]["updater"]
+                self.assertEqual(updater["windows"]["installMode"], "passive")
+                self.assertNotIn(updater["windows"]["installMode"], {"basicUi", "quiet"})
+                self.assertEqual(updater["endpoints"], [expected_endpoints[channel]])
+        self.assertEqual(self.conf["bundle"]["windows"]["nsis"]["installMode"], "perMachine")
+
+    def test_update_handoff_is_visible_and_install_retry_is_wired(self):
+        coordinator = APP_UPDATE_COORDINATOR.read_text(encoding="utf-8")
+        modal = APP_UPDATE_MODAL.read_text(encoding="utf-8")
+        self.assertIn("retryInstall", coordinator)
+        self.assertIn('dispatch({ type: "launching", release });', coordinator)
+        self.assertIn("await installAppUpdateTauri(release.version);", coordinator)
+        self.assertIn("UPDATE_APPLYING_LABEL", modal)
+        self.assertIn("UPDATE_APPLYING_DESCRIPTION", modal)
+        self.assertIn("onRetryInstall", modal)
+        self.assertIn("Retry install", modal)
 
     def test_committed_public_key_is_real(self):
         pubkey = self.conf["plugins"]["updater"]["pubkey"]

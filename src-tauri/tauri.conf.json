@@ -34,7 +34,7 @@
         "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json"
       ],
       "windows": {
-        "installMode": "basicUi"
+        "installMode": "passive"
       }
     }
   },
