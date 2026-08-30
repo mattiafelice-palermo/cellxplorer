@@ -669,6 +669,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_uploaded_manifest_and_signature_are_verified(self):
         self.assertIn("uploaded-latest.json", self.release)
         self.assertIn("uploaded-setup.sig", self.release)
+        staged_download = self.release.split(
+            "Download staged draft manifest and signature", 1
+        )[1].split("Verify updater manifest", 1)[0]
+        self.assertIn("public-latest.json", staged_download)
+        self.assertIn("[System.IO.File]::Copy", staged_download)
+        self.assertNotIn(
+            "Invoke-RestMethod -Uri $latest.url -Headers $headers -OutFile uploaded-latest.json",
+            staged_download,
+        )
         self.assertIn(
             "--tauri-conf ${{ steps.channel.outputs.updater_key_conf }}",
             self.release,

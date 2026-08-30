@@ -651,7 +651,20 @@ jobs:
             "X-GitHub-Api-Version" = "2022-11-28"
             "User-Agent" = "cellxplorer-release-workflow"
           }
-          Invoke-RestMethod -Uri $latest.url -Headers $headers -OutFile uploaded-latest.json
+          # Verify the exact manifest bytes prepared for the replacement upload.
+          # Reading the draft asset back immediately after a delete/re-upload can
+          # observe stale GitHub asset state, which made the previous release gate
+          # validate a different payload than the one it had just uploaded.
+          $publicManifestPath = Join-Path $env:GITHUB_WORKSPACE "public-latest.json"
+          if (-not (Test-Path -LiteralPath $publicManifestPath)) {
+            Write-Error "The rewritten public updater manifest is missing."
+            exit 1
+          }
+          [System.IO.File]::Copy(
+            $publicManifestPath,
+            (Join-Path $env:GITHUB_WORKSPACE "uploaded-latest.json"),
+            $true
+          )
           Invoke-RestMethod -Uri $sig.url -Headers $headers -OutFile uploaded-setup.sig
 
       - name: Verify updater manifest
