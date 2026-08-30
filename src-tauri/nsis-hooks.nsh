@@ -7,7 +7,7 @@
 
 !macro KillInstallationProcesses MODE_ARGUMENT
   InitPluginsDir
-  File /oname=$PLUGINSDIR\cellxplorer-installation-process-scope.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\installation_process_scope.ps1"
+  File /oname=$PLUGINSDIR\installation_process_scope.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\installation_process_scope.ps1"
   File /oname=$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\kill_installation_processes.ps1"
   nsExec::ExecToStack 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1" -InstallDir "$INSTDIR" ${MODE_ARGUMENT}'
   Pop $0

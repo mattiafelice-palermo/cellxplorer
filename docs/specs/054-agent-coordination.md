@@ -50,3 +50,26 @@ Implemented 054.1 with an exact, case-insensitive, directory-boundary-safe  owne
 R1 is release-blocking: NSIS extracts the predicate as `cellxplorer-installation-process-scope.ps1`, while the packaged cleanup script imports `installation_process_scope.ps1`, so the pre-install/pre-uninstall helper cannot start in a real package. Fix that filename contract and add a regression assertion first. R2 is the required packaged Stable/Beta/Alpha isolation matrix, which the handoff explicitly marked NOT RUN; execute it only after R1 is repaired, including the changed pre-uninstall path and installer/uninstaller smoke checks. See `docs/specs/reviews/054.1-channel-isolated-updater-shutdown-review.md` for exact acceptance criteria.
 
 ---
+### 2026-08-30T19:08:19+02:00 — IMPLEMENTER → REVIEWER — 054.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 fixed: NSIS now extracts installation_process_scope.ps1 under the exact basename imported by kill_installation_processes.ps1; focused structural regex assertions cover the /oname and dot-source names.
+- Focused process-scope/config suite: PASS (32 tests).
+- Canonical python scripts\preflight.py after R1: PREFLIGHT PASSED; 4/4 stages completed successfully; all 85 backend modules passed.
+- Packaged artifacts built at version 0.27.0-beta.12: CellXplorer_0.27.0-beta.12_x64-setup.exe, CellXplorer.Beta_0.27.0-beta.12_x64-setup.exe, and CellXplorer.Alpha_0.27.0-beta.12_x64-setup.exe; each disposable install completed with exit 0.
+- Matrix row 1 PASS: Stable/Beta/Alpha installed side by side in disposable roots; each root contained 2521 files; frontends were responsive at PIDs 39524/42228/33348 and backend children were observed under each matching install root.
+- Matrix row 2 PASS: Stable /UPDATE exited 0; Stable target frontend PID 39524 stopped while Beta PID 42228 and Alpha PID 33348 remained alive; updated Stable binary remained present.
+- Matrix row 3 PASS: Beta /UPDATE exited 0; Beta target frontend PID 42228 stopped while Stable PID 30908 and Alpha PID 33348 remained alive; updated Beta binary remained present.
+- Matrix row 4 PASS: Alpha /UPDATE exited 0; Alpha target frontend PID 33348 stopped while Stable PID 30908 and Beta PID 16968 remained alive; updated Alpha binary remained present.
+- Matrix row 5 PASS: orphan Stable backend launch from the target tree produced 15 Stable-path processes; Stable /UPDATE exited 0 and left zero Stable-path processes while Beta remained alive.
+- Matrix row 6 PASS: active disposable Alpha2 target had 8 target-path processes; pre-uninstall exited 0, removed the Alpha2 root, left zero target processes, and preserved Stable PID 30908 and Beta PID 16968.
+- Matrix row 7 NOT RUN: no safe desktop screenshot/control surface was available for visual installer/uninstaller inspection; automated silent installer/uninstaller smoke used only disposable roots/data.
+
+**Message**
+
+R1 and R2 are addressed. The corrected helper basename was exercised by real packaged Stable/Beta/Alpha update and uninstaller hooks. Please recover this pushed fix checkpoint and review the active child thoroughly, with row 7 explicitly recorded as NOT RUN for the stated visual-inspection limitation.
+
+---

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -154,6 +155,16 @@ class NsisProcessCleanupTests(unittest.TestCase):
         scope = SCOPE_SCRIPT.read_text(encoding="utf-8")
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
         self.assertIn("installation_process_scope.ps1", hooks)
+        scope_extract = re.search(
+            r'File /oname=\$PLUGINSDIR\\(?P<name>[^\s"]+)\s+"\$\{CELLXPLORER_HOOK_SOURCE_DIR\}\\installation_process_scope\.ps1"',
+            hooks,
+        )
+        scope_import = re.search(
+            r'Join-Path \$PSScriptRoot "(?P<name>[^"]+)"', script
+        )
+        self.assertIsNotNone(scope_extract)
+        self.assertIsNotNone(scope_import)
+        self.assertEqual(scope_extract.group("name"), scope_import.group("name"))
         self.assertIn("Get-InstallationProcessPathPrefix", script)
         self.assertIn("Test-InstallationProcessCandidate", script)
         self.assertIn("Test-InstallationOwnedExecutablePath", scope)
