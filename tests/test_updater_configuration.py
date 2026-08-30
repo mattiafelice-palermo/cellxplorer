@@ -230,6 +230,14 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertIn('${GetOptions} $CMDLINE "/UPDATE" $UpdateMode', self.nsis)
         self.assertIn("StrCpy $UpdateMode 1", self.nsis)
 
+    def test_nsis_update_flag_forces_noninteractive_update_pages(self):
+        self.assertIn(
+            '  ${If} $UpdateMode = 1\n'
+            '    StrCpy $PassiveMode 1\n'
+            '  ${EndIf}',
+            self.nsis,
+        )
+
     def test_notification_plugin_and_window_command_are_wired(self):
         frontend_package = json.loads(
             (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")

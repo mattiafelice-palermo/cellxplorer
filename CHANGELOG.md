@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.15 - 2026-08-30
+
+- Keep updater-launched Alpha installations out of the interactive installer flow.
+
 ## 0.27.1-alpha.14 - 2026-08-30
 
 - Use public updater download URLs and repair channel manifest verification.

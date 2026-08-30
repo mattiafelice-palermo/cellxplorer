@@ -1293,6 +1293,13 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
+  ; Tauri's updater always passes /UPDATE. Treat that flag as passive even if
+  ; an older updater configuration omitted /P, so updates can never fall into
+  ; the normal interactive welcome/location flow.
+  ${If} $UpdateMode = 1
+    StrCpy $PassiveMode 1
+  ${EndIf}
+
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
   !endif
