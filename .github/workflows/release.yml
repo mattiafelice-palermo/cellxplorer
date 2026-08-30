@@ -539,6 +539,90 @@ jobs:
             $content
           )
 
+      - name: Rewrite draft updater manifest to public download URL
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = Get-Content release-assets.json -Raw | ConvertFrom-Json
+          if ($assets -isnot [System.Array]) { $assets = @($assets) }
+          $latest = $assets | Where-Object { $_.name -eq "latest.json" } | Select-Object -First 1
+          $signatures = @($assets | Where-Object { $_.name -like "*.exe.sig" })
+          if (-not $latest) { Write-Error "Draft release is missing latest.json asset."; exit 1 }
+          if ($signatures.Count -ne 1) {
+            Write-Error "Draft release must contain exactly one NSIS .exe.sig asset; found $($signatures.Count)."
+            exit 1
+          }
+          $setupName = $signatures[0].name.Substring(0, $signatures[0].name.Length - ".sig".Length)
+          $setup = $assets | Where-Object { $_.name -eq $setupName } | Select-Object -First 1
+          if (-not $setup) { Write-Error "Draft release is missing installer $setupName."; exit 1 }
+          $browserUrl = [string]$setup.browser_download_url
+          if ([string]::IsNullOrWhiteSpace($browserUrl)) {
+            Write-Error "Draft installer metadata is missing browser_download_url."
+            exit 1
+          }
+
+          $manifestPath = "${{ steps.manifest.outputs.path }}"
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if ($null -eq $manifest.platforms) {
+            Write-Error "Generated updater manifest has no platforms object."
+            exit 1
+          }
+          $windowsEntries = @($manifest.platforms.psobject.Properties | Where-Object {
+            $_.Name.StartsWith("windows-") -and $_.Value -is [pscustomobject]
+          })
+          if ($windowsEntries.Count -lt 1) {
+            Write-Error "Generated updater manifest has no Windows platform entries."
+            exit 1
+          }
+          foreach ($entry in $windowsEntries) {
+            $entry.Value.url = $browserUrl
+          }
+          $publicManifestPath = Join-Path $env:GITHUB_WORKSPACE "public-latest.json"
+          [System.IO.File]::WriteAllText(
+            $publicManifestPath,
+            ($manifest | ConvertTo-Json -Depth 20),
+            (New-Object System.Text.UTF8Encoding($false))
+          )
+
+          $releaseId = "${{ steps.tauri_release.outputs.releaseId }}"
+          $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "cellxplorer-release-workflow"
+          }
+          # Replace the Tauri action's API-only latest.json asset while the
+          # release is still draft. The updater must receive a public browser
+          # download URL because installed clients do not send GitHub API auth.
+          Invoke-RestMethod -Method Delete -Uri ([string]$latest.url) -Headers $headers
+          $uploadUri = "https://uploads.github.com/repos/$owner/$repo/releases/$releaseId/assets?name=latest.json"
+          $publicManifestBytes = [System.IO.File]::ReadAllBytes($publicManifestPath)
+          $uploaded = Invoke-RestMethod `
+            -Method Post `
+            -Uri $uploadUri `
+            -Headers $headers `
+            -ContentType "application/octet-stream" `
+            -Body $publicManifestBytes
+          if ([string]$uploaded.name -ne "latest.json") {
+            Write-Error "GitHub did not return the replacement latest.json asset."
+            exit 1
+          }
+
+          $assetsUri = "https://api.github.com/repos/$owner/$repo/releases/$releaseId/assets?per_page=100"
+          $assetsResponse = Invoke-WebRequest -Method Get -Uri $assetsUri -Headers $headers
+          if ([string]::IsNullOrWhiteSpace($assetsResponse.Content)) {
+            Write-Error "GitHub release assets response was empty after replacing latest.json."
+            exit 1
+          }
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE "release-assets.json"),
+            $assetsResponse.Content,
+            (New-Object System.Text.UTF8Encoding($false))
+          )
+
       - name: Download staged draft manifest and signature
         if: github.ref_type == 'tag'
         id: staged_assets
@@ -764,7 +848,7 @@ jobs:
 
           [System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)
 
-          $publishedTreeUri = "https://api.github.com/repos/$owner/$repo/git/trees/$publishedCommit?recursive=1"
+          $publishedTreeUri = "https://api.github.com/repos/$owner/$repo/git/trees/$($treeResult.sha)?recursive=1"
           $publishedTree = Invoke-RestMethod -Method Get -Uri $publishedTreeUri -Headers $headers
           [System.IO.File]::WriteAllText(
             (Join-Path $env:GITHUB_WORKSPACE "published-release-channels-tree.json"),
