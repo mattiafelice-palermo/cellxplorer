@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.13 - 2026-08-30
+
+### New features
+
+- Publish a newer Alpha build that updates existing Alpha installations created from the earlier beta-versioned package.
+
 ## 0.27.0-alpha.1 - 2026-08-30
 
 ### New features
