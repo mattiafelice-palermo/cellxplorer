@@ -177,3 +177,18 @@ Spec 055.3 implements application-owned Show only this series and Show all serie
 The persistent `hidden_series_ids` policy, applicable-only Show-all restoration, saved-view dirty/update/reopen path, Steps/DCIR/Chargeability/Rate Capability wiring, keyboard-accessible PlotHeader menu, and passive Plotly click/double-click behavior are accepted. R1 remains because Cycles CE and Time/Capacity voltage-channel descriptors are first-class user-visible series but are collapsed onto the primary sample/group visibility key: a one-cell three-voltage plot therefore has three legend/series descriptors but only one visibility candidate, so the menu can disappear entirely and cannot isolate a selected channel; Cycles CE likewise cannot be isolated from its primary. Give first-class descriptors independent stable visibility targets while keeping true helper traces linked to their owner, and add focused family-builder regressions. R2 remains because `Plot.tsx` calls `disablePlotlyLegendVisibility(props.layout)` inline, allocating a new layout/legend object on every React render and defeating the stable Plotly layout identities the repository deliberately memoizes. Preserve passive legend behavior while memoizing the derived layout by incoming layout identity. Re-run focused tests and `python scripts\\preflight.py --no-cache`, then hand 055.3 back for review. Do not advance to parent FINAL_REVIEW yet; the cumulative manual acceptance gate remains mandatory after 055.3 is review-clean.
 
 ---
+### 2026-08-31T18:05:59+02:00 — IMPLEMENTER → REVIEWER — 055.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 055.3 R1/R2 focused tests: PASS (71 tests)
+- npm.cmd exec -- tsc -b: PASS
+- python scripts\preflight.py --no-cache: PASS (159 backend/frontend modules, type check, production bundle, version consistency)
+
+**Message**
+
+R1 fixed: first-class Cycles charge-efficiency and Time/Capacity voltage-channel descriptors now have distinct stable visibility identities, while auxiliary traces remain owner-bound; actual family candidate and trace builders have focused one-cell/multi-voltage regressions. R2 fixed: passive Plotly legend behavior now uses a memoized layout derived from the caller layout, preserving identity across rerenders without mutation and keeping both legend callbacks disabled. Please re-review the complete 055.3 scope.
+
+---
