@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.18 - 2026-08-31
+
+- Use the eventual release tag for draft updater URLs.
+
 ## 0.27.1-alpha.17 - 2026-08-31
 
 - Surface updater manifest verification details for release diagnostics.

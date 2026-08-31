@@ -80,7 +80,7 @@ class PreflightScriptTests(unittest.TestCase):
         return [
             command
             for command, _, _ in self.calls
-            if command[:4] == [r"C:\Node\npm.cmd", "--prefix", "frontend", "exec"]
+            if command[:2] == [r"C:\Node\npm.cmd", "exec"]
         ]
 
     def test_stages_use_required_order(self):
@@ -101,10 +101,10 @@ class PreflightScriptTests(unittest.TestCase):
         frontend_cmd = self.command_for("run_backend_tests.py")
         npm_cmds = self.npm_exec_commands()
         self.assertEqual(len(npm_cmds), 2)
-        self.assertEqual(npm_cmds[0], [r"C:\Node\npm.cmd", "--prefix", "frontend", "exec", "--", "tsc", "-b"])
+        self.assertEqual(npm_cmds[0], [r"C:\Node\npm.cmd", "exec", "--", "tsc", "-b"])
         self.assertEqual(
             npm_cmds[1],
-            [r"C:\Node\npm.cmd", "--prefix", "frontend", "exec", "--", "vite", "build"],
+            [r"C:\Node\npm.cmd", "exec", "--", "vite", "build"],
         )
         self.assertEqual(version_cmd[0], r"C:\Python\python.exe")
         self.assertEqual(backend_cmd[0], r"C:\Python\python.exe")

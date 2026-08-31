@@ -283,7 +283,10 @@ def npm_exec_command(
     npm_executable: str,
     *args: str,
 ) -> list[str]:
-    return [npm_executable, "--prefix", "frontend", "exec", "--", *args]
+    # Frontend stages already run with frontend/ as their working directory.
+    # Keeping a relative --prefix frontend here makes npm resolve
+    # frontend/frontend and fail on a clean no-cache preflight.
+    return [npm_executable, "exec", "--", *args]
 
 
 def build_stages(

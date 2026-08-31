@@ -557,11 +557,13 @@ jobs:
           $setupName = $signatures[0].name.Substring(0, $signatures[0].name.Length - ".sig".Length)
           $setup = $assets | Where-Object { $_.name -eq $setupName } | Select-Object -First 1
           if (-not $setup) { Write-Error "Draft release is missing installer $setupName."; exit 1 }
-          $browserUrl = [string]$setup.browser_download_url
-          if ([string]::IsNullOrWhiteSpace($browserUrl)) {
-            Write-Error "Draft installer metadata is missing browser_download_url."
-            exit 1
-          }
+          # GitHub assigns draft releases an untagged-* download URL until the
+          # release is published. Build the eventual public URL from the exact
+          # tag instead of persisting that temporary draft URL in latest.json.
+          $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
+          $tag = "${{ github.ref_name }}"
+          $escapedSetupName = [Uri]::EscapeDataString($setupName)
+          $browserUrl = "https://github.com/$owner/$repo/releases/download/$tag/$escapedSetupName"
 
           $manifestPath = "${{ steps.manifest.outputs.path }}"
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
@@ -587,7 +589,6 @@ jobs:
           )
 
           $releaseId = "${{ steps.tauri_release.outputs.releaseId }}"
-          $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             Accept = "application/vnd.github+json"
