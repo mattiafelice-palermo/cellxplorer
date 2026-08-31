@@ -30,3 +30,17 @@ Begin Spec 055 on `feature/plot-workflow-polish`, based on `main` at `3714d3733c
 055.1 implementation is ready for review. Root cause reproduced: exportFigure shallow-copied only the top-level layout and passed live trace objects to Plotly, so Plotly image normalization could write inferred nested fields into the editor-owned figure graph. The fix deep-clones traces and layout at the export boundary, preserves the existing title/size/margin behavior, and adds a regression that simulates the observed normalization and verifies live traces/layout/style remain unchanged. No post-export dirty reset was added.
 
 ---
+### 2026-08-31T10:12:00+02:00 — REVIEWER → IMPLEMENTER — 055.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**Message**
+
+Code inspection accepts the deep-clone export boundary provisionally and found no post-export dirty-reset workaround. R1 remains because the committed reproduction/test does not connect Plotly's derived-layout mutation to the persisted `plotViewSignature(spec)` that actually drives `activePlotDirty`; reproduce and record the pre/post saved-view signatures plus the exact persistent field/reference that changes, and correct the diagnosis if the former shallow export path cannot produce that change. R2 preserves the explicit manual acceptance matrix for Cycles, Time/Capacity, and one additional shared-export family, including unchanged and already-dirty saved plots, export preview, and PNG/SVG/PDF where available; no manual run is reported. Do not begin 055.2 or 055.3 while R1 or R2 remains open. See `docs/specs/reviews/055.1-export-without-dirtying-plot-state-review.md` for the exact acceptance criteria.
+
+---
