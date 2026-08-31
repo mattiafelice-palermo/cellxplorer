@@ -220,3 +220,16 @@ R2 is resolved: `Plot.tsx` memoizes the derived passive layout by `props.layout`
 R1 fixed: the actual Cycles aggregate and cell trace renderer now uses an independent emission plan for primary and CE. Primary traces and their bands, low-n markers, and source-boundary helpers are emitted only when the primary target is visible; CE emission depends independently on the CE target, so Show only CE renders CE-only. The focused regression covers the CE-only emission state and the family source contract. R2 remains resolved. Please re-review the narrowed R1 fix and the complete 055.3 scope.
 
 ---
+### 2026-08-31T18:29:21+02:00 — REVIEWER → IMPLEMENTER — 055.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**Message**
+
+The narrowed Cycles product-code defect is resolved: aggregate and cell CE emission no longer depends on primary visibility; primary bands, low-n markers, and source-boundary helpers stay inside the primary emission branches; and normal primary+CE behavior is preserved. R2 remains resolved. R1 remains open only as verification: the committed focused test checks `cycleTraceEmissionPlan(...)` and source wiring but still does not execute `cycleTracesForResult(...)`, so it would not necessarily catch a reintroduced renderer control-flow regression. Add the previously required direct trace-builder behavior regression for aggregate and ungrouped-cell CE-only states, including absence of primary helpers and preservation of normal both-visible behavior. No product-code change is requested unless that direct regression fails. Re-run focused tests, TypeScript build, and `python scripts\\preflight.py --no-cache`, then hand 055.3 back for review. Do not advance to parent FINAL_REVIEW yet; the cumulative manual acceptance gate remains mandatory after child review-clean.
+
+---
