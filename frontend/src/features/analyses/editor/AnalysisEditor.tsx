@@ -2512,18 +2512,17 @@ function AnalysisEditorView({
   } | null>(null);
   const [leaveSaving, setLeaveSaving] = useState(false);
   const [rendered, setRendered] = useState<{ result: ComputeResult; spec: AnalysisSpec } | null>(null);
-  const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving" | "error">("saved");
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">("saved");
   const [initialComputeReady, setInitialComputeReady] = useState(false);
   const [timeCapacityReady, setTimeCapacityReady] = useState(false);
   const [timeCapacityVoltageChannels, setTimeCapacityVoltageChannels] =
     useState<TimeCapacityResult["voltage_channels"]>(undefined);
   const [chargeabilityReady, setChargeabilityReady] = useState(false);
   const [rateCapabilityReady, setRateCapabilityReady] = useState(false);
-  const autosaveSignature = useMemo(
-    () => (spec ? JSON.stringify({ title, spec }) : "no-spec"),
-    [spec, title]
-  );
-  const autosaveSignatureRef = useRef(autosaveSignature);
+  // Explicit saves may finish after another local edit. Keep the latest object
+  // identity so those completions cannot clear a newer unsaved change.
+  const latestWorkspaceRef = useRef<{ spec: AnalysisSpec | null; title: string }>({ spec, title });
+  latestWorkspaceRef.current = { spec, title };
   const protocolSelectionCells = useMemo(
     () =>
       analysis.data && spec
@@ -2533,7 +2532,7 @@ function AnalysisEditorView({
   );
   // Resolve this from the live draft selection, not only the last persisted
   // AnalysisFull response. Adding/removing a Cell or replicate group must
-  // synchronously gate every scientific request before autosave/refetch.
+  // synchronously gate every scientific request before explicit persistence/refetch.
   const hasMetadataOnlySources = selectionHasMetadataOnlySources(protocolSelectionCells);
   const protocolPolicyForTab = (tab: AnalysisTabKey) =>
     multiSourceAnalysisPolicy(tab, protocolSelectionCells);
@@ -2558,10 +2557,6 @@ function AnalysisEditorView({
       ),
     [cellsQuery.data, groupsQuery.data, spec?.selection.entries],
   );
-
-  useEffect(() => {
-    autosaveSignatureRef.current = autosaveSignature;
-  }, [autosaveSignature]);
 
   useEffect(() => {
     if (activeTab === "time_capacity") setTimeCapacityVisited(true);
@@ -2693,7 +2688,7 @@ function AnalysisEditorView({
       return next;
     });
     setDirty(!serverAlreadyClean);
-    if (serverAlreadyClean) setAutosaveStatus("saved");
+    if (serverAlreadyClean) setSaveStatus("saved");
   }, [analysis.data, groupsQuery.data, groupsQuery.isSuccess, spec]);
 
   useEffect(() => {
@@ -2798,34 +2793,34 @@ function AnalysisEditorView({
     },
   });
 
-  const buildPersistPayload = useCallback(() => {
-    if (!spec) return null;
+  const buildPersistPayload = useCallback((sourceSpec: AnalysisSpec | null = spec) => {
+    if (!sourceSpec) return null;
     const activePlotForPersist = activeSavedPlotId
-      ? (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
+      ? (sourceSpec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
       : null;
     const baselineDirty = Boolean(
       activePlotForPersist &&
         activePlotBaselineSignature &&
-        snapshotSignature(spec) !== activePlotBaselineSignature,
+        snapshotSignature(sourceSpec) !== activePlotBaselineSignature,
     );
     const liveDraftSession = Boolean(
       plotSessionActive && activeSavedPlotId === null && plotWorkspaceTouched,
     );
     if (baselineDirty && activePlotForPersist) {
       return buildStablePersistSpec({
-        current: spec,
+        current: sourceSpec,
         mode: "edited_saved",
         savedPlot: activePlotForPersist,
       });
     }
     if (liveDraftSession) {
       return buildStablePersistSpec({
-        current: spec,
+        current: sourceSpec,
         mode: "draft_session",
-        normal: normalWorkspaceRef.current ?? captureNormalWorkspace(spec, activeTab),
+        normal: normalWorkspaceRef.current ?? captureNormalWorkspace(sourceSpec, activeTab),
       });
     }
-    return buildStablePersistSpec({ current: spec, mode: "stable" });
+    return buildStablePersistSpec({ current: sourceSpec, mode: "stable" });
   }, [
     activePlotBaselineSignature,
     activeSavedPlotId,
@@ -2835,30 +2830,30 @@ function AnalysisEditorView({
     spec,
   ]);
 
-  useEffect(() => {
-    if (!spec || !dirty) return;
-    const signatureAtSchedule = autosaveSignature;
-    const timer = window.setTimeout(() => {
-      const persistSpec = buildPersistPayload();
-      if (!persistSpec) return;
-      setAutosaveStatus("saving");
-      put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: persistSpec })
-        .then((saved) => {
-          void refreshPersistedAnalysisQueries(qc, aid, saved);
-          if (autosaveSignatureRef.current === signatureAtSchedule) {
-            setDirty(false);
-            setAutosaveStatus("saved");
-          }
-        })
-        .catch((e: Error) => {
-          if (autosaveSignatureRef.current === signatureAtSchedule) {
-            setAutosaveStatus("error");
-            notifications.show({ message: e.message, color: "red" });
-          }
-        });
-    }, 1800);
-    return () => window.clearTimeout(timer);
-  }, [aid, autosaveSignature, buildPersistPayload, dirty, qc, spec, title]);
+  const persistAnalysisSpec = (
+    persistSpec: AnalysisSpec,
+    persistTitle = title,
+    options?: { invalidateScientific?: boolean },
+  ) => {
+    setSaveStatus("saving");
+    return put<AnalysisFull>(`/api/analyses/${aid}`, {
+      title: persistTitle,
+      spec: persistSpec,
+    })
+      .then((saved) => {
+        setSaveStatus("saved");
+        void refreshPersistedAnalysisQueries(qc, aid, saved);
+        if (options?.invalidateScientific) {
+          void invalidateAnalysisQueries(qc, aid);
+        }
+        return saved;
+      })
+      .catch((error: Error) => {
+        setSaveStatus("error");
+        notifications.show({ message: error.message, color: "red" });
+        throw error;
+      });
+  };
 
   const displayResult = rendered?.result ?? compute.data;
   const activePlot = spec
@@ -3023,27 +3018,19 @@ function AnalysisEditorView({
     }
     const wait = options?.wait ?? true;
     const persistSpec = buildPersistPayload() ?? stripDraftPlots(spec);
-    const payload = { title, spec: persistSpec };
     setDirty(false);
-    setAutosaveStatus("saving");
     if (wait) setLeaveSaving(true);
     else proceed();
-    put<AnalysisFull>(`/api/analyses/${aid}`, payload)
-      .then((saved) => {
-        setAutosaveStatus("saved");
-        qc.setQueryData(["analysis", aid], saved);
-        qc.invalidateQueries({ queryKey: ["analyses"] });
-        void invalidateAnalysisQueries(qc, aid);
+    void persistAnalysisSpec(persistSpec, title, { invalidateScientific: true })
+      .then(() => {
         if (wait) {
           setLeaveSaving(false);
           proceed();
         }
       })
-      .catch((error: Error) => {
+      .catch(() => {
         if (wait) setLeaveSaving(false);
         setDirty(true);
-        setAutosaveStatus("error");
-        notifications.show({ message: error.message, color: "red" });
       });
   };
 
@@ -3346,20 +3333,45 @@ function AnalysisEditorView({
     });
   };
 
-  const applyUpdateActivePlot = (name: string) => {
-    if (!activePlot || !spec) return;
+  const applyUpdateActivePlot = (name: string, afterUpdate?: () => void) => {
+    if (!activePlot || !spec || saveStatus === "saving") return;
     const subtitle = plotSubtitle(activeTab, displayResult, spec);
     const trimmed = name.trim() || activePlot.name;
-    setActivePlotBaselineSignature(snapshotSignature(spec));
-    normalWorkspaceRef.current = captureNormalWorkspace(spec, activeTab);
-    update((s) => {
-      s.saved_plots = (s.saved_plots ?? []).map((plot) =>
-        plot.id === activePlot.id
-          ? savedPlotFromSpec(s, activeTab, trimmed, subtitle, plot.description, plot)
-          : plot
-      );
+    const next = clone(spec);
+    const updatedPlot = savedPlotFromSpec(
+      next,
+      activeTab,
+      trimmed,
+      subtitle,
+      activePlot.description,
+      activePlot,
+    );
+    next.saved_plots = (next.saved_plots ?? []).map((plot) =>
+      plot.id === activePlot.id ? updatedPlot : plot,
+    );
+    const persistSpec = buildStablePersistSpec({
+      current: next,
+      mode: "edited_saved",
+      savedPlot: updatedPlot,
     });
+    const persistTitle = title;
+    setSpec(next);
+    normalWorkspaceRef.current = captureNormalWorkspace(next, activeTab);
     setPlotWorkspaceTouched(false);
+    setDirty(true);
+    void persistAnalysisSpec(persistSpec, persistTitle)
+      .then(() => {
+        if (
+          latestWorkspaceRef.current.spec !== next ||
+          latestWorkspaceRef.current.title !== persistTitle
+        ) {
+          return;
+        }
+        setActivePlotBaselineSignature(snapshotSignature(next));
+        setDirty(false);
+        afterUpdate?.();
+      })
+      .catch(() => undefined);
   };
 
   const updateActivePlot = (options?: { afterUpdate?: () => void }) => {
@@ -3375,20 +3387,18 @@ function AnalysisEditorView({
       });
       return;
     }
-    applyUpdateActivePlot(activePlot.name);
-    options?.afterUpdate?.();
+    applyUpdateActivePlot(activePlot.name, options?.afterUpdate);
   };
 
   const confirmQuantityRenameUpdate = () => {
     if (!quantityRenamePrompt) return;
     const { name, afterUpdate } = quantityRenamePrompt;
     setQuantityRenamePrompt(null);
-    applyUpdateActivePlot(name);
-    afterUpdate?.();
+    applyUpdateActivePlot(name, afterUpdate);
   };
 
   const renameSavedPlot = (plotId: string, name: string) => {
-    if (!spec) return;
+    if (!spec || saveStatus === "saving") return;
     const validation = validateSavedPlotName(name);
     if (validation.error) {
       notifications.show({ message: validation.error, color: "red" });
@@ -3401,34 +3411,34 @@ function AnalysisEditorView({
     }
     if (target.name === validation.value) return;
     const modifiedAt = new Date().toISOString();
-    update((s) => {
-      const result = renameSavedPlotInList(
-        s.saved_plots ?? [],
-        plotId,
-        validation.value,
-        modifiedAt,
-      );
-      if (result.changed) s.saved_plots = result.plots;
+    const next = clone(spec);
+    const result = renameSavedPlotInList(
+      next.saved_plots ?? [],
+      plotId,
+      validation.value,
+      modifiedAt,
+    );
+    if (!result.changed) return;
+    next.saved_plots = result.plots;
+    const persistSpec = buildPersistPayload(next) ?? stripDraftPlots(next);
+    const persistTitle = title;
+    setSpec(next);
+    void persistAnalysisSpec(persistSpec, persistTitle).catch(() => {
+      setDirty(true);
     });
   };
 
   const openSavedPlotDirect = (plot: SavedAnalysisPlot) => {
-    const restoredForBaseline = specForSavedPlot(spec, plot);
+    const restored = specForSavedPlot(spec, plot);
     if (plot.tab === "time_capacity") {
       setTimeCapacityNavigationSession((value) => value + 1);
       setTimeCapacityVirginNavigation(false);
     }
     setActiveSavedPlotId(plot.id);
-    setActivePlotBaselineSignature(snapshotSignature(restoredForBaseline));
-    normalWorkspaceRef.current = captureNormalWorkspace(restoredForBaseline, plot.tab);
+    setActivePlotBaselineSignature(snapshotSignature(restored));
+    normalWorkspaceRef.current = captureNormalWorkspace(restored, plot.tab);
     lastPlotIdByTabRef.current[plot.tab] = plot.id;
-    update((s) => {
-      const restored = specForSavedPlot(s, plot);
-      s.selection = restored.selection;
-      s.computation = restored.computation;
-      s.aggregation = restored.aggregation;
-      s.presentation = restored.presentation;
-    });
+    setSpec(restored);
     setPlotWorkspaceTouched(false);
     setPlotSessionActive(true);
     setActiveTab(plot.tab);
@@ -3569,7 +3579,7 @@ function AnalysisEditorView({
   };
 
   const commitSavedPlot = () => {
-    if (!saveDraft || !spec) return;
+    if (!saveDraft || !spec || saveStatus === "saving") return;
     const afterSave = saveDraft.afterSave ?? "none";
     const targetTab = saveDraft.targetTab;
     const source = saveDraft.source;
@@ -3600,22 +3610,35 @@ function AnalysisEditorView({
     next.computation = restored.computation;
     next.aggregation = restored.aggregation;
     next.presentation = restored.presentation;
+    const persistTitle = title;
     setDirty(true);
-    if (afterSave === "switch_tab" && targetTab) {
-      openColdTabWorkspace(targetTab, next);
-      return;
-    }
     setSpec(next);
     setActiveSavedPlotId(plot.id);
     if (plot.tab === "time_capacity") setTimeCapacityVirginNavigation(false);
     setActiveTab(plot.tab);
-    setActivePlotBaselineSignature(snapshotSignature(next));
+    setActivePlotBaselineSignature(null);
     normalWorkspaceRef.current = captureNormalWorkspace(next, plot.tab);
     setPlotWorkspaceTouched(false);
     setPlotSessionActive(true);
     if (afterSave === "new_plot") {
       queueMicrotask(() => startNewPlotReset());
     }
+    void persistAnalysisSpec(next, persistTitle)
+      .then(() => {
+        if (
+          latestWorkspaceRef.current.spec === next &&
+          latestWorkspaceRef.current.title === persistTitle
+        ) {
+          setActivePlotBaselineSignature(snapshotSignature(next));
+          setDirty(false);
+          if (afterSave === "switch_tab" && targetTab) {
+            openColdTabWorkspace(targetTab, next);
+          }
+        }
+      })
+      .catch(() => {
+        setDirty(true);
+      });
   };
 
   const startNewPlotReset = () => {
@@ -3727,24 +3750,19 @@ function AnalysisEditorView({
       const restoredView = specForSavedPlot(spec, activePlot);
       const next = buildDiscardEditedSavedPlotSpec(spec, restoredView);
       setLeaveSaving(true);
-      put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: next })
+      persistAnalysisSpec(next, title, { invalidateScientific: true })
         .then(() => {
           setSpec(next);
           setActivePlotBaselineSignature(snapshotSignature(next));
           normalWorkspaceRef.current = captureNormalWorkspace(next, activePlot.tab);
           setPlotWorkspaceTouched(false);
           setDirty(false);
-          setAutosaveStatus("saved");
-          qc.invalidateQueries({ queryKey: ["analysis", aid] });
-          qc.invalidateQueries({ queryKey: ["analyses"] });
-          void invalidateAnalysisQueries(qc, aid);
           setLeaveSaving(false);
           setLeavePrompt(null);
           proceed();
         })
-        .catch((error: Error) => {
+        .catch(() => {
           setLeaveSaving(false);
-          notifications.show({ message: error.message, color: "red" });
         });
       return;
     }
@@ -3754,7 +3772,7 @@ function AnalysisEditorView({
     const reopen = tabPlots[0] ?? null;
     if (reopen) next = specForSavedPlot(next, reopen);
     setLeaveSaving(true);
-    put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: next })
+    persistAnalysisSpec(next, title, { invalidateScientific: true })
       .then(() => {
         setSpec(next);
         setActiveTab(normal.tab);
@@ -3764,17 +3782,12 @@ function AnalysisEditorView({
         normalWorkspaceRef.current = normal;
         setPlotWorkspaceTouched(false);
         setDirty(false);
-        setAutosaveStatus("saved");
-        qc.invalidateQueries({ queryKey: ["analysis", aid] });
-        qc.invalidateQueries({ queryKey: ["analyses"] });
-        void invalidateAnalysisQueries(qc, aid);
         setLeaveSaving(false);
         setLeavePrompt(null);
         proceed();
       })
-      .catch((error: Error) => {
+      .catch(() => {
         setLeaveSaving(false);
-        notifications.show({ message: error.message, color: "red" });
       });
   };
 
@@ -3808,26 +3821,21 @@ function AnalysisEditorView({
       next.saved_plots = [...(next.saved_plots ?? []), plot];
     }
     setLeaveSaving(true);
-    put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: next })
+    persistAnalysisSpec(next, title, { invalidateScientific: true })
       .then(() => {
         setSpec(next);
         setDirty(false);
-        setAutosaveStatus("saved");
         setActiveSavedPlotId(plot.id);
         setActivePlotBaselineSignature(snapshotSignature(next));
         setPlotWorkspaceTouched(false);
         setPlotSessionActive(true);
-        qc.invalidateQueries({ queryKey: ["analysis", aid] });
-        qc.invalidateQueries({ queryKey: ["analyses"] });
-        void invalidateAnalysisQueries(qc, aid);
         const proceed = leavePrompt.proceed;
         setLeaveSaving(false);
         setLeavePrompt(null);
         proceed();
       })
-      .catch((e: Error) => {
+      .catch(() => {
         setLeaveSaving(false);
-        notifications.show({ message: e.message, color: "red" });
       });
   };
 
@@ -3955,7 +3963,7 @@ function AnalysisEditorView({
             source: "live",
           })
       : updateActivePlot,
-    updatePlotEnabled: !hasMetadataOnlySources && activeProtocolPolicy.supported && (draftPlotSession
+    updatePlotEnabled: saveStatus !== "saving" && !hasMetadataOnlySources && activeProtocolPolicy.supported && (draftPlotSession
       ? true
       : Boolean(activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab)),
     updatePlotLabel: draftPlotSession ? "Save as" : "Update",
@@ -3987,6 +3995,40 @@ function AnalysisEditorView({
         )}
       </>
     );
+  };
+
+  const deleteSavedPlot = (plotId: string) => {
+    if (!spec || saveStatus === "saving") return;
+    const next = clone(spec);
+    const target = (next.saved_plots ?? []).find((plot) => plot.id === plotId);
+    if (!target) return;
+    next.saved_plots = (next.saved_plots ?? []).filter((plot) => plot.id !== plotId);
+    const persistTitle = title;
+    const replacement =
+      activeSavedPlotId === plotId
+        ? (next.saved_plots ?? []).find((plot) => plot.tab === target.tab) ?? null
+        : null;
+    const localSpec = replacement ? specForSavedPlot(next, replacement) : next;
+    const persistSpec = buildPersistPayload(localSpec) ?? stripDraftPlots(localSpec);
+
+    if (replacement) {
+      setActiveSavedPlotId(replacement.id);
+      setActivePlotBaselineSignature(snapshotSignature(localSpec));
+      normalWorkspaceRef.current = captureNormalWorkspace(localSpec, replacement.tab);
+      lastPlotIdByTabRef.current[replacement.tab] = replacement.id;
+      setPlotWorkspaceTouched(false);
+      setPlotSessionActive(true);
+      setActiveTab(replacement.tab);
+    } else if (activeSavedPlotId === plotId) {
+      setActiveSavedPlotId(null);
+      setActivePlotBaselineSignature(null);
+      setPlotWorkspaceTouched(false);
+      setPlotSessionActive(false);
+    }
+    setSpec(localSpec);
+    void persistAnalysisSpec(persistSpec, persistTitle).catch(() => {
+      setDirty(true);
+    });
   };
 
   const savedPlotsPanelFor = (tab: AnalysisTabKey) => {
@@ -4022,21 +4064,7 @@ function AnalysisEditorView({
         }
         onOpen={openSavedPlot}
         onRename={renameSavedPlot}
-        onDelete={(plotId) => {
-          update((s) => void (s.saved_plots = (s.saved_plots ?? []).filter((plot) => plot.id !== plotId)));
-          if (activeSavedPlotId === plotId) {
-            const remaining = (spec.saved_plots ?? []).filter(
-              (plot) => plot.id !== plotId && plot.tab === tab,
-            );
-            if (remaining[0]) {
-              openSavedPlot(remaining[0]);
-            } else {
-              setActiveSavedPlotId(null);
-              setActivePlotBaselineSignature(null);
-              setPlotSessionActive(false);
-            }
-          }
-        }}
+        onDelete={deleteSavedPlot}
         allowPreviewGeneration={!hasMetadataOnlySources && (
           tab === "time_capacity"
             ? timeCapacityReady
@@ -4068,9 +4096,9 @@ function AnalysisEditorView({
         <Group gap="xs">
           <Badge
             variant="light"
-            color={autosaveStatus === "error" ? "red" : autosaveStatus === "saving" || dirty ? "yellow" : "teal"}
+            color={saveStatus === "error" ? "red" : saveStatus === "saving" || dirty ? "yellow" : "teal"}
           >
-            {autosaveStatus === "error" ? "Not saved" : autosaveStatus === "saving" || dirty ? "Saving" : "Saved"}
+            {saveStatus === "error" ? "Not saved" : saveStatus === "saving" ? "Saving" : dirty ? "Unsaved" : "Saved"}
           </Badge>
           <Tooltip label="Duplicate and keep this record intact">
             <Button variant="default" leftSection={<IconCopy size={16} />} onClick={() => duplicate.mutate()}>

@@ -379,11 +379,13 @@ The generic cycle query must stay disabled while any of those tabs is active; ot
 saved-plot change starts an unrelated cycle computation beside the visible request. Their query
 observers should retain previous data during a key change, and a delayed loading indicator should
 appear only when no plot is available.
-An ordinary editor autosave is a persistence update, not a scientific invalidation: its returned
-`AnalysisFull` is written directly to `['analysis', analysisId]` and `['analyses']` is invalidated
-for compact index metadata. Source/cell/scientific mutations continue to use the broad scoped
-invalidation helper. Saved-plot create/update/delete paths retain their explicit artifact,
-thumbnail, prepared-marker, and preview lifecycle rather than depending on autosave side effects.
+Analysis editor persistence is explicit rather than timer-driven: plot Update, Save-as-new,
+rename, and delete actions issue the save request deliberately, while local edits remain visibly
+unsaved until the user saves or uses the existing leave flow. A successful explicit save writes its
+returned `AnalysisFull` directly to `['analysis', analysisId]` and invalidates `['analyses']` for
+compact index metadata. Source/cell/scientific mutations continue to use the broad scoped
+invalidation helper. Saved-plot create/update/delete paths therefore own their explicit artifact,
+thumbnail, prepared-marker, and preview lifecycle without depending on autosave side effects.
 Within a newly mounted analysis family, the live plot has request priority. Saved rows may look up
 and display already-cached thumbnails immediately, but missing saved-plot computations are admitted
 sequentially during idle time only after the live plot is ready. Do not prefetch every thumbnail

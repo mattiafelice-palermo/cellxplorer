@@ -138,6 +138,27 @@ test("stable persist for edited saved plot writes the baseline, not the edits", 
   assert.equal(persisted.draft_plots, null);
 });
 
+test("stable persist for an explicit saved-plot update keeps the updated cycle range", () => {
+  const saved = makeSaved("discharge_capacity");
+  const updatedRange = { start: 12, end: 15 };
+  const updatedPlot = {
+    ...saved,
+    computation: { ...saved.computation, cycle_range: updatedRange },
+  };
+  const current = makeSpec("discharge_capacity");
+  current.saved_plots = [updatedPlot];
+  current.computation = { ...current.computation, cycle_range: updatedRange };
+
+  const persisted = buildStablePersistSpec({
+    current,
+    mode: "edited_saved",
+    savedPlot: updatedPlot,
+  });
+
+  assert.deepEqual(persisted.computation.cycle_range, updatedRange);
+  assert.deepEqual(persisted.saved_plots?.[0]?.computation.cycle_range, updatedRange);
+});
+
 test("cold open strips drafts and opens the first saved plot", () => {
   const first = makeSaved("discharge_capacity", "p1");
   const second = makeSaved("charge_capacity", "p2");

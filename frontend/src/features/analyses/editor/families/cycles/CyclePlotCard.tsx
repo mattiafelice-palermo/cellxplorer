@@ -1246,7 +1246,7 @@ export function CyclePlotCard({
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   // Rebuild traces/layout only when the fields they actually read change —
-  // unrelated spec edits (other tabs' styles, autosave echoes) must not
+  // unrelated spec edits (other tabs' styles, persistence echoes) must not
   // trigger a full Plotly re-render.
   //
   // Any presentation field that changes what is plotted (not merely how it is

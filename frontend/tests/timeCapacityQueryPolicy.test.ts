@@ -236,10 +236,19 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(savedPreviewSource, /queryFn: \(\{ signal \}\) =>/);
   assert.match(savedPreviewSource, /background: warmup,\s*\n\s*\}, \{ signal \}\),/);
 
-  const autosaveStart = editorSource.indexOf("const signatureAtSchedule = autosaveSignature;");
-  const autosaveEnd = editorSource.indexOf("const displayResult", autosaveStart);
-  assert.ok(autosaveStart >= 0 && autosaveEnd > autosaveStart);
-  const autosaveSource = editorSource.slice(autosaveStart, autosaveEnd);
-  assert.match(autosaveSource, /refreshPersistedAnalysisQueries\(qc, aid, saved\)/);
-  assert.doesNotMatch(autosaveSource, /invalidateAnalysisQueries/);
+  assert.doesNotMatch(editorSource, /autosave/i);
+  const persistStart = editorSource.indexOf("const buildPersistPayload");
+  const displayResultStart = editorSource.indexOf("const displayResult", persistStart);
+  assert.ok(persistStart >= 0 && displayResultStart > persistStart);
+  const persistenceSource = editorSource.slice(persistStart, displayResultStart);
+  assert.match(persistenceSource, /const persistAnalysisSpec =/);
+  assert.doesNotMatch(persistenceSource, /useEffect|setTimeout|signatureAtSchedule/);
+
+  const updateStart = editorSource.indexOf("const applyUpdateActivePlot");
+  const updateEnd = editorSource.indexOf("const updateActivePlot", updateStart);
+  assert.ok(updateStart >= 0 && updateEnd > updateStart);
+  const updateSource = editorSource.slice(updateStart, updateEnd);
+  assert.match(updateSource, /setSpec\(next\)/);
+  assert.match(updateSource, /persistAnalysisSpec\(persistSpec, persistTitle\)/);
+  assert.match(editorSource, /dirty \? "Unsaved" : "Saved"/);
 });
