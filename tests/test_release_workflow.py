@@ -716,7 +716,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         rewrite = self.release.split(
             "Rewrite draft updater manifest to public download URL", 1
         )[1].split("Download staged draft manifest", 1)[0]
-        self.assertIn("browser_download_url", rewrite)
+        self.assertIn('tag = "${{ github.ref_name }}"', rewrite)
+        self.assertIn("EscapeDataString($setupName)", rewrite)
+        self.assertNotIn("$setup.browser_download_url", rewrite)
         self.assertIn("public-latest.json", rewrite)
         self.assertIn("Invoke-RestMethod -Method Delete", rewrite)
         self.assertIn("uploads.github.com", rewrite)
@@ -1020,6 +1022,25 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             expected_owner=OWNER,
             expected_repo=REPO,
             release_assets=sample_assets(),
+        )
+
+    def test_accepts_eventual_public_url_when_draft_asset_is_untagged(self):
+        manifest = sample_manifest()
+        manifest["platforms"]["windows-x86_64"]["url"] = (
+            f"https://github.com/{OWNER}/{REPO}/releases/download/v0.15.0/{SETUP_EXE}"
+        )
+        assets = sample_assets()
+        assets[0]["browser_download_url"] = (
+            f"https://github.com/{OWNER}/{REPO}/releases/download/"
+            f"untagged-0123456789abcdef/{SETUP_EXE}"
+        )
+        verify_updater_manifest.verify_manifest(
+            manifest,
+            expected_version="0.15.0",
+            expected_notes=NOTES,
+            expected_owner=OWNER,
+            expected_repo=REPO,
+            release_assets=assets,
         )
 
     def test_rejects_public_browser_download_url_with_wrong_tag_or_metadata(self):

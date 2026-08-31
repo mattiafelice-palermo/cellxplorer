@@ -191,12 +191,41 @@ def require_named_asset(assets: list[dict], name: str) -> dict:
 def find_asset_by_browser_download_url(
     assets: list[dict], url: str, asset_name: str
 ) -> dict:
-    """Find a release asset and reject metadata that disagrees with its public URL."""
+    """Find a release asset and reject unexpected public-URL metadata.
+
+    GitHub reports a draft release asset with a temporary ``untagged-*`` URL.
+    The workflow must validate the eventual tag-based URL before publishing,
+    so that temporary draft URL is an expected metadata mismatch.
+    """
 
     named_asset = require_named_asset(assets, asset_name)
     metadata_url = named_asset.get("browser_download_url")
     if isinstance(metadata_url, str) and metadata_url.strip():
-        if metadata_url.strip() != url.strip():
+        if metadata_url.strip() == url.strip():
+            return named_asset
+        try:
+            expected_owner, expected_repo, _expected_tag, _expected_asset_name = (
+                parse_github_browser_download_url(url)
+            )
+            (
+                metadata_owner,
+                metadata_repo,
+                metadata_tag,
+                metadata_asset_name,
+            ) = parse_github_browser_download_url(metadata_url)
+        except ManifestVerificationError:
+            expected_owner = ""
+            expected_repo = ""
+            metadata_owner = ""
+            metadata_repo = ""
+            metadata_tag = ""
+            metadata_asset_name = ""
+        if not (
+            metadata_owner == expected_owner
+            and metadata_repo == expected_repo
+            and metadata_tag.startswith("untagged-")
+            and metadata_asset_name == asset_name
+        ):
             raise ManifestVerificationError(
                 f"Release asset {asset_name!r} has browser URL {metadata_url!r}, "
                 f"not {url!r}."
