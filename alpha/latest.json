@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.13",
-  "notes": "### New features\n\n- Publish a newer Alpha build that updates existing Alpha installations created from the earlier beta-versioned package.",
-  "pub_date": "2026-08-30T21:15:20.918Z",
+  "version": "0.27.1-alpha.18",
+  "notes": "- Use the eventual release tag for draft updater URLs.",
+  "pub_date": "2026-08-31T06:01:55.302Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVJNVDIyQWI3VnByN2Z0KzFYbGo0QUpGT1pOU1dTY2doT0c5emtiMGhiVUgzY0RKVlVEdnZTaXBhWGNSWitTWXNUZWZtQ3ZXcFJWbkJkQmp1bFJmMEFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTI0NTE0CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjEzX3g2NC1zZXR1cC5leGUKL3RrS3lNWW5lcVJybTNNN1dYOUZ3c0dqR3FzaG1JaFByb1daVDBKNDhiNlBTeHovUXVyZ2dvdVJTRTVyQXhIcUlRZnd3dHpKZkM5SFJuQTc4QXVMQWc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/537070802"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVUzbmE3NU4rSTY1VEFOVXFVa0IxNmlFWVVSamIxUUJ6aGZiczdqSGJvRGtoeElwQ3hzMVp5eW8zQlRVWGw2eDArS1JCWkZucFJoUkczY09uaGQ5bFEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTU2MTExCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjE4X3g2NC1zZXR1cC5leGUKQVI4UnRNYUxWR0xPSnQyWll4ZGUydkFqVFFaaEVUTGtVdjF2Q2VCdG8rUmdNVnU3WC9xWHBYbFZmcm5maVFSV3QrM3h5TUQ3OFZyaFFRVktaT0djQXc9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.18/CellXplorer.Alpha_0.27.1-alpha.18_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVJNVDIyQWI3VnByN2Z0KzFYbGo0QUpGT1pOU1dTY2doT0c5emtiMGhiVUgzY0RKVlVEdnZTaXBhWGNSWitTWXNUZWZtQ3ZXcFJWbkJkQmp1bFJmMEFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTI0NTE0CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjEzX3g2NC1zZXR1cC5leGUKL3RrS3lNWW5lcVJybTNNN1dYOUZ3c0dqR3FzaG1JaFByb1daVDBKNDhiNlBTeHovUXVyZ2dvdVJTRTVyQXhIcUlRZnd3dHpKZkM5SFJuQTc4QXVMQWc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/537070802"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVUzbmE3NU4rSTY1VEFOVXFVa0IxNmlFWVVSamIxUUJ6aGZiczdqSGJvRGtoeElwQ3hzMVp5eW8zQlRVWGw2eDArS1JCWkZucFJoUkczY09uaGQ5bFEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTU2MTExCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjE4X3g2NC1zZXR1cC5leGUKQVI4UnRNYUxWR0xPSnQyWll4ZGUydkFqVFFaaEVUTGtVdjF2Q2VCdG8rUmdNVnU3WC9xWHBYbFZmcm5maVFSV3QrM3h5TUQ3OFZyaFFRVktaT0djQXc9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.18/CellXplorer.Alpha_0.27.1-alpha.18_x64-setup.exe"
     }
   }
 }
