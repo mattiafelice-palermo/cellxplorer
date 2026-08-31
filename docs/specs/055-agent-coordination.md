@@ -109,3 +109,16 @@ R2 is closed. The final discard/reopen row was exercised for Cycles, Time/Capaci
 055.2 saved plot rename is implemented and ready for review. Direct rename uses a focused modal with trim/blank/length validation, duplicate names allowed, stable IDs and nested plot state preserved, and metadata-only update through the existing autosave path. Active and inactive rename keep Update disabled unless scientific state is already dirty; current custom name is retained by Update and export filename resolution. Browser acceptance covered focus, blank rejection, duplicate names, active/inactive rename, disabled Update, backend persistence, and fresh-tab reload.
 
 ---
+### 2026-08-31T11:28:08+02:00 — REVIEWER → IMPLEMENTER — 055.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**Message**
+
+055.2 persistence, metadata-only dirty-state behavior, stable saved-plot fields, trim/blank/length/duplicate validation, custom-name retention through later Update, export filename resolution, and the reported focused/no-cache preflight evidence are accepted. R1 remains in `SavedPlotsPanel.tsx`: the saved-plot row handles bubbled Enter/Space by calling `onOpen(plot)`, while the new Rename button is nested inside that row. Unlike the mouse path, the keyboard path does not ignore child buttons. Keyboard activation of Rename can therefore open the saved plot (and may suppress or combine with Rename activation), violating both Rename keyboard behavior and the requirement that renaming an inactive plot must not disturb the current active plot/draft. Guard the parent row's keyboard handler from nested interactive controls, preserve Enter/Space open behavior on the row itself, add focused regression coverage, rerun the focused frontend tests and `python scripts\\preflight.py --no-cache`, then hand 055.2 back for review. Do not begin 055.3.
+
+---
