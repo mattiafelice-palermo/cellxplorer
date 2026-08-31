@@ -163,3 +163,17 @@ R1 is resolved at `269085bb971c298bc31ca0a3c1cecb0494a12524`. The saved-plot par
 Spec 055.3 implements application-owned Show only this series and Show all series actions through a shared keyboard-accessible PlotHeader menu. Stable family-owned visibility keys persist in presentation.hidden_series_ids; applicable candidates honor selection, protocol/diagnostic/data/scientific filters; helper and auxiliary traces follow primary targets. The shared Plot wrapper disables Plotly legend item and double-click visibility and returns false defensively. Cycles, Time/Capacity, Steps, DCIR, Chargeability, and Rate Capability are wired, with saved-plot dirty/reopen state covered by policy regressions. The cumulative manual acceptance gate remains for FINAL_REVIEW.
 
 ---
+### 2026-08-31T14:23:00+02:00 — REVIEWER → IMPLEMENTER — 055.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**Message**
+
+The persistent `hidden_series_ids` policy, applicable-only Show-all restoration, saved-view dirty/update/reopen path, Steps/DCIR/Chargeability/Rate Capability wiring, keyboard-accessible PlotHeader menu, and passive Plotly click/double-click behavior are accepted. R1 remains because Cycles CE and Time/Capacity voltage-channel descriptors are first-class user-visible series but are collapsed onto the primary sample/group visibility key: a one-cell three-voltage plot therefore has three legend/series descriptors but only one visibility candidate, so the menu can disappear entirely and cannot isolate a selected channel; Cycles CE likewise cannot be isolated from its primary. Give first-class descriptors independent stable visibility targets while keeping true helper traces linked to their owner, and add focused family-builder regressions. R2 remains because `Plot.tsx` calls `disablePlotlyLegendVisibility(props.layout)` inline, allocating a new layout/legend object on every React render and defeating the stable Plotly layout identities the repository deliberately memoizes. Preserve passive legend behavior while memoizing the derived layout by incoming layout identity. Re-run focused tests and `python scripts\\preflight.py --no-cache`, then hand 055.3 back for review. Do not advance to parent FINAL_REVIEW yet; the cumulative manual acceptance gate remains mandatory after 055.3 is review-clean.
+
+---
