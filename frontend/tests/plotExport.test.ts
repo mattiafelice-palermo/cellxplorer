@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -91,7 +92,7 @@ test("export figures isolate nested live inputs from Plotly normalization", () =
   assert.deepEqual({ traces, layout, style }, before);
 });
 
-test("export cannot dirty a saved-view signature, while an export preference can", () => {
+test("export settings do not dirty a saved-view signature", () => {
   const spec = {
     selection: { entries: [], exclusions: [], hidden_replicate_group_ids: [] },
     dcir_segments: [],
@@ -149,15 +150,15 @@ test("export cannot dirty a saved-view signature, while an export preference can
   assert.equal(plotViewSignature(spec), baseline);
   assert.deepEqual(spec, before);
 
-  // This is the legitimate dirty path observed in the UI: PlotHeader's
-  // updateStyle writes the selected export format into the saved plot style.
-  const withIntentionalPreferenceChange = structuredClone(spec);
-  withIntentionalPreferenceChange.presentation.plot_styles!.cycles!.export_format = "svg";
-  assert.notEqual(plotViewSignature(withIntentionalPreferenceChange), baseline);
-  assert.equal(
-    withIntentionalPreferenceChange.presentation.plot_styles!.cycles!.export_format,
-    "svg",
+  // Advanced export settings are transient. PlotHeader passes the local style
+  // to the export callbacks instead of writing it into the saved plot draft.
+  const headerSource = readFileSync(
+    new URL("../src/features/analyses/editor/plotting/PlotHeader.tsx", import.meta.url),
+    "utf8",
   );
+  assert.doesNotMatch(headerSource, /updateStyle/);
+  assert.match(headerSource, /onExport\?\.\(selectedFormat, renderedFilename, exportStyle\)/);
+  assert.match(headerSource, /onDataExport\?\.\(renderedFilename, exportStyle\)/);
 });
 
 test("saved plot names remain the sanitized export filename base", () => {

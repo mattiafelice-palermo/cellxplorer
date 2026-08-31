@@ -1369,14 +1369,14 @@ export function CyclePlotCard({
     return { width: Math.round(rect.width), height: Math.round(rect.height) };
   };
 
-  const getExportPreview = async (): Promise<string | null> => {
+  const getExportPreview = async (exportStyle: PlotStyle = style): Promise<string | null> => {
     if (!plotDivRef.current || exportTraces.length === 0) return null;
-    const plan = resolveExportPlan(style, currentViewSize(), layout);
+    const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
     ).toImage;
-    const previewTraces = style.export_format === "png" ? traces : exportTraces;
-    return toImage(exportFigure(previewTraces, layout, style, plotName, plan), {
+    const previewTraces = exportStyle.export_format === "png" ? traces : exportTraces;
+    return toImage(exportFigure(previewTraces, layout, exportStyle, plotName, plan), {
       format: "png",
       width: plan.layoutWidth,
       height: plan.layoutHeight,
@@ -1384,20 +1384,24 @@ export function CyclePlotCard({
     });
   };
 
-  const handleDataExport = (baseName: string) => {
-    downloadDataExport(tracesToColumns(exportTraces, layout), style, baseName).catch(
+  const handleDataExport = (baseName: string, exportStyle: PlotStyle = style) => {
+    downloadDataExport(tracesToColumns(exportTraces, layout), exportStyle, baseName).catch(
       (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" }),
     );
   };
 
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
+  const exportPlot = async (
+    format: PlotExportFormat,
+    baseName: string,
+    exportStyle: PlotStyle = style,
+  ) => {
     if (!plotDivRef.current || !result) return;
     try {
-      const plan = resolveExportPlan(style, currentViewSize(), layout);
-      const ppi = Math.max(36, style.export_ppi ?? 96);
+      const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
+      const ppi = Math.max(36, exportStyle.export_ppi ?? 96);
       const filename = slugFilename(baseName);
       const outputTraces = format === "png" ? traces : exportTraces;
-      const figure = exportFigure(outputTraces, layout, style, plotName, plan);
+      const figure = exportFigure(outputTraces, layout, exportStyle, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -1412,7 +1416,7 @@ export function CyclePlotCard({
           await makeVectorPdf(
             svgUrl,
             plan.pixelWidth / plan.pixelHeight,
-            style.export_aspect_ratio,
+            exportStyle.export_aspect_ratio,
           ),
           `${filename}.pdf`,
         );
@@ -1499,7 +1503,6 @@ export function CyclePlotCard({
           onDataExport={handleDataExport}
           getExportPreview={getExportPreview}
           style={style}
-          updateStyle={updatePlotStyle}
           viewSize={plotSize}
           layout={layout}
           canExport={exportTraces.length > 0}
@@ -1509,11 +1512,6 @@ export function CyclePlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
-          seriesVisibility={{
-            items: seriesVisibilityItems,
-            onShowOnly: showOnlySeries,
-            onShowAll: showAllSeries,
-          }}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
         {segmentsActive && (

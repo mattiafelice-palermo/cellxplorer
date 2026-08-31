@@ -120,7 +120,14 @@ test("all audited simple plot families use the shared layout and opacity paths",
   }
 });
 
-test("representative plot families expose the shared persistent visibility menu", () => {
+test("plot families do not expose an unrequested series visibility control", () => {
+  const headerSource = readFileSync(
+    new URL("../src/features/analyses/editor/plotting/PlotHeader.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(headerSource, /Series visibility/);
+  assert.doesNotMatch(headerSource, /PlotSeriesVisibilityMenu/);
+
   const families = [
     "../src/features/analyses/editor/families/cycles/CyclePlotCard.tsx",
     "../src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx",
@@ -128,9 +135,7 @@ test("representative plot families expose the shared persistent visibility menu"
   ];
   for (const family of families) {
     const source = readFileSync(new URL(family, import.meta.url), "utf8");
-    assert.match(source, /hiddenSeriesIdsAfterShowOnly/);
-    assert.match(source, /hiddenSeriesIdsAfterShowAll/);
-    assert.match(source, /seriesVisibility=/);
+    assert.doesNotMatch(source, /seriesVisibility=/);
   }
 });
 

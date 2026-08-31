@@ -2863,14 +2863,14 @@ function TimeCapacityPlotCardView({
   };
 
   // faithful mini-render of the export output for the settings popover
-  const getExportPreview = async (): Promise<string | null> => {
+  const getExportPreview = async (exportStyle: PlotStyle = style): Promise<string | null> => {
     if (!plotExportReady || !plotDivRef.current || exportTraces.length === 0) return null;
-    const plan = resolveExportPlan(style, currentViewSize(), layout);
+    const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
     ).toImage;
-    const previewTraces = style.export_format === "png" ? exportInteractiveTraces : exportTraces;
-    return toImage(exportFigure(previewTraces, layout, style, plotName, plan), {
+    const previewTraces = exportStyle.export_format === "png" ? exportInteractiveTraces : exportTraces;
+    return toImage(exportFigure(previewTraces, layout, exportStyle, plotName, plan), {
       format: "png",
       width: plan.layoutWidth,
       height: plan.layoutHeight,
@@ -2878,7 +2878,7 @@ function TimeCapacityPlotCardView({
     });
   };
 
-  const handleDataExport = async (baseName: string) => {
+  const handleDataExport = async (baseName: string, exportStyle: PlotStyle = style) => {
     if (!currentResult || selectedVoltageUnavailable || exportTraces.length === 0 || dataExporting) return;
     const requestedSignature = dataSignature;
     const requestedVoltageChannels = requestCfg.voltage_channels;
@@ -2918,7 +2918,7 @@ function TimeCapacityPlotCardView({
       if (fullTraces.length === 0) {
         throw new Error("No data is available for the selected voltage quantity.");
       }
-      await downloadDataExport(tracesToColumns(fullTraces, layout), style, baseName);
+      await downloadDataExport(tracesToColumns(fullTraces, layout), exportStyle, baseName);
     } catch (e) {
       notifications.show({ message: e instanceof Error ? e.message : "Data export failed.", color: "red" });
     } finally {
@@ -2926,14 +2926,18 @@ function TimeCapacityPlotCardView({
     }
   };
 
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
+  const exportPlot = async (
+    format: PlotExportFormat,
+    baseName: string,
+    exportStyle: PlotStyle = style,
+  ) => {
     if (!plotExportReady || !plotDivRef.current || !currentResult || selectedVoltageUnavailable) return;
     try {
-      const plan = resolveExportPlan(style, currentViewSize(), layout);
-      const ppi = Math.max(36, style.export_ppi ?? 96);
+      const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
+      const ppi = Math.max(36, exportStyle.export_ppi ?? 96);
       const filename = slugFilename(baseName);
       const outputTraces = format === "png" ? exportInteractiveTraces : exportTraces;
-      const figure = exportFigure(outputTraces, layout, style, plotName, plan);
+      const figure = exportFigure(outputTraces, layout, exportStyle, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -2948,7 +2952,7 @@ function TimeCapacityPlotCardView({
           await makeVectorPdf(
             svgUrl,
             plan.pixelWidth / plan.pixelHeight,
-            style.export_aspect_ratio
+            exportStyle.export_aspect_ratio
           ),
           `${filename}.pdf`
         );
@@ -3047,7 +3051,6 @@ function TimeCapacityPlotCardView({
           onDataExport={handleDataExport}
           getExportPreview={getExportPreview}
           style={style}
-          updateStyle={updatePlotStyle}
           viewSize={plotSize}
           layout={layout}
           canExport={!panActive && Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
@@ -3058,11 +3061,6 @@ function TimeCapacityPlotCardView({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
-          seriesVisibility={{
-            items: seriesVisibilityItems,
-            onShowOnly: showOnlySeries,
-            onShowAll: showAllSeries,
-          }}
         />
         <TimeCapacityCycleNavigation
           config={cfg}

@@ -811,12 +811,16 @@ export function ChargeabilityPlotCard({
     [result.data, spec],
   );
 
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
+  const exportPlot = async (
+    format: PlotExportFormat,
+    baseName: string,
+    exportStyle: PlotStyle = style,
+  ) => {
     try {
       await downloadStyledPlotExport(
         traces,
         layout,
-        style,
+        exportStyle,
         plotName,
         format,
         baseName,
@@ -829,11 +833,11 @@ export function ChargeabilityPlotCard({
       });
     }
   };
-  const getExportPreview = () =>
-    styledPlotExportPreview(traces, layout, style, plotName, plotSize);
-  const dataExport = async (baseName: string) => {
+  const getExportPreview = (exportStyle: PlotStyle = style) =>
+    styledPlotExportPreview(traces, layout, exportStyle, plotName, plotSize);
+  const dataExport = async (baseName: string, exportStyle: PlotStyle = style) => {
     try {
-      await downloadDataExport(tracesToColumns(traces, layout), style, baseName);
+      await downloadDataExport(tracesToColumns(traces, layout), exportStyle, baseName);
     } catch (error) {
       notifications.show({
         color: "red",
@@ -876,20 +880,6 @@ export function ChargeabilityPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
-          seriesVisibility={{
-            items: seriesVisibilityItems,
-            onShowOnly: showOnlySeries,
-            onShowAll: showAllSeries,
-          }}
-          updateStyle={(fn) =>
-            update((draft) => {
-              const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=
-                {}) as Record<string, unknown>;
-              const current = (styles.chargeability ?? {}) as Record<string, unknown>;
-              fn(current as never);
-              styles.chargeability = current;
-            })
-          }
           layout={layout}
           viewSize={plotSize}
           canExport={traces.length > 0}

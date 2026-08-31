@@ -5,7 +5,6 @@ import {
   Divider,
   Group,
   Loader,
-  Menu,
   Paper,
   Popover,
   Progress,
@@ -19,8 +18,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconDownload,
-  IconEye,
-  IconEyeOff,
   IconInfoCircle,
   IconPlus,
   IconTable,
@@ -40,8 +37,7 @@ import { FilenameTemplateEditor } from "../../../../components/FilenameTemplateE
 import { renderExportFilename, sanitizeExportFilename } from "../../../../exportFilenames";
 import { resolveExportPlan } from "./plotExport";
 import { type PlotExplainer } from "./plotExplainers";
-import { DEFAULT_PLOT_STYLE } from "./plotStyle";
-import type { PlotSeriesVisibilityItem } from "../policies/analysisVisibility";
+import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "./plotStyle";
 
 const ASPECT_RATIO_OPTIONS: { value: PlotAspectRatioKey; label: string }[] = [
   { value: "view", label: "Current view" },
@@ -134,57 +130,6 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
   );
 }
 
-function PlotSeriesVisibilityMenu({
-  items,
-  onShowOnly,
-  onShowAll,
-}: {
-  items: PlotSeriesVisibilityItem[];
-  onShowOnly: (key: string) => void;
-  onShowAll: () => void;
-}) {
-  const canShowAll = items.some((item) => item.hidden);
-  if (items.length === 0) return null;
-  // With one visible target and no hidden user-level state, there is no useful
-  // action to expose. Keep the header compact until isolation is meaningful.
-  if (items.length === 1 && !canShowAll) return null;
-  return (
-    <Menu withinPortal position="bottom-end" shadow="md">
-      <Menu.Target>
-        <Button
-          size="xs"
-          variant={canShowAll ? "light" : "default"}
-          leftSection={<IconEye size={14} />}
-          aria-label="Series visibility"
-        >
-          Series visibility
-        </Button>
-      </Menu.Target>
-      <Menu.Dropdown>
-        <Menu.Label>CellXplorer series</Menu.Label>
-        {items.map((item) => (
-          <Menu.Item
-            key={item.key}
-            leftSection={item.hidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-            onClick={() => onShowOnly(item.key)}
-            title={item.label}
-          >
-            Show only {item.label}
-          </Menu.Item>
-        ))}
-        <Divider my={4} />
-        <Menu.Item
-          leftSection={<IconEye size={14} />}
-          disabled={!canShowAll}
-          onClick={onShowAll}
-        >
-          Show all series
-        </Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
-  );
-}
-
 export function PlotHeader({
   analysisTitle,
   tabName,
@@ -198,7 +143,6 @@ export function PlotHeader({
   onDataExport,
   getExportPreview,
   style,
-  updateStyle,
   viewSize,
   layout,
   canExport = false,
@@ -209,7 +153,6 @@ export function PlotHeader({
   onUpdatePlot,
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
-  seriesVisibility,
 }: {
   analysisTitle?: string;
   tabName?: string;
@@ -219,11 +162,10 @@ export function PlotHeader({
   xAxisName?: string;
   sampleSummary?: string;
   explainer?: PlotExplainer;
-  onExport?: (format: PlotExportFormat, baseName: string) => void;
-  onDataExport?: (baseName: string) => void;
-  getExportPreview?: () => Promise<string | null>;
+  onExport?: (format: PlotExportFormat, baseName: string, exportStyle: PlotStyle) => void;
+  onDataExport?: (baseName: string, exportStyle: PlotStyle) => void;
+  getExportPreview?: (exportStyle: PlotStyle) => Promise<string | null>;
   style?: PlotStyle;
-  updateStyle?: (fn: (style: PlotStyle) => void) => void;
   viewSize?: { width: number; height: number } | null;
   layout?: Partial<Plotly.Layout>;
   canExport?: boolean;
@@ -239,14 +181,19 @@ export function PlotHeader({
   updatePlotEnabled?: boolean;
   /** `Save as` for new drafts; `Update` for edited saved plots. */
   updatePlotLabel?: string;
-  /** Application-owned series visibility actions for this plot. */
-  seriesVisibility?: {
-    items: PlotSeriesVisibilityItem[];
-    onShowOnly: (key: string) => void;
-    onShowAll: () => void;
-  };
 }) {
-  const exportStyle = style ?? DEFAULT_PLOT_STYLE;
+  const persistedExportStyle = normalizePlotStyle(style);
+  const persistedStyleSignature = JSON.stringify(persistedExportStyle);
+  const [exportStyle, setExportStyleState] = useState<PlotStyle>(
+    () => persistedExportStyle,
+  );
+  useEffect(() => {
+    setExportStyleState(persistedExportStyle);
+    // The signature changes only when the persisted style changes. Keeping the
+    // normalized object out of the dependency list prevents local export
+    // choices from being reset on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedStyleSignature]);
   const plotExportEnabled = canPlotExport ?? canExport;
   const selectedFormat = exportStyle.export_format ?? "png";
   const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
@@ -268,7 +215,13 @@ export function PlotHeader({
   const ppi = Math.max(36, exportStyle.export_ppi || DEFAULT_PLOT_STYLE.export_ppi);
   const printWidthCm = (exportWidthValue / ppi) * 2.54;
   const printHeightCm = (exportHeightValue / ppi) * 2.54;
-  const setExportStyle = (fn: (style: PlotStyle) => void) => updateStyle?.(fn);
+  const setExportStyle = (fn: (style: PlotStyle) => void) => {
+    setExportStyleState((current) => {
+      const next = normalizePlotStyle(current);
+      fn(next);
+      return next;
+    });
+  };
   const setAspect = (value: PlotAspectRatioKey) => {
     setExportStyle((next) => {
       next.export_aspect_ratio = value;
@@ -302,11 +255,11 @@ export function PlotHeader({
     "plot",
   );
   const exportPlot = () => {
-    onExport?.(selectedFormat, renderedFilename);
+    onExport?.(selectedFormat, renderedFilename, exportStyle);
     setExportPopoverOpen(false);
   };
   const exportData = () => {
-    onDataExport?.(renderedFilename);
+    onDataExport?.(renderedFilename, exportStyle);
     setDataExportPopoverOpen(false);
   };
 
@@ -316,7 +269,7 @@ export function PlotHeader({
     if (!exportPopoverOpen || !getExportPreview || !plotExportEnabled) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      getExportPreview()
+      getExportPreview(exportStyle)
         .then((url) => {
           if (!cancelled) setPreviewUrl(url);
         })
@@ -363,13 +316,6 @@ export function PlotHeader({
       </div>
       <Group gap="xs" align="start">
         <PlotExplainerButton explainer={explainer} />
-        {seriesVisibility && (
-          <PlotSeriesVisibilityMenu
-            items={seriesVisibility.items}
-            onShowOnly={seriesVisibility.onShowOnly}
-            onShowAll={seriesVisibility.onShowAll}
-          />
-        )}
         {onDataExport && style && (
           <Button.Group>
             <Button
