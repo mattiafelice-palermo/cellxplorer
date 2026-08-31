@@ -74,17 +74,21 @@ export function timeCapacityPlaceholderData<T>(
 }
 
 /**
- * A retained compatible result is visible plot content, but it is not the
- * resolved result for the current request identity and must not be serialized
- * as a plot export.
+ * Decide whether the currently visible plot can be exported.
+ *
+ * Ordinary range navigation may temporarily retain the last resolved result
+ * while the replacement query is running. That result is still the complete
+ * plot shown to the user, so range replacement must not toggle export controls
+ * or close their settings menu. The transient flag is reserved for states
+ * whose visible result is only a pan/refill fallback.
  */
 export function timeCapacityPlotExportReady(
-  isPlaceholderData: boolean,
+  isTransientRenderState: boolean,
   hasCurrentResult: boolean,
   voltageUnavailable: boolean,
   hasTraces: boolean,
 ): boolean {
-  return !isPlaceholderData && hasCurrentResult && !voltageUnavailable && hasTraces;
+  return !isTransientRenderState && hasCurrentResult && !voltageUnavailable && hasTraces;
 }
 
 /** A transient pan/refill must never replace the last valid plot with an empty loader. */

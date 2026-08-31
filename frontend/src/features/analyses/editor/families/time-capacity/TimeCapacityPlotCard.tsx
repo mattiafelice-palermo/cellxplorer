@@ -2421,8 +2421,12 @@ function TimeCapacityPlotCardView({
       ),
     ];
   }, [cfg.stacked, panPresentationActive, refinementTransition, refinementTransitionProgress]);
+  // A committed range replacement keeps the last complete result/spec pair
+  // visible while its query resolves. It must not make the export controls
+  // flash or close their settings popover. Active pan/refill fallback remains
+  // blocked because it is not a stable export target.
   const plotExportReady = timeCapacityPlotExportReady(
-    panActive || timeResult.isPlaceholderData || resultIsRetainedPanFallback,
+    panActive || resultIsRetainedPanFallback,
     Boolean(currentResult),
     selectedVoltageUnavailable,
     exportTraces.length > 0,

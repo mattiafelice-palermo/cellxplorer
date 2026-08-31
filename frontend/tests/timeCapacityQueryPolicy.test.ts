@@ -162,9 +162,9 @@ test("placeholder data is retained only for the same compatibility identity", ()
   );
 });
 
-test("plot export is unavailable while a compatible placeholder is displayed", () => {
-  assert.equal(timeCapacityPlotExportReady(true, true, false, true), false);
+test("plot export remains available for a displayed range during query replacement", () => {
   assert.equal(timeCapacityPlotExportReady(false, true, false, true), true);
+  assert.equal(timeCapacityPlotExportReady(true, true, false, true), false);
   assert.equal(timeCapacityPlotExportReady(false, false, false, true), false);
   assert.equal(timeCapacityPlotExportReady(false, true, true, true), false);
   assert.equal(timeCapacityPlotExportReady(false, true, false, false), false);
@@ -204,7 +204,8 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
   assert.match(liveSource, /timeCapacityPlotExportReady/);
   assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
-  assert.match(liveSource, /panActive \|\| timeResult\.isPlaceholderData \|\| resultIsRetainedPanFallback/);
+  assert.match(liveSource, /panActive \|\| resultIsRetainedPanFallback/);
+  assert.match(liveSource, /timeResult\.isPlaceholderData \|\| resultIsRetainedPanFallback/);
   assert.match(liveSource, /const token = transientPreviewRequest \? null : newComputeToken\(\)/);
   assert.match(liveSource, /onReadyChange\?\.\(readyForParent\)/);
   assert.match(liveSource, /panSettlingWindowRef\.current = \{ \.\.\.range \}/);
