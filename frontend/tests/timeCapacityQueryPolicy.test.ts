@@ -214,6 +214,13 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /absolute_time_origin_cycle: panRequest\.window\.start/);
   assert.match(liveSource, /const panRelayoutInFlightRef = useRef\(false\)/);
   assert.match(liveSource, /if \(panPendingRef\.current\) queuePanFrameRef\.current\(\)/);
+  assert.match(liveSource, /timeCapacityCommittedNavigationOnRange/);
+  assert.match(liveSource, /timeCapacityCommittedNavigationOnRequestSettled/);
+  assert.match(liveSource, /scheduleCommittedNavigationRange\(range\)/);
+  assert.match(liveSource, /timeCapacitySpecWithCycleRange/);
+  assert.match(liveSource, /if \(cyclePreviewRange === null && committedNavigationRange\)/);
+  assert.match(liveSource, /timeCapacityPreviewOnMove\(/);
+  assert.match(liveSource, /timeCapacityBufferOnMove\(/);
   assert.match(navigationSource, /const final = previewAtPointer\(\s*event\.clientX,/s);
   assert.doesNotMatch(navigationSource, /onPreview\(finalRange, final\.position\)/);
   assert.match(navigationSource, /const final = previewAtPointer\([\s\S]*onCommit\(finalRange\);/);

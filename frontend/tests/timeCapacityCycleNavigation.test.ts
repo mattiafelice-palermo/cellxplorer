@@ -49,6 +49,10 @@ import {
   timeCapacityPreviewPromoteOnIdle,
   timeCapacityPreviewRequestIsCurrent,
   timeCapacityPreviewSchedulerInitialState,
+  timeCapacityCommittedNavigationOnRange,
+  timeCapacityCommittedNavigationOnRequestSettled,
+  timeCapacityCommittedNavigationRequestIsCurrent,
+  timeCapacityCommittedNavigationSchedulerInitialState,
   timeCapacityRangeNavigationDisabled,
   timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
@@ -361,6 +365,82 @@ test("delayed moving requests are backpressured and retain only the newest range
   assert.equal(timeCapacityPreviewMaxPoints(800, "moving"), 800);
   assert.equal(timeCapacityPreviewMaxPoints(4000, "full"), 4000);
   assert.deepEqual(canonical, { max_points_per_cell: 4000 });
+});
+
+test("committed navigation keeps one request active and promotes only the latest pending range", () => {
+  const first = { start: 1, end: 20 };
+  const second = { start: 2, end: 21 };
+  const third = { start: 3, end: 22 };
+
+  const leading = timeCapacityCommittedNavigationOnRange(
+    timeCapacityCommittedNavigationSchedulerInitialState(),
+    first,
+    "context-a",
+  );
+  assert.deepEqual(leading.request, {
+    range: first,
+    generation: 1,
+    contextSignature: "context-a",
+  });
+
+  let state = leading.state;
+  const firstRequest = leading.request!;
+  const queued = timeCapacityCommittedNavigationOnRange(state, second, "context-a");
+  state = queued.state;
+  assert.equal(queued.request, null);
+  assert.equal(state.inFlight, true);
+  assert.deepEqual(state.pendingRange, second);
+
+  const replaced = timeCapacityCommittedNavigationOnRange(state, third, "context-a");
+  state = replaced.state;
+  assert.equal(replaced.request, null);
+  assert.deepEqual(state.pendingRange, third);
+  assert.equal(timeCapacityCommittedNavigationRequestIsCurrent(state, firstRequest), true);
+
+  const promoted = timeCapacityCommittedNavigationOnRequestSettled(state, firstRequest);
+  assert.deepEqual(promoted.request?.range, third);
+  assert.equal(promoted.request?.generation, 4);
+  assert.equal(promoted.state.inFlight, true);
+  assert.equal(
+    timeCapacityCommittedNavigationRequestIsCurrent(promoted.state, promoted.request!),
+    true,
+  );
+  assert.equal(
+    timeCapacityCommittedNavigationOnRequestSettled(promoted.state, firstRequest).request,
+    null,
+  );
+
+  const complete = timeCapacityCommittedNavigationOnRequestSettled(
+    promoted.state,
+    promoted.request!,
+  );
+  assert.equal(complete.request, null);
+  assert.equal(complete.state.active, false);
+  assert.equal(complete.state.inFlight, false);
+  assert.equal(complete.state.publishedRequest, null);
+});
+
+test("committed navigation admits a new request when the plot context changes", () => {
+  const first = { start: 1, end: 20 };
+  const second = { start: 2, end: 21 };
+  const leading = timeCapacityCommittedNavigationOnRange(
+    timeCapacityCommittedNavigationSchedulerInitialState(),
+    first,
+    "context-a",
+  );
+  const changed = timeCapacityCommittedNavigationOnRange(
+    leading.state,
+    second,
+    "context-b",
+  );
+
+  assert.deepEqual(changed.request?.range, second);
+  assert.equal(changed.state.contextSignature, "context-b");
+  assert.equal(timeCapacityCommittedNavigationRequestIsCurrent(changed.state, leading.request!), false);
+  assert.equal(
+    timeCapacityCommittedNavigationRequestIsCurrent(changed.state, changed.request!),
+    true,
+  );
 });
 
 test("idle promotion sharpens the same range and renewed movement obsoletes it immediately", () => {

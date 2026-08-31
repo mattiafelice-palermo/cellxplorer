@@ -38,6 +38,26 @@ export interface TimeCapacityPreviewSchedulerDecision {
   waitMs: number | null;
 }
 
+export interface TimeCapacityCommittedNavigationRequest {
+  range: TimeCapacityCycleRange;
+  generation: number;
+  contextSignature: string;
+}
+
+export interface TimeCapacityCommittedNavigationSchedulerState {
+  active: boolean;
+  generation: number;
+  contextSignature: string | null;
+  inFlight: boolean;
+  pendingRange: TimeCapacityCycleRange | null;
+  publishedRequest: TimeCapacityCommittedNavigationRequest | null;
+}
+
+export interface TimeCapacityCommittedNavigationSchedulerDecision {
+  state: TimeCapacityCommittedNavigationSchedulerState;
+  request: TimeCapacityCommittedNavigationRequest | null;
+}
+
 export type TimeCapacityCycleRangePatch = {
   start?: number | string | null;
   end?: number | string | null;
@@ -271,6 +291,127 @@ export function timeCapacityPreviewRequestIsCurrent(
     state.publishedRequest !== null &&
     state.publishedRequest.generation === request.generation &&
     state.publishedRequest.resolution === request.resolution &&
+    cycleRangesEqual(state.publishedRequest.range, request.range)
+  );
+}
+
+export function timeCapacityCommittedNavigationSchedulerInitialState():
+  TimeCapacityCommittedNavigationSchedulerState {
+  return {
+    active: false,
+    generation: 0,
+    contextSignature: null,
+    inFlight: false,
+    pendingRange: null,
+    publishedRequest: null,
+  };
+}
+
+function committedNavigationRequest(
+  range: TimeCapacityCycleRange,
+  generation: number,
+  contextSignature: string,
+): TimeCapacityCommittedNavigationRequest {
+  return { range: { ...range }, generation, contextSignature };
+}
+
+function admitCommittedNavigationRequest(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  range: TimeCapacityCycleRange,
+  generation: number,
+  contextSignature: string,
+): TimeCapacityCommittedNavigationSchedulerDecision {
+  const request = committedNavigationRequest(range, generation, contextSignature);
+  return {
+    state: {
+      ...state,
+      active: true,
+      generation,
+      contextSignature,
+      inFlight: true,
+      pendingRange: null,
+      publishedRequest: request,
+    },
+    request,
+  };
+}
+
+/** Admit one committed range and keep only the newest range while it runs. */
+export function timeCapacityCommittedNavigationOnRange(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  range: TimeCapacityCycleRange,
+  contextSignature: string,
+): TimeCapacityCommittedNavigationSchedulerDecision {
+  const nextGeneration = state.generation + 1;
+  if (state.inFlight && state.contextSignature === contextSignature) {
+    const current = state.publishedRequest?.range;
+    return {
+      state: {
+        ...state,
+        generation: nextGeneration,
+        pendingRange:
+          current && cycleRangesEqual(current, range) ? null : { ...range },
+      },
+      request: null,
+    };
+  }
+  return admitCommittedNavigationRequest(state, range, nextGeneration, contextSignature);
+}
+
+/** Complete one committed request, immediately admitting the latest pending range. */
+export function timeCapacityCommittedNavigationOnRequestSettled(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  request: TimeCapacityCommittedNavigationRequest,
+): TimeCapacityCommittedNavigationSchedulerDecision {
+  if (
+    !state.active ||
+    !state.inFlight ||
+    state.publishedRequest === null ||
+    state.publishedRequest.generation !== request.generation ||
+    state.publishedRequest.contextSignature !== request.contextSignature ||
+    !cycleRangesEqual(state.publishedRequest.range, request.range)
+  ) {
+    return { state, request: null };
+  }
+
+  if (state.pendingRange && !cycleRangesEqual(state.pendingRange, request.range)) {
+    return admitCommittedNavigationRequest(
+      state,
+      state.pendingRange,
+      state.generation + 1,
+      request.contextSignature,
+    );
+  }
+
+  return {
+    state: {
+      ...timeCapacityCommittedNavigationSchedulerInitialState(),
+      generation: state.generation,
+    },
+    request: null,
+  };
+}
+
+/** Cancel committed navigation work when the plot context changes or a preview starts. */
+export function timeCapacityCommittedNavigationCancel(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+): TimeCapacityCommittedNavigationSchedulerState {
+  return {
+    ...timeCapacityCommittedNavigationSchedulerInitialState(),
+    generation: state.generation + 1,
+  };
+}
+
+export function timeCapacityCommittedNavigationRequestIsCurrent(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  request: TimeCapacityCommittedNavigationRequest,
+): boolean {
+  return (
+    state.active &&
+    state.inFlight &&
+    state.publishedRequest !== null &&
+    state.publishedRequest.generation === request.generation &&
+    state.publishedRequest.contextSignature === request.contextSignature &&
     cycleRangesEqual(state.publishedRequest.range, request.range)
   );
 }

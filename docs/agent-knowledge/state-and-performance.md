@@ -307,6 +307,14 @@ windows only; every response is independently re-zeroed, moving requests use lat
 backpressure and a mildly reduced point budget, and placeholder data keeps the previous plot visible
 until the newest admitted window is ready.
 
+Ordinary committed cycle navigation has a separate request-admission boundary: the first selected
+range remains the only in-flight query and subsequent button/jump/history selections replace one
+latest pending range. The parent analysis spec is still updated for the intentional dirty state, so
+the current range is persisted only by the explicit plot Update action. A semantic plot-setting
+change or the start of slider preview cancels this committed-navigation session; slider preview and
+buffered panning continue to use their own schedulers and are never routed through the committed
+range request.
+
 Adaptive Time refinement is also display-only and ephemeral. Its response-generation check remains
 strict for accepting a newly arriving response, but it is independent from the compatibility check
 for the refinement already on screen: a compatible old viewport may remain visible while a newer

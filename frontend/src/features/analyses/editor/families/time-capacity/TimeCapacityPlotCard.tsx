@@ -151,9 +151,16 @@ import {
   timeCapacityPreviewPromoteOnIdle,
   timeCapacityPreviewRequestIsCurrent,
   timeCapacityPreviewSchedulerInitialState,
+  timeCapacityCommittedNavigationCancel,
+  timeCapacityCommittedNavigationOnRange,
+  timeCapacityCommittedNavigationOnRequestSettled,
+  timeCapacityCommittedNavigationRequestIsCurrent,
+  timeCapacityCommittedNavigationSchedulerInitialState,
   TIME_CAPACITY_PREVIEW_IDLE_MS,
   TIME_CAPACITY_PREVIEW_MOVING_INTERVAL_MS,
   type TimeCapacityCycleRange,
+  type TimeCapacityCommittedNavigationRequest,
+  type TimeCapacityCommittedNavigationSchedulerState,
   type TimeCapacityPreviewRequest,
   type TimeCapacityPreviewSchedulerState,
 } from "./timeCapacityCycleNavigationPolicy";
@@ -210,6 +217,8 @@ const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   path: "M64 64h144v144H64zM304 64h144v144H304zM64 304h144v144H64zM304 304h144v144H304z",
 };
 
+const TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH = 1200;
+
 function timeCapacitySpecWithPreview(
   spec: AnalysisSpec,
   range: TimeCapacityCycleRange,
@@ -228,6 +237,24 @@ function timeCapacitySpecWithPreview(
         max_points_per_cell:
           maxPointsOverride ??
           timeCapacityPreviewMaxPoints(config.max_points_per_cell, resolution),
+      },
+    },
+  };
+}
+
+function timeCapacitySpecWithCycleRange(
+  spec: AnalysisSpec,
+  range: TimeCapacityCycleRange,
+): AnalysisSpec {
+  const config = timeCapacityConfig(spec);
+  return {
+    ...spec,
+    computation: {
+      ...spec.computation,
+      time_capacity: {
+        ...config,
+        cycle_start: range.start,
+        cycle_end: range.end,
       },
     },
   };
@@ -1592,6 +1619,46 @@ function TimeCapacityPlotCardView({
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
   const [panWarmRange, setPanWarmRange] = useState<TimeCapacityCycleRange | null>(null);
   const [previewRequest, setPreviewRequest] = useState<TimeCapacityPreviewRequest | null>(null);
+  const [committedNavigationRequest, setCommittedNavigationRequest] =
+    useState<TimeCapacityCommittedNavigationRequest | null>(null);
+  const committedNavigationSchedulerRef = useRef<TimeCapacityCommittedNavigationSchedulerState>(
+    timeCapacityCommittedNavigationSchedulerInitialState(),
+  );
+  // Navigation changes still pass through the parent update callback so they
+  // remain dirty until the user explicitly saves or discards them. This
+  // context signature lets the request admission layer coalesce only range
+  // changes while immediately abandoning it for a real plot-setting change.
+  const committedNavigationContextSignature = useMemo(
+    () => JSON.stringify({
+      navigationResetKey: navigationResetKey ?? "",
+      compatibility: timeCapacityCompatibilitySignature(
+        spec,
+        cfg,
+        TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH,
+      ),
+      cycles: cfg.cycles,
+      max_points_per_cell: cfg.max_points_per_cell,
+    }),
+    [cfg, navigationResetKey, spec],
+  );
+  const cancelCommittedNavigation = useCallback(() => {
+    committedNavigationSchedulerRef.current = timeCapacityCommittedNavigationCancel(
+      committedNavigationSchedulerRef.current,
+    );
+    setCommittedNavigationRequest(null);
+  }, []);
+  const scheduleCommittedNavigationRange = useCallback(
+    (range: TimeCapacityCycleRange) => {
+      const decision = timeCapacityCommittedNavigationOnRange(
+        committedNavigationSchedulerRef.current,
+        range,
+        committedNavigationContextSignature,
+      );
+      committedNavigationSchedulerRef.current = decision.state;
+      if (decision.request) setCommittedNavigationRequest(decision.request);
+    },
+    [committedNavigationContextSignature],
+  );
   const [panRequest, setPanRequest] = useState<TimeCapacityBufferRequest | null>(null);
   const panSchedulerRef = useRef<TimeCapacityBufferSchedulerState>(
     timeCapacityBufferSchedulerInitialState(),
@@ -1654,6 +1721,15 @@ function TimeCapacityPlotCardView({
     panSchedulerRef.current = timeCapacityBufferCancel(panSchedulerRef.current);
     setPanRequest(null);
   }, [clearPanIdleTimer]);
+  useEffect(() => {
+    const scheduler = committedNavigationSchedulerRef.current;
+    if (
+      scheduler.contextSignature !== null &&
+      scheduler.contextSignature !== committedNavigationContextSignature
+    ) {
+      cancelCommittedNavigation();
+    }
+  }, [cancelCommittedNavigation, committedNavigationContextSignature]);
   const panPlanFor = useCallback(
     (range: TimeCapacityCycleRange, motion: TimeCapacityPanMotion | null) => {
       if (!maxAvailableCycle) return null;
@@ -1803,7 +1879,13 @@ function TimeCapacityPlotCardView({
     panSettlingWindowRef.current = null;
     cancelPreviewScheduler();
     cancelPanScheduler();
-  }, [cancelPanScheduler, cancelPreviewScheduler, navigationResetKey]);
+    cancelCommittedNavigation();
+  }, [
+    cancelCommittedNavigation,
+    cancelPanScheduler,
+    cancelPreviewScheduler,
+    navigationResetKey,
+  ]);
   useEffect(
     () => () => {
       clearPreviewTimers();
@@ -1821,6 +1903,10 @@ function TimeCapacityPlotCardView({
       cancelPanScheduler();
       return;
     }
+    // A pointer preview owns the request boundary while the slider is open.
+    // Abandon any ordinary committed navigation request so it cannot compete
+    // with the existing moving/buffered preview schedulers.
+    cancelCommittedNavigation();
     if (panningEnabled && maxAvailableCycle) {
       cancelPreviewScheduler();
       panSettlingWindowRef.current = null;
@@ -1873,6 +1959,7 @@ function TimeCapacityPlotCardView({
   }, [
     cancelPreviewScheduler,
     cancelPanScheduler,
+    cancelCommittedNavigation,
     clearPreviewIdleTimer,
     clearPreviewMovingTimer,
     applyPanDecision,
@@ -1888,6 +1975,10 @@ function TimeCapacityPlotCardView({
   // directional buffer, so fast movement cannot cancel every refill.
   const panActive = panningEnabled && cyclePreviewRange !== null;
   const panBufferRequestActive = panActive && panRequest !== null;
+  const committedNavigationRange =
+    committedNavigationRequest?.contextSignature === committedNavigationContextSignature
+      ? committedNavigationRequest.range
+      : null;
 
   const requestSpec = useMemo(() => {
     if (panBufferRequestActive && panRequest) {
@@ -1898,9 +1989,21 @@ function TimeCapacityPlotCardView({
         panRequest.maxPoints,
       );
     }
-    if (!previewRequest) return spec;
-    return timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution);
-  }, [panBufferRequestActive, panRequest, previewRequest, spec]);
+    if (previewRequest) {
+      return timeCapacitySpecWithPreview(spec, previewRequest.range, previewRequest.resolution);
+    }
+    if (cyclePreviewRange === null && committedNavigationRange) {
+      return timeCapacitySpecWithCycleRange(spec, committedNavigationRange);
+    }
+    return spec;
+  }, [
+    committedNavigationRange,
+    cyclePreviewRange,
+    panBufferRequestActive,
+    panRequest,
+    previewRequest,
+    spec,
+  ]);
   const previewQueryRange = previewRequest?.range ?? null;
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
@@ -1918,7 +2021,9 @@ function TimeCapacityPlotCardView({
   refinementLifecycle.setStacked(cfg.stacked);
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
-  const viewportWidth = panBufferRequestActive ? TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH : 1200;
+  const viewportWidth = panBufferRequestActive
+    ? TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH
+    : TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH;
   // Keep this separate from dataSignature. Range and point-density changes
   // may retain the old compact result while the replacement is fetched, but
   // a semantic/display change must never relabel that result temporarily.
@@ -2153,6 +2258,35 @@ function TimeCapacityPlotCardView({
   )
     ? timeResult.data
     : undefined;
+  useEffect(() => {
+    const request = committedNavigationRequest;
+    if (
+      !request ||
+      request.contextSignature !== committedNavigationContextSignature ||
+      !timeCapacityCommittedNavigationRequestIsCurrent(
+        committedNavigationSchedulerRef.current,
+        request,
+      ) ||
+      timeResult.isFetching
+    ) return;
+    // A cache hit has no queryFn boundary, so the settled query state is the
+    // completion signal for both cached and HTTP responses. Do not promote a
+    // placeholder-only frame; it still belongs to the previous range.
+    if (!timeResult.isError && (timeResult.isPlaceholderData || !queryResult)) return;
+    const decision = timeCapacityCommittedNavigationOnRequestSettled(
+      committedNavigationSchedulerRef.current,
+      request,
+    );
+    committedNavigationSchedulerRef.current = decision.state;
+    setCommittedNavigationRequest(decision.request);
+  }, [
+    committedNavigationContextSignature,
+    committedNavigationRequest,
+    queryResult,
+    timeResult.isError,
+    timeResult.isFetching,
+    timeResult.isPlaceholderData,
+  ]);
   const lastValidPanResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   if (queryResult) lastValidPanResultRef.current = queryResult;
   const retainPanResult = panActive || panSettlingWindowRef.current !== null;
@@ -2725,6 +2859,10 @@ function TimeCapacityPlotCardView({
         panLivePositionRef.current = range.start;
         panVisualUpdateRef.current(range, range.start);
       }
+      // Keep the parent update for the intentional dirty-state semantics, but
+      // admit committed data requests latest-wins so rapid buttons cannot
+      // cancel every request before one produces a frame.
+      scheduleCommittedNavigationRange(range);
       update((s) => {
         const next = timeCapacityConfig(s);
         next.cycle_start = range.start;
@@ -2732,7 +2870,7 @@ function TimeCapacityPlotCardView({
         s.computation.time_capacity = next;
       });
     },
-    [update],
+    [scheduleCommittedNavigationRange, update],
   );
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     zoom.onRelayout(event);
