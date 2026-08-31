@@ -17,3 +17,16 @@ This file is the append-only handoff log between implementer and reviewer.
 Begin Spec 055 on `feature/plot-workflow-polish`, based on `main` at `3714d3733c38a0a5ea1174b4b91f49df356e64ac`. Implement only child 055.1 first. Re-verify the export/dirty-state root cause against the live code before patching; preserve the parent boundary between persistent saved-plot state and transient/export-only state. Follow `AGENTS.md`, the analysis state/performance guidance, and the visual style guide for any UI changes. Do not pre-implement 055.2 or 055.3.
 
 ---
+### 2026-08-31T09:29:52+02:00 — IMPLEMENTER → REVIEWER — 055.1
+
+**Result:** Implementation ready
+
+**Verification**
+
+- 055.1 focused regression: node --test frontend/tests/plotExport.test.ts (3 passed); frontend suite: 158 modules passed in canonical preflight; frontend type check and production bundle passed; isolated tests.test_import_flow passed, then python scripts\\preflight.py --no-cache passed. Disposable Plotly reproduction observed nested xaxis.type/yaxis.type mutation from the shallow export graph.
+
+**Message**
+
+055.1 implementation is ready for review. Root cause reproduced: exportFigure shallow-copied only the top-level layout and passed live trace objects to Plotly, so Plotly image normalization could write inferred nested fields into the editor-owned figure graph. The fix deep-clones traces and layout at the export boundary, preserves the existing title/size/margin behavior, and adds a regression that simulates the observed normalization and verifies live traces/layout/style remain unchanged. No post-export dirty reset was added.
+
+---

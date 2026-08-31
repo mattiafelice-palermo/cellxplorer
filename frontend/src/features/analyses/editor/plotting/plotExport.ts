@@ -167,6 +167,24 @@ async function plotlyToImage(figure: unknown, options: unknown): Promise<string>
   ).toImage(figure, options);
 }
 
+/**
+ * Plotly's image renderer normalizes nested figure objects in place. Keep
+ * those writes inside an export-only object graph: the live layout and trace
+ * objects are derived from the editor's current view and must not be exposed
+ * to an image renderer's mutations.
+ */
+function cloneExportInput<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Plotly figures should be JSON-compatible. The fallback also keeps the
+      // export usable in older WebViews without structuredClone.
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -330,17 +348,17 @@ export function exportFigure(
   plotName: string,
   plan: ExportPlan
 ) {
-  const exportLayout: Partial<Plotly.Layout> = {
+  const exportLayout = cloneExportInput<Partial<Plotly.Layout>>({
     ...layout,
     width: plan.layoutWidth,
     height: plan.layoutHeight,
     autosize: false,
-    margin: plan.margin,
-  };
+    margin: { ...plan.margin },
+  });
   if (style.export_include_title) {
     exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
   }
-  return { data: traces, layout: exportLayout };
+  return { data: cloneExportInput(traces), layout: exportLayout };
 }
 
 export async function styledPlotExportPreview(
