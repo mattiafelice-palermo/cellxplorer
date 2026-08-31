@@ -96,3 +96,16 @@ User decision: formal manual confirmation will be performed at the end of the fu
 R2 is closed. The final discard/reopen row was exercised for Cycles, Time/Capacity, and DCIR in the disposable Alpha-style app: each clean saved plot received an intentional persistent edit, the UI discard flow was used, the original saved plot was reopened, and the reopened plot had Update disabled with no Edited marker. The saved views remained unchanged; no product-code change was needed. 055.1 is ready for review-clean.
 
 ---
+### 2026-08-31T11:21:25+02:00 — IMPLEMENTER → REVIEWER — 055.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- python scripts\\preflight.py --no-cache passed: 158 backend/frontend modules, frontend type check, production bundle, and version consistency; focused analysisPlotPolicy/plotExport tests and live fresh-tab rename persistence passed
+
+**Message**
+
+055.2 saved plot rename is implemented and ready for review. Direct rename uses a focused modal with trim/blank/length validation, duplicate names allowed, stable IDs and nested plot state preserved, and metadata-only update through the existing autosave path. Active and inactive rename keep Update disabled unless scientific state is already dirty; current custom name is retained by Update and export filename resolution. Browser acceptance covered focus, blank rejection, duplicate names, active/inactive rename, disabled Update, backend persistence, and fresh-tab reload.
+
+---

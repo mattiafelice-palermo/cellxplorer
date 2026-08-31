@@ -5,6 +5,7 @@ import {
   buildDelimitedText,
   exportFigure,
   resolveExportPlan,
+  slugFilename,
   tracesToColumns,
 } from "../src/features/analyses/editor/plotting/plotExport.ts";
 import { DEFAULT_PLOT_STYLE } from "../src/features/analyses/editor/plotting/plotStyle.ts";
@@ -157,4 +158,9 @@ test("export cannot dirty a saved-view signature, while an export preference can
     withIntentionalPreferenceChange.presentation.plot_styles!.cycles!.export_format,
     "svg",
   );
+});
+
+test("saved plot names remain the sanitized export filename base", () => {
+  assert.equal(slugFilename("Gen2H 6 bar retention"), "gen2h-6-bar-retention");
+  assert.equal(slugFilename("Unsaved plot"), "unsaved-plot");
 });

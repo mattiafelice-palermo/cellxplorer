@@ -3,10 +3,13 @@ import test from "node:test";
 
 import {
   plotViewSignature,
+  renameSavedPlotInList,
   savedPlotPreviewSignature,
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
+  validateSavedPlotName,
 } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
+import type { SavedAnalysisPlot } from "../src/api.ts";
 
 function makeSpec(
   entries: { kind: "cell" | "replicate_group"; ref_id: number }[],
@@ -42,6 +45,81 @@ function makeSpec(
     saved_plots: [],
   } as const;
 }
+
+function makeSavedPlot(id: string, name: string): SavedAnalysisPlot {
+  const base = makeSpec([{ kind: "cell", ref_id: 1 }], []);
+  return {
+    id,
+    tab: "cycles",
+    name,
+    subtitle: "view",
+    description: "description",
+    selection: { entries: [], exclusions: [], hidden_replicate_group_ids: [] },
+    computation: base.computation,
+    aggregation: base.aggregation,
+    presentation: base.presentation,
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+test("saved plot rename changes only target metadata and trims the name", () => {
+  const first = makeSavedPlot("p1", "First");
+  const second = makeSavedPlot("p2", "Second");
+  const original = [first, second];
+  const result = renameSavedPlotInList(original, "p1", "  Shared view  ", "2026-01-02T00:00:00Z");
+
+  assert.equal(result.error, null);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.plots[0], {
+    ...first,
+    name: "Shared view",
+    modified_at: "2026-01-02T00:00:00Z",
+  });
+  assert.deepEqual(result.plots[1], second);
+  assert.deepEqual(original, [first, second]);
+  assert.equal(result.plots[0].id, "p1");
+  assert.equal(result.plots[0].tab, "cycles");
+  assert.strictEqual(result.plots[0].selection, first.selection);
+  assert.strictEqual(result.plots[0].computation, first.computation);
+  assert.strictEqual(result.plots[0].aggregation, first.aggregation);
+  assert.strictEqual(result.plots[0].presentation, first.presentation);
+});
+
+test("saved plot rename validates blank and overlong names, while allowing duplicates", () => {
+  const plots = [makeSavedPlot("p1", "First"), makeSavedPlot("p2", "Second")];
+  const blank = renameSavedPlotInList(plots, "p1", " \t");
+  const tooLong = renameSavedPlotInList(plots, "p1", "x".repeat(121));
+  const first = renameSavedPlotInList(plots, "p1", "Shared");
+  const duplicate = renameSavedPlotInList(first.plots, "p2", " Shared ");
+
+  assert.match(blank.error ?? "", /Enter a saved plot name/);
+  assert.match(tooLong.error ?? "", /120 characters or fewer/);
+  assert.equal(first.error, null);
+  assert.equal(duplicate.error, null);
+  assert.equal(duplicate.plots[0].name, "Shared");
+  assert.equal(duplicate.plots[1].name, "Shared");
+});
+
+test("unchanged rename is a no-op and rename does not affect scientific dirty signatures", () => {
+  const saved = makeSavedPlot("p1", "First");
+  const original = [saved];
+  const unchanged = renameSavedPlotInList(original, "p1", " First ", "2026-01-02T00:00:00Z");
+  const current = structuredClone(makeSpec([{ kind: "cell", ref_id: 1 }], [])) as any;
+  current.saved_plots = [saved];
+  current.presentation.quantity = "charge_capacity";
+  const currentSignature = plotViewSignature(current);
+  const renamed = renameSavedPlotInList(current.saved_plots, "p1", "Renamed", "2026-01-02T00:00:00Z");
+  const renamedCurrent = { ...current, saved_plots: renamed.plots };
+
+  assert.equal(unchanged.error, null);
+  assert.equal(unchanged.changed, false);
+  assert.strictEqual(unchanged.plots, original);
+  assert.equal(validateSavedPlotName("  Renamed  ").value, "Renamed");
+  assert.equal(plotViewSignature(renamedCurrent), currentSignature);
+  assert.notEqual(plotViewSignature(current), plotViewSignature(specForSavedPlotView(current, saved)));
+  assert.equal(renamedCurrent.saved_plots[0].id, "p1");
+});
 
 test("saved plots store hidden cells but not sample membership", () => {
   const spec = makeSpec(

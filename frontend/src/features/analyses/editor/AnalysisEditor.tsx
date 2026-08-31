@@ -132,8 +132,10 @@ import {
 } from "./policies/analysisDraftPolicy";
 import {
   plotViewSignature,
+  renameSavedPlotInList,
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
+  validateSavedPlotName,
 } from "./policies/analysisPlotPolicy";
 import {
   DebouncedNumberInput,
@@ -3385,6 +3387,31 @@ function AnalysisEditorView({
     afterUpdate?.();
   };
 
+  const renameSavedPlot = (plotId: string, name: string) => {
+    if (!spec) return;
+    const validation = validateSavedPlotName(name);
+    if (validation.error) {
+      notifications.show({ message: validation.error, color: "red" });
+      return;
+    }
+    const target = (spec.saved_plots ?? []).find((plot) => plot.id === plotId);
+    if (!target) {
+      notifications.show({ message: "Saved plot not found.", color: "red" });
+      return;
+    }
+    if (target.name === validation.value) return;
+    const modifiedAt = new Date().toISOString();
+    update((s) => {
+      const result = renameSavedPlotInList(
+        s.saved_plots ?? [],
+        plotId,
+        validation.value,
+        modifiedAt,
+      );
+      if (result.changed) s.saved_plots = result.plots;
+    });
+  };
+
   const openSavedPlotDirect = (plot: SavedAnalysisPlot) => {
     const restoredForBaseline = specForSavedPlot(spec, plot);
     if (plot.tab === "time_capacity") {
@@ -3994,6 +4021,7 @@ function AnalysisEditorView({
           })
         }
         onOpen={openSavedPlot}
+        onRename={renameSavedPlot}
         onDelete={(plotId) => {
           update((s) => void (s.saved_plots = (s.saved_plots ?? []).filter((plot) => plot.id !== plotId)));
           if (activeSavedPlotId === plotId) {
