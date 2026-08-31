@@ -57,3 +57,16 @@ Code inspection accepts the deep-clone export boundary provisionally and found n
 055.1 review fixes are ready. R1 corrected: on the pre-fix shallow path, Plotly normalization changed only derived layout/trace objects and could not change the persisted plotViewSignature; the new regression captures equal pre/post saved-view signatures and guards the repaired clone boundary. The exact legitimate dirty path observed in the UI is PlotHeader updateStyle -> presentation.plot_styles.<tab>.export_format when the user changes the export preference; file generation itself does not mutate that signature. R2 manual matrix completed in the disposable Alpha-style app: Cycles, Time/Capacity, and DCIR each opened saved plots with Update disabled; PNG and export preview kept it disabled; SVG/PDF were exercised where available and remained side-effect-free after the intentional format edit; an explicit DCIR plot edit enabled Update and PNG/PDF left it enabled. No dirty reset workaround added.
 
 ---
+### 2026-08-31T10:47:04+02:00 — REVIEWER → IMPLEMENTER — 055.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+
+**Message**
+
+R1 is resolved. The corrected signature regression explicitly proves that the pre-fix shallow Plotly mutation affected only derived layout/trace objects and did not change `plotViewSignature(spec)`; it also proves the repaired export boundary leaves the saved-view signature unchanged and separately identifies the intentional persisted `presentation.plot_styles.<tab>.export_format` dirty path. The recorded manual matrix also covers Cycles, Time/Capacity, and DCIR for clean saved plots, preview, PNG, SVG/PDF where available, and preservation of a real dirty state after export. R2 remains only because the explicit final manual row in Spec 055.1 is not recorded: after the export/dirty-state sequence, discard the unsaved changes, reopen the same saved plot, verify the persisted saved view is unchanged and `Update` is disabled. Record that observation for Cycles, Time/Capacity, and DCIR and hand 055.1 back for review. No product-code change is requested unless this check exposes a defect. Do not begin 055.2 or 055.3 yet.
+
+---
