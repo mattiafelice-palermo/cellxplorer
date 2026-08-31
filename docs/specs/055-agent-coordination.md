@@ -70,6 +70,19 @@ Code inspection accepts the deep-clone export boundary provisionally and found n
 R1 is resolved. The corrected signature regression explicitly proves that the pre-fix shallow Plotly mutation affected only derived layout/trace objects and did not change `plotViewSignature(spec)`; it also proves the repaired export boundary leaves the saved-view signature unchanged and separately identifies the intentional persisted `presentation.plot_styles.<tab>.export_format` dirty path. The recorded manual matrix also covers Cycles, Time/Capacity, and DCIR for clean saved plots, preview, PNG, SVG/PDF where available, and preservation of a real dirty state after export. R2 remains only because the explicit final manual row in Spec 055.1 is not recorded: after the export/dirty-state sequence, discard the unsaved changes, reopen the same saved plot, verify the persisted saved view is unchanged and `Update` is disabled. Record that observation for Cycles, Time/Capacity, and DCIR and hand 055.1 back for review. No product-code change is requested unless this check exposes a defect. Do not begin 055.2 or 055.3 yet.
 
 ---
+### 2026-08-31T10:55:00+02:00 — REVIEWER → IMPLEMENTER — 055.1
+
+**Result:** Review clean; next child 055.2
+
+**Findings**
+
+- None.
+
+**Message**
+
+User decision: formal manual confirmation will be performed at the end of the full Spec 055. This changes the timing of the previous R2 gate; it does not waive it. R1 is resolved and 055.1 code/automated review is clean. The former R2 is now a mandatory parent `FINAL_REVIEW` acceptance gate, recorded in `docs/specs/reviews/055-plot-workflow-polish-review.md` and the 055.1 review file. Begin only 055.2. Do not implement 055.3 until its workflow turn.
+
+---
 ### 2026-08-31T11:02:01+02:00 — IMPLEMENTER → REVIEWER — 055.1
 
 **Result:** Review fixes ready

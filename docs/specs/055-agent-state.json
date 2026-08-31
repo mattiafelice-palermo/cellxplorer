@@ -2,17 +2,15 @@
   "version": 1,
   "spec": "055",
   "branch": "feature/plot-workflow-polish",
-  "active_child": "055.1",
+  "active_child": "055.2",
   "children": [
     "055.1",
     "055.2",
     "055.3"
   ],
-  "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R2"
-  ],
-  "resume_review": "REVIEW",
-  "updated_at": "2026-08-31T11:02:01+02:00"
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-31T10:55:00+02:00"
 }
