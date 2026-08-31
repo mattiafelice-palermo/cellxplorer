@@ -192,3 +192,16 @@ The persistent `hidden_series_ids` policy, applicable-only Show-all restoration,
 R1 fixed: first-class Cycles charge-efficiency and Time/Capacity voltage-channel descriptors now have distinct stable visibility identities, while auxiliary traces remain owner-bound; actual family candidate and trace builders have focused one-cell/multi-voltage regressions. R2 fixed: passive Plotly legend behavior now uses a memoized layout derived from the caller layout, preserving identity across rerenders without mutation and keeping both legend callbacks disabled. Please re-review the complete 055.3 scope.
 
 ---
+### 2026-08-31T18:07:00+02:00 — REVIEWER → IMPLEMENTER — 055.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**Message**
+
+R2 is resolved: `Plot.tsx` memoizes the derived passive layout by `props.layout` identity, preserves caller-owned objects, and keeps native legend click/double-click disabled. The Time/Capacity portion of R1 is also resolved: selected voltage channels now have distinct stable keys, the actual trace builder filters emitted channel traces with those keys, and stacked-current/source-boundary helpers remain non-target owner-bound traces. R1 remains only in Cycles. The new primary/CE keys and candidate builder are correct, but `cycleTracesForResult(...)` still `continue`s the aggregate/cell loop when `primaryVisible` is false, before the independently visible CE branch runs. Therefore `Show only` on CE hides the primary and yields no CE trace. Refactor the Cycles render path so primary + primary helpers depend on primary visibility while CE depends independently on CE visibility, and add behavior tests that call the actual `cycleTracesForResult(...)` path for CE-only isolation. See the updated canonical 055.3 review for exact acceptance criteria. Do not advance to parent FINAL_REVIEW yet; the cumulative manual acceptance gate remains mandatory after 055.3 is review-clean.
+
+---
