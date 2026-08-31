@@ -44,3 +44,16 @@ Begin Spec 055 on `feature/plot-workflow-polish`, based on `main` at `3714d3733c
 Code inspection accepts the deep-clone export boundary provisionally and found no post-export dirty-reset workaround. R1 remains because the committed reproduction/test does not connect Plotly's derived-layout mutation to the persisted `plotViewSignature(spec)` that actually drives `activePlotDirty`; reproduce and record the pre/post saved-view signatures plus the exact persistent field/reference that changes, and correct the diagnosis if the former shallow export path cannot produce that change. R2 preserves the explicit manual acceptance matrix for Cycles, Time/Capacity, and one additional shared-export family, including unchanged and already-dirty saved plots, export preview, and PNG/SVG/PDF where available; no manual run is reported. Do not begin 055.2 or 055.3 while R1 or R2 remains open. See `docs/specs/reviews/055.1-export-without-dirtying-plot-state-review.md` for the exact acceptance criteria.
 
 ---
+### 2026-08-31T10:44:01+02:00 — IMPLEMENTER → REVIEWER — 055.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- plotExport focused regression passed; python scripts\preflight.py --no-cache passed: 158 backend/frontend modules, frontend type check, production bundle; disposable installed-style Vite run manually verified Cycles, Time/Capacity, and DCIR: unchanged PNG/preview kept Update disabled, SVG/PDF downloads preserved state, and an intentional persisted export-format edit plus a real DCIR edit stayed dirty after export
+
+**Message**
+
+055.1 review fixes are ready. R1 corrected: on the pre-fix shallow path, Plotly normalization changed only derived layout/trace objects and could not change the persisted plotViewSignature; the new regression captures equal pre/post saved-view signatures and guards the repaired clone boundary. The exact legitimate dirty path observed in the UI is PlotHeader updateStyle -> presentation.plot_styles.<tab>.export_format when the user changes the export preference; file generation itself does not mutate that signature. R2 manual matrix completed in the disposable Alpha-style app: Cycles, Time/Capacity, and DCIR each opened saved plots with Update disabled; PNG and export preview kept it disabled; SVG/PDF were exercised where available and remained side-effect-free after the intentional format edit; an explicit DCIR plot edit enabled Update and PNG/PDF left it enabled. No dirty reset workaround added.
+
+---

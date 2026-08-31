@@ -8,6 +8,8 @@ import {
   tracesToColumns,
 } from "../src/features/analyses/editor/plotting/plotExport.ts";
 import { DEFAULT_PLOT_STYLE } from "../src/features/analyses/editor/plotting/plotStyle.ts";
+import { plotViewSignature } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
+import type { AnalysisSpec } from "../src/api.ts";
 
 test("CSV text starts with a UTF-8 BOM, not visible mojibake", () => {
   const text = buildDelimitedText(
@@ -86,4 +88,73 @@ test("export figures isolate nested live inputs from Plotly normalization", () =
   };
 
   assert.deepEqual({ traces, layout, style }, before);
+});
+
+test("export cannot dirty a saved-view signature, while an export preference can", () => {
+  const spec = {
+    selection: { entries: [], exclusions: [], hidden_replicate_group_ids: [] },
+    dcir_segments: [],
+    computation: { formation_cycles: 3 },
+    aggregation: { min_n_for_band: 2 },
+    presentation: {
+      plot_styles: { cycles: structuredClone(DEFAULT_PLOT_STYLE) },
+    },
+  } as AnalysisSpec;
+  const baseline = plotViewSignature(spec);
+  const before = structuredClone(spec);
+  const traces = [
+    {
+      x: [1, 2],
+      y: [3, 4],
+      name: "Cell A",
+      type: "scatter",
+      line: { color: "#12b886", width: 2.5 },
+    },
+  ] as Plotly.Data[];
+  const layout: Partial<Plotly.Layout> = {
+    xaxis: { title: { text: "Cycle" } },
+    yaxis: { title: { text: "Capacity" } },
+  };
+  const plan = resolveExportPlan(DEFAULT_PLOT_STYLE, { width: 640, height: 480 }, layout);
+
+  // The former shallow export boundary could mutate this derived graph, but
+  // those fields are not part of the saved-view signature and are not linked
+  // back to the persisted spec. Keep that diagnosis explicit and verifiable.
+  const legacyFigure = {
+    data: traces,
+    layout: {
+      ...layout,
+      width: plan.layoutWidth,
+      height: plan.layoutHeight,
+      margin: plan.margin,
+    },
+  };
+  (legacyFigure.layout.xaxis as Record<string, unknown>).type = "linear";
+  (legacyFigure.data[0] as Record<string, unknown>).line = {
+    ...(legacyFigure.data[0] as Record<string, unknown>).line as Record<string, unknown>,
+    shape: "linear",
+  };
+  assert.equal(plotViewSignature(spec), baseline);
+  assert.deepEqual(spec, before);
+
+  // The repaired boundary isolates the same renderer writes even when the
+  // figure is built from the live derived inputs.
+  const figure = exportFigure(traces, layout, DEFAULT_PLOT_STYLE, "Saved view", plan);
+  (figure.layout.xaxis as Record<string, unknown>).type = "linear";
+  (figure.data[0] as Record<string, unknown>).line = {
+    ...(figure.data[0] as Record<string, unknown>).line as Record<string, unknown>,
+    shape: "linear",
+  };
+  assert.equal(plotViewSignature(spec), baseline);
+  assert.deepEqual(spec, before);
+
+  // This is the legitimate dirty path observed in the UI: PlotHeader's
+  // updateStyle writes the selected export format into the saved plot style.
+  const withIntentionalPreferenceChange = structuredClone(spec);
+  withIntentionalPreferenceChange.presentation.plot_styles!.cycles!.export_format = "svg";
+  assert.notEqual(plotViewSignature(withIntentionalPreferenceChange), baseline);
+  assert.equal(
+    withIntentionalPreferenceChange.presentation.plot_styles!.cycles!.export_format,
+    "svg",
+  );
 });
