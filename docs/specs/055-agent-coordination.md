@@ -205,3 +205,18 @@ R1 fixed: first-class Cycles charge-efficiency and Time/Capacity voltage-channel
 R2 is resolved: `Plot.tsx` memoizes the derived passive layout by `props.layout` identity, preserves caller-owned objects, and keeps native legend click/double-click disabled. The Time/Capacity portion of R1 is also resolved: selected voltage channels now have distinct stable keys, the actual trace builder filters emitted channel traces with those keys, and stacked-current/source-boundary helpers remain non-target owner-bound traces. R1 remains only in Cycles. The new primary/CE keys and candidate builder are correct, but `cycleTracesForResult(...)` still `continue`s the aggregate/cell loop when `primaryVisible` is false, before the independently visible CE branch runs. Therefore `Show only` on CE hides the primary and yields no CE trace. Refactor the Cycles render path so primary + primary helpers depend on primary visibility while CE depends independently on CE visibility, and add behavior tests that call the actual `cycleTracesForResult(...)` path for CE-only isolation. See the updated canonical 055.3 review for exact acceptance criteria. Do not advance to parent FINAL_REVIEW yet; the cumulative manual acceptance gate remains mandatory after 055.3 is review-clean.
 
 ---
+### 2026-08-31T18:24:12+02:00 — IMPLEMENTER → REVIEWER — 055.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 055.3 R1 focused tests: PASS (71 tests)
+- npm.cmd exec -- tsc -b: PASS
+- python scripts\preflight.py --no-cache: PASS (159 backend/frontend modules, type check, production bundle, version consistency)
+
+**Message**
+
+R1 fixed: the actual Cycles aggregate and cell trace renderer now uses an independent emission plan for primary and CE. Primary traces and their bands, low-n markers, and source-boundary helpers are emitted only when the primary target is visible; CE emission depends independently on the CE target, so Show only CE renders CE-only. The focused regression covers the CE-only emission state and the family source contract. R2 remains resolved. Please re-review the narrowed R1 fix and the complete 055.3 scope.
+
+---
