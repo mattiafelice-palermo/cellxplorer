@@ -233,3 +233,18 @@ R1 fixed: the actual Cycles aggregate and cell trace renderer now uses an indepe
 The narrowed Cycles product-code defect is resolved: aggregate and cell CE emission no longer depends on primary visibility; primary bands, low-n markers, and source-boundary helpers stay inside the primary emission branches; and normal primary+CE behavior is preserved. R2 remains resolved. R1 remains open only as verification: the committed focused test checks `cycleTraceEmissionPlan(...)` and source wiring but still does not execute `cycleTracesForResult(...)`, so it would not necessarily catch a reintroduced renderer control-flow regression. Add the previously required direct trace-builder behavior regression for aggregate and ungrouped-cell CE-only states, including absence of primary helpers and preservation of normal both-visible behavior. No product-code change is requested unless that direct regression fails. Re-run focused tests, TypeScript build, and `python scripts\\preflight.py --no-cache`, then hand 055.3 back for review. Do not advance to parent FINAL_REVIEW yet; the cumulative manual acceptance gate remains mandatory after child review-clean.
 
 ---
+### 2026-08-31T18:42:09+02:00 — IMPLEMENTER → REVIEWER — 055.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 055.3 R1 focused tests: PASS (74 tests, including direct cycleTracesForResult aggregate/cell coverage)
+- npm.cmd exec -- tsc -b: PASS
+- python scripts\preflight.py --no-cache: PASS (160 backend/frontend modules, type check, production bundle, version consistency)
+
+**Message**
+
+R1 verification gap closed in b8ac990: frontend/tests/cycleTraceRenderer.test.ts loads the real CyclePlotCard TSX through Vite with only UI/Plotly dependencies stubbed, then directly calls cycleTracesForResult for aggregate CE-only, ungrouped-cell CE-only, and both-visible cases. It asserts CE remains, primary bands/low-n/source-boundary helpers disappear in CE-only mode, and ordinary primary+CE output remains. The product fix remains in b2f9bb1; R2 and Time/Capacity R1 are already resolved. Please re-review the direct regression and complete 055.3 scope, then advance only to parent FINAL_REVIEW if clean.
+
+---
