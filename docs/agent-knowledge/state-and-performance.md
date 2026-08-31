@@ -219,11 +219,14 @@ during every report export when the valid saved artifact already exists.
 User-level series visibility is presentation state in
 `AnalysisSpec.presentation.hidden_series_ids`, separate from scientific selection and cache
 identity. The shared `frontend/src/components/Plot.tsx` wrapper keeps Plotly legends passive by
-disabling both native item-click and double-click visibility mutations; family-owned header
-actions update the persistent set through `analysisVisibility.ts`. Applicable series are rebuilt
-from the current data/filter context, while helper traces follow their primary target and are not
-independent visibility entries. Because the presentation state is part of the saved-plot view
-signature, isolating or restoring a series is a real saved-plot edit and survives update/reopen.
+disabling both native item-click and double-click visibility mutations; it memoizes the derived
+passive layout by incoming layout identity so this policy does not defeat Plotly relayout guards.
+Family-owned header actions update the persistent set through `analysisVisibility.ts`. Applicable
+series are rebuilt from the current data/filter context; first-class descriptors such as Cycles CE
+and selected Time/capacity voltage channels have independent stable keys, while helper traces
+follow their primary target and are not independent visibility entries. Because the presentation
+state is part of the saved-plot view signature, isolating or restoring a series is a real saved-
+plot edit and survives update/reopen.
 
 Plot cards that remember their rendered size for export settings must guard the `setPlotSize`
 update by comparing width and height with the current state. Plotly's `onUpdate` fires again after

@@ -86,7 +86,6 @@ import {
   hiddenSeriesIdsAfterShowAll,
   hiddenSeriesIdsAfterShowOnly,
   isAnalysisSampleHidden,
-  isSeriesHidden,
   plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import {
@@ -106,6 +105,13 @@ import {
   sourceBoundaryPointIndices,
   sourceExportColumns,
 } from "../../plotting/sourceChainPlot";
+import {
+  cycleCeSeriesKey,
+  cycleCeVisibilityKey,
+  cycleSeriesVisibilityCandidatesForResult,
+  cycleTraceVisibility,
+  cycleVisibilityKey,
+} from "./cycleVisibility";
 
 const CAPACITY_LIKE_KEYS = new Set([
   "discharge_capacity",
@@ -114,9 +120,6 @@ const CAPACITY_LIKE_KEYS = new Set([
   "charge_capacity_specific",
   "cv_charge_capacity",
 ]);
-
-const CYCLES_VISIBILITY_PREFIX = "cycles:";
-const cycleVisibilityKey = (seriesKey: string) => `${CYCLES_VISIBILITY_PREFIX}${seriesKey}`;
 
 const NORMALIZED_QUANTITY_MAP: Record<string, { column: string; label: string }> = {
   discharge_capacity: { column: "discharge_capacity_mah_g", label: "Discharge capacity (mAh/g)" },
@@ -432,30 +435,16 @@ export function cycleSeriesVisibilityCandidates(
     spec.presentation.reindex_diagnostic_cycles ?? false,
   );
   const { column } = resolveCycleQuantity(result, spec);
+  const showCeOverlay =
+    (spec.presentation.ce_overlay ?? false) &&
+    CAPACITY_LIKE_KEYS.has(spec.presentation.quantity ?? "discharge_capacity");
   const showIndividual =
     spec.presentation.show_individual_cells || result.aggregates.length === 0;
-  const candidates: { key: string; label: string }[] = [];
-  for (const aggregate of result.aggregates) {
-    const quantity = aggregate.quantities[column];
-    if (!quantity || !quantity.mean.some((value) => value !== null && Number.isFinite(value))) {
-      continue;
-    }
-    candidates.push({
-      key: cycleVisibilityKey(`g${aggregate.group_id}`),
-      label: `${aggregate.group_name} mean`,
-    });
-  }
-  for (const series of result.cell_series) {
-    if (
-      cycleSeriesIsHidden(series, spec) ||
-      (series.group_id !== null && !showIndividual) ||
-      !series.quantities[column]?.some((value) => value !== null && Number.isFinite(value))
-    ) {
-      continue;
-    }
-    candidates.push({ key: cycleVisibilityKey(`c${series.cell_id}`), label: series.label });
-  }
-  return candidates;
+  return cycleSeriesVisibilityCandidatesForResult(result, spec, {
+    column,
+    showIndividual,
+    includeCoulombicEfficiency: showCeOverlay,
+  });
 }
 
 export function cycleTracesForResult(
@@ -518,7 +507,7 @@ export function cycleTracesForResult(
     axis: "y2",
     measure: "coulombic_efficiency",
     sourceKey,
-    visibilityKey: cycleVisibilityKey(sourceKey),
+    visibilityKey: cycleCeVisibilityKey(sourceKey),
     secondarySuffix: " CE",
   });
 
@@ -529,6 +518,7 @@ export function cycleTracesForResult(
   const colorKeyFor = new Map<string, string>();
   for (const agg of result.aggregates) {
     const aggDescriptor = aggregateSeriesDescriptor(agg, compact);
+    aggDescriptor.visibilityKey = cycleVisibilityKey(aggDescriptor.key);
     colorKeyFor.set(aggDescriptor.key, `g${agg.group_id}`);
     descriptors.push(aggDescriptor);
     if (showCeOverlay && agg.quantities[column] && agg.quantities["coulombic_efficiency_pct"]) {
@@ -539,6 +529,7 @@ export function cycleTracesForResult(
     if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
     const descriptor = cellSeriesDescriptor(s);
+    descriptor.visibilityKey = cycleVisibilityKey(descriptor.key);
     colorKeyFor.set(descriptor.key, grouped ? `g${s.group_id}` : `c${s.cell_id}`);
     descriptors.push(descriptor);
     if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
@@ -600,7 +591,8 @@ export function cycleTracesForResult(
     const aggKey = `g${agg.group_id}`;
     const q = agg.quantities[column];
     if (!q) continue;
-    if (isSeriesHidden(spec, cycleVisibilityKey(aggKey))) continue;
+    const aggregateVisibility = cycleTraceVisibility(spec, aggKey);
+    if (!aggregateVisibility.primaryVisible) continue;
     const aggResolved = resolvedStyles.get(aggKey);
     if (!aggResolved || aggResolved.hidden) continue;
     if (!compact) {
@@ -679,10 +671,9 @@ export function cycleTracesForResult(
       }
     }
     if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
-      const ceResolved = resolvedStyles.get(
-        composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" }),
-      );
-      if (ceResolved && !ceResolved.hidden) {
+      const ceKey = cycleCeSeriesKey(aggKey);
+      const ceResolved = resolvedStyles.get(ceKey);
+      if (ceResolved && !ceResolved.hidden && aggregateVisibility.ceVisible) {
         out.push({
           x: agg.x,
           y: agg.quantities["coulombic_efficiency_pct"].mean,
@@ -698,9 +689,7 @@ export function cycleTracesForResult(
           mode: seriesPlotlyMode(ceResolved),
           opacity: ceResolved.opacity,
           showlegend: ceResolved.showInLegend,
-          legendrank: legendRanks.get(
-            composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" }),
-          ),
+          legendrank: legendRanks.get(ceKey),
         } as Plotly.Data);
       }
     }
@@ -708,9 +697,10 @@ export function cycleTracesForResult(
 
   for (const s of result.cell_series) {
     const cellKey = `c${s.cell_id}`;
+    const cellVisibility = cycleTraceVisibility(spec, cellKey);
     if (
       cycleSeriesIsHidden(s, spec) ||
-      isSeriesHidden(spec, cycleVisibilityKey(cellKey)) ||
+      !cellVisibility.primaryVisible ||
       !soloOrIndividual(s)
     ) {
       continue;
@@ -791,10 +781,9 @@ export function cycleTracesForResult(
       } as Plotly.Data);
     }
     if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
-      const ceResolved = resolvedStyles.get(
-        composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" }),
-      );
-      if (ceResolved && !ceResolved.hidden) {
+      const ceKey = cycleCeSeriesKey(cellKey);
+      const ceResolved = resolvedStyles.get(ceKey);
+      if (ceResolved && !ceResolved.hidden && cellVisibility.ceVisible) {
         out.push({
           x: s.x,
           y: s.quantities["coulombic_efficiency_pct"],
@@ -810,9 +799,7 @@ export function cycleTracesForResult(
           mode: seriesPlotlyMode(ceResolved),
           opacity: ceResolved.opacity,
           showlegend: ceResolved.showInLegend,
-          legendrank: legendRanks.get(
-            composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" }),
-          ),
+          legendrank: legendRanks.get(ceKey),
         } as Plotly.Data);
       }
     }

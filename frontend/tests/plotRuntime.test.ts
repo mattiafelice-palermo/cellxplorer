@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -24,4 +25,11 @@ test("legend policy supplies a passive legend even when a plot has no layout", (
   assert.deepEqual(disablePlotlyLegendVisibility(undefined), {
     legend: { itemclick: false, itemdoubleclick: false },
   });
+});
+
+test("shared Plot memoizes the passive layout by incoming layout identity", () => {
+  const source = readFileSync(new URL("../src/components/Plot.tsx", import.meta.url), "utf8");
+  assert.match(source, /const passiveLayout = useMemo\(/);
+  assert.match(source, /\[props\.layout\]/);
+  assert.match(source, /layout=\{passiveLayout\}/);
 });

@@ -63,10 +63,12 @@ export interface SeriesDescriptor {
   sourceKey?: string;
   /**
    * Stable application visibility identity. Secondary and helper traces can
-   * point at their primary series here so one visibility action controls the
-   * complete user-facing series rather than a fragile trace index. Multiple
-   * descriptors may intentionally share this identity when one action controls
-   * a Cell/replicate series family (for example, its voltage channels).
+   * point at their primary series here so one visibility action controls a
+   * complete user-facing series rather than a fragile trace index. Distinct
+   * first-class descriptors, such as a CE overlay or selected voltage channel,
+   * must receive distinct identities even when they share a Cell/replicate
+   * source. Genuine Plotly helpers may share their owner's identity or remain
+   * outside the descriptor list entirely.
    */
   visibilityKey?: string;
   /** Default legend suffix when deriving a name from a linked primary, e.g. " CE". */
@@ -267,7 +269,11 @@ export function cyclesSeriesDescriptors(
         axis: "y2",
         measure: "coulombic_efficiency",
         sourceKey,
-        visibilityKey: `cycles:${sourceKey}`,
+        visibilityKey: `cycles:${composeSeriesKey({
+          sourceKey,
+          axis: "y2",
+          measure: "coulombic_efficiency",
+        })}`,
         secondarySuffix: " CE",
         measureLabel: "Coulombic efficiency",
       });
@@ -286,7 +292,11 @@ export function cyclesSeriesDescriptors(
         axis: "y2",
         measure: "coulombic_efficiency",
         sourceKey,
-        visibilityKey: `cycles:${sourceKey}`,
+        visibilityKey: `cycles:${composeSeriesKey({
+          sourceKey,
+          axis: "y2",
+          measure: "coulombic_efficiency",
+        })}`,
         secondarySuffix: " CE",
         measureLabel: "Coulombic efficiency",
       });
@@ -327,7 +337,7 @@ export function timeCapacityVoltageSeriesDescriptor(
     key: `${base.key}|${channel}`,
     label: `${base.label} — ${timeCapacityVoltageChannelShortLabel(channel)}`,
     sourceKey: base.key,
-    visibilityKey: base.visibilityKey ?? base.key,
+    visibilityKey: `${base.visibilityKey ?? base.key}|${channel}`,
     measureLabel: timeCapacityVoltageChannelShortLabel(channel),
     channel,
   };

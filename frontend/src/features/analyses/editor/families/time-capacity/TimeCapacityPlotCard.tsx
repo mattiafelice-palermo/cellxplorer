@@ -64,7 +64,6 @@ import {
 import {
   hiddenSeriesIdsAfterShowAll,
   hiddenSeriesIdsAfterShowOnly,
-  isAnalysisSampleHidden,
   isSeriesHidden,
   plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
@@ -123,6 +122,13 @@ import {
   timeCapacitySourceAt,
   type TimeCapacitySourcePoint,
 } from "./timeCapacityProvenance";
+import {
+  timeCapacitySeriesVisibilityCandidatesForConfig,
+  timeCapacityTraceIsHidden,
+  timeCapacityVisibilityKey,
+  timeCapacityVisibleVoltageChannels,
+  timeCapacityVoltageVisibilityKey,
+} from "./timeCapacityVisibility";
 import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
@@ -190,10 +196,6 @@ export type TimeCapacityConfig = Omit<
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
 export type TimeCapacityVoltageChannel = VoltageChannel;
-
-const TIME_CAPACITY_VISIBILITY_PREFIX = "time_capacity:";
-const timeCapacityVisibilityKey = (seriesKey: string) =>
-  `${TIME_CAPACITY_VISIBILITY_PREFIX}${seriesKey}`;
 
 // Vertical double-headed arrow: "expand the y axis to fit".
 const TIME_CAPACITY_FIT_Y_MODEBAR_ICON = {
@@ -537,36 +539,13 @@ function voltageChannelColor(
   return paletteColorAt(palette, VOLTAGE_CHANNEL_PALETTE_INDEX[channel], paletteOverflow);
 }
 
-export function timeCapacityTraceIsHidden(
-  trace: Pick<TimeCapacityTrace, "cell_id" | "group_id" | "excluded">,
-  spec: AnalysisSpec,
-): boolean {
-  return isAnalysisSampleHidden(spec, trace);
-}
-
 /** Primary CellXplorer visibility targets for the current Time/capacity plot. */
 export function timeCapacitySeriesVisibilityCandidates(
   result: TimeCapacityResult,
   spec: AnalysisSpec,
 ): { key: string; label: string }[] {
   const cfg = timeCapacityConfig(spec);
-  const candidates: { key: string; label: string }[] = [];
-  for (const trace of result.cell_traces) {
-    if (timeCapacityTraceIsHidden(trace, spec)) continue;
-    const hasData =
-      cfg.view === "voltage_current"
-        ? cfg.voltage_channels.some((channel) =>
-            hasFinitePoint(traceVoltageValues(trace, channel, cfg.voltage_channel)),
-          )
-        : hasFinitePoint(trace.derivative_x) && hasFinitePoint(trace.derivative_y);
-    if (!hasData) continue;
-    const key = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
-    candidates.push({
-      key: timeCapacityVisibilityKey(key),
-      label: trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label,
-    });
-  }
-  return candidates;
+  return timeCapacitySeriesVisibilityCandidatesForConfig(result, spec, cfg);
 }
 
 function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: AnalysisSpec): boolean {
@@ -606,9 +585,14 @@ export function timeCapacityTracesForResult(
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
   const legendRanks = seriesLegendRanks(
-    timeCapacitySeriesDescriptors(result.cell_traces, selectedVoltageChannels),
+    timeCapacitySeriesDescriptors(
+      result.cell_traces,
+      cfg.view === "voltage_current" ? selectedVoltageChannels : [],
+    ),
     style.series_order,
   );
+  const multipleVoltageChannels =
+    cfg.view === "voltage_current" && selectedVoltageChannels.length > 1;
   const traceType = interactiveWebGl ? "scattergl" : "scatter";
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   let ci = 0;
@@ -723,7 +707,9 @@ export function timeCapacityTracesForResult(
   for (const trace of result.cell_traces) {
     if (timeCapacityTraceIsHidden(trace, spec)) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
-    if (isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
+    if (!multipleVoltageChannels && isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) {
+      continue;
+    }
     const color = pick(seriesKey);
     const descriptor = timeCapacitySeriesDescriptor(trace);
     const resolved = resolveTrace(
@@ -734,7 +720,6 @@ export function timeCapacityTracesForResult(
     if (resolved.hidden) continue;
     const name = resolved.name;
     const fullX = timeCapacityX(trace, spec).x;
-    const multipleVoltageChannels = selectedVoltageChannels.length > 1;
     const channelStyles = selectedVoltageChannels.map((channel) => {
       const channelKey = `${seriesKey}|${channel}`;
       const channelDescriptor = multipleVoltageChannels
@@ -754,22 +739,34 @@ export function timeCapacityTracesForResult(
         channelKey,
         channelResolved,
         legendKey: multipleVoltageChannels ? channelKey : seriesKey,
+        visibilityKey: multipleVoltageChannels
+          ? timeCapacityVoltageVisibilityKey(seriesKey, channel)
+          : timeCapacityVisibilityKey(seriesKey),
       };
     });
+    const visibleVoltageChannels = new Set(
+      timeCapacityVisibleVoltageChannels(
+        spec,
+        seriesKey,
+        selectedVoltageChannels,
+        multipleVoltageChannels,
+      ),
+    );
     for (const segment of timeCapacitySegments(trace, spec, fullX)) {
-      const hasVoltage = selectedVoltageChannels.some((channel) =>
-        hasFinitePoint(segment.voltageByChannel[channel] ?? []),
+      const visibleChannelStyles = channelStyles.filter(
+        (channelStyle) =>
+          visibleVoltageChannels.has(channelStyle.channel) &&
+          hasFinitePoint(segment.voltageByChannel[channelStyle.channel] ?? []),
       );
-      if (!hasVoltage) continue;
+      if (visibleChannelStyles.length === 0) continue;
       const segmentCustomdata = segment.x.map((_, index) => [
         segment.cycle[index] ?? "",
         segment.sourceCycle[index] ?? "",
         segment.sources[index]?.position ?? "",
         plotlySafeText(shortSourceName(String(segment.sources[index]?.filename ?? ""), 24)),
       ]);
-      for (const channelStyle of channelStyles) {
+      for (const channelStyle of visibleChannelStyles) {
         const voltage = segment.voltageByChannel[channelStyle.channel] ?? [];
-        if (!hasFinitePoint(voltage)) continue;
         const { channelLabel, channelKey, channelResolved, legendKey } = channelStyle;
         if (channelResolved.hidden) continue;
         const channelName = channelResolved.name;
@@ -865,7 +862,11 @@ export function timeCapacityTracesForResult(
         }
       }
     }
-    const boundaryChannel = selectedVoltageChannels[0];
+    const boundaryChannel = channelStyles.find(
+      (channelStyle) =>
+        visibleVoltageChannels.has(channelStyle.channel) &&
+        hasFinitePoint(traceVoltageValues(trace, channelStyle.channel, cfg.voltage_channel)),
+    )?.channel;
     const boundaryVoltage = boundaryChannel
       ? traceVoltageValues(trace, boundaryChannel, cfg.voltage_channel)
       : [];

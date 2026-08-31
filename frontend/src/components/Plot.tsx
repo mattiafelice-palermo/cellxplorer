@@ -2,6 +2,7 @@
 import Plotly from "plotly.js-dist-min";
 import type { PlotParams } from "react-plotly.js";
 import factoryModule from "react-plotly.js/factory";
+import { useMemo } from "react";
 import { resolvePlotlyFactory } from "./plotFactory";
 import {
   disposePlotlyCssZoomHoverCompensation,
@@ -17,10 +18,17 @@ const createPlotlyComponent = resolvePlotlyFactory(factoryModule);
 const PlotlyComponent = createPlotlyComponent(Plotly as never);
 
 function Plot(props: PlotParams) {
+  // Plot cards deliberately memoize layout objects because react-plotly.js
+  // treats reference changes as update/relayout signals. Add the passive
+  // legend flags without discarding that identity on unrelated React renders.
+  const passiveLayout = useMemo(
+    () => disablePlotlyLegendVisibility(props.layout),
+    [props.layout],
+  );
   return (
     <PlotlyComponent
       {...props}
-      layout={disablePlotlyLegendVisibility(props.layout)}
+      layout={passiveLayout}
       onLegendClick={(event) => {
         props.onLegendClick?.(event);
         return blockPlotlyLegendVisibility();
