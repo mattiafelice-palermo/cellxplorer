@@ -7,6 +7,7 @@ import {
   savedPlotPreviewSignature,
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
+  shouldOpenSavedPlotCardFromKey,
   validateSavedPlotName,
 } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
 import type { SavedAnalysisPlot } from "../src/api.ts";
@@ -99,6 +100,14 @@ test("saved plot rename validates blank and overlong names, while allowing dupli
   assert.equal(duplicate.error, null);
   assert.equal(duplicate.plots[0].name, "Shared");
   assert.equal(duplicate.plots[1].name, "Shared");
+});
+
+test("saved plot card keyboard activation ignores nested controls", () => {
+  assert.equal(shouldOpenSavedPlotCardFromKey("Enter", false), true);
+  assert.equal(shouldOpenSavedPlotCardFromKey(" ", false), true);
+  assert.equal(shouldOpenSavedPlotCardFromKey("Escape", false), false);
+  assert.equal(shouldOpenSavedPlotCardFromKey("Enter", true), false);
+  assert.equal(shouldOpenSavedPlotCardFromKey(" ", true), false);
 });
 
 test("unchanged rename is a no-op and rename does not affect scientific dirty signatures", () => {

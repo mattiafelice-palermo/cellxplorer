@@ -24,6 +24,7 @@ import type {
 import { draftAsSavedPlot, draftPlotFromWorkspace } from "../policies/analysisDraftPolicy";
 import {
   SAVED_PLOT_NAME_MAX_LENGTH,
+  shouldOpenSavedPlotCardFromKey,
   validateSavedPlotName,
 } from "../policies/analysisPlotPolicy";
 import { DraftPlotCard } from "./DraftPlotCard";
@@ -284,10 +285,11 @@ export function SavedPlotsPanel({
                   onOpen(plot);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onOpen(plot);
-                  }
+                  const originatedInNestedButton =
+                    event.target instanceof HTMLElement && event.target.closest("button") !== null;
+                  if (!shouldOpenSavedPlotCardFromKey(event.key, originatedInNestedButton)) return;
+                  event.preventDefault();
+                  onOpen(plot);
                 }}
                 style={{
                   border: active

@@ -5,6 +5,13 @@ import type { AnalysisSpec, SavedAnalysisPlot } from "../../../../api";
 export const SAVED_PLOT_THUMBNAIL_RENDER_VERSION = 8;
 export const SAVED_PLOT_NAME_MAX_LENGTH = 120;
 
+export function shouldOpenSavedPlotCardFromKey(
+  key: string,
+  originatedInNestedControl: boolean,
+): boolean {
+  return (key === "Enter" || key === " ") && !originatedInNestedControl;
+}
+
 export type SavedPlotNameValidation = {
   value: string;
   error: string | null;

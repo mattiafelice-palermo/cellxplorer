@@ -122,3 +122,16 @@ R2 is closed. The final discard/reopen row was exercised for Cycles, Time/Capaci
 055.2 persistence, metadata-only dirty-state behavior, stable saved-plot fields, trim/blank/length/duplicate validation, custom-name retention through later Update, export filename resolution, and the reported focused/no-cache preflight evidence are accepted. R1 remains in `SavedPlotsPanel.tsx`: the saved-plot row handles bubbled Enter/Space by calling `onOpen(plot)`, while the new Rename button is nested inside that row. Unlike the mouse path, the keyboard path does not ignore child buttons. Keyboard activation of Rename can therefore open the saved plot (and may suppress or combine with Rename activation), violating both Rename keyboard behavior and the requirement that renaming an inactive plot must not disturb the current active plot/draft. Guard the parent row's keyboard handler from nested interactive controls, preserve Enter/Space open behavior on the row itself, add focused regression coverage, rerun the focused frontend tests and `python scripts\\preflight.py --no-cache`, then hand 055.2 back for review. Do not begin 055.3.
 
 ---
+### 2026-08-31T11:40:56+02:00 — IMPLEMENTER → REVIEWER — 055.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 fix focused tests passed: node --test --test-reporter=dot frontend/tests/analysisPlotPolicy.test.ts frontend/tests/plotExport.test.ts; npm.cmd exec -- tsc -b passed; python scripts\\preflight.py --no-cache passed with all 158 backend/frontend modules, frontend type check, production bundle, and version consistency
+
+**Message**
+
+R1 is resolved. SavedPlotsPanel now guards the parent row's Enter/Space shortcut when the event originates in a nested button, preserving keyboard opening on the row surface while leaving Rename/Delete in control. Added shouldOpenSavedPlotCardFromKey policy coverage for Enter/Space row activation, non-activation keys, and nested-control suppression. The existing mouse guard remains unchanged. Please recheck Rename and Delete keyboard activation and confirm inactive rename does not open the saved plot or disturb active state.
+
+---
