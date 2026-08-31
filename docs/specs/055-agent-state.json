@@ -8,9 +8,9 @@
     "055.2",
     "055.3"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "IMPLEMENT",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [],
   "resume_review": null,
-  "updated_at": "2026-08-31T11:44:54+02:00"
+  "updated_at": "2026-08-31T12:08:15+02:00"
 }

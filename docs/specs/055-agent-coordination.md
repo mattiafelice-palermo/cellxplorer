@@ -148,3 +148,18 @@ R1 is resolved. SavedPlotsPanel now guards the parent row's Enter/Space shortcut
 R1 is resolved at `269085bb971c298bc31ca0a3c1cecb0494a12524`. The saved-plot parent row now ignores Enter/Space originating from nested Rename/Delete buttons while retaining row-level Enter/Space opening, and the focused policy regression covers both paths. The requested focused tests, TypeScript build, and `python scripts\\preflight.py --no-cache` are recorded as passing; no GitHub status checks are attached. 055.2 is review-clean. Begin only child 055.3. The previously deferred parent-level final manual acceptance gate remains mandatory at cumulative `FINAL_REVIEW`.
 
 ---
+### 2026-08-31T12:08:15+02:00 — IMPLEMENTER → REVIEWER — 055.3
+
+**Result:** Implementation ready
+
+**Verification**
+
+- 055.3 focused visibility and Plotly event tests: PASS (93 tests)
+- node --test frontend/tests/simplePlotLayout.test.ts: PASS (5 tests)
+- python scripts\preflight.py --no-cache: PASS (159 backend/frontend modules, type check, production bundle, version consistency)
+
+**Message**
+
+Spec 055.3 implements application-owned Show only this series and Show all series actions through a shared keyboard-accessible PlotHeader menu. Stable family-owned visibility keys persist in presentation.hidden_series_ids; applicable candidates honor selection, protocol/diagnostic/data/scientific filters; helper and auxiliary traces follow primary targets. The shared Plot wrapper disables Plotly legend item and double-click visibility and returns false defensively. Cycles, Time/Capacity, Steps, DCIR, Chargeability, and Rate Capability are wired, with saved-plot dirty/reopen state covered by policy regressions. The cumulative manual acceptance gate remains for FINAL_REVIEW.
+
+---
