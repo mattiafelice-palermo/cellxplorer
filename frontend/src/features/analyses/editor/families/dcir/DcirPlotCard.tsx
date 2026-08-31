@@ -64,9 +64,12 @@ import {
   plotPalette,
 } from "../../plotting/plotStyle";
 import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
+  plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import {
   decimatePreviewTraces,
@@ -201,12 +204,21 @@ export function dcirVisibleSeries(
   result: DcirResult,
   spec: AnalysisSpec,
 ): DcirResultSeries[] {
+  return dcirApplicableSeries(result, spec).filter(
+    (item) => !isSeriesHidden(spec, item.series_id),
+  );
+}
+
+/** Series valid after selection and segment filters, before user visibility. */
+export function dcirApplicableSeries(
+  result: DcirResult,
+  spec: AnalysisSpec,
+): DcirResultSeries[] {
   return (result.cell_series ?? []).filter(
     (item) =>
       item.n_measurements > 0 &&
       !isCellHiddenInAnalysis(spec, item.cell_id) &&
-      !isAnalysisSegmentHidden(spec, item.segment_id) &&
-      !isSeriesHidden(spec, item.series_id)
+      !isAnalysisSegmentHidden(spec, item.segment_id),
   );
 }
 
@@ -221,6 +233,7 @@ export function dcirSeriesDescriptors(items: DcirResultSeries[]): SeriesDescript
     label: item.label,
     cellName: item.cell_name,
     groupName: null,
+    visibilityKey: item.series_id,
   }));
 }
 
@@ -1163,6 +1176,41 @@ export function DcirPlotCard({
     () => dcirSeriesDescriptors(visibleSeriesItems),
     [visibleSeriesItems]
   );
+  const seriesVisibilityCandidates = useMemo(
+    () =>
+      result.data
+        ? dcirApplicableSeries(result.data, spec).map((item) => ({
+            key: item.series_id,
+            label: item.label,
+          }))
+        : [],
+    [result.data, spec],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
 
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
@@ -1246,6 +1294,11 @@ export function DcirPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+          seriesVisibility={{
+            items: seriesVisibilityItems,
+            onShowOnly: showOnlySeries,
+            onShowAll: showAllSeries,
+          }}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=

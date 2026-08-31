@@ -110,3 +110,17 @@ test("all audited simple plot families use the shared layout and opacity paths",
     assert.match(source, /opacity: style\.individual_opacity/);
   }
 });
+
+test("representative plot families expose the shared persistent visibility menu", () => {
+  const families = [
+    "../src/features/analyses/editor/families/cycles/CyclePlotCard.tsx",
+    "../src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx",
+    "../src/features/analyses/editor/families/rate-capability/RateCapabilityPlotCard.tsx",
+  ];
+  for (const family of families) {
+    const source = readFileSync(new URL(family, import.meta.url), "utf8");
+    assert.match(source, /hiddenSeriesIdsAfterShowOnly/);
+    assert.match(source, /hiddenSeriesIdsAfterShowAll/);
+    assert.match(source, /seriesVisibility=/);
+  }
+});

@@ -30,6 +30,7 @@ import {
   seriesQuantityGroupKey,
   seriesSelectionRange,
   seriesSelectionResult,
+  seriesVisibilityKey,
   sharedValue,
   shortSourceName,
   type BaseSeriesStyle,
@@ -425,10 +426,27 @@ test("multi-voltage Time/Capacity descriptors expose independent channel keys", 
   ]);
   assert.equal(descriptors[1].channel, "working_potential");
   assert.equal(descriptors[1].sourceKey, "c1");
+  assert.deepEqual(descriptors.map((descriptor) => seriesVisibilityKey(descriptor)), [
+    "time_capacity:c1",
+    "time_capacity:c1",
+    "time_capacity:c1",
+  ]);
   assert.equal(
     timeCapacityVoltageSeriesDescriptor(traceLike({ cell_id: 1 }), "counter_potential").key,
     "c1|counter_potential",
   );
+});
+
+test("Cycles primary and auxiliary descriptors share a family-scoped visibility identity", () => {
+  const descriptors = cyclesSeriesDescriptors(
+    [{ group_id: 7, group_name: "LFP" }],
+    [traceLike({ cell_id: 1, group_id: 7, group_name: "LFP" })],
+    false,
+    true,
+  );
+
+  assert.equal(seriesVisibilityKey(descriptors[0]), "cycles:g7");
+  assert.equal(seriesVisibilityKey(descriptors[1]), "cycles:g7");
 });
 
 test("channel overrides win while legacy Cell overrides remain the fallback", () => {

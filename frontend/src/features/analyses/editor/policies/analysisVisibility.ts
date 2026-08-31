@@ -12,6 +12,18 @@ export interface AnalysisSampleVisibility {
   excluded?: boolean | null;
 }
 
+/** One user-visible series target in the current plot context. */
+export interface SeriesVisibilityCandidate {
+  /** Stable application identity persisted in `hidden_series_ids`. */
+  key: string;
+  /** Human-readable text for the action label; never used as identity. */
+  label: string;
+}
+
+export interface PlotSeriesVisibilityItem extends SeriesVisibilityCandidate {
+  hidden: boolean;
+}
+
 /** Convert the current hidden state into the visibility requested by a toggle. */
 export function visibilityAfterToggle(currentlyHidden: boolean): boolean {
   return currentlyHidden;
@@ -100,4 +112,77 @@ export function isAnalysisSegmentHidden(spec: AnalysisSpec, segmentId: string): 
 /** Display-only: has this individual series line been hidden? */
 export function isSeriesHidden(spec: AnalysisSpec, seriesId: string): boolean {
   return (spec.presentation.hidden_series_ids ?? []).includes(seriesId);
+}
+
+/**
+ * Deduplicate current plot targets by their stable key and resolve their
+ * persisted hidden state. Duplicate descriptors occur for secondary/helper
+ * traces, which are represented by their first-class primary target instead.
+ */
+export function plotSeriesVisibilityItems(
+  candidates: readonly SeriesVisibilityCandidate[],
+  spec: AnalysisSpec,
+): PlotSeriesVisibilityItem[] {
+  const seen = new Set<string>();
+  const items: PlotSeriesVisibilityItem[] = [];
+  for (const candidate of candidates) {
+    if (!candidate.key || seen.has(candidate.key)) continue;
+    seen.add(candidate.key);
+    items.push({ ...candidate, hidden: isSeriesHidden(spec, candidate.key) });
+  }
+  return items;
+}
+
+/**
+ * Return the persisted hidden set after isolating one applicable target.
+ * Higher-level exclusions are absent from `candidates`, so they remain
+ * untouched and cannot be resurrected by either visibility action.
+ */
+export function hiddenSeriesIdsAfterShowOnly(
+  currentHidden: readonly string[] | undefined,
+  candidates: readonly SeriesVisibilityCandidate[],
+  targetKey: string,
+): string[] {
+  const applicable = plotSeriesVisibilityKeys(candidates);
+  if (!applicable.has(targetKey)) return [...(currentHidden ?? [])];
+  const next = new Set(currentHidden ?? []);
+  for (const key of applicable) {
+    if (key === targetKey) next.delete(key);
+    else next.add(key);
+  }
+  return [...next];
+}
+
+/** Restore only user-hidden keys represented by the current applicable set. */
+export function hiddenSeriesIdsAfterShowAll(
+  currentHidden: readonly string[] | undefined,
+  candidates: readonly SeriesVisibilityCandidate[],
+): string[] {
+  const applicable = plotSeriesVisibilityKeys(candidates);
+  return (currentHidden ?? []).filter((key) => !applicable.has(key));
+}
+
+/** Plotly must remain a passive legend; visibility belongs to the app state. */
+export function disablePlotlyLegendVisibility(
+  layout: Partial<Plotly.Layout> | undefined,
+): Partial<Plotly.Layout> {
+  return {
+    ...(layout ?? {}),
+    legend: {
+      ...(layout?.legend ?? {}),
+      itemclick: false,
+      itemdoubleclick: false,
+    },
+  };
+}
+
+/** Event callback return value that cancels Plotly's native legend mutation. */
+export function blockPlotlyLegendVisibility(): false {
+  return false;
+}
+
+function plotSeriesVisibilityKeys(
+  candidates: readonly SeriesVisibilityCandidate[],
+): Set<string> {
+  return new Set(candidates.map((candidate) => candidate.key).filter(Boolean));
 }

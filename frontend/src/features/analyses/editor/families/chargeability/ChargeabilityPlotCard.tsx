@@ -43,7 +43,13 @@ import {
   markerSymbol,
   plotPalette,
 } from "../../plotting/plotStyle";
-import { isCellHiddenInAnalysis } from "../../policies/analysisVisibility";
+import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
+  isCellHiddenInAnalysis,
+  isSeriesHidden,
+  plotSeriesVisibilityItems,
+} from "../../policies/analysisVisibility";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
   decimatePreviewTraces,
@@ -291,6 +297,7 @@ export function chargeabilitySeriesDescriptors(
       label: name,
       cellName: match.cell_name,
       groupName: null,
+      visibilityKey: `chargeability-${match.id}`,
     };
   });
 }
@@ -309,7 +316,8 @@ export function chargeabilityTracesForResult(
       hasFinite(x) &&
       hasFinite(match.y[view.y_axis]) &&
       // Respect the "Analysis samples" eye toggle: a hidden cell draws nothing.
-      !isCellHiddenInAnalysis(spec, match.cell_id)
+      !isCellHiddenInAnalysis(spec, match.cell_id) &&
+      !isSeriesHidden(spec, `chargeability-${match.id}`)
     );
   });
   const descriptors = chargeabilitySeriesDescriptors(visibleMatches, result);
@@ -749,6 +757,35 @@ export function ChargeabilityPlotCard({
         : [],
     [visibleSeriesItems, result.data]
   );
+  const seriesVisibilityCandidates = useMemo(
+    () => seriesDescriptors.map(({ key, label }) => ({ key, label })),
+    [seriesDescriptors],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
 
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
@@ -839,6 +876,11 @@ export function ChargeabilityPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+          seriesVisibility={{
+            items: seriesVisibilityItems,
+            onShowOnly: showOnlySeries,
+            onShowAll: showAllSeries,
+          }}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=

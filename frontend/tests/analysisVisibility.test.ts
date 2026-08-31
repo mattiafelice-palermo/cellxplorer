@@ -6,6 +6,9 @@ import {
   isAnalysisSampleHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
+  plotSeriesVisibilityItems,
   visibilityAfterToggle,
   type CellSelectionContext,
 } from "../src/features/analyses/editor/policies/analysisVisibility.ts";
@@ -175,4 +178,58 @@ test("segment and series visibility are read from presentation state", () => {
 test("visibility toggles request the opposite of the current hidden state", () => {
   assert.equal(visibilityAfterToggle(false), false);
   assert.equal(visibilityAfterToggle(true), true);
+});
+
+test("show only isolates stable series keys and preserves the target", () => {
+  const candidates = [
+    { key: "series-a", label: "Same label" },
+    { key: "series-b", label: "Same label" },
+    { key: "series-c", label: "Third" },
+  ];
+  assert.deepEqual(hiddenSeriesIdsAfterShowOnly([], candidates, "series-a"), [
+    "series-b",
+    "series-c",
+  ]);
+  assert.deepEqual(
+    hiddenSeriesIdsAfterShowOnly(["series-b", "series-c"], candidates, "series-a"),
+    ["series-b", "series-c"],
+    "isolating an already-isolated target is idempotent",
+  );
+  assert.deepEqual(hiddenSeriesIdsAfterShowOnly([], candidates, "series-b"), [
+    "series-a",
+    "series-c",
+  ], "labels do not determine the target");
+});
+
+test("show all restores only applicable user-hidden series", () => {
+  const candidates = [
+    { key: "series-a", label: "A" },
+    { key: "series-b", label: "B" },
+  ];
+  assert.deepEqual(
+    hiddenSeriesIdsAfterShowAll(
+      ["series-b", "excluded-cell", "unsupported-data"],
+      candidates,
+    ),
+    ["excluded-cell", "unsupported-data"],
+  );
+});
+
+test("visibility items deduplicate helper descriptors by stable key", () => {
+  const spec = specWithVisibility([]);
+  spec.presentation = { hidden_series_ids: ["series-b"] } as AnalysisSpec["presentation"];
+  assert.deepEqual(
+    plotSeriesVisibilityItems(
+      [
+        { key: "series-a", label: "A" },
+        { key: "series-a", label: "A helper" },
+        { key: "series-b", label: "B" },
+      ],
+      spec,
+    ),
+    [
+      { key: "series-a", label: "A", hidden: false },
+      { key: "series-b", label: "B", hidden: true },
+    ],
+  );
 });

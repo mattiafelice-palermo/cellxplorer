@@ -63,9 +63,12 @@ import {
   plotPalette,
 } from "../../plotting/plotStyle";
 import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
+  plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
@@ -711,12 +714,18 @@ export function StepsSettings({
  * sidebar swatches both palette over this list so their colours stay aligned.
  */
 export function stepsVisibleSeries(result: StepsResult, spec: AnalysisSpec): StepSeries[] {
+  return stepsApplicableSeries(result, spec).filter(
+    (item) => !isSeriesHidden(spec, item.series_id),
+  );
+}
+
+/** Series that are valid for the current selection/segment layer. */
+export function stepsApplicableSeries(result: StepsResult, spec: AnalysisSpec): StepSeries[] {
   return result.cell_series.filter(
     (item) =>
       item.n_blocks > 0 &&
       !isCellHiddenInAnalysis(spec, item.cell_id) &&
-      !isAnalysisSegmentHidden(spec, item.segment_id) &&
-      !isSeriesHidden(spec, item.series_id)
+      !isAnalysisSegmentHidden(spec, item.segment_id),
   );
 }
 
@@ -731,6 +740,7 @@ export function stepsSeriesDescriptors(items: StepSeries[]): SeriesDescriptor[] 
     label: item.label,
     cellName: item.cell_name,
     groupName: null,
+    visibilityKey: item.series_id,
   }));
 }
 
@@ -865,6 +875,41 @@ export function StepsPlotCard({
     () => stepsSeriesDescriptors(visibleSeriesItems),
     [visibleSeriesItems]
   );
+  const seriesVisibilityCandidates = useMemo(
+    () =>
+      data
+        ? stepsApplicableSeries(data, spec).map((item) => ({
+            key: item.series_id,
+            label: item.label,
+          }))
+        : [],
+    [data, spec],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
 
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
@@ -948,6 +993,11 @@ export function StepsPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+          seriesVisibility={{
+            items: seriesVisibilityItems,
+            onShowOnly: showOnlySeries,
+            onShowAll: showAllSeries,
+          }}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=

@@ -1311,9 +1311,11 @@ export interface AnalysisSpec {
     legend: boolean;
     hidden_protocol_segment_ids?: string[];
     /**
-     * Display-only visibility for the series-based tabs (DCIR, steps). Kept out
-     * of the compute cache key (see analysis_cache._scientific_spec) so toggling
-     * a line on or off never triggers a recompute.
+     * Display-only visibility for user-visible series across plot families.
+     * Keys are family-owned stable application identities; existing DCIR/Steps
+     * identifiers remain supported. Kept out of the compute cache key (see
+     * analysis_cache._scientific_spec) so toggling a line on or off never
+     * triggers a recompute.
      */
     hidden_series_ids?: string[];
     /** Display-only: segment ids hidden across DCIR/steps series (all cells). */

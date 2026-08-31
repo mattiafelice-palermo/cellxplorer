@@ -32,7 +32,14 @@ import {
   type SeriesStyleOverride,
   type SeriesStyleRule,
 } from "../../../../../api";
-import { isCellHiddenInAnalysis, type CellSelectionContext } from "../../policies/analysisVisibility";
+import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
+  isCellHiddenInAnalysis,
+  isSeriesHidden,
+  plotSeriesVisibilityItems,
+  type CellSelectionContext,
+} from "../../policies/analysisVisibility";
 import { simpleCartesianLayout } from "../../plotting/plotLayout";
 import {
   downloadDataExport,
@@ -338,6 +345,7 @@ export function rateCapabilitySeriesDescriptors(
       label: name,
       cellName: block.cell_name,
       groupName: null,
+      visibilityKey: `rate-capability-${block.id}`,
     });
   }
 
@@ -353,6 +361,7 @@ export function rateCapabilitySeriesDescriptors(
       label: cellName,
       cellName,
       groupName: null,
+      visibilityKey: `rate-capability-cell-${cellId}`,
     });
   }
 
@@ -492,6 +501,7 @@ export function rateCapabilityTracesForResult(
       if (!points.length) return [];
       const descriptor = descriptors.find((d) => d.key === `rate-capability-cell-${cellId}`);
       if (!descriptor) return [];
+      if (isSeriesHidden(spec, descriptor.visibilityKey ?? descriptor.key)) return [];
       const color = colorForCell(cellId);
       const baseStyle = {
         color,
@@ -588,6 +598,7 @@ export function rateCapabilityTracesForResult(
     .map((block) => {
       const descriptor = descriptors.find((d) => d.key === `rate-capability-${block.id}`);
       if (!descriptor) return null;
+      if (isSeriesHidden(spec, descriptor.visibilityKey ?? descriptor.key)) return null;
       const points = [...block.points]
         .filter(
           (point) => finite(pointX(point, view)) && finite(pointY(point, view)),
@@ -1369,6 +1380,46 @@ export function RateCapabilityPlotCard({
         : [],
     [result.data, spec]
   );
+  const seriesVisibilityCandidates = useMemo(
+    () =>
+      seriesDescriptors
+        .filter((descriptor) =>
+          view.y_axis === "asymmetry_ratio"
+            ? descriptor.key.startsWith("rate-capability-cell-")
+            : descriptor.key.startsWith("rate-capability-") &&
+              !descriptor.key.startsWith("rate-capability-cell-"),
+        )
+        .map(({ key, label, visibilityKey }) => ({
+          key: visibilityKey ?? key,
+          label,
+        })),
+    [seriesDescriptors, view.y_axis],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
 
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
@@ -1477,6 +1528,11 @@ export function RateCapabilityPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+          seriesVisibility={{
+            items: seriesVisibilityItems,
+            onShowOnly: showOnlySeries,
+            onShowAll: showAllSeries,
+          }}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((

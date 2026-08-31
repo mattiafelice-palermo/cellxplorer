@@ -172,6 +172,14 @@ test("plot signatures distinguish standalone and replicate-member visibility", (
   assert.notEqual(plotViewSignature(standaloneHidden), plotViewSignature(memberHidden));
 });
 
+test("plot signatures distinguish user-level series visibility", () => {
+  const visible = makeSpec([{ kind: "cell", ref_id: 1 }], []);
+  const isolated = structuredClone(visible) as typeof visible;
+  isolated.presentation.hidden_series_ids = ["cycles:c2", "cycles:c3"];
+
+  assert.notEqual(plotViewSignature(visible), plotViewSignature(isolated));
+});
+
 test("opening a saved plot keeps current analysis samples and restores only hidden cells", () => {
   const currentAnalysis = makeSpec(
     [

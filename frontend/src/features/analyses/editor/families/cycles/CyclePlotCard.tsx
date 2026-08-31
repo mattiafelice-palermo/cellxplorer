@@ -83,7 +83,11 @@ import {
 } from "../../plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
   isAnalysisSampleHidden,
+  isSeriesHidden,
+  plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import {
   aggregateSeriesDescriptor,
@@ -110,6 +114,9 @@ const CAPACITY_LIKE_KEYS = new Set([
   "charge_capacity_specific",
   "cv_charge_capacity",
 ]);
+
+const CYCLES_VISIBILITY_PREFIX = "cycles:";
+const cycleVisibilityKey = (seriesKey: string) => `${CYCLES_VISIBILITY_PREFIX}${seriesKey}`;
 
 const NORMALIZED_QUANTITY_MAP: Record<string, { column: string; label: string }> = {
   discharge_capacity: { column: "discharge_capacity_mah_g", label: "Discharge capacity (mAh/g)" },
@@ -414,6 +421,43 @@ export function diagnosticCyclesFor(result: ComputeResult, spec: AnalysisSpec): 
   );
 }
 
+/** Primary CellXplorer visibility targets for the current Cycles plot. */
+export function cycleSeriesVisibilityCandidates(
+  original: ComputeResult,
+  spec: AnalysisSpec,
+): { key: string; label: string }[] {
+  const result = withoutDiagnosticCycles(
+    original,
+    diagnosticCyclesFor(original, spec),
+    spec.presentation.reindex_diagnostic_cycles ?? false,
+  );
+  const { column } = resolveCycleQuantity(result, spec);
+  const showIndividual =
+    spec.presentation.show_individual_cells || result.aggregates.length === 0;
+  const candidates: { key: string; label: string }[] = [];
+  for (const aggregate of result.aggregates) {
+    const quantity = aggregate.quantities[column];
+    if (!quantity || !quantity.mean.some((value) => value !== null && Number.isFinite(value))) {
+      continue;
+    }
+    candidates.push({
+      key: cycleVisibilityKey(`g${aggregate.group_id}`),
+      label: `${aggregate.group_name} mean`,
+    });
+  }
+  for (const series of result.cell_series) {
+    if (
+      cycleSeriesIsHidden(series, spec) ||
+      (series.group_id !== null && !showIndividual) ||
+      !series.quantities[column]?.some((value) => value !== null && Number.isFinite(value))
+    ) {
+      continue;
+    }
+    candidates.push({ key: cycleVisibilityKey(`c${series.cell_id}`), label: series.label });
+  }
+  return candidates;
+}
+
 export function cycleTracesForResult(
   original: ComputeResult,
   spec: AnalysisSpec,
@@ -474,6 +518,7 @@ export function cycleTracesForResult(
     axis: "y2",
     measure: "coulombic_efficiency",
     sourceKey,
+    visibilityKey: cycleVisibilityKey(sourceKey),
     secondarySuffix: " CE",
   });
 
@@ -555,6 +600,7 @@ export function cycleTracesForResult(
     const aggKey = `g${agg.group_id}`;
     const q = agg.quantities[column];
     if (!q) continue;
+    if (isSeriesHidden(spec, cycleVisibilityKey(aggKey))) continue;
     const aggResolved = resolvedStyles.get(aggKey);
     if (!aggResolved || aggResolved.hidden) continue;
     if (!compact) {
@@ -661,9 +707,15 @@ export function cycleTracesForResult(
   }
 
   for (const s of result.cell_series) {
-    if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
-    const grouped = s.group_id !== null;
     const cellKey = `c${s.cell_id}`;
+    if (
+      cycleSeriesIsHidden(s, spec) ||
+      isSeriesHidden(spec, cycleVisibilityKey(cellKey)) ||
+      !soloOrIndividual(s)
+    ) {
+      continue;
+    }
+    const grouped = s.group_id !== null;
     const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
     const resolved = resolvedStyles.get(cellKey);
     if (!resolved || resolved.hidden) continue;
@@ -1220,6 +1272,7 @@ export function CyclePlotCard({
         visibility: {
           exclusions: spec.selection.exclusions,
           hiddenReplicateGroups: spec.selection.hidden_replicate_group_ids ?? [],
+          hiddenSeries: spec.presentation.hidden_series_ids ?? [],
         },
         style: currentPlotStyle(spec, "cycles"),
       }),
@@ -1262,6 +1315,29 @@ export function CyclePlotCard({
     [result, viewSignature, exportTraces],
   );
   const style = currentPlotStyle(spec, "cycles");
+  const seriesVisibilityCandidates = useMemo(
+    () => (result ? cycleSeriesVisibilityCandidates(result, spec) : []),
+    [result, spec],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = (key: string) =>
+    update((draft) => {
+      draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+        draft.presentation.hidden_series_ids,
+        seriesVisibilityCandidates,
+        key,
+      );
+    });
+  const showAllSeries = () =>
+    update((draft) => {
+      draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+        draft.presentation.hidden_series_ids,
+        seriesVisibilityCandidates,
+      );
+    });
   const explainer = getCycleQuantityExplainer(
     spec.presentation.quantity ?? "discharge_capacity",
     Boolean(spec.presentation.normalize_by_mass),
@@ -1437,6 +1513,11 @@ export function CyclePlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+          seriesVisibility={{
+            items: seriesVisibilityItems,
+            onShowOnly: showOnlySeries,
+            onShowAll: showAllSeries,
+          }}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
         {segmentsActive && (

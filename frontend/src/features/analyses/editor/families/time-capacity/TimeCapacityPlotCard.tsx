@@ -62,7 +62,11 @@ import {
   timeCapacityRetainedPanResult,
 } from "../../policies/timeCapacityQueryPolicy";
 import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
   isAnalysisSampleHidden,
+  isSeriesHidden,
+  plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
@@ -186,6 +190,10 @@ export type TimeCapacityConfig = Omit<
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
 export type TimeCapacityVoltageChannel = VoltageChannel;
+
+const TIME_CAPACITY_VISIBILITY_PREFIX = "time_capacity:";
+const timeCapacityVisibilityKey = (seriesKey: string) =>
+  `${TIME_CAPACITY_VISIBILITY_PREFIX}${seriesKey}`;
 
 // Vertical double-headed arrow: "expand the y axis to fit".
 const TIME_CAPACITY_FIT_Y_MODEBAR_ICON = {
@@ -536,6 +544,31 @@ export function timeCapacityTraceIsHidden(
   return isAnalysisSampleHidden(spec, trace);
 }
 
+/** Primary CellXplorer visibility targets for the current Time/capacity plot. */
+export function timeCapacitySeriesVisibilityCandidates(
+  result: TimeCapacityResult,
+  spec: AnalysisSpec,
+): { key: string; label: string }[] {
+  const cfg = timeCapacityConfig(spec);
+  const candidates: { key: string; label: string }[] = [];
+  for (const trace of result.cell_traces) {
+    if (timeCapacityTraceIsHidden(trace, spec)) continue;
+    const hasData =
+      cfg.view === "voltage_current"
+        ? cfg.voltage_channels.some((channel) =>
+            hasFinitePoint(traceVoltageValues(trace, channel, cfg.voltage_channel)),
+          )
+        : hasFinitePoint(trace.derivative_x) && hasFinitePoint(trace.derivative_y);
+    if (!hasData) continue;
+    const key = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
+    candidates.push({
+      key: timeCapacityVisibilityKey(key),
+      label: trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label,
+    });
+  }
+  return candidates;
+}
+
 function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: AnalysisSpec): boolean {
   if (!result) return false;
   const cfg = timeCapacityConfig(spec);
@@ -611,6 +644,7 @@ export function timeCapacityTracesForResult(
     for (const trace of result.cell_traces) {
       if (timeCapacityTraceIsHidden(trace, spec)) continue;
       const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
+      if (isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
       const color = pick(seriesKey);
       const baseName = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
       const descriptor = timeCapacitySeriesDescriptor(trace);
@@ -689,6 +723,7 @@ export function timeCapacityTracesForResult(
   for (const trace of result.cell_traces) {
     if (timeCapacityTraceIsHidden(trace, spec)) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
+    if (isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
     const color = pick(seriesKey);
     const descriptor = timeCapacitySeriesDescriptor(trace);
     const resolved = resolveTrace(
@@ -2137,9 +2172,19 @@ function TimeCapacityPlotCardView({
   // draft concern, though, so carry the current selection into that retained
   // render spec and let the plot hide the toggled trace immediately.
   const renderSpec =
-    renderSpecBase.selection === spec.selection
+    renderSpecBase === spec
       ? renderSpecBase
-      : { ...renderSpecBase, selection: spec.selection };
+      : {
+          ...renderSpecBase,
+          selection: spec.selection,
+          // A retained/placeholder result may still use the previous request's
+          // computation, but display-only visibility belongs to the current
+          // draft and must respond immediately to a menu action.
+          presentation: {
+            ...renderSpecBase.presentation,
+            hidden_series_ids: spec.presentation.hidden_series_ids,
+          },
+        };
   const renderCfg = timeCapacityConfig(renderSpec);
   useEffect(() => {
     if (!timeResult.isPlaceholderData && queryResult) {
@@ -2282,6 +2327,7 @@ function TimeCapacityPlotCardView({
       JSON.stringify({
         cfg: renderCfg,
         legend: renderSpec.presentation.legend,
+        visibility: renderSpec.presentation.hidden_series_ids ?? [],
         style: currentPlotStyle(renderSpec, "time_capacity"),
       }),
     [renderSpec]
@@ -2560,6 +2606,35 @@ function TimeCapacityPlotCardView({
     );
   }, [currentResult, profileRequest, profileResultIsCurrent, traces.length]);
   const style = currentPlotStyle(spec, "time_capacity");
+  const seriesVisibilityCandidates = useMemo(
+    () => (currentResult ? timeCapacitySeriesVisibilityCandidates(currentResult, spec) : []),
+    [currentResult, spec],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
   const updatePlotStyle = useCallback(
     (fn: (style: PlotStyle) => void) => {
       update((s) => writeScopedStyle(s, "time_capacity", fn));
@@ -2982,6 +3057,11 @@ function TimeCapacityPlotCardView({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
+          seriesVisibility={{
+            items: seriesVisibilityItems,
+            onShowOnly: showOnlySeries,
+            onShowAll: showAllSeries,
+          }}
         />
         <TimeCapacityCycleNavigation
           config={cfg}

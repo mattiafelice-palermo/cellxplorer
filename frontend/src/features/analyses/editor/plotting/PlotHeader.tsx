@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Loader,
+  Menu,
   Paper,
   Popover,
   Progress,
@@ -18,6 +19,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconDownload,
+  IconEye,
+  IconEyeOff,
   IconInfoCircle,
   IconPlus,
   IconTable,
@@ -38,6 +41,7 @@ import { renderExportFilename, sanitizeExportFilename } from "../../../../export
 import { resolveExportPlan } from "./plotExport";
 import { type PlotExplainer } from "./plotExplainers";
 import { DEFAULT_PLOT_STYLE } from "./plotStyle";
+import type { PlotSeriesVisibilityItem } from "../policies/analysisVisibility";
 
 const ASPECT_RATIO_OPTIONS: { value: PlotAspectRatioKey; label: string }[] = [
   { value: "view", label: "Current view" },
@@ -130,6 +134,57 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
   );
 }
 
+function PlotSeriesVisibilityMenu({
+  items,
+  onShowOnly,
+  onShowAll,
+}: {
+  items: PlotSeriesVisibilityItem[];
+  onShowOnly: (key: string) => void;
+  onShowAll: () => void;
+}) {
+  const canShowAll = items.some((item) => item.hidden);
+  if (items.length === 0) return null;
+  // With one visible target and no hidden user-level state, there is no useful
+  // action to expose. Keep the header compact until isolation is meaningful.
+  if (items.length === 1 && !canShowAll) return null;
+  return (
+    <Menu withinPortal position="bottom-end" shadow="md">
+      <Menu.Target>
+        <Button
+          size="xs"
+          variant={canShowAll ? "light" : "default"}
+          leftSection={<IconEye size={14} />}
+          aria-label="Series visibility"
+        >
+          Series visibility
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>CellXplorer series</Menu.Label>
+        {items.map((item) => (
+          <Menu.Item
+            key={item.key}
+            leftSection={item.hidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+            onClick={() => onShowOnly(item.key)}
+            title={item.label}
+          >
+            Show only {item.label}
+          </Menu.Item>
+        ))}
+        <Divider my={4} />
+        <Menu.Item
+          leftSection={<IconEye size={14} />}
+          disabled={!canShowAll}
+          onClick={onShowAll}
+        >
+          Show all series
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 export function PlotHeader({
   analysisTitle,
   tabName,
@@ -154,6 +209,7 @@ export function PlotHeader({
   onUpdatePlot,
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
+  seriesVisibility,
 }: {
   analysisTitle?: string;
   tabName?: string;
@@ -183,6 +239,12 @@ export function PlotHeader({
   updatePlotEnabled?: boolean;
   /** `Save as` for new drafts; `Update` for edited saved plots. */
   updatePlotLabel?: string;
+  /** Application-owned series visibility actions for this plot. */
+  seriesVisibility?: {
+    items: PlotSeriesVisibilityItem[];
+    onShowOnly: (key: string) => void;
+    onShowAll: () => void;
+  };
 }) {
   const exportStyle = style ?? DEFAULT_PLOT_STYLE;
   const plotExportEnabled = canPlotExport ?? canExport;
@@ -301,6 +363,13 @@ export function PlotHeader({
       </div>
       <Group gap="xs" align="start">
         <PlotExplainerButton explainer={explainer} />
+        {seriesVisibility && (
+          <PlotSeriesVisibilityMenu
+            items={seriesVisibility.items}
+            onShowOnly={seriesVisibility.onShowOnly}
+            onShowAll={seriesVisibility.onShowAll}
+          />
+        )}
         {onDataExport && style && (
           <Button.Group>
             <Button

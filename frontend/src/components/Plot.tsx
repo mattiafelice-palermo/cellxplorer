@@ -7,6 +7,10 @@ import {
   disposePlotlyCssZoomHoverCompensation,
   installPlotlyCssZoomHoverCompensation,
 } from "../features/analyses/editor/plotting/plotRuntime";
+import {
+  blockPlotlyLegendVisibility,
+  disablePlotlyLegendVisibility,
+} from "../features/analyses/editor/policies/analysisVisibility";
 
 const createPlotlyComponent = resolvePlotlyFactory(factoryModule);
 
@@ -16,6 +20,15 @@ function Plot(props: PlotParams) {
   return (
     <PlotlyComponent
       {...props}
+      layout={disablePlotlyLegendVisibility(props.layout)}
+      onLegendClick={(event) => {
+        props.onLegendClick?.(event);
+        return blockPlotlyLegendVisibility();
+      }}
+      onLegendDoubleClick={(event) => {
+        props.onLegendDoubleClick?.(event);
+        return blockPlotlyLegendVisibility();
+      }}
       onInitialized={(figure, graphDiv) => {
         installPlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
         props.onInitialized?.(figure, graphDiv);
