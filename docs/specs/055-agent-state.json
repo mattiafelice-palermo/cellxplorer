@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "spec": "055",
+  "branch": "feature/plot-workflow-polish",
+  "active_child": "055.1",
+  "children": [
+    "055.1",
+    "055.2",
+    "055.3"
+  ],
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-31T08:53:15+02:00"
+}
