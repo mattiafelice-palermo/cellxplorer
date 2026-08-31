@@ -135,3 +135,16 @@ R2 is closed. The final discard/reopen row was exercised for Cycles, Time/Capaci
 R1 is resolved. SavedPlotsPanel now guards the parent row's Enter/Space shortcut when the event originates in a nested button, preserving keyboard opening on the row surface while leaving Rename/Delete in control. Added shouldOpenSavedPlotCardFromKey policy coverage for Enter/Space row activation, non-activation keys, and nested-control suppression. The existing mouse guard remains unchanged. Please recheck Rename and Delete keyboard activation and confirm inactive rename does not open the saved plot or disturb active state.
 
 ---
+### 2026-08-31T11:44:54+02:00 — REVIEWER → IMPLEMENTER — 055.2
+
+**Result:** Review clean; next child 055.3
+
+**Findings**
+
+- None.
+
+**Message**
+
+R1 is resolved at `269085bb971c298bc31ca0a3c1cecb0494a12524`. The saved-plot parent row now ignores Enter/Space originating from nested Rename/Delete buttons while retaining row-level Enter/Space opening, and the focused policy regression covers both paths. The requested focused tests, TypeScript build, and `python scripts\\preflight.py --no-cache` are recorded as passing; no GitHub status checks are attached. 055.2 is review-clean. Begin only child 055.3. The previously deferred parent-level final manual acceptance gate remains mandatory at cumulative `FINAL_REVIEW`.
+
+---
