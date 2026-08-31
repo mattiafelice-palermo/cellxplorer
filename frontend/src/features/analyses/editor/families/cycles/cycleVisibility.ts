@@ -23,6 +23,22 @@ export function cycleTraceVisibility(
   };
 }
 
+/**
+ * Resolve the actual renderer gates for one source. Primary helpers follow
+ * `primary`, while Coulombic-efficiency traces remain independently drawable.
+ */
+export function cycleTraceEmissionPlan(
+  spec: AnalysisSpec,
+  sourceKey: string,
+  available: { primary: boolean; ce: boolean },
+): { primary: boolean; ce: boolean } {
+  const visibility = cycleTraceVisibility(spec, sourceKey);
+  return {
+    primary: available.primary && visibility.primaryVisible,
+    ce: available.ce && visibility.ceVisible,
+  };
+}
+
 type CycleVisibilityCandidate = { key: string; label: string };
 
 /**

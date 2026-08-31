@@ -109,6 +109,7 @@ import {
   cycleCeSeriesKey,
   cycleCeVisibilityKey,
   cycleSeriesVisibilityCandidatesForResult,
+  cycleTraceEmissionPlan,
   cycleTraceVisibility,
   cycleVisibilityKey,
 } from "./cycleVisibility";
@@ -591,124 +592,133 @@ export function cycleTracesForResult(
     const aggKey = `g${agg.group_id}`;
     const q = agg.quantities[column];
     if (!q) continue;
-    const aggregateVisibility = cycleTraceVisibility(spec, aggKey);
-    if (!aggregateVisibility.primaryVisible) continue;
     const aggResolved = resolvedStyles.get(aggKey);
-    if (!aggResolved || aggResolved.hidden) continue;
-    if (!compact) {
-      out.push(
-        ...bandSegmentTraces(
-          agg.x,
-          q.band_low,
-          q.band_high,
-          aggResolved.color,
-          style.band_opacity,
-          `${agg.group_name} band`,
-        ),
-      );
-    }
-    out.push({
-      x: agg.x,
-      y: q.mean,
-      name: aggResolved.name,
-      line: {
-        color: aggResolved.color,
-        width: aggResolved.lineWidth,
-        dash: aggResolved.lineDash,
-        shape: aggResolved.lineShape,
-      },
-      marker: {
-        color: aggResolved.color,
-        size: aggResolved.markerSize,
-        symbol: seriesPlotlySymbol(aggResolved),
-      },
-      opacity: aggResolved.opacity,
-      showlegend: aggResolved.showInLegend,
-      legendrank: legendRanks.get(aggKey),
-      type: "scatter",
-      mode: compact ? mode : seriesPlotlyMode(aggResolved),
-      customdata: q.n,
-      hovertemplate: compact
-        ? undefined
-        : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
-    } as Plotly.Data);
-    if (!compact) {
-      const lowCountX: number[] = [];
-      const lowCountY: number[] = [];
-      const lowCountN: number[] = [];
-      q.n.forEach((count, index) => {
-        const value = q.mean[index];
-        if (
-          count > 0 &&
-          count < spec.aggregation.min_n_for_band &&
-          value !== null &&
-          Number.isFinite(value)
-        ) {
-          lowCountX.push(agg.x[index]);
-          lowCountY.push(value);
-          lowCountN.push(count);
+    const ceKey = cycleCeSeriesKey(aggKey);
+    const ceResolved = resolvedStyles.get(ceKey);
+    const aggregateEmission = cycleTraceEmissionPlan(spec, aggKey, {
+      primary: Boolean(aggResolved && !aggResolved.hidden),
+      ce: Boolean(
+        showCeOverlay &&
+          agg.quantities["coulombic_efficiency_pct"] &&
+          ceResolved &&
+          !ceResolved.hidden,
+      ),
+    });
+    if (aggregateEmission.primary && aggResolved) {
+      if (!compact) {
+        out.push(
+          ...bandSegmentTraces(
+            agg.x,
+            q.band_low,
+            q.band_high,
+            aggResolved.color,
+            style.band_opacity,
+            `${agg.group_name} band`,
+          ),
+        );
+      }
+      out.push({
+        x: agg.x,
+        y: q.mean,
+        name: aggResolved.name,
+        line: {
+          color: aggResolved.color,
+          width: aggResolved.lineWidth,
+          dash: aggResolved.lineDash,
+          shape: aggResolved.lineShape,
+        },
+        marker: {
+          color: aggResolved.color,
+          size: aggResolved.markerSize,
+          symbol: seriesPlotlySymbol(aggResolved),
+        },
+        opacity: aggResolved.opacity,
+        showlegend: aggResolved.showInLegend,
+        legendrank: legendRanks.get(aggKey),
+        type: "scatter",
+        mode: compact ? mode : seriesPlotlyMode(aggResolved),
+        customdata: q.n,
+        hovertemplate: compact
+          ? undefined
+          : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
+      } as Plotly.Data);
+      if (!compact) {
+        const lowCountX: number[] = [];
+        const lowCountY: number[] = [];
+        const lowCountN: number[] = [];
+        q.n.forEach((count, index) => {
+          const value = q.mean[index];
+          if (
+            count > 0 &&
+            count < spec.aggregation.min_n_for_band &&
+            value !== null &&
+            Number.isFinite(value)
+          ) {
+            lowCountX.push(agg.x[index]);
+            lowCountY.push(value);
+            lowCountN.push(count);
+          }
+        });
+        if (lowCountX.length > 0) {
+          out.push({
+            x: lowCountX,
+            y: lowCountY,
+            name: `${agg.group_name} below minimum n`,
+            type: "scatter",
+            mode: "markers",
+            marker: {
+              color: style.low_n_color,
+              size: style.low_n_marker_size,
+              symbol: style.low_n_marker_symbol,
+              line: { color: style.paper_bgcolor, width: 0.8 },
+            },
+            customdata: lowCountN,
+            showlegend: false,
+            hovertemplate:
+              `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
+              `<extra>${agg.group_name}</extra>`,
+          } as Plotly.Data);
         }
-      });
-      if (lowCountX.length > 0) {
-        out.push({
-          x: lowCountX,
-          y: lowCountY,
-          name: `${agg.group_name} below minimum n`,
-          type: "scatter",
-          mode: "markers",
-          marker: {
-            color: style.low_n_color,
-            size: style.low_n_marker_size,
-            symbol: style.low_n_marker_symbol,
-            line: { color: style.paper_bgcolor, width: 0.8 },
-          },
-          customdata: lowCountN,
-          showlegend: false,
-          hovertemplate:
-            `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
-            `<extra>${agg.group_name}</extra>`,
-        } as Plotly.Data);
       }
     }
-    if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
-      const ceKey = cycleCeSeriesKey(aggKey);
-      const ceResolved = resolvedStyles.get(ceKey);
-      if (ceResolved && !ceResolved.hidden && aggregateVisibility.ceVisible) {
-        out.push({
-          x: agg.x,
-          y: agg.quantities["coulombic_efficiency_pct"].mean,
-          name: ceResolved.name,
-          yaxis: "y2",
-          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
-          marker: {
-            color: ceResolved.color,
-            size: ceResolved.markerSize,
-            symbol: seriesPlotlySymbol(ceResolved),
-          },
-          type: "scatter",
-          mode: seriesPlotlyMode(ceResolved),
-          opacity: ceResolved.opacity,
-          showlegend: ceResolved.showInLegend,
-          legendrank: legendRanks.get(ceKey),
-        } as Plotly.Data);
-      }
+    if (aggregateEmission.ce && ceResolved) {
+      out.push({
+        x: agg.x,
+        y: agg.quantities["coulombic_efficiency_pct"]!.mean,
+        name: ceResolved.name,
+        yaxis: "y2",
+        line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
+        marker: {
+          color: ceResolved.color,
+          size: ceResolved.markerSize,
+          symbol: seriesPlotlySymbol(ceResolved),
+        },
+        type: "scatter",
+        mode: seriesPlotlyMode(ceResolved),
+        opacity: ceResolved.opacity,
+        showlegend: ceResolved.showInLegend,
+        legendrank: legendRanks.get(ceKey),
+      } as Plotly.Data);
     }
   }
 
   for (const s of result.cell_series) {
     const cellKey = `c${s.cell_id}`;
-    const cellVisibility = cycleTraceVisibility(spec, cellKey);
-    if (
-      cycleSeriesIsHidden(s, spec) ||
-      !cellVisibility.primaryVisible ||
-      !soloOrIndividual(s)
-    ) {
-      continue;
-    }
+    if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
-    const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
     const resolved = resolvedStyles.get(cellKey);
-    if (!resolved || resolved.hidden) continue;
+    const ceKey = cycleCeSeriesKey(cellKey);
+    const ceResolved = resolvedStyles.get(ceKey);
+    const cellEmission = cycleTraceEmissionPlan(spec, cellKey, {
+      primary: Boolean(resolved && !resolved.hidden),
+      ce: Boolean(
+        showCeOverlay &&
+          !grouped &&
+          s.quantities["coulombic_efficiency_pct"] &&
+          ceResolved &&
+          !ceResolved.hidden,
+      ),
+    });
     const sourceCycle = s.source_cycle ?? s.x.map(() => null);
     const sourcePosition = s.source_position ?? s.x.map(() => null);
     const sourceFilename = s.source_filename ?? s.x.map(() => null);
@@ -721,87 +731,86 @@ export function cycleTracesForResult(
       sourceFilename,
       sourceHash,
     );
-    const customdata = s.x.map((cycle, index) => [
-      cycle,
-      sourceCycle[index] ?? "",
-      sourcePosition[index] ?? "",
-      shortSourceName(String(sourceFilename[index] ?? "")),
-    ]);
-    out.push({
-      x: s.x,
-      y: s.quantities[column] ?? [],
-      name: resolved.name,
-      line: {
-        color: resolved.color,
-        width: resolved.lineWidth,
-        dash: resolved.lineDash,
-        shape: resolved.lineShape,
-      },
-      marker: {
-        color: resolved.color,
-        size: resolved.markerSize,
-        symbol: seriesPlotlySymbol(resolved),
-      },
-      opacity: resolved.opacity,
-      type: "scatter",
-      mode: compact ? mode : seriesPlotlyMode(resolved),
-      showlegend: !compact && !grouped && resolved.showInLegend,
-      legendrank: legendRanks.get(cellKey),
-      customdata,
-      cellxplorer_export_columns: sourceColumns,
-      hovertemplate:
-        `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
-        `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
-    } as Plotly.Data);
     const values = s.quantities[column] ?? [];
-    const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
-    if (boundaryIndices.length) {
+    if (cellEmission.primary && resolved) {
+      const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
+      const customdata = s.x.map((cycle, index) => [
+        cycle,
+        sourceCycle[index] ?? "",
+        sourcePosition[index] ?? "",
+        shortSourceName(String(sourceFilename[index] ?? "")),
+      ]);
       out.push({
-        x: boundaryIndices.map((index) => s.x[index]),
-        y: boundaryIndices.map((index) => values[index]),
-        name: "Source boundary",
-        type: "scatter",
-        mode: "markers",
-        marker: {
-          color,
-          size: Math.max(style.marker_size + 2, 7),
-          symbol: "diamond-open",
-          line: { color: style.paper_bgcolor, width: 1.2 },
+        x: s.x,
+        y: values,
+        name: resolved.name,
+        line: {
+          color: resolved.color,
+          width: resolved.lineWidth,
+          dash: resolved.lineDash,
+          shape: resolved.lineShape,
         },
-        showlegend: false,
-        customdata: boundaryIndices.map((index) => [
-          s.x[index],
-          sourceCycle[index] ?? "",
-          sourcePosition[index] ?? "",
-          shortSourceName(String(sourceFilename[index] ?? "")),
-        ]),
+        marker: {
+          color: resolved.color,
+          size: resolved.markerSize,
+          symbol: seriesPlotlySymbol(resolved),
+        },
+        opacity: resolved.opacity,
+        type: "scatter",
+        mode: compact ? mode : seriesPlotlyMode(resolved),
+        showlegend: !compact && !grouped && resolved.showInLegend,
+        legendrank: legendRanks.get(cellKey),
+        customdata,
+        cellxplorer_export_columns: sourceColumns,
         hovertemplate:
-          "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
-          "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+          `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
+          `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
       } as Plotly.Data);
-    }
-    if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
-      const ceKey = cycleCeSeriesKey(cellKey);
-      const ceResolved = resolvedStyles.get(ceKey);
-      if (ceResolved && !ceResolved.hidden && cellVisibility.ceVisible) {
+      const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
+      if (boundaryIndices.length) {
         out.push({
-          x: s.x,
-          y: s.quantities["coulombic_efficiency_pct"],
-          name: ceResolved.name,
-          yaxis: "y2",
-          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
-          marker: {
-            color: ceResolved.color,
-            size: ceResolved.markerSize,
-            symbol: seriesPlotlySymbol(ceResolved),
-          },
+          x: boundaryIndices.map((index) => s.x[index]),
+          y: boundaryIndices.map((index) => values[index]),
+          name: "Source boundary",
           type: "scatter",
-          mode: seriesPlotlyMode(ceResolved),
-          opacity: ceResolved.opacity,
-          showlegend: ceResolved.showInLegend,
-          legendrank: legendRanks.get(ceKey),
+          mode: "markers",
+          marker: {
+            color,
+            size: Math.max(style.marker_size + 2, 7),
+            symbol: "diamond-open",
+            line: { color: style.paper_bgcolor, width: 1.2 },
+          },
+          showlegend: false,
+          customdata: boundaryIndices.map((index) => [
+            s.x[index],
+            sourceCycle[index] ?? "",
+            sourcePosition[index] ?? "",
+            shortSourceName(String(sourceFilename[index] ?? "")),
+          ]),
+          hovertemplate:
+            "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
+            "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
         } as Plotly.Data);
       }
+    }
+    if (cellEmission.ce && ceResolved) {
+      out.push({
+        x: s.x,
+        y: s.quantities["coulombic_efficiency_pct"],
+        name: ceResolved.name,
+        yaxis: "y2",
+        line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
+        marker: {
+          color: ceResolved.color,
+          size: ceResolved.markerSize,
+          symbol: seriesPlotlySymbol(ceResolved),
+        },
+        type: "scatter",
+        mode: seriesPlotlyMode(ceResolved),
+        opacity: ceResolved.opacity,
+        showlegend: ceResolved.showInLegend,
+        legendrank: legendRanks.get(ceKey),
+      } as Plotly.Data);
     }
   }
   return out;

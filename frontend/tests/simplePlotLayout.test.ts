@@ -11,6 +11,7 @@ import {
 import { simpleCartesianLayout } from "../src/features/analyses/editor/plotting/plotLayout.ts";
 import {
   cycleSeriesVisibilityCandidatesForResult,
+  cycleTraceEmissionPlan,
   cycleTraceVisibility,
 } from "../src/features/analyses/editor/families/cycles/cycleVisibility.ts";
 import {
@@ -141,8 +142,8 @@ test("Cycles and Time/Capacity builders keep first-class series independently ta
   assert.match(cyclesSource, /cycleCeVisibilityKey\(sourceKey\)/);
   assert.match(cyclesSource, /const ceKey = cycleCeSeriesKey\(aggKey\)/);
   assert.match(cyclesSource, /const ceKey = cycleCeSeriesKey\(cellKey\)/);
-  assert.match(cyclesSource, /cycleTraceVisibility\(spec, aggKey\)/);
-  assert.match(cyclesSource, /cycleTraceVisibility\(spec, cellKey\)/);
+  assert.match(cyclesSource, /cycleTraceEmissionPlan\(spec, aggKey,/);
+  assert.match(cyclesSource, /cycleTraceEmissionPlan\(spec, cellKey,/);
 
   const timeCapacitySource = readFileSync(
     new URL(
@@ -197,6 +198,14 @@ test("the Cycles visibility builder exposes CE separately and keeps helpers out"
       "g7",
     ),
     { primaryVisible: true, ceVisible: false },
+  );
+  assert.deepEqual(
+    cycleTraceEmissionPlan(
+      { ...spec, presentation: { hidden_series_ids: ["cycles:g7"] } },
+      "g7",
+      { primary: true, ce: true },
+    ),
+    { primary: false, ce: true },
   );
 });
 
