@@ -260,6 +260,9 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
   assert.match(liveSource, /timeCapacityPlotExportReady/);
   assert.match(liveSource, /timeCapacityScientificRequestSpec/);
+  assert.match(liveSource, /const plotConfig = useMemo\(/);
+  assert.match(liveSource, /config=\{plotConfig\}/);
+  assert.match(liveSource, /voltageChannelAvailabilitySignature\(scientificRequestSpec,/);
   const queryStart = liveSource.indexOf("const timeResult = useQuery");
   assert.ok(queryStart >= 0);
   assert.match(liveSource.slice(queryStart), /spec: scientificRequestSpec,/);

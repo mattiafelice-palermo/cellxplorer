@@ -2385,8 +2385,8 @@ function TimeCapacityPlotCardView({
   const effectiveVoltageDataIdentity =
     voltageDataIdentity ?? lastVoltageDataIdentityRef.current;
   const voltageCapabilitySignature = useMemo(
-    () => voltageChannelAvailabilitySignature(spec, effectiveVoltageDataIdentity),
-    [effectiveVoltageDataIdentity, spec.selection]
+    () => voltageChannelAvailabilitySignature(scientificRequestSpec, effectiveVoltageDataIdentity),
+    [effectiveVoltageDataIdentity, scientificRequestSpec]
   );
   const voltageCapabilitySignatureRef = useRef(voltageCapabilitySignature);
   useEffect(() => {
@@ -2805,6 +2805,23 @@ function TimeCapacityPlotCardView({
       click: () => updatePlotStyle((next) => void (next.show_grid = !next.show_grid)),
     }),
     [style.show_grid, updatePlotStyle],
+  );
+  // react-plotly.js treats a changed config reference as a full Plotly.react
+  // update, even when data and layout are unchanged. Keep it stable across
+  // parent/state renders so a visibility edit cannot queue a redundant plot
+  // rebuild behind the actual trace update.
+  const plotConfig = useMemo(
+    () => ({
+      displaylogo: false,
+      edits: { legendPosition: style.legend_mode !== "outside" },
+      // Keep Plotly's normal hover-to-reveal modebar available even
+      // when the Y-range hint is not active.
+      displayModeBar: "hover" as const,
+      modeBarButtonsToAdd: yOutOfView
+        ? [fitYModebarButton, gridModebarButton]
+        : [gridModebarButton],
+    }),
+    [fitYModebarButton, gridModebarButton, style.legend_mode, yOutOfView],
   );
   const explainer = getTimeCapacityExplainer(
     cfg.x_axis,
@@ -3275,16 +3292,7 @@ function TimeCapacityPlotCardView({
               key={`${cfg.stacked ? "tc-stacked" : "tc-flat"}|grid-${style.show_grid ? "on" : "off"}`}
               data={traces}
               layout={layout}
-              config={{
-                displaylogo: false,
-                edits: { legendPosition: style.legend_mode !== "outside" },
-                // Keep Plotly's normal hover-to-reveal modebar available even
-                // when the Y-range hint is not active.
-                displayModeBar: "hover",
-                modeBarButtonsToAdd: yOutOfView
-                  ? [fitYModebarButton, gridModebarButton]
-                  : [gridModebarButton],
-              }}
+              config={plotConfig}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
