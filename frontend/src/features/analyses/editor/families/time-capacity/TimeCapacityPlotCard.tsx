@@ -578,7 +578,8 @@ function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: Ana
 export function timeCapacityTracesForResult(
   result: TimeCapacityResult,
   spec: AnalysisSpec,
-  interactiveWebGl = false
+  interactiveWebGl = false,
+  preserveAnalysisSampleVisibility = false,
 ): Plotly.Data[] {
   const style = currentPlotStyle(spec, "time_capacity");
   const palette = plotPalette(style);
@@ -629,9 +630,15 @@ export function timeCapacityTracesForResult(
 
   if (cfg.view !== "voltage_current") {
     for (const trace of result.cell_traces) {
-      if (timeCapacityTraceIsHidden(trace, spec)) continue;
+      const analysisSampleHidden = timeCapacityTraceIsHidden(trace, spec);
+      if (analysisSampleHidden && !preserveAnalysisSampleVisibility) continue;
       const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
       if (isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
+      const analysisSample = {
+        cell_id: trace.cell_id,
+        group_id: trace.group_id,
+        excluded: trace.excluded,
+      };
       const color = pick(seriesKey);
       const baseName = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
       const descriptor = timeCapacitySeriesDescriptor(trace);
@@ -687,6 +694,7 @@ export function timeCapacityTracesForResult(
             mode: seriesPlotlyMode(resolved),
             type: traceType,
             connectgaps: false,
+            cellxplorer_analysis_sample: analysisSample,
             meta: `${phase}, cycle ${cycle ?? "?"}`,
             cellxplorer_export_columns: sourceExportColumns(
               baseName,
@@ -708,11 +716,17 @@ export function timeCapacityTracesForResult(
   }
 
   for (const trace of result.cell_traces) {
-    if (timeCapacityTraceIsHidden(trace, spec)) continue;
+    const analysisSampleHidden = timeCapacityTraceIsHidden(trace, spec);
+    if (analysisSampleHidden && !preserveAnalysisSampleVisibility) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     if (!multipleVoltageChannels && isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) {
       continue;
     }
+    const analysisSample = {
+      cell_id: trace.cell_id,
+      group_id: trace.group_id,
+      excluded: trace.excluded,
+    };
     const color = pick(seriesKey);
     const descriptor = timeCapacitySeriesDescriptor(trace);
     const resolved = resolveTrace(
@@ -795,6 +809,7 @@ export function timeCapacityTracesForResult(
           mode: seriesPlotlyMode(channelResolved),
           type: traceType,
           connectgaps: false,
+          cellxplorer_analysis_sample: analysisSample,
           customdata: segmentCustomdata,
           cellxplorer_export_columns: sourceExportColumnsFromPoints(
             channelName,
@@ -827,6 +842,7 @@ export function timeCapacityTracesForResult(
             mode: "lines",
             type: traceType,
             connectgaps: false,
+            cellxplorer_analysis_sample: analysisSample,
             showlegend: false,
             opacity: 0.85,
             meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
@@ -850,6 +866,7 @@ export function timeCapacityTracesForResult(
               mode: "lines",
               type: traceType,
               connectgaps: false,
+              cellxplorer_analysis_sample: analysisSample,
               showlegend: false,
               opacity: 0.75,
               meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
@@ -892,6 +909,7 @@ export function timeCapacityTracesForResult(
         name: "Source boundary",
         type: traceType,
         mode: "markers",
+        cellxplorer_analysis_sample: analysisSample,
         marker: {
           color,
           size: Math.max(style.marker_size + 2, 7),
@@ -909,6 +927,18 @@ export function timeCapacityTracesForResult(
     }
   }
   return out;
+}
+
+type TimeCapacityAnalysisSampleReference = Pick<
+  TimeCapacityTrace,
+  "cell_id" | "group_id" | "excluded"
+>;
+
+function timeCapacityTraceVisibleForSpec(trace: Plotly.Data, spec: AnalysisSpec): boolean {
+  const sample = (trace as Plotly.Data & {
+    cellxplorer_analysis_sample?: TimeCapacityAnalysisSampleReference;
+  }).cellxplorer_analysis_sample;
+  return sample ? !timeCapacityTraceIsHidden(sample, spec) : true;
 }
 
 type RefinementTransition = {
@@ -2448,6 +2478,14 @@ function TimeCapacityPlotCardView({
       }),
     [renderSpec]
   );
+  // The interactive figure must not change its data-array length when the
+  // Analysis-sample eye changes. Keep a visibility-neutral render spec stable
+  // across that display-only edit; the live selection is applied below with a
+  // lightweight Plotly restyle operation.
+  const scientificRenderSpec = useMemo(
+    () => timeCapacityScientificRequestSpec(renderSpec),
+    [dataSignature, viewSignature],
+  );
   const activeRefinedResult =
     !panActive &&
     timeCapacityRefinementDisplayIsCurrent(
@@ -2462,22 +2500,30 @@ function TimeCapacityPlotCardView({
   const plotTraces = useMemo(
     () =>
       plotResult && !selectedVoltageUnavailable
-        ? timeCapacityTracesForResult(plotResult, renderSpec)
+        ? timeCapacityTracesForResult(plotResult, scientificRenderSpec, false, true)
         : [],
-    [plotResult, renderSpec, selectedVoltageUnavailable, viewSignature]
+    [plotResult, scientificRenderSpec, selectedVoltageUnavailable]
+  );
+  const plotTraceVisibility = useMemo(
+    () => plotTraces.map((trace) => timeCapacityTraceVisibleForSpec(trace, spec)),
+    [plotTraces, spec],
+  );
+  const visiblePlotTraces = useMemo(
+    () => plotTraces.filter((_, index) => plotTraceVisibility[index] !== false),
+    [plotTraceVisibility, plotTraces],
   );
   const exportTraces = useMemo(
     () => {
       if (!currentResult || selectedVoltageUnavailable) return [];
-      // The ordinary view and the export read the same trace model. Reuse the
-      // already-built array instead of walking every point a second time on
-      // every result/style update. A viewport refinement is the only case in
-      // which the plot is showing a different result from the export source.
-      if (plotResult === currentResult) return plotTraces;
+      // The ordinary view keeps hidden samples in its stable Plotly data
+      // array, so exports use the separately filtered visible view. A viewport
+      // refinement is the only case in which the plot is showing a different
+      // result from the export source.
+      if (plotResult === currentResult) return visiblePlotTraces;
       return timeCapacityTracesForResult(currentResult, renderSpec);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentResult, plotResult, plotTraces, renderSpec, selectedVoltageUnavailable, viewSignature]
+    [currentResult, plotResult, renderSpec, selectedVoltageUnavailable, viewSignature, visiblePlotTraces]
   );
   // One shared WebGL subplot is the performance boundary. Each resident
   // buffer is re-zeroed near its own start, which avoids the large per-Cell
@@ -2549,6 +2595,10 @@ function TimeCapacityPlotCardView({
     () => transitionTraces ?? interactivePlotTraces(plotTraces),
     [plotTraces, transitionTraces],
   );
+  const traceVisibility = useMemo(
+    () => traces.map((trace) => timeCapacityTraceVisibleForSpec(trace, spec)),
+    [spec, traces],
+  );
   const exportInteractiveTraces = useMemo(
     () => interactivePlotTraces(exportTraces),
     [exportTraces],
@@ -2583,7 +2633,10 @@ function TimeCapacityPlotCardView({
   const fitYAxis = useCallback(() => setFrozenY(null), []);
 
   const layout = useMemo(() => {
-    const base = zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces));
+    // Use the same neutral scientific spec as the stable figure data. The
+    // live Analysis-sample selection is applied by Plotly restyle, so an eye
+    // edit does not rebuild axes or margins either.
+    const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, plotTraces));
     const retainedY = panFrozenYRef.current;
     const next = { ...base } as Record<string, unknown>;
     // Stacked layouts intentionally omit uirevision because Plotly can enter
@@ -2613,8 +2666,7 @@ function TimeCapacityPlotCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       plotResult,
-      renderSpec,
-      viewSignature,
+      scientificRenderSpec,
       plotTraces,
       panPresentationActive,
       cfg.stacked,
@@ -2977,9 +3029,9 @@ function TimeCapacityPlotCardView({
                     prefersReducedMotion(),
                   );
                   const fromTraces = previousDisplayedResult
-                    ? refinementTransitionTraces(previousDisplayedResult, renderSpec)
+                    ? refinementTransitionTraces(previousDisplayedResult, scientificRenderSpec)
                     : [];
-                  const toTraces = refinementTransitionTraces(response, renderSpec);
+                  const toTraces = refinementTransitionTraces(response, scientificRenderSpec);
                   if (
                     previousDisplayedResult &&
                     transitionDuration > 0 &&
@@ -3293,6 +3345,7 @@ function TimeCapacityPlotCardView({
               data={traces}
               layout={layout}
               config={plotConfig}
+              traceVisibility={traceVisibility}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {

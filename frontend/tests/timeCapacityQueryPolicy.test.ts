@@ -146,6 +146,24 @@ test("live Analysis-sample visibility filters an already returned Time/Capacity 
   assert.equal(signature(visible), signature(hidden));
 });
 
+test("interactive Plot visibility uses style restyle instead of a calc replot", () => {
+  const plotSource = readFileSync(
+    new URL("../src/components/Plot.tsx", import.meta.url),
+    "utf8",
+  );
+  const restyleStart = plotSource.indexOf("await Plotly.restyle(");
+  assert.ok(restyleStart >= 0);
+  const restyleEnd = plotSource.indexOf("        } catch", restyleStart);
+  assert.ok(restyleEnd > restyleStart);
+  const restyleSource = plotSource.slice(restyleStart, restyleEnd);
+
+  assert.match(restyleSource, /opacity: opacityValues/);
+  assert.match(restyleSource, /showlegend: legendValues/);
+  assert.doesNotMatch(restyleSource, /\bvisible\s*:/);
+  assert.match(plotSource, /internalVisibilityRestyleRef/);
+  assert.match(plotSource, /figureUpdatePendingRef/);
+});
+
 test("selection and protocol visibility changes are incompatible", () => {
   const selected = makeSpec();
   const changedSelection = makeSpec();
