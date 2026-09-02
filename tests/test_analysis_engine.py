@@ -2430,6 +2430,7 @@ class AnalysisEngineTests(unittest.TestCase):
             "cycle_end": 3,
             "x_axis": "time",
             "display_mode": "consecutive",
+            "stacked": True,
             "max_points_per_cell": 4000,
         }
         analysis = Analysis(title="Ephemeral refinement", spec=spec)
@@ -2456,6 +2457,7 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(body["request_generation"], "g1")
         self.assertEqual(body["overview_data_signature"], body["data_signature"])
         self.assertTrue(body["cell_traces"])
+        self.assertTrue(body["cell_traces"][0]["current_ma"])
 
     def test_ordinary_worker_process_matches_forced_serial_trace_order(self):
         spec = self.spec_with(

@@ -164,26 +164,23 @@ export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {
       xAxis === "capacity_mah_g" ||
       xAxis === "capacity_mah_cm2") &&
     (cfg?.display_mode ?? "consecutive") === "consecutive" &&
-    cfg?.stacked !== true &&
     !(cfg?.cycles?.length)
   );
 }
 
 /**
- * A refinement can never be displayed by the stacked renderer. This keeps a
- * stacked transition from reusing a previously accepted flat-view refinement
- * without adding stacked to the scientific/query/cache identity.
+ * A refinement uses the same server result for flat and stacked rendering.
+ * Stacking and the current-axis choices are client-side presentation, so they
+ * must not invalidate an otherwise compatible high-resolution response.
  */
 export function timeCapacityRefinementDisplayIsCurrent(
-  stacked: boolean,
   response: TimeCapacityRefinementResult | null,
   currentResult: TimeCapacityResult | undefined,
   displayedCompatibilitySignature: string | null,
   compatibilitySignature: string,
 ): boolean {
   return Boolean(
-    !stacked &&
-      response &&
+    response &&
       displayedCompatibilitySignature === compatibilitySignature &&
       timeCapacityRefinementResultMatchesOverview(response, currentResult),
   );

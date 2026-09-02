@@ -1071,9 +1071,10 @@ export function timeCapacityLayout(
     font: { size: style.tick_font_size },
     hoverlabel: hoverLabelLayout(style),
     // uirevision together with `matches` axes is a documented plotly.js
-    // infinite-relayout trap — skip zoom persistence in stacked mode. In
-    // flat mode, key the revision to the x-axis semantics so changing the
-    // x quantity/unit/display resets the view instead of keeping stale ranges.
+    // infinite-relayout trap — stacked refinement restores its accepted
+    // viewport explicitly below. In flat mode, key the revision to the
+    // x-axis semantics so changing the x quantity/unit/display resets the
+    // view instead of keeping stale ranges.
     ...(cfg.stacked
       ? {}
       : {
@@ -2013,13 +2014,12 @@ function TimeCapacityPlotCardView({
   const requestCfg = timeCapacityConfig(requestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
-    refinementLifecycleRef.current = new TimeCapacityRefinementLifecycle(cfg.stacked);
+    refinementLifecycleRef.current = new TimeCapacityRefinementLifecycle();
   }
   const refinementLifecycle = refinementLifecycleRef.current;
   const stackedModeRef = useRef(cfg.stacked);
   const stackedModeChanged = stackedModeRef.current !== cfg.stacked;
   stackedModeRef.current = cfg.stacked;
-  refinementLifecycle.setStacked(cfg.stacked);
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
   const viewportWidth = panBufferRequestActive
@@ -2386,7 +2386,7 @@ function TimeCapacityPlotCardView({
     invalidateRefinement();
   }, [invalidateRefinement, currentResult?.data_signature, dataSignature]);
   useLayoutEffect(() => {
-    if (stackedModeChanged && cfg.stacked) invalidateRefinement();
+    if (stackedModeChanged) invalidateRefinement();
   }, [cfg.stacked, invalidateRefinement, stackedModeChanged]);
   useEffect(() => {
     if (!active) {
@@ -2471,7 +2471,6 @@ function TimeCapacityPlotCardView({
   const activeRefinedResult =
     !panActive &&
     timeCapacityRefinementDisplayIsCurrent(
-      cfg.stacked,
       refinedResult,
       currentResult,
       refinementLifecycle.displayed?.compatibilitySignature ?? null,
@@ -2607,6 +2606,19 @@ function TimeCapacityPlotCardView({
     const base = zoom.apply(timeCapacityLayout(plotResult, renderSpec, plotTraces));
     const retainedY = panFrozenYRef.current;
     const next = { ...base } as Record<string, unknown>;
+    // Stacked layouts intentionally omit uirevision because Plotly can enter
+    // a relayout loop when matched x axes use it. Preserve the accepted
+    // refinement viewport explicitly while replacing the coarse result so the
+    // new high-resolution data cannot reset the user's visible window.
+    const refinementViewport =
+      cfg.stacked && activeRefinedResult
+        ? refinementLifecycle.displayed?.viewport ?? null
+        : null;
+    if (refinementViewport) {
+      const range = [refinementViewport.min, refinementViewport.max];
+      next.xaxis = { ...(base.xaxis ?? {}), range: [...range], autorange: false };
+      next.xaxis2 = { ...(base.xaxis2 ?? {}), range: [...range], autorange: false };
+    }
     const liveX = panPresentationActive ? panLiveXRef.current : null;
     if (liveX) {
       next.xaxis = { ...(base.xaxis ?? {}), range: [...liveX], autorange: false };
@@ -2627,6 +2639,8 @@ function TimeCapacityPlotCardView({
       panPresentationActive,
       cfg.stacked,
       frozenY,
+      activeRefinedResult,
+      refinementLifecycle,
     ]
   );
 

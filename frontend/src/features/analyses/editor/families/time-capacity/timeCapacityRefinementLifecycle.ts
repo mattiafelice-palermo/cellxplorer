@@ -16,18 +16,14 @@ export type TimeCapacityRefinementDisplay = {
 /**
  * Own the ephemeral request/display boundary used by the Time/Capacity card.
  * React and Plotly remain responsible for rendering and side effects; this
- * controller makes generation, stacked invalidation, and response acceptance
- * one testable lifecycle instead of duplicating those decisions in callbacks.
+ * controller makes generation and response acceptance one testable lifecycle
+ * instead of duplicating those decisions in callbacks. Rendering-topology
+ * changes are invalidated by the owning card before the next request.
  */
 export class TimeCapacityRefinementLifecycle {
   private generationValue = 0;
   private requestedViewportValue: TimeCapacityViewport | null = null;
   private displayedValue: TimeCapacityRefinementDisplay | null = null;
-  private stackedValue: boolean;
-
-  constructor(stacked = false) {
-    this.stackedValue = stacked;
-  }
 
   get generation(): string {
     return String(this.generationValue);
@@ -39,10 +35,6 @@ export class TimeCapacityRefinementLifecycle {
 
   get displayed(): TimeCapacityRefinementDisplay | null {
     return this.displayedValue;
-  }
-
-  setStacked(stacked: boolean): void {
-    this.stackedValue = stacked;
   }
 
   cancelPending(): void {
@@ -72,7 +64,6 @@ export class TimeCapacityRefinementLifecycle {
     compatibilitySignature: string,
   ): boolean {
     if (
-      this.stackedValue ||
       generation !== this.generation ||
       !timeCapacityRefinementRequestIsCurrent(response, currentResult, generation)
     ) {

@@ -228,12 +228,14 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(navigationSource, /if \(event\.detail === 0\) onActivate\(event\.ctrlKey\)/);
   assert.match(navigationSource, /navigateTimeCapacityCycleRange\(\s*buttonRangeRef\.current,/s);
   assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);
-  assert.match(liveSource, /new TimeCapacityRefinementLifecycle\(cfg\.stacked\)/);
+  assert.match(liveSource, /new TimeCapacityRefinementLifecycle\(\)/);
   assert.match(
     liveSource,
-    /useLayoutEffect\(\(\) => \{\s*if \(stackedModeChanged && cfg\.stacked\) invalidateRefinement\(\);/s,
+    /useLayoutEffect\(\(\) => \{\s*if \(stackedModeChanged\) invalidateRefinement\(\);/s,
   );
   assert.match(liveSource, /timeCapacityRefinementDisplayIsCurrent\(/);
+  assert.match(liveSource, /const refinementViewport =/);
+  assert.match(liveSource, /next\.xaxis2 = \{ \.\.\.\(base\.xaxis2 \?\? \{\}\)/);
   assert.match(liveSource, /if \(panPresentationActive \|\| cfg\.stacked \|\| !refinementTransition\) return null;/);
   assert.match(liveSource, /timeCapacityRefinementCanSchedule\(active, spec\)/);
   assert.match(liveSource, /refinementLifecycle\.acceptResponse\(/);
