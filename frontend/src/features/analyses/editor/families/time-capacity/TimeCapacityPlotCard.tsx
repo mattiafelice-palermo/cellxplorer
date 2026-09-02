@@ -57,9 +57,11 @@ import {
 } from "../../policies/voltageChannelPolicy";
 import {
   timeCapacityCompatibilitySignature,
+  timeCapacityDataSignature,
   timeCapacityPlotExportReady,
   timeCapacityPlaceholderData,
   timeCapacityRetainedPanResult,
+  timeCapacityScientificRequestSpec,
 } from "../../policies/timeCapacityQueryPolicy";
 import {
   hiddenSeriesIdsAfterShowAll,
@@ -258,39 +260,6 @@ function timeCapacitySpecWithCycleRange(
       },
     },
   };
-}
-
-function timeCapacityDataSignature(
-  requestSpec: AnalysisSpec,
-  viewportWidth: number,
-  coordinateOriginCycle: number | null = null,
-): string {
-  const requestCfg = timeCapacityConfig(requestSpec);
-  return JSON.stringify({
-    selection: requestSpec.selection,
-    protocol_segments: requestSpec.protocol_segments ?? [],
-    protocol_filter: requestSpec.computation.protocol_filter,
-    hidden_protocol_segment_ids: requestSpec.presentation.hidden_protocol_segment_ids ?? [],
-    cycles: requestCfg.cycles,
-    start: requestCfg.cycle_start,
-    end: requestCfg.cycle_end,
-    points: requestCfg.max_points_per_cell,
-    xAxis: requestCfg.x_axis,
-    timeUnit: requestCfg.time_unit,
-    displayMode: requestCfg.display_mode,
-    electrodeArea: requestCfg.electrode_area_cm2,
-    voltageChannel: requestCfg.voltage_channel,
-    voltageChannels: requestCfg.voltage_channels,
-    viewportWidth,
-    coordinateOriginCycle,
-    derivative: requestCfg.view === "voltage_current" ? null : {
-      view: requestCfg.view,
-      phase: requestCfg.derivative_phase,
-      specific: requestCfg.derivative_specific,
-      absoluteDischarge: requestCfg.derivative_absolute_discharge,
-      smoothing: requestCfg.smoothing_window,
-    },
-  });
 }
 
 const CURRENT_AXIS_OPTIONS: { value: TimeCapacityCurrentQuantity; label: string }[] = [
@@ -1758,23 +1727,25 @@ function TimeCapacityPlotCardView({
   );
   const panWarmQuery = useMemo(() => {
     if (!panWarmSpec || !panWarmPlan) return null;
-    const warmCfg = timeCapacityConfig(panWarmSpec);
+    const scientificSpec = timeCapacityScientificRequestSpec(panWarmSpec);
+    const warmCfg = timeCapacityConfig(scientificSpec);
     return {
       queryKey: [
         "time-capacity",
         analysisId,
         timeCapacityCompatibilitySignature(
-          panWarmSpec,
+          scientificSpec,
           warmCfg,
           TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
         ),
         timeCapacityDataSignature(
-          panWarmSpec,
+          scientificSpec,
+          warmCfg,
           TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
           panWarmPlan.window.start,
         ),
       ] as const,
-      spec: panWarmSpec,
+      spec: scientificSpec,
       origin: panWarmPlan.window.start,
     };
   }, [analysisId, panWarmPlan, panWarmSpec]);
@@ -2006,12 +1977,20 @@ function TimeCapacityPlotCardView({
     previewRequest,
     spec,
   ]);
+  // Analysis-sample visibility is a saved-plot display edit, not a scientific
+  // input for the ordinary Time/Capacity request. Keep the live requestSpec
+  // for rendering, then use this neutral copy consistently for both query
+  // identity and the request body.
+  const scientificRequestSpec = useMemo(
+    () => timeCapacityScientificRequestSpec(requestSpec),
+    [requestSpec],
+  );
   const previewQueryRange = previewRequest?.range ?? null;
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
   const previewResolution = previewRequest?.resolution ?? null;
   const transientPreviewRequest = panBufferRequestActive || previewResolution === "moving";
-  const requestCfg = timeCapacityConfig(requestSpec);
+  const requestCfg = timeCapacityConfig(scientificRequestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
     refinementLifecycleRef.current = new TimeCapacityRefinementLifecycle();
@@ -2029,7 +2008,7 @@ function TimeCapacityPlotCardView({
   // may retain the old compact result while the replacement is fetched, but
   // a semantic/display change must never relabel that result temporarily.
   const compatibilitySignature = timeCapacityCompatibilitySignature(
-    requestSpec,
+    scientificRequestSpec,
     requestCfg,
     viewportWidth,
   );
@@ -2043,11 +2022,12 @@ function TimeCapacityPlotCardView({
   const dataSignature = useMemo(
     () =>
       timeCapacityDataSignature(
-        requestSpec,
+        scientificRequestSpec,
+        requestCfg,
         viewportWidth,
         panBufferRequestActive && panRequest ? panRequest.window.start : null,
       ),
-    [panBufferRequestActive, panRequest, requestSpec, viewportWidth],
+    [panBufferRequestActive, panRequest, scientificRequestSpec, viewportWidth],
   );
   const dataSignatureRef = useRef(dataSignature);
   // Keep the latest request identity synchronous with render. A passive
@@ -2107,7 +2087,7 @@ function TimeCapacityPlotCardView({
       const httpStarted = profileRequest ? timeCapacityPerformanceNow() : 0;
       try {
         const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
-          spec: requestSpec,
+          spec: scientificRequestSpec,
           ...(token ? { job_token: token } : {}),
           viewport_width: viewportWidth,
           precision: "standard",

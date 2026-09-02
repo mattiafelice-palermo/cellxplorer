@@ -10,6 +10,24 @@ type TimeCapacityCompatibilitySpec = Pick<
 >;
 
 /**
+ * Build the Time/Capacity scientific request without the Analysis samples
+ * display filters. The live spec remains the source of truth for rendering
+ * and persistence; this copy is only for the interactive scientific query.
+ */
+export function timeCapacityScientificRequestSpec<T extends Pick<AnalysisSpec, "selection">>(
+  spec: T,
+): T {
+  return {
+    ...spec,
+    selection: {
+      ...spec.selection,
+      exclusions: [],
+      hidden_replicate_group_ids: [],
+    },
+  } as T;
+}
+
+/**
  * Return the identity of the meaning carried by a compact Time/Capacity
  * response. Range, point density, and viewport width are intentionally absent:
  * those fields select which records are returned, but do not relabel the
@@ -21,11 +39,12 @@ export function timeCapacityCompatibilitySignature(
   config: TimeCapacityQueryConfig,
   _viewportWidth: number,
 ): string {
+  const scientificSpec = timeCapacityScientificRequestSpec(spec);
   return JSON.stringify({
-    selection: spec.selection,
-    protocol_segments: spec.protocol_segments ?? [],
-    protocol_filter: spec.computation.protocol_filter ?? {},
-    hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
+    selection: scientificSpec.selection,
+    protocol_segments: scientificSpec.protocol_segments ?? [],
+    protocol_filter: scientificSpec.computation.protocol_filter ?? {},
+    hidden_protocol_segment_ids: scientificSpec.presentation.hidden_protocol_segment_ids ?? [],
     x_axis: config.x_axis,
     time_unit: config.time_unit,
     display_mode: config.display_mode,
@@ -37,6 +56,45 @@ export function timeCapacityCompatibilitySignature(
     derivative_specific: config.derivative_specific,
     derivative_absolute_discharge: config.derivative_absolute_discharge,
     smoothing_window: config.smoothing_window,
+  });
+}
+
+/**
+ * Identity of the compact Time/Capacity data request. Analysis-sample eye
+ * state is deliberately excluded here, while selected entries and every
+ * scientific/display coordinate input remain part of the identity.
+ */
+export function timeCapacityDataSignature(
+  spec: TimeCapacityCompatibilitySpec,
+  config: TimeCapacityQueryConfig,
+  viewportWidth: number,
+  coordinateOriginCycle: number | null = null,
+): string {
+  const scientificSpec = timeCapacityScientificRequestSpec(spec);
+  return JSON.stringify({
+    selection: scientificSpec.selection,
+    protocol_segments: scientificSpec.protocol_segments ?? [],
+    protocol_filter: scientificSpec.computation.protocol_filter,
+    hidden_protocol_segment_ids: scientificSpec.presentation.hidden_protocol_segment_ids ?? [],
+    cycles: config.cycles,
+    start: config.cycle_start,
+    end: config.cycle_end,
+    points: config.max_points_per_cell,
+    xAxis: config.x_axis,
+    timeUnit: config.time_unit,
+    displayMode: config.display_mode,
+    electrodeArea: config.electrode_area_cm2,
+    voltageChannel: config.voltage_channel,
+    voltageChannels: config.voltage_channels,
+    viewportWidth,
+    coordinateOriginCycle,
+    derivative: config.view === "voltage_current" ? null : {
+      view: config.view,
+      phase: config.derivative_phase,
+      specific: config.derivative_specific,
+      absoluteDischarge: config.derivative_absolute_discharge,
+      smoothing: config.smoothing_window,
+    },
   });
 }
 
