@@ -151,6 +151,46 @@ class BiologicMetadataTests(unittest.TestCase):
             protocol_service.reconstruct_declared_protocol(metadata["raw"])["signature"],
         )
 
+    def test_technique_04_profile_resolves_selector_signed_current(self) -> None:
+        settings = encode_gcpl_settings(
+            [
+                {"set_i_c": 0, "current": 0.0, "rest_duration_s": 1.0},
+                {"set_i_c": 1, "current": 130.0, "c_rate": 20.0},
+                {
+                    "set_i_c": 1,
+                    "current": 130.0,
+                    "c_rate": 20.0,
+                    "sign_code": 1,
+                    "goto_step": 1,
+                    "repeat_count": 1,
+                },
+            ],
+            technique_id=0x04,
+            comments="alternate GCPL settings",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "technique-04.mpr",
+                _HEADER_ROWS,
+                settings_payload=settings,
+            )
+            metadata = parsing.read_header_metadata(path)
+
+        self.assertNotIn("error", metadata)
+        decoded = metadata["raw"]["settings"]
+        self.assertEqual(decoded["technique_id"], 0x04)
+        self.assertEqual(decoded["settings_profile"], "gcpl-technique-04-v1")
+        self.assertEqual(decoded["layout"], "ec-lab-gcpl-technique-04-v1")
+        self.assertEqual(
+            [sequence["current_ma"] for sequence in decoded["sequences"]],
+            [0.0, 130.0, -130.0],
+        )
+        self.assertEqual(
+            [sequence["direction"] for sequence in decoded["sequences"]],
+            ["rest", "charge", "discharge"],
+        )
+        self.assertEqual(decoded["sequences"][2]["current_sign_factor"], -1)
+
     def test_reference_placeholder_is_not_promoted_to_a_reference_identity(self) -> None:
         settings = _settings(reference_electrode="(unspecified)")
         with tempfile.TemporaryDirectory() as temp:
@@ -181,7 +221,7 @@ class BiologicMetadataTests(unittest.TestCase):
 
     def test_unknown_settings_discriminator_fails_closed(self) -> None:
         payload = bytearray(_settings())
-        payload[0] = 0x04
+        payload[0] = 0x05
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "unknown.mpr", _HEADER_ROWS, settings_payload=bytes(payload))
             metadata = parsing.read_header_metadata(path)

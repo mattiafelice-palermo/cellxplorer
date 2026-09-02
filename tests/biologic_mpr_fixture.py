@@ -123,6 +123,7 @@ def _pascal_write(payload: bytearray, offset: int, value: str | None) -> None:
 def encode_gcpl_settings(
     sequences: Sequence[Mapping[str, object]],
     *,
+    technique_id: int = 0x77,
     comments: str | None = "fixture GCPL",
     active_mass_g: float = 0.001,
     electrode_area_cm2: float = 1.5,
@@ -130,12 +131,12 @@ def encode_gcpl_settings(
     battery_capacity: float = 0.0,
     battery_capacity_unit: int = 0,
 ) -> bytes:
-    """Encode the Spec 041.3 modern GCPL settings discriminator/layout."""
+    """Encode a fixture for one registered GCPL settings profile."""
 
     if not sequences or len(sequences) > 100:
         raise ValueError("fixture sequence count must be in 1..100")
     payload = bytearray(0x1847 + 4 + len(sequences) * 108)
-    payload[0] = 0x77
+    payload[0] = technique_id
     _pascal_write(payload, 0x0007, comments)
     struct.pack_into("<f", payload, 0x0107, active_mass_g)
     struct.pack_into("<f", payload, 0x0211, electrode_area_cm2)

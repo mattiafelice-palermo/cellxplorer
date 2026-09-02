@@ -427,9 +427,9 @@ RAW_COLUMNS = {
 # candidate/verified boundary and declared-direction checks changed. ``gcpl7``
 # and ``gcpl8`` are also historical now: gcpl8 widened the accepted contract
 # for a header-proven neutral setup/control preamble, gcpl9 widened the
-# binary column-layout contract, and gcpl10 widens logical-cycle
-# reconstruction. Sources under each prior identity must pass the current
-# source-reading path before receiving gcpl10.
+# binary column-layout contract, gcpl10 widened logical-cycle reconstruction,
+# and gcpl11 adds validated settings profiles. Sources under each prior
+# identity must pass the current source-reading path before receiving gcpl11.
 # Keep these sets explicit so a later BioLogic revision can add its own
 # bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
@@ -441,6 +441,7 @@ LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
         "bm:gcpl7:r1",
         "bm:gcpl8:r1",
         "bm:gcpl9:r1",
+        "bm:gcpl10:r1",
     }
 )
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
@@ -458,13 +459,13 @@ RETIRED_BIOLOGIC_MPR_WARNING = (
     "verified; this source is metadata-only."
 )
 BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING = (
-    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl10 "
+    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl11 "
     "identity from stored registry-resolved layout evidence; canonical "
     "cycling remains unavailable until logical cycle identity is independently "
     "verified, so this source is metadata-only."
 )
 BIOLOGIC_MPR_REINSPECTION_WARNING = (
-    "This BioLogic MPR was registered under a pre-gcpl10 parser identity, but "
+    "This BioLogic MPR was registered under a pre-gcpl11 parser identity, but "
     "its stored binary-layout evidence does not prove a safe registry-resolved "
     "layout. Re-inspect the source before using it; it remains metadata-only."
 )

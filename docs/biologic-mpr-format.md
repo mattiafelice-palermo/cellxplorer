@@ -245,7 +245,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl10`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl11`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -253,11 +253,27 @@ is zero-based in the verified file. The canonical adapter applies the documented
 `step_index = raw Ns + 1` (`raw Ns >= 0`); for example, the private sample's raw `Ns=1` belongs to
 settings sequence 2 and is published as canonical `step_index=2`.
 
-The adapter keeps the accepted BioLogic sign factor explicit as `+1`: positive canonical current is
-charge and negative canonical current is discharge. ID-211 is converted into non-negative,
+GCPL settings are resolved through an explicit profile registry keyed by the VMP Set technique
+discriminator. The currently verified profiles are:
+
+| Profile | Technique byte | Settings `Is` representation | Accepted `I sign` factors |
+|---|---:|---|---|
+| `gcpl-technique-77-v1` | `0x77` | signed current | `0` → `+1` |
+| `gcpl-technique-04-v1` | `0x04` | non-negative current magnitude | `0` → `+1`, `1` → `-1` |
+
+The selector factor is applied only to the declared settings current; the data-record current remains
+source-signed and is validated against the resolved declaration. Thus positive canonical current is
+charge and negative canonical current is discharge for both profiles. An unknown technique byte,
+sign selector, or incompatible parameter discriminator remains unsupported rather than being
+decoded by a positional fallback. ID-211 is converted into non-negative,
 phase-specific capacity counters relative to each executed step, and its sign must agree with ID-7
 and the current direction. Capacity counters must remain monotonic; ambiguous boundary ownership,
-error flags, unvalidated counter-increment flags, and unsupported control histories fail closed.
+error flags, counter-increment flags without a profile-specific validation rule, and unsupported
+control histories fail closed. The `0x04` profile additionally validates its observed source
+conventions: the `Ns`-change flag is one record late, the counter-increment bit becomes latched only
+after a validated backward loop wrap, and the final active interval may be recorded on the first
+same-`Ns` Rest row. That narrow active-to-Rest transfer is assigned to the preceding active step;
+arbitrary flag timing or capacity transfer remains unsupported.
 The supplied EGG GCPL6 source also establishes one narrow reset form at an executed `Ns` boundary:
 the first active row of the new `Ns` has an ID-211 cumulative charge/discharge quantity near zero
 and an ID-7 incremental `dQ` equal to that same short origin interval (about `1.75e-6 mA.h` in the
