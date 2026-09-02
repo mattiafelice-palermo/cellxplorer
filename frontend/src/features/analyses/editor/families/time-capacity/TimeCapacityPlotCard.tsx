@@ -2873,6 +2873,20 @@ function TimeCapacityPlotCardView({
     },
     [scheduleCommittedNavigationRange, update],
   );
+  const commitSpecificCycles = useCallback(
+    (cycles: number[]) => {
+      update((s) => {
+        const next = timeCapacityConfig(s);
+        next.cycles = cycles;
+        if (cycles.length > 0) {
+          next.cycle_start = Math.min(...cycles);
+          next.cycle_end = Math.max(...cycles);
+        }
+        s.computation.time_capacity = next;
+      });
+    },
+    [update],
+  );
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     zoom.onRelayout(event);
     const relayout = event as Record<string, unknown>;
@@ -3211,6 +3225,7 @@ function TimeCapacityPlotCardView({
           isVirgin={isVirginNavigation}
           navigationResetKey={navigationResetKey}
           onCommitRange={commitCycleRange}
+          onCommitSpecificCycles={commitSpecificCycles}
           onPreviewRangeChange={handleCyclePreviewRange}
           onWarmRange={panningEnabled ? setPanWarmRange : undefined}
           spec={spec}

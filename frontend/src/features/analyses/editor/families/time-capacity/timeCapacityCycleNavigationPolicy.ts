@@ -801,6 +801,47 @@ export function timeCapacityRangeNavigationDisabled(
   return (cycles ?? []).length > 0;
 }
 
+export function timeCapacityCycleNavigationDisabledAtBoundary(
+  range: TimeCapacityCycleRange,
+  direction: -1 | 1,
+  mode: "cycle" | "window",
+  maxAvailableCycle: number | null | undefined,
+): boolean {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  if (maximum === null) {
+    // A previous single-cycle move remains safe without an extent; forward and
+    // window moves need the known upper bound to avoid an unbounded request.
+    return direction === 1 || mode === "window";
+  }
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  return direction === -1 ? current.start <= 1 : current.end >= maximum;
+}
+
+export function parseTimeCapacitySpecificCycles(
+  input: string,
+  maxAvailableCycle: number | null | undefined,
+): number[] | null {
+  const trimmed = input.trim();
+  if (trimmed === "") return [];
+
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const values: number[] = [];
+  for (const token of trimmed.split(/[,\s]+/).filter(Boolean)) {
+    if (!/^\d+$/.test(token)) return null;
+    const value = Number(token);
+    if (
+      !Number.isSafeInteger(value) ||
+      value <= 0 ||
+      (maximum !== null && value > maximum)
+    ) {
+      return null;
+    }
+    values.push(value);
+  }
+
+  return [...new Set(values)].sort((left, right) => left - right);
+}
+
 export function timeCapacityPreviousViewDisabled(
   cycles: readonly number[] | null | undefined,
   historyLength: number,

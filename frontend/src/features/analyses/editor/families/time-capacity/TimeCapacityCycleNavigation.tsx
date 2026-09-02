@@ -9,6 +9,7 @@ import {
   Popover,
   Select,
   Text,
+  TextInput,
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
@@ -21,6 +22,9 @@ import {
   IconChevronsLeft,
   IconChevronsRight,
   IconHome,
+  IconInfoCircle,
+  IconPlayerTrackNext,
+  IconPlayerTrackPrev,
 } from "@tabler/icons-react";
 import {
   forwardRef,
@@ -42,7 +46,6 @@ import type { AnalysisSpec } from "../../../../../api";
 import type { TimeCapacityConfig } from "./TimeCapacityPlotCard";
 import {
   appendTimeCapacityCycleHistory,
-  centerTimeCapacityCycleRange,
   clampCycleWindow,
   cycleRangeWidth,
   cycleWindowOptions,
@@ -62,6 +65,8 @@ import {
   timeCapacityCycleStartAtPointerDelta,
   timeCapacityCycleStartAtTrackPosition,
   timeCapacityCycleSliderGeometry,
+  timeCapacityCycleNavigationDisabledAtBoundary,
+  parseTimeCapacitySpecificCycles,
   type TimeCapacityCycleRange,
 } from "./timeCapacityCycleNavigationPolicy";
 
@@ -161,9 +166,9 @@ function DraftCycleNumberInput({
       size="xs"
       w={78}
       disabled={disabled}
-      rightSectionPointerEvents="all"
-      rightSectionWidth={26}
-      rightSection={
+      leftSectionPointerEvents="all"
+      leftSectionWidth={26}
+      leftSection={
         <ActionIcon
           size="xs"
           variant="subtle"
@@ -176,10 +181,10 @@ function DraftCycleNumberInput({
           onMouseDown={(event) => event.preventDefault()}
           onClick={applyExtreme}
         >
-          {extreme === "first" ? <IconChevronsLeft size={13} /> : <IconChevronsRight size={13} />}
+          {extreme === "first" ? <IconPlayerTrackPrev size={13} /> : <IconPlayerTrackNext size={13} />}
         </ActionIcon>
       }
-      styles={{ input: { textAlign: "center", paddingRight: 28 } }}
+      styles={{ input: { textAlign: "center", paddingLeft: 28, paddingRight: 8 } }}
     />,
     disabled,
     disabledReason,
@@ -657,6 +662,7 @@ export function TimeCapacityCycleNavigation({
   config,
   maxAvailableCycle,
   onCommitRange,
+  onCommitSpecificCycles,
   onPreviewRangeChange,
   onWarmRange,
   isVirgin = false,
@@ -666,6 +672,7 @@ export function TimeCapacityCycleNavigation({
   config: Pick<TimeCapacityConfig, "cycle_start" | "cycle_end" | "cycles">;
   maxAvailableCycle: number | null;
   onCommitRange: (range: TimeCapacityCycleRange) => void;
+  onCommitSpecificCycles: (cycles: number[]) => void;
   onPreviewRangeChange?: (
     range: TimeCapacityCycleRange | null,
     continuousStart?: number | null,
@@ -698,6 +705,28 @@ export function TimeCapacityCycleNavigation({
   const disabledReason = specificCyclesActive
     ? "Clear Specific cycles in the Cycles settings to navigate a continuous range"
     : "Cycle extent is not available yet";
+  const previousNavigationDisabled =
+    boundedNavigationDisabled ||
+    timeCapacityCycleNavigationDisabledAtBoundary(
+      boundedRange,
+      -1,
+      "cycle",
+      maxAvailableCycle,
+    );
+  const nextNavigationDisabled =
+    boundedNavigationDisabled ||
+    timeCapacityCycleNavigationDisabledAtBoundary(
+      boundedRange,
+      1,
+      "cycle",
+      maxAvailableCycle,
+    );
+  const previousNavigationDisabledReason = boundedNavigationDisabled
+    ? disabledReason
+    : "Already at the first cycle";
+  const nextNavigationDisabledReason = boundedNavigationDisabled
+    ? disabledReason
+    : "Already at the last cycle";
   const selectionIdentity = useMemo(
     () =>
       JSON.stringify(
@@ -713,7 +742,7 @@ export function TimeCapacityCycleNavigation({
   const historyRef = useRef<TimeCapacityCycleRange[]>([]);
   const [sliderOpened, setSliderOpened] = useState(false);
   const [sliderPreviewRange, setSliderPreviewRange] = useState<TimeCapacityCycleRange | null>(null);
-  const [jumpDraft, setJumpDraft] = useState("");
+  const [specificCyclesDraft, setSpecificCyclesDraft] = useState("");
   const { ref: navigationRef, width: navigationWidth } = useElementSize();
   const sliderCloseTimerRef = useRef<number | null>(null);
   const triggerHoveredRef = useRef(false);
@@ -857,15 +886,14 @@ export function TimeCapacityCycleNavigation({
     [boundedNavigationDisabled, boundedRange, commitRange, hasBound, maxAvailableCycle],
   );
 
-  const jump = useCallback(() => {
-    if (!jumpDraft.trim() || boundedNavigationDisabled || !hasBound) return;
-    const target = Number(jumpDraft);
-    if (!Number.isFinite(target) || target <= 0) return;
-    const committed = commitRange(
-      centerTimeCapacityCycleRange(boundedRange, target, maxAvailableCycle),
-    );
-    if (committed) setJumpDraft("");
-  }, [boundedNavigationDisabled, boundedRange, commitRange, hasBound, jumpDraft, maxAvailableCycle]);
+  const commitSpecificCycles = useCallback(() => {
+    if (!hasBound) return;
+    const parsed = parseTimeCapacitySpecificCycles(specificCyclesDraft, maxAvailableCycle);
+    if (parsed === null) return;
+    if (parsed.length === 0 && !specificCyclesActive) return;
+    onCommitSpecificCycles(parsed);
+    setSpecificCyclesDraft("");
+  }, [hasBound, maxAvailableCycle, onCommitSpecificCycles, specificCyclesActive, specificCyclesDraft]);
 
   const showAll = useCallback(() => {
     if (boundedNavigationDisabled || !hasBound) return;
@@ -1165,8 +1193,8 @@ export function TimeCapacityCycleNavigation({
             <NavigationSegmentButton
               label="Previous cycle window"
               tooltipLabel="Previous window · Ctrl+click: first window"
-              disabled={boundedNavigationDisabled}
-              disabledReason={disabledReason}
+              disabled={previousNavigationDisabled}
+              disabledReason={previousNavigationDisabledReason}
               onActivate={(ctrlKey) => move(-1, "window", ctrlKey ? "first" : undefined)}
             >
               <IconChevronsLeft size={14} />
@@ -1174,8 +1202,8 @@ export function TimeCapacityCycleNavigation({
             <NavigationSegmentButton
               label="Previous cycle"
               tooltipLabel="Previous cycle · Ctrl+click: first window"
-              disabled={specificCyclesActive}
-              disabledReason={disabledReason}
+              disabled={previousNavigationDisabled}
+              disabledReason={previousNavigationDisabledReason}
               onActivate={(ctrlKey) => move(-1, "cycle", ctrlKey ? "first" : undefined)}
             >
               <IconChevronLeft size={14} />
@@ -1251,8 +1279,8 @@ export function TimeCapacityCycleNavigation({
             <NavigationSegmentButton
               label="Next cycle"
               tooltipLabel="Next cycle · Ctrl+click: last window"
-              disabled={boundedNavigationDisabled}
-              disabledReason={disabledReason}
+              disabled={nextNavigationDisabled}
+              disabledReason={nextNavigationDisabledReason}
               onActivate={(ctrlKey) => move(1, "cycle", ctrlKey ? "last" : undefined)}
             >
               <IconChevronRight size={14} />
@@ -1260,8 +1288,8 @@ export function TimeCapacityCycleNavigation({
             <NavigationSegmentButton
               label="Next cycle window"
               tooltipLabel="Next window · Ctrl+click: last window"
-              disabled={boundedNavigationDisabled}
-              disabledReason={disabledReason}
+              disabled={nextNavigationDisabled}
+              disabledReason={nextNavigationDisabledReason}
               onActivate={(ctrlKey) => move(1, "window", ctrlKey ? "last" : undefined)}
             >
               <IconChevronsRight size={14} />
@@ -1296,31 +1324,36 @@ export function TimeCapacityCycleNavigation({
           }}
         >
           <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
-            Jump to
+            Specific cycle
           </Text>
+          <Tooltip
+            label="Enter one cycle (145) or a comma-separated list (1, 5, 10), then press Enter."
+            multiline
+            w={260}
+            withArrow
+          >
+            <ActionIcon size="sm" variant="subtle" aria-label="Specific cycle syntax">
+              <IconInfoCircle size={14} />
+            </ActionIcon>
+          </Tooltip>
           {withControlTooltip(
-            "Jump to cycle",
-            <NumberInput
-              aria-label="Jump to cycle"
-              placeholder="Cycle"
-              value={jumpDraft}
-              onChange={(value) => setJumpDraft(String(value))}
+            "Specific cycle",
+            <TextInput
+              aria-label="Specific cycle"
+              placeholder="145 or 1, 5, 10"
+              value={specificCyclesDraft}
+              onChange={(event) => setSpecificCyclesDraft(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  jump();
+                  commitSpecificCycles();
                 }
               }}
-              min={1}
-              max={hasBound ? maxAvailableCycle! : undefined}
-              allowDecimal={false}
-              allowNegative={false}
-              hideControls
               size="xs"
-              w={72}
-              disabled={boundedNavigationDisabled}
+              w={132}
+              disabled={!hasBound}
             />,
-            boundedNavigationDisabled,
+            !hasBound,
             disabledReason,
           )}
         </Group>

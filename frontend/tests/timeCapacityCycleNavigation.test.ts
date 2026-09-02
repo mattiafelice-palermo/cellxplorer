@@ -30,6 +30,7 @@ import {
   normalizeCycleRangeForNavigation,
   normalizeManualTimeCapacityRange,
   normalizeTimeCapacityRange,
+  parseTimeCapacitySpecificCycles,
   resizeTimeCapacityCycleRange,
   selectedTimeCapacityCycleMax,
   selectTimeCapacityCycleHistory,
@@ -53,6 +54,7 @@ import {
   timeCapacityCommittedNavigationOnRequestSettled,
   timeCapacityCommittedNavigationRequestIsCurrent,
   timeCapacityCommittedNavigationSchedulerInitialState,
+  timeCapacityCycleNavigationDisabledAtBoundary,
   timeCapacityRangeNavigationDisabled,
   timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
@@ -207,7 +209,13 @@ test("cycle navigation keeps endpoint actions inside the fields and the window m
   );
   assert.match(source, /extreme="first"/);
   assert.match(source, /extreme="last"/);
-  assert.match(source, /rightSectionPointerEvents="all"/);
+  assert.match(source, /leftSectionPointerEvents="all"/);
+  assert.doesNotMatch(source, /rightSectionPointerEvents="all"/);
+  assert.match(source, /IconPlayerTrackPrev/);
+  assert.match(source, /IconPlayerTrackNext/);
+  assert.match(source, /Specific cycle/);
+  assert.match(source, /IconInfoCircle/);
+  assert.match(source, /onCommitSpecificCycles/);
   assert.match(source, /withScrollArea=\{false\}/);
   assert.match(source, /comboboxProps=\{\{ width: 96 \}\}/);
 });
@@ -567,6 +575,55 @@ test("explicit cycles disable range navigation without changing the retained ran
   assert.equal(timeCapacityPreviousViewDisabled([], 1), false);
   assert.equal(timeCapacityPreviousViewDisabled([], 0), true);
   assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), true);
+});
+
+test("cycle navigation buttons disable only at known range boundaries", () => {
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 1, end: 20 }, -1, "cycle", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 1, end: 20 }, -1, "window", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 2, end: 21 }, -1, "cycle", 720),
+    false,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 700, end: 720 }, 1, "cycle", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 700, end: 720 }, 1, "window", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 699, end: 719 }, 1, "cycle", 720),
+    false,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 10, end: 20 }, -1, "cycle", null),
+    false,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 10, end: 20 }, 1, "cycle", null),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 10, end: 20 }, -1, "window", null),
+    true,
+  );
+});
+
+test("specific cycle input accepts one or a sorted unique list and rejects invalid values", () => {
+  assert.deepEqual(parseTimeCapacitySpecificCycles("145", 332), [145]);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("10, 1 10 5", 332), [1, 5, 10]);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("", 332), []);
+  assert.equal(parseTimeCapacitySpecificCycles("0", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("1, nope", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("333", 332), null);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("145", null), [145]);
 });
 
 // Spec 052.3 Stage 5 evidence gate.
