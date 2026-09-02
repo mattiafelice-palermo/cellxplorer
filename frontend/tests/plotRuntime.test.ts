@@ -33,3 +33,15 @@ test("shared Plot memoizes the passive layout by incoming layout identity", () =
   assert.match(source, /\[props\.layout\]/);
   assert.match(source, /layout=\{passiveLayout\}/);
 });
+
+test("Plotly CSS zoom compensation keeps Plotly drag origins and scales aligned", () => {
+  const source = readFileSync(
+    new URL("../src/features/analyses/editor/plotting/plotRuntime.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /applyPlotlyCssZoomInteractionScale/);
+  assert.match(source, /patchPlotlyInverseTransformCalculation/);
+  assert.match(source, /_invTransform/);
+  assert.match(source, /baseX \/ scale\.x/);
+  assert.match(source, /baseY \/ scale\.y/);
+});

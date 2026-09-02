@@ -557,7 +557,7 @@ export function timeCapacityCycleSliderGeometry(
   return { leftPercent, widthPercent, visualWidthCycles };
 }
 
-/** Center the current-width window on a click position along the slider track. */
+/** Place the current-width window's left edge at a click position along the slider track. */
 export function timeCapacityCycleRangeAtTrackPosition(
   range: TimeCapacityCycleRange,
   pointerOffsetPx: number,
@@ -575,8 +575,10 @@ export function timeCapacityCycleRangeAtTrackPosition(
     return current;
   }
   const fraction = clamp(pointerOffsetPx / trackWidthPx, 0, 1);
-  const targetCycle = 1 + Math.round(fraction * Math.max(0, maximum - 1));
-  return centerTimeCapacityCycleRange(current, targetCycle, maximum);
+  const width = cycleRangeWidth(current);
+  const availableStarts = Math.max(0, maximum - width);
+  const targetStart = 1 + Math.round(fraction * availableStarts);
+  return clampCycleWindow(targetStart, width, maximum);
 }
 
 /**
@@ -606,8 +608,7 @@ export function timeCapacityCycleStartAtTrackPosition(
   const width = cycleRangeWidth(current);
   const availableStarts = Math.max(0, maximum - width);
   const fraction = clamp(pointerOffsetPx / trackWidthPx, 0, 1);
-  const targetCycle = 1 + fraction * Math.max(0, maximum - 1);
-  return clamp(targetCycle - (width - 1) / 2, 1, availableStarts + 1);
+  return clamp(1 + fraction * availableStarts, 1, availableStarts + 1);
 }
 
 export function timeCapacityCycleRangeAtBoundary(

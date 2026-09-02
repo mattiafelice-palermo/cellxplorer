@@ -8,7 +8,10 @@ import {
   normalizePlotStyle,
   plotStylePresetFamilyForTab,
 } from "../src/features/analyses/editor/plotting/plotStyle.ts";
-import { simpleCartesianLayout } from "../src/features/analyses/editor/plotting/plotLayout.ts";
+import {
+  hoverLabelLayout,
+  simpleCartesianLayout,
+} from "../src/features/analyses/editor/plotting/plotLayout.ts";
 import {
   cycleSeriesVisibilityCandidatesForResult,
   cycleTraceEmissionPlan,
@@ -118,6 +121,14 @@ test("all audited simple plot families use the shared layout and opacity paths",
     assert.match(source, /return simpleCartesianLayout\(style, spec/);
     assert.match(source, /opacity: style\.individual_opacity/);
   }
+});
+
+test("hover labels keep the channel tint but use readable dark text and borders", () => {
+  const hover = hoverLabelLayout(normalizePlotStyle(DEFAULT_PLOT_STYLE));
+  assert.equal(hover.bgcolor, "#e6fcf5");
+  assert.equal(hover.bordercolor, "#495057");
+  assert.equal(hover.font.color, "#343a40");
+  assert.equal(hover.font.weight, 400);
 });
 
 test("plot families do not expose an unrequested series visibility control", () => {

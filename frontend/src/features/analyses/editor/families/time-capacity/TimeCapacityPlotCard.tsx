@@ -543,7 +543,14 @@ function hasFinitePoint(values: (number | null)[]): boolean {
 }
 
 function compactHoverName(name: string): string {
-  return plotlySafeText(shortSourceName(name, 28));
+  const compact = shortSourceName(name, 28);
+  if (compact.length <= 18) return plotlySafeText(compact);
+
+  // Plotly cannot wrap hover text itself. Keep the cell/source label inside a
+  // predictable width while the surrounding <b> tag keeps both lines bold.
+  const separator = compact.lastIndexOf("_", 18);
+  const splitAt = separator > 0 ? separator + 1 : 18;
+  return `${plotlySafeText(compact.slice(0, splitAt))}<br>${plotlySafeText(compact.slice(splitAt))}`;
 }
 
 const VOLTAGE_CHANNEL_PALETTE_INDEX: Record<VoltageChannel, number> = {
@@ -789,8 +796,6 @@ export function timeCapacityTracesForResult(
       const segmentCustomdata = segment.x.map((_, index) => [
         segment.cycle[index] ?? "",
         segment.sourceCycle[index] ?? "",
-        segment.sources[index]?.position ?? "",
-        plotlySafeText(shortSourceName(String(segment.sources[index]?.filename ?? ""), 24)),
       ]);
       for (const channelStyle of visibleChannelStyles) {
         const voltage = segment.voltageByChannel[channelStyle.channel] ?? [];
@@ -835,8 +840,7 @@ export function timeCapacityTracesForResult(
           hovertemplate:
             `<b>${compactHoverName(channelName)}</b><br>` +
             `${plotlySafeText(channelLabel.replace(/\s*\(V\)$/, ""))}: %{y:.4f} V<br>` +
-            "time: %{x:.4f}<br>cycle: %{customdata[0]} · local %{customdata[1]}<br>" +
-            "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+            "time: %{x:.4f}<br>cycle: %{customdata[0]} · local %{customdata[1]}<extra></extra>",
         } as Plotly.Data);
       }
       if (cfg.stacked) {
@@ -926,15 +930,12 @@ export function timeCapacityTracesForResult(
           line: { color: style.paper_bgcolor, width: 1.2 },
         },
         showlegend: false,
-        customdata: boundaryPoints.map(({ index, descriptor }) => [
+        customdata: boundaryPoints.map(({ index }) => [
           trace.cycle[index] ?? "",
           trace.source_cycle?.[index] ?? "",
-          descriptor.source_position,
-          plotlySafeText(shortSourceName(descriptor.filename, 24)),
         ]),
         hovertemplate:
-          "<b>Source boundary</b><br>cycle %{customdata[0]} · local %{customdata[1]}<br>" +
-          "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+          "<b>Source boundary</b><br>cycle %{customdata[0]} · local %{customdata[1]}<extra></extra>",
       } as Plotly.Data);
     }
   }

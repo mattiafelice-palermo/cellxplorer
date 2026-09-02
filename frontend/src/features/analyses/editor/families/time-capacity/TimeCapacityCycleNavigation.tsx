@@ -69,6 +69,7 @@ interface DraftCycleNumberInputProps {
   value: number;
   label: string;
   onCommit: (value: number | null) => number;
+  extreme: "first" | "last";
   disabled?: boolean;
   disabledReason?: string;
   max?: number;
@@ -78,6 +79,7 @@ function DraftCycleNumberInput({
   value,
   label,
   onCommit,
+  extreme,
   disabled = false,
   disabledReason,
   max,
@@ -108,6 +110,18 @@ function DraftCycleNumberInput({
     }
     setDraft(String(onCommit(numeric)));
   }, [draft, onCommit]);
+
+  const extremeValue = extreme === "first" ? 1 : max ?? null;
+  const extremeLabel =
+    extreme === "first"
+      ? `Set ${label.toLowerCase()} to first cycle`
+      : `Set ${label.toLowerCase()} to last cycle`;
+  const applyExtreme = useCallback(() => {
+    if (disabled || extremeValue === null) return;
+    const committed = onCommit(extremeValue);
+    lastCommittedTextRef.current = String(committed);
+    setDraft(String(committed));
+  }, [disabled, extremeValue, onCommit]);
 
   return withControlTooltip(
     label,
@@ -145,9 +159,27 @@ function DraftCycleNumberInput({
       allowNegative={false}
       hideControls
       size="xs"
-      w={62}
+      w={78}
       disabled={disabled}
-      styles={{ input: { textAlign: "center" } }}
+      rightSectionPointerEvents="all"
+      rightSectionWidth={26}
+      rightSection={
+        <ActionIcon
+          size="xs"
+          variant="subtle"
+          color="gray"
+          aria-label={extremeLabel}
+          title={extremeValue === null ? "Cycle extent is not available yet" : extremeLabel}
+          disabled={disabled || extremeValue === null}
+          // Keep the draft input focused so its blur handler cannot commit a
+          // stale value before the extreme action is applied.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={applyExtreme}
+        >
+          {extreme === "first" ? <IconChevronsLeft size={13} /> : <IconChevronsRight size={13} />}
+        </ActionIcon>
+      }
+      styles={{ input: { textAlign: "center", paddingRight: 28 } }}
     />,
     disabled,
     disabledReason,
@@ -1115,7 +1147,14 @@ export function TimeCapacityCycleNavigation({
               allowDeselect={false}
               searchable={false}
               size="xs"
-              w={60}
+              w={76}
+              withScrollArea={false}
+              comboboxProps={{ width: 96 }}
+              styles={{
+                input: { whiteSpace: "nowrap", textAlign: "center" },
+                option: { whiteSpace: "nowrap" },
+                dropdown: { overflowX: "hidden" },
+              }}
               disabled={boundedNavigationDisabled}
             />,
             boundedNavigationDisabled,
@@ -1147,6 +1186,7 @@ export function TimeCapacityCycleNavigation({
             value={visibleRange.start}
             label="From cycle"
             onCommit={commitManualStart}
+            extreme="first"
             disabled={specificCyclesActive}
             disabledReason={disabledReason}
             max={hasBound ? maxAvailableCycle! : undefined}
@@ -1201,6 +1241,7 @@ export function TimeCapacityCycleNavigation({
             value={visibleRange.end}
             label="To cycle"
             onCommit={commitManualEnd}
+            extreme="last"
             disabled={specificCyclesActive}
             disabledReason={disabledReason}
             max={hasBound ? maxAvailableCycle! : undefined}

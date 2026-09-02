@@ -174,11 +174,15 @@ test("pointer and track positions retain sub-cycle motion for true panning", () 
     1000,
     100,
   );
-  assert.ok(clicked > 29 && clicked < 30, String(clicked));
+  assert.ok(clicked > 30 && clicked < 31, String(clicked));
 });
 
-test("track clicks center the existing window and clamp at both ends", () => {
+test("track clicks place the window start at the pointer and clamp at both ends", () => {
   const range = { start: 40, end: 49 };
+  assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 250, 1000, 100), {
+    start: 24,
+    end: 33,
+  });
   assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 500, 1000, 100), {
     start: 46,
     end: 55,
@@ -191,6 +195,21 @@ test("track clicks center the existing window and clamp at both ends", () => {
     start: 91,
     end: 100,
   });
+});
+
+test("cycle navigation keeps endpoint actions inside the fields and the window menu free of overflow scrolling", () => {
+  const source = readFileSync(
+    new URL(
+      "../src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(source, /extreme="first"/);
+  assert.match(source, /extreme="last"/);
+  assert.match(source, /rightSectionPointerEvents="all"/);
+  assert.match(source, /withScrollArea=\{false\}/);
+  assert.match(source, /comboboxProps=\{\{ width: 96 \}\}/);
 });
 
 test("narrow windows retain a graspable visual handle without changing their range", () => {
