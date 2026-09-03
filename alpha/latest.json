@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.18",
-  "notes": "- Use the eventual release tag for draft updater URLs.",
-  "pub_date": "2026-08-31T06:01:55.302Z",
+  "version": "0.27.1-alpha.19",
+  "notes": "### New features\n\n- Add saved-plot renaming with validation, persistence, and custom names in analysis exports.\n- Add full-resolution Time/Capacity data exports with full-series or current-plot-range selection, source precision, and Parquet output.\n- Improve Time/Capacity cycle navigation with explicit cycle ranges, adaptive display refinement, viewport-aware navigation, and line-oriented defaults for new plots.\n- Support alternate BioLogic GCPL settings profiles with corresponding parsing, cache, and metadata coverage.\n\n### Bug fixes\n\n- Keep plot image export, data export, and export previews from falsely marking plots as edited or enabling Update.\n- Reduce unnecessary Time/Capacity refetches, redraws, and visibility flashes while preserving application-owned plot state.\n- Keep Plotly legend interactions passive and fix Cycles CE-only rendering so visible charge-efficiency curves are not lost when primary curves are hidden.\n- Polish plot hover, pointer, zoom, and cycle-navigation behavior for more stable interactive coordinates and view state.",
+  "pub_date": "2026-09-03T11:19:42.47Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVUzbmE3NU4rSTY1VEFOVXFVa0IxNmlFWVVSamIxUUJ6aGZiczdqSGJvRGtoeElwQ3hzMVp5eW8zQlRVWGw2eDArS1JCWkZucFJoUkczY09uaGQ5bFEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTU2MTExCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjE4X3g2NC1zZXR1cC5leGUKQVI4UnRNYUxWR0xPSnQyWll4ZGUydkFqVFFaaEVUTGtVdjF2Q2VCdG8rUmdNVnU3WC9xWHBYbFZmcm5maVFSV3QrM3h5TUQ3OFZyaFFRVktaT0djQXc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.18/CellXplorer.Alpha_0.27.1-alpha.18_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWJ6RG9YNXVScFBIZ2F4aEU0L0MrdlhvNTR5N0l6WTIxTHptWmsyWEhYTkFFRGNoc2hKK3pBNXRvQ1BLdUFBZm0yUGRBSi9jSStaZE1TUHBZcitoZ0FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDM0Mzc4CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjE5X3g2NC1zZXR1cC5leGUKUnBKbnlWZjIwbncyZ1VEdThGdmtpcjFjNzgxM1RNbC9wc3ZPdmFxSmFGYXZXNDU4Z2g2WXZad2h4eVZUNVBjY0V1MU9LVVlKSWtGd1E1Z1lxOUtGQUE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.19/CellXplorer.Alpha_0.27.1-alpha.19_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVUzbmE3NU4rSTY1VEFOVXFVa0IxNmlFWVVSamIxUUJ6aGZiczdqSGJvRGtoeElwQ3hzMVp5eW8zQlRVWGw2eDArS1JCWkZucFJoUkczY09uaGQ5bFEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MTU2MTExCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjE4X3g2NC1zZXR1cC5leGUKQVI4UnRNYUxWR0xPSnQyWll4ZGUydkFqVFFaaEVUTGtVdjF2Q2VCdG8rUmdNVnU3WC9xWHBYbFZmcm5maVFSV3QrM3h5TUQ3OFZyaFFRVktaT0djQXc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.18/CellXplorer.Alpha_0.27.1-alpha.18_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWJ6RG9YNXVScFBIZ2F4aEU0L0MrdlhvNTR5N0l6WTIxTHptWmsyWEhYTkFFRGNoc2hKK3pBNXRvQ1BLdUFBZm0yUGRBSi9jSStaZE1TUHBZcitoZ0FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDM0Mzc4CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjE5X3g2NC1zZXR1cC5leGUKUnBKbnlWZjIwbncyZ1VEdThGdmtpcjFjNzgxM1RNbC9wc3ZPdmFxSmFGYXZXNDU4Z2g2WXZad2h4eVZUNVBjY0V1MU9LVVlKSWtGd1E1Z1lxOUtGQUE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.19/CellXplorer.Alpha_0.27.1-alpha.19_x64-setup.exe"
     }
   }
 }
