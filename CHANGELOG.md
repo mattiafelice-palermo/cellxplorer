@@ -4,6 +4,19 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.20 - 2026-09-04
+
+### New features
+
+- Add native backend streaming for full-resolution Time/Capacity CSV and Parquet exports.
+- Show progress feedback while preparing, creating, and saving large data exports.
+
+### Bug fixes
+
+- Reduce full-resolution export payloads and avoid unnecessary Plotly trace, marker, and browser-side JSON work for large datasets.
+- Preserve selected voltage channels, visible series, stacked current channels, source provenance, precision, delimiters, and plot-range behavior in optimized exports.
+- Keep voltage-channel identity stable across cycle and range changes to prevent unnecessary invalidation and refetching.
+
 ## 0.27.1-alpha.19 - 2026-09-03
 
 ### New features
