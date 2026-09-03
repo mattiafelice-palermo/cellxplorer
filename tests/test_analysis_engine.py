@@ -929,6 +929,38 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(len(full_trace["voltage_v"]), 200)
         self.assertEqual(full_trace["voltage_v"][0], 3.5)
 
+    def test_full_compact_time_capacity_export_keeps_all_points_and_omits_unused_arrays(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": None,
+            "x_axis": "time",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 100,
+        }
+
+        full = engine.compute_time_capacity(
+            self.db, deepcopy(spec), None, precision="full", compact=False
+        )
+        compact = engine.compute_time_capacity(
+            self.db, deepcopy(spec), None, precision="full", compact=True
+        )
+
+        full_trace = full["cell_traces"][0]
+        compact_trace = compact["cell_traces"][0]
+        self.assertEqual(compact["rendering"]["precision"], "full")
+        self.assertTrue(compact["rendering"]["compact"])
+        self.assertEqual(len(compact_trace["voltage_v"]), 200)
+        for key in ("cycle", "display_x", "voltage_v", "current_ma", "phase", "source_cycle"):
+            self.assertEqual(compact_trace[key], full_trace[key])
+        for key in ("time_s", "capacity_mah", "capacity_mah_g", "capacity_mah_cm2", "status", "derivative_x", "derivative_y"):
+            self.assertEqual(compact_trace[key], [])
+        self.assertEqual(len(compact_trace["source_index"]), len(compact_trace["cycle"]))
+        self.assertTrue(compact_trace["sources"])
+        self.assertNotIn("source_position", compact_trace)
+        self.assertNotIn("source_filename", compact_trace)
+        self.assertNotIn("source_hash", compact_trace)
+
     def test_full_time_capacity_worker_matches_legacy_export_result(self):
         spec = self.spec_with(
             [
@@ -996,7 +1028,7 @@ class AnalysisEngineTests(unittest.TestCase):
             kwargs = {
                 "viewport_width": 1200,
                 "precision": "full",
-                "compact": False,
+                "compact": True,
             }
             serial = time_capacity_workers.try_compute_time_capacity(
                 self.db,

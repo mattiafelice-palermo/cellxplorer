@@ -250,7 +250,14 @@ export function timeCapacityExportOptions(viewportWidth: number) {
   return {
     viewport_width: viewportWidth,
     precision: "full" as const,
-    compact: false,
+    // Full precision controls point retention; compact controls only the
+    // response shape. Export needs every point, but it does not need the
+    // interactive result's unused capacity/derivative/status arrays.
+    compact: true,
+    // A full-series export can be tens or hundreds of megabytes as JSON.
+    // Persisting that transient transport payload costs more than recomputing
+    // it with the warm bounded worker pool and competes with useful plot data.
+    persist: false,
   };
 }
 

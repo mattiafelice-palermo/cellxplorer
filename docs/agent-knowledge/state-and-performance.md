@@ -267,8 +267,12 @@ than one Cell is selected. The worker result is parity-checked against the estab
 serial path and falls back to it when the indexed plan, pool, or publication boundary is not safe;
 derivative and other unsupported full-resolution requests remain on the established path. The
 frontend keeps the plot mounted and reports request, file-formatting, and save stages beside the
-export controls. XLSX/CSV formatting remains a browser-side operation, so Parquet is the lighter
-large-export format and the full-resolution result is still built only once per export.
+export controls. The export request uses `precision=full` with a compact, non-persisted transport
+shape: full precision retains every selected row, while compactness omits unused derivative,
+capacity, status, and repeated source-provenance arrays. Do not persist these potentially very
+large one-shot JSON payloads in the analysis result cache. XLSX/CSV formatting remains a
+browser-side operation, so Parquet is the lighter large-export format and the full-resolution
+result is still built only once per export.
 
 Compact time/capacity responses are specific to the selected X-axis and display mode: the backend
 ships `display_x` plus only the raw X array needed for that request. Therefore the frontend query

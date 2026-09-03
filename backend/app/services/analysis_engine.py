@@ -3777,7 +3777,6 @@ def compute_time_capacity(
     # the exact serial/legacy fallback.
     full_voltage_current_export = (
         precision == "full"
-        and not compact
         and not refinement
         and time_capacity_settings(spec.get("computation", {}))["view"]
         == "voltage_current"
@@ -3821,7 +3820,6 @@ def compute_time_capacity(
     settings = time_capacity_settings(computation)
     compact_ordinary_time = (
         compact
-        and precision == "standard"
         and settings["view"] == "voltage_current"
         and settings["x_axis"] == "time"
         and settings["display_mode"] == "consecutive"
@@ -4499,9 +4497,9 @@ def compute_time_capacity(
                 if "segment" in raw.columns and len(raw) > 1
                 else np.array([], dtype="int64")
             )
-        # A full, non-compact request is used by scientific data export. It
-        # must retain every selected-channel row even when the interactive
-        # setting intentionally limits the on-screen point count.
+        # Full precision is used by scientific data export. It must retain
+        # every selected-channel row even when the compact response shape
+        # omits arrays that the exporter does not consume.
         if len(raw) > display_max and not (precision == "full" or not compact):
             envelope_series = (
                 [derivative_x, derivative_y]

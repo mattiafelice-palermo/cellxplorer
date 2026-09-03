@@ -372,11 +372,12 @@ test("source-controlled labels are safe for fixed Plotly templates", () => {
   );
 });
 
-test("scientific Time/Capacity exports request full precision and no compact downsampling", () => {
+test("scientific Time/Capacity exports request full precision in a transient compact payload", () => {
   assert.deepEqual(timeCapacityExportOptions(1200), {
     viewport_width: 1200,
     precision: "full",
-    compact: false,
+    compact: true,
+    persist: false,
   });
 });
 

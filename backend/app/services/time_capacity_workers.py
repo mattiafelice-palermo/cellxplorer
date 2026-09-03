@@ -662,7 +662,6 @@ def _cell_result(
     settings = request.settings
     compact_ordinary_time = (
         request.compact
-        and request.precision == "standard"
         and settings["view"] == "voltage_current"
         and settings["x_axis"] == "time"
         and settings["display_mode"] == "consecutive"
@@ -1481,7 +1480,7 @@ def try_compute_time_capacity(
 
     settings = analysis_engine.time_capacity_settings(spec.get("computation", {}))
     ordinary_compact = precision == "standard" and compact
-    full_export = precision == "full" and not compact and not refinement
+    full_export = precision == "full" and not refinement
     if not (ordinary_compact or full_export) or settings.get("view") != "voltage_current":
         return None
     if refinement and (
