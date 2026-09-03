@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AnalysisSpec, TimeCapacityResult, TimeCapacityTrace } from "../src/api.ts";
-import { consecutiveTimeCapacityExportColumns } from "../src/features/analyses/editor/families/time-capacity/timeCapacityDataExport.ts";
+import {
+  consecutiveTimeCapacityExportColumns,
+  timeCapacityNativeExportPlan,
+} from "../src/features/analyses/editor/families/time-capacity/timeCapacityDataExport.ts";
 import { DEFAULT_PLOT_STYLE } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 
 const config = {
@@ -100,6 +103,33 @@ test("direct Time/Capacity export crops full-resolution values and applies live 
     { header: "Cell A | Cell voltage (V)", values: [3.2] },
   ]);
   assert.deepEqual(spec, before);
+});
+
+test("native export plan carries resolved visible names without scientific rows", () => {
+  const spec = makeSpec([{ cell_id: 2 }]);
+  spec.presentation.plot_styles!.time_capacity!.series_overrides = {
+    c1: { name: "Renamed cell" },
+  };
+  const plan = timeCapacityNativeExportPlan(
+    makeResult(),
+    spec,
+    config,
+    spec.presentation.plot_styles!.time_capacity!,
+  );
+
+  assert.deepEqual(plan, {
+    x_title: "Time (min)",
+    traces: [{
+      cell_id: 1,
+      group_id: null,
+      current_name: "Renamed cell",
+      voltage_series: [{
+        channel: "voltage",
+        name: "Renamed cell",
+        y_title: "Cell voltage (V)",
+      }],
+    }],
+  });
 });
 
 test("direct Time/Capacity export includes configured stacked-current quantities", () => {

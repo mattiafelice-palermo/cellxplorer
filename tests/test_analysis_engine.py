@@ -1207,6 +1207,72 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(calls.get("preload_cell_sources"), 1, calls)
         self.assertEqual(calls.get("load_scalar_metadata"), 1, calls)
 
+    def test_native_time_capacity_export_uses_full_compact_compute_and_requested_range(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "view": "voltage_current",
+            "display_mode": "consecutive",
+            "x_axis": "time",
+        }
+        analysis = Analysis(title="Native data export", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        request = analyses_router.TimeCapacityDataExportRequest(
+            spec=spec,
+            viewport_width=1400,
+            format="csv",
+            data_precision="standard",
+            decimal_separator="point",
+            delimiter="comma",
+            x_range=(10.0, 20.0),
+            plan={
+                "x_title": "Time (min)",
+                "traces": [{
+                    "cell_id": self.cells["c1"].id,
+                    "group_id": None,
+                    "current_name": "Cell one",
+                    "voltage_series": [{
+                        "channel": "voltage",
+                        "name": "Cell one",
+                        "y_title": "Cell voltage (V)",
+                    }],
+                }],
+            },
+        )
+        context = object()
+
+        def write_fixture(_result, _plan, _settings, destination, **_options):
+            destination.write_bytes(b"\xef\xbb\xbfvalue\n1\n")
+
+        with patch.object(
+            analyses_router.engine,
+            "build_analysis_request_context",
+            return_value=context,
+        ), patch.object(
+            analyses_router,
+            "_guard_canonical_cycling",
+        ), patch.object(
+            analyses_router.engine,
+            "compute_time_capacity",
+            return_value={"cell_traces": []},
+        ) as compute, patch.object(
+            time_capacity_workers,
+            "write_time_capacity_data_export",
+            side_effect=write_fixture,
+        ) as write:
+            response = analyses_router.export_time_capacity_data(
+                analysis.id,
+                request,
+                self.db,
+            )
+
+        self.assertEqual(response.media_type, "text/csv; charset=utf-8")
+        self.assertEqual(compute.call_args.kwargs["precision"], "full")
+        self.assertTrue(compute.call_args.kwargs["compact"])
+        self.assertIs(compute.call_args.kwargs["request_context"], context)
+        self.assertEqual(write.call_args.kwargs["x_range"], (10.0, 20.0))
+        Path(response.path).unlink(missing_ok=True)
+
     def test_transient_time_capacity_requests_read_the_cache_but_never_populate_it(self):
         """Spec 052.3 Stage 3: moving previews must not write to the result cache."""
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
@@ -1818,27 +1884,31 @@ class AnalysisEngineTests(unittest.TestCase):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
         try:
-            with patch.object(
-                engine,
-                "_phase_capacity",
-                side_effect=AssertionError(
-                    "phase capacity is not consumed by time-axis compact view"
-                ),
-            ):
-                result = engine.compute_time_capacity(
-                    self.db,
-                    spec,
-                    None,
-                    precision="standard",
-                    compact=True,
-                )
+            for precision in ("standard", "full"):
+                with self.subTest(precision=precision), patch.object(
+                    engine,
+                    "_phase_capacity",
+                    side_effect=AssertionError(
+                        "phase capacity is not consumed by time-axis compact view"
+                    ),
+                ):
+                    result = engine.compute_time_capacity(
+                        self.db,
+                        spec,
+                        None,
+                        precision=precision,
+                        compact=True,
+                    )
+                    trace = result["cell_traces"][0]
+                    self.assertEqual(trace["capacity_mah"], [])
+                    self.assertEqual(trace["capacity_mah_g"], [])
+                    self.assertEqual(trace["capacity_mah_cm2"], [])
+                    if precision == "standard":
+                        self.assertEqual(trace["phase"], [])
+                    else:
+                        self.assertEqual(len(trace["phase"]), len(trace["cycle"]))
         finally:
             self._restore_prepared_sidecar(source.hash, parser_version)
-        trace = result["cell_traces"][0]
-        self.assertEqual(trace["capacity_mah"], [])
-        self.assertEqual(trace["capacity_mah_g"], [])
-        self.assertEqual(trace["capacity_mah_cm2"], [])
-        self.assertEqual(trace["phase"], [])
 
     def test_compact_time_axis_does_not_read_phase_only_prepared_sidecar(self):
         source = self.cells["c1"].tests[0].file_links[0].file

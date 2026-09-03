@@ -25,6 +25,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import {
   get,
   post,
+  postBlob,
   type AnalysisSpec,
   type BackgroundJob,
   type PlotExportFormat,
@@ -132,7 +133,10 @@ import {
   timeCapacityVisibleVoltageChannels,
   timeCapacityVoltageVisibilityKey,
 } from "./timeCapacityVisibility";
-import { consecutiveTimeCapacityExportColumns } from "./timeCapacityDataExport";
+import {
+  consecutiveTimeCapacityExportColumns,
+  timeCapacityNativeExportPlan,
+} from "./timeCapacityDataExport";
 import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
@@ -3198,6 +3202,63 @@ function TimeCapacityPlotCardView({
     setDataExportStage("requesting");
     setDataExporting(true);
     try {
+      const exportConfig = timeCapacityConfig(exportSpec);
+      const nativePlan =
+        exportStyle.data_export_format === "csv" || exportStyle.data_export_format === "parquet"
+          ? timeCapacityNativeExportPlan(
+              currentResult,
+              exportSpec,
+              exportConfig,
+              currentPlotStyle(exportSpec, "time_capacity"),
+            )
+          : null;
+      if (scope === "plot_range" && livePlotXRange === null) {
+        throw new Error("The current plot range is unavailable. Please reset or adjust the plot and try again.");
+      }
+      if (nativePlan !== null) {
+        const requestStarted = performance.now();
+        const blob = await postBlob(
+          `/api/analyses/${analysisId}/time-capacity/export`,
+          {
+            spec: exportSpec,
+            viewport_width: viewportWidth,
+            format: exportStyle.data_export_format,
+            data_precision: exportStyle.data_precision,
+            decimal_separator: exportStyle.data_decimal_separator,
+            delimiter: exportStyle.data_delimiter,
+            x_range: livePlotXRange,
+            plan: nativePlan,
+          },
+        );
+        markExportStage("native_request_and_format_ms", requestStarted);
+        if (
+          !timeCapacityExportMatchesRequest(
+            dataSignatureRef.current,
+            requestedSignature,
+            voltageChannelRef.current,
+            requestedVoltageChannels,
+            currentResult,
+            requestedSourceDataIdentity,
+          )
+        ) {
+          throw new Error("The plot changed while the full-resolution export was prepared. Please try again.");
+        }
+        setDataExportStage("saving");
+        saveStarted = performance.now();
+        await downloadBlob(blob, `${baseName}.${exportStyle.data_export_format}`);
+        markExportStage("save_ms", saveStarted);
+        markExportStage("total_ms", exportStarted);
+        if (import.meta.env.DEV) {
+          console.debug("[Time/Capacity data export]", {
+            format: exportFormat,
+            scope,
+            path: "native_file",
+            bytes: blob.size,
+            ...exportTimings,
+          });
+        }
+        return;
+      }
       const requestStarted = performance.now();
       const fullResult = await post<TimeCapacityResult>(
         `/api/analyses/${analysisId}/time-capacity`,
@@ -3233,7 +3294,7 @@ function TimeCapacityPlotCardView({
       const directColumns = consecutiveTimeCapacityExportColumns(
         fullResult,
         exportSpec,
-        timeCapacityConfig(exportSpec),
+        exportConfig,
         currentPlotStyle(exportSpec, "time_capacity"),
         livePlotXRange,
       );

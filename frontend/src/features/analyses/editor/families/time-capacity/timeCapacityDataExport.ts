@@ -31,6 +31,20 @@ export type TimeCapacityExportConfig = {
   voltage_channels: VoltageChannel[];
 };
 
+export type TimeCapacityNativeExportPlan = {
+  x_title: string;
+  traces: Array<{
+    cell_id: number;
+    group_id: number | null;
+    current_name: string;
+    voltage_series: Array<{
+      channel: VoltageChannel;
+      name: string;
+      y_title: string;
+    }>;
+  }>;
+};
+
 function xAxisTitle(config: TimeCapacityExportConfig): string {
   if (config.x_axis === "capacity_mah_g") return "Specific capacity (mAh/g)";
   if (config.x_axis === "capacity_mah_cm2") return "Areal capacity (mAh/cm²)";
@@ -116,19 +130,13 @@ function hasFinite(values: readonly (number | null)[]): boolean {
   return values.some((value) => value !== null && Number.isFinite(value));
 }
 
-/**
- * Build export columns directly from a full-resolution consecutive
- * voltage/current result. This avoids allocating Plotly hover, segment, and
- * marker objects for hundreds of thousands of points that are never rendered.
- * Unsupported layouts return null and retain the established trace path.
- */
-export function consecutiveTimeCapacityExportColumns(
+/** Resolve visibility and presentation names once from the live plotted result. */
+export function timeCapacityNativeExportPlan(
   result: TimeCapacityResult,
   spec: AnalysisSpec,
   config: TimeCapacityExportConfig,
   style: PlotStyle,
-  range: PlotDataXRange | null,
-): DataColumn[] | null {
+): TimeCapacityNativeExportPlan | null {
   if (config.view !== "voltage_current" || config.display_mode !== "consecutive") return null;
   if (
     result.cell_traces.some((trace) =>
@@ -142,12 +150,12 @@ export function consecutiveTimeCapacityExportColumns(
     return null;
   }
 
-  const columns: DataColumn[] = [];
   const palette = plotPalette(style);
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   const selectedChannels = config.voltage_channels;
   const multipleChannels = selectedChannels.length > 1;
   const xTitle = style.x_title ?? xAxisTitle(config);
+  const traces: TimeCapacityNativeExportPlan["traces"] = [];
   let colorIndex = 0;
 
   for (const trace of result.cell_traces) {
@@ -174,10 +182,6 @@ export function consecutiveTimeCapacityExportColumns(
     );
     if (resolved.hidden) continue;
     if (trace.display_x?.length !== trace.cycle.length) return null;
-    const x = trace.display_x.map((value) => value ?? Number.NaN);
-    const indices = selectedIndices(x, range);
-    if (indices !== null && indices.length === 0) continue;
-    const selectedX = take(x, indices);
     const visibleChannels = new Set(
       timeCapacityVisibleVoltageChannels(
         spec,
@@ -186,7 +190,7 @@ export function consecutiveTimeCapacityExportColumns(
         multipleChannels,
       ),
     );
-
+    const voltageSeries: TimeCapacityNativeExportPlan["traces"][number]["voltage_series"] = [];
     for (const channel of selectedChannels) {
       if (!visibleChannels.has(channel)) continue;
       const channelDescriptor = multipleChannels
@@ -202,15 +206,62 @@ export function consecutiveTimeCapacityExportColumns(
           )
         : resolved;
       if (channelResolved.hidden) continue;
-      const y = take(voltageValues(trace, channel, config.voltage_channel), indices);
+      if (!hasFinite(voltageValues(trace, channel, config.voltage_channel))) continue;
+      voltageSeries.push({
+        channel,
+        name: channelResolved.name,
+        y_title: style.y_title ?? voltageChannelLabel(channel, result.voltage_channels),
+      });
+    }
+    if (voltageSeries.length === 0) continue;
+    traces.push({
+      cell_id: trace.cell_id,
+      group_id: trace.group_id,
+      current_name: resolved.name,
+      voltage_series: voltageSeries,
+    });
+  }
+  return { x_title: xTitle, traces };
+}
+
+/**
+ * Build export columns directly from a full-resolution consecutive
+ * voltage/current result. This avoids allocating Plotly hover, segment, and
+ * marker objects for hundreds of thousands of points that are never rendered.
+ * Unsupported layouts return null and retain the established trace path.
+ */
+export function consecutiveTimeCapacityExportColumns(
+  result: TimeCapacityResult,
+  spec: AnalysisSpec,
+  config: TimeCapacityExportConfig,
+  style: PlotStyle,
+  range: PlotDataXRange | null,
+): DataColumn[] | null {
+  const plan = timeCapacityNativeExportPlan(result, spec, config, style);
+  if (plan === null) return null;
+  const columns: DataColumn[] = [];
+
+  for (const plannedTrace of plan.traces) {
+    const trace = result.cell_traces.find(
+      (candidate) =>
+        candidate.cell_id === plannedTrace.cell_id && candidate.group_id === plannedTrace.group_id,
+    );
+    if (!trace || trace.display_x?.length !== trace.cycle.length) return null;
+    const x = trace.display_x.map((value) => value ?? Number.NaN);
+    const indices = selectedIndices(x, range);
+    if (indices !== null && indices.length === 0) continue;
+    const selectedX = take(x, indices);
+
+    for (const voltageSeries of plannedTrace.voltage_series) {
+      const y = take(
+        voltageValues(trace, voltageSeries.channel, config.voltage_channel),
+        indices,
+      );
       if (!hasFinite(y)) continue;
       columns.push(
-        ...sourceColumns(channelResolved.name, trace, indices),
-        { header: `${channelResolved.name} | ${xTitle}`, values: selectedX },
-        {
-          header: `${channelResolved.name} | ${style.y_title ?? voltageChannelLabel(channel, result.voltage_channels)}`,
-          values: y,
-        },
+        ...sourceColumns(voltageSeries.name, trace, indices),
+        { header: `${voltageSeries.name} | ${plan.x_title}`, values: selectedX },
+        { header: `${voltageSeries.name} | ${voltageSeries.y_title}`, values: y },
       );
     }
 
@@ -218,9 +269,9 @@ export function consecutiveTimeCapacityExportColumns(
     const left = config.current_left;
     const leftValues = currentValues(trace, left, config, indices);
     if (hasFinite(leftValues)) {
-      const label = `${resolved.name} ${currentAxisLabel(left)}`;
+      const label = `${plannedTrace.current_name} ${currentAxisLabel(left)}`;
       columns.push(
-        { header: `${label} | ${xTitle}`, values: selectedX },
+        { header: `${label} | ${plan.x_title}`, values: selectedX },
         { header: `${label} | ${currentAxisLabel(left)}`, values: leftValues },
       );
     }
@@ -228,9 +279,9 @@ export function consecutiveTimeCapacityExportColumns(
       const right = config.current_right;
       const rightValues = currentValues(trace, right, config, indices);
       if (hasFinite(rightValues)) {
-        const label = `${resolved.name} ${currentAxisLabel(right)}`;
+        const label = `${plannedTrace.current_name} ${currentAxisLabel(right)}`;
         columns.push(
-          { header: `${label} | ${xTitle}`, values: selectedX },
+          { header: `${label} | ${plan.x_title}`, values: selectedX },
           { header: `${label} | ${currentAxisLabel(right)}`, values: rightValues },
         );
       }

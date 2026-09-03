@@ -17,12 +17,13 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import ctypes
 import logging
 import math
 import multiprocessing
 import os
+from pathlib import Path
 import pickle
 import threading
 from time import perf_counter, sleep as _sleep
@@ -689,13 +690,6 @@ def _cell_result(
         precision=request.precision,
         compact=request.compact,
     )
-    if (
-        request.compact
-        and request.precision == "standard"
-        and settings["x_axis"] == "time"
-        and settings["display_mode"] == "consecutive"
-    ):
-        needs = replace(needs, phase=False)
     with time_capacity_path.timed_stage(diagnostics, "exact_cycle_filter_and_sort"):
         if settings["cycles"]:
             raw = raw[raw["cycle"].isin(settings["cycles"])]
@@ -1635,3 +1629,239 @@ def try_compute_time_capacity(
             raise
         logger.exception("Optimized Time/Capacity path failed; using serial engine fallback")
         return None
+
+
+def _export_current_axis_label(quantity: str) -> str:
+    if quantity == "current_density":
+        return "Current density (mA/cm2)"
+    if quantity == "c_rate":
+        return "C-rate (C)"
+    return "Current (mA)"
+
+
+def _export_decimal_places(header: str) -> int:
+    value = header.lower()
+    if "cycle" in value:
+        return 0
+    if "time" in value:
+        return 3
+    if "voltage" in value or "current" in value:
+        return 5
+    if "derivative" in value or "dq/dv" in value or "dv/dq" in value:
+        return 7
+    return 6
+
+
+def _export_take(values: list[Any] | None, indices: Any, count: int) -> list[Any]:
+    source = values if isinstance(values, list) and len(values) == count else [None] * count
+    if indices is None:
+        return source
+    return [source[int(index)] for index in indices]
+
+
+def _export_source_columns(
+    name: str,
+    trace: dict[str, Any],
+    indices: Any,
+    count: int,
+) -> list[tuple[str, list[Any]]]:
+    output_count = count if indices is None else len(indices)
+    sources = trace.get("sources") if isinstance(trace.get("sources"), list) else []
+    source_indices = trace.get("source_index")
+    positions = trace.get("source_position")
+    filenames = trace.get("source_filename")
+    hashes = trace.get("source_hash")
+    resolved_positions: list[int | None] = []
+    resolved_filenames: list[str | None] = []
+    resolved_hashes: list[str | None] = []
+    point_indices = range(count) if indices is None else indices
+    for raw_index in point_indices:
+        index = int(raw_index)
+        source_index = (
+            source_indices[index]
+            if isinstance(source_indices, list) and index < len(source_indices)
+            else None
+        )
+        if isinstance(source_index, int) and 0 <= source_index < len(sources):
+            source = sources[source_index]
+            resolved_positions.append(source.get("position"))
+            resolved_filenames.append(source.get("filename"))
+            resolved_hashes.append(source.get("hash"))
+        else:
+            resolved_positions.append(
+                positions[index] if isinstance(positions, list) and index < len(positions) else None
+            )
+            resolved_filenames.append(
+                filenames[index] if isinstance(filenames, list) and index < len(filenames) else None
+            )
+            resolved_hashes.append(
+                hashes[index] if isinstance(hashes, list) and index < len(hashes) else None
+            )
+    return [
+        ("Cell", [name] * output_count),
+        ("Global cycle", _export_take(trace.get("cycle"), indices, count)),
+        ("Local cycle", _export_take(trace.get("source_cycle"), indices, count)),
+        ("Source position", resolved_positions),
+        ("Source file", resolved_filenames),
+        ("Source hash", resolved_hashes),
+    ]
+
+
+def _time_capacity_export_columns(
+    result: dict[str, Any],
+    plan: dict[str, Any],
+    settings: dict[str, Any],
+    x_range: tuple[float, float] | None,
+) -> list[tuple[str, list[Any]]]:
+    traces = result.get("cell_traces") if isinstance(result.get("cell_traces"), list) else []
+    by_identity = {
+        (trace.get("cell_id"), trace.get("group_id")): trace
+        for trace in traces
+        if isinstance(trace, dict)
+    }
+    columns: list[tuple[str, list[Any]]] = []
+    x_title = str(plan.get("x_title") or "x")
+    fallback_channel = str(settings.get("voltage_channel") or "voltage")
+    low, high = (min(x_range), max(x_range)) if x_range is not None else (None, None)
+
+    for planned in plan.get("traces", []):
+        trace = by_identity.get((planned.get("cell_id"), planned.get("group_id")))
+        if trace is None:
+            continue
+        display_x = trace.get("display_x")
+        cycles = trace.get("cycle")
+        if not isinstance(display_x, list) or not isinstance(cycles, list) or len(display_x) != len(cycles):
+            raise ValueError("Time/Capacity export response has misaligned display coordinates")
+        count = len(display_x)
+        x_values = [float(value) if value is not None else math.nan for value in display_x]
+        indices = None
+        if low is not None and high is not None:
+            x_array = np.asarray(x_values, dtype="float64")
+            indices = np.flatnonzero(np.isfinite(x_array) & (x_array >= low) & (x_array <= high))
+            if len(indices) == 0:
+                continue
+        selected_x = _export_take(x_values, indices, count)
+        voltage_by_channel = trace.get("voltage_v_by_channel")
+        for voltage_series in planned.get("voltage_series", []):
+            channel = str(voltage_series.get("channel") or fallback_channel)
+            values = (
+                voltage_by_channel.get(channel)
+                if isinstance(voltage_by_channel, dict)
+                else None
+            )
+            if not isinstance(values, list) and channel == fallback_channel:
+                values = trace.get("voltage_v")
+            selected_y = _export_take(values, indices, count)
+            if not any(
+                isinstance(value, (int, float)) and math.isfinite(value)
+                for value in selected_y
+            ):
+                continue
+            name = str(voltage_series.get("name") or trace.get("label") or "series")
+            y_title = str(voltage_series.get("y_title") or "Voltage (V)")
+            columns.extend(_export_source_columns(name, trace, indices, count))
+            columns.append((f"{name} | {x_title}", selected_x))
+            columns.append((f"{name} | {y_title}", selected_y))
+
+        if not settings.get("stacked"):
+            continue
+        current = _export_take(trace.get("current_ma"), indices, count)
+        current_name = str(planned.get("current_name") or trace.get("label") or "series")
+        area = settings.get("electrode_area_cm2") or trace.get("electrode_area_cm2")
+        nominal = trace.get("nominal_capacity_mah")
+        for quantity in (settings.get("current_left") or "current_ma", settings.get("current_right")):
+            if not quantity or quantity == "none":
+                continue
+            if quantity == "current_density":
+                values = [
+                    value / area
+                    if isinstance(value, (int, float)) and math.isfinite(value) and area and area > 0
+                    else None
+                    for value in current
+                ]
+            elif quantity == "c_rate":
+                values = [
+                    value / nominal
+                    if isinstance(value, (int, float)) and math.isfinite(value) and nominal and nominal > 0
+                    else None
+                    for value in current
+                ]
+            else:
+                values = current
+            if not any(
+                isinstance(value, (int, float)) and math.isfinite(value)
+                for value in values
+            ):
+                continue
+            axis_label = _export_current_axis_label(str(quantity))
+            label = f"{current_name} {axis_label}"
+            columns.append((f"{label} | {x_title}", selected_x))
+            columns.append((f"{label} | {axis_label}", values))
+    return columns
+
+
+def write_time_capacity_data_export(
+    result: dict[str, Any],
+    plan: dict[str, Any],
+    settings: dict[str, Any],
+    destination: Path,
+    *,
+    export_format: Literal["csv", "parquet"],
+    data_precision: Literal["standard", "full"] = "standard",
+    decimal_separator: Literal["point", "comma"] = "point",
+    delimiter: Literal["comma", "semicolon", "tab"] = "comma",
+    x_range: tuple[float, float] | None = None,
+) -> dict[str, int]:
+    """Write a native full-resolution export without a JSON/browser round trip."""
+
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.csv as pa_csv
+    import pyarrow.parquet as pq
+
+    columns = _time_capacity_export_columns(result, plan, settings, x_range)
+    if not columns:
+        raise ValueError("No data is available in the requested Time/Capacity export range")
+    row_count = max(len(values) for _, values in columns)
+    arrays = []
+    names = []
+    seen_names: dict[str, int] = {}
+    for header, values in columns:
+        padded = values if len(values) == row_count else [*values, *([None] * (row_count - len(values)))]
+        array = pa.array(padded, from_pandas=True)
+        if export_format == "csv" and data_precision == "standard" and pa.types.is_floating(array.type):
+            array = pc.round(array, ndigits=_export_decimal_places(header))
+        if export_format == "csv" and decimal_separator == "comma" and (
+            pa.types.is_integer(array.type) or pa.types.is_floating(array.type)
+        ):
+            array = pc.replace_substring(pc.cast(array, pa.string()), ".", ",")
+        arrays.append(array)
+        seen_names[header] = seen_names.get(header, 0) + 1
+        occurrence = seen_names[header]
+        names.append(
+            header
+            if export_format == "csv" or occurrence == 1
+            else f"{header} ({occurrence})"
+        )
+    table = pa.Table.from_arrays(arrays, names=names)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if export_format == "parquet":
+        pq.write_table(table, destination, compression="snappy")
+    else:
+        separators = {"comma": ",", "semicolon": ";", "tab": "\t"}
+        with destination.open("wb") as output:
+            output.write(b"\xef\xbb\xbf")
+            pa_csv.write_csv(
+                table,
+                output,
+                write_options=pa_csv.WriteOptions(
+                    batch_size=65_536,
+                    delimiter=separators[delimiter],
+                    quoting_style="needed",
+                ),
+            )
+    return {
+        "columns": len(columns),
+        "rows": row_count,
+        "bytes": destination.stat().st_size,
+    }

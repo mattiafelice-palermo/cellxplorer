@@ -54,6 +54,12 @@ def _load_analysis_cache():
     return module
 
 
+def _load_time_capacity_workers():
+    from ..services import time_capacity_workers as module
+
+    return module
+
+
 def _load_portable_analysis():
     from ..services import portable_analysis as module
 
@@ -63,6 +69,7 @@ def _load_portable_analysis():
 engine = LazyModule(_load_analysis_engine)
 analysis_usage = LazyModule(_load_analysis_usage)
 analysis_cache = LazyModule(_load_analysis_cache)
+time_capacity_workers = LazyModule(_load_time_capacity_workers)
 portable_analysis = LazyModule(_load_portable_analysis)
 
 router = APIRouter(prefix="/api", tags=["analyses"])
@@ -447,6 +454,35 @@ class ComputeRequest(BaseModel):
     # through as views onto a single axis. It changes the returned coordinates,
     # so it is part of the render cache identity below.
     absolute_time_origin_cycle: int | None = Field(default=None, ge=1)
+
+
+class TimeCapacityExportVoltageSeries(BaseModel):
+    channel: Literal["voltage", "working_potential", "counter_potential"]
+    name: str = Field(min_length=1, max_length=500)
+    y_title: str = Field(min_length=1, max_length=500)
+
+
+class TimeCapacityExportSeriesPlan(BaseModel):
+    cell_id: int
+    group_id: int | None = None
+    current_name: str = Field(min_length=1, max_length=500)
+    voltage_series: list[TimeCapacityExportVoltageSeries] = Field(max_length=3)
+
+
+class TimeCapacityExportPlan(BaseModel):
+    x_title: str = Field(min_length=1, max_length=500)
+    traces: list[TimeCapacityExportSeriesPlan] = Field(max_length=500)
+
+
+class TimeCapacityDataExportRequest(BaseModel):
+    spec: dict
+    viewport_width: int | None = Field(default=None, ge=240, le=10000)
+    format: Literal["csv", "parquet"]
+    data_precision: Literal["standard", "full"] = "standard"
+    decimal_separator: Literal["point", "comma"] = "point"
+    delimiter: Literal["comma", "semicolon", "tab"] = "comma"
+    x_range: tuple[float, float] | None = None
+    plan: TimeCapacityExportPlan
 
 
 class TimeCapacityRefinementRequest(BaseModel):
@@ -1696,6 +1732,78 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         finish_request_profile()
         _finish_job(job_id, error=str(exc))
         raise
+
+
+@router.post("/analyses/{analysis_id}/time-capacity/export")
+def export_time_capacity_data(
+    analysis_id: int,
+    req: TimeCapacityDataExportRequest,
+    db: Session = Depends(get_db),
+):
+    """Build CSV/Parquet natively so full rows never make a JSON round trip."""
+
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec
+    settings = engine.time_capacity_settings(spec.get("computation", {}))
+    if settings.get("view") != "voltage_current" or settings.get("display_mode") != "consecutive":
+        raise HTTPException(422, "Native export requires a consecutive voltage/current view")
+    if not req.plan.traces:
+        raise HTTPException(422, "No visible Time/Capacity series are available to export")
+    x_range = req.x_range
+    if x_range is not None and not all(math.isfinite(value) for value in x_range):
+        raise HTTPException(422, "The current plot range is not finite")
+
+    request_context = engine.build_analysis_request_context(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=False,
+    )
+    _guard_canonical_cycling(db, spec, request_context=request_context)
+    result = engine.compute_time_capacity(
+        db,
+        spec,
+        analysis.provenance,
+        viewport_width=req.viewport_width,
+        precision="full",
+        compact=True,
+        request_context=request_context,
+    )
+    suffix = f".{req.format}"
+    with tempfile.NamedTemporaryFile(
+        prefix="cellxplorer-time-capacity-",
+        suffix=suffix,
+        delete=False,
+    ) as temporary:
+        export_path = Path(temporary.name)
+    try:
+        time_capacity_workers.write_time_capacity_data_export(
+            result,
+            req.plan.model_dump(),
+            settings,
+            export_path,
+            export_format=req.format,
+            data_precision=req.data_precision,
+            decimal_separator=req.decimal_separator,
+            delimiter=req.delimiter,
+            x_range=x_range,
+        )
+    except ValueError as exc:
+        export_path.unlink(missing_ok=True)
+        raise HTTPException(422, str(exc)) from exc
+    except Exception:
+        export_path.unlink(missing_ok=True)
+        raise
+
+    media_type = "text/csv; charset=utf-8" if req.format == "csv" else "application/vnd.apache.parquet"
+    return FileResponse(
+        export_path,
+        media_type=media_type,
+        filename=f"time-capacity.{req.format}",
+        background=BackgroundTask(export_path.unlink, missing_ok=True),
+    )
 
 
 @router.post("/analyses/{analysis_id}/time-capacity/refine")
