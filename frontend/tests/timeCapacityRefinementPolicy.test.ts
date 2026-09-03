@@ -15,6 +15,7 @@ import {
   timeCapacityRefinementTransitionDuration,
   timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
+  timeCapacityVisibleCycleRangeForViewport,
   timeCapacityViewportContains,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementPolicy.ts";
 
@@ -84,6 +85,14 @@ test("overview extent and cycle range use visible overview points only", () => {
   assert.deepEqual(
     timeCapacityCycleRangeForViewport(current, { min: 1.5, max: 3.5 }),
     { start: 1, end: 3 },
+  );
+  assert.deepEqual(
+    timeCapacityVisibleCycleRangeForViewport(current, { min: 1.5, max: 3.5 }),
+    { start: 2, end: 2 },
+  );
+  assert.deepEqual(
+    timeCapacityVisibleCycleRangeForViewport(current, { min: 3.5, max: 1.5 }),
+    { start: 2, end: 2 },
   );
 });
 

@@ -5,7 +5,6 @@ import {
   Divider,
   Group,
   Loader,
-  Paper,
   Popover,
   Progress,
   Select,
@@ -53,6 +52,20 @@ const EXPORT_FORMAT_OPTIONS: { value: PlotExportFormat; label: string }[] = [
 ];
 
 export type PlotDataExportScope = "full_series" | "plot_range";
+
+function dataExportFormatLabel(format: PlotStyle["data_export_format"]): string {
+  if (format === "xlsx") return "XLSX";
+  if (format === "parquet") return "Parquet";
+  return "CSV";
+}
+
+function exportFilenameBase(value: string): string {
+  return value.replace(/\.(?:csv|xlsx|parquet|png|svg|pdf)$/i, "");
+}
+
+function filenameSuffixWidth(suffix: string): number {
+  return Math.max(56, suffix.length * 8 + 18);
+}
 
 export function jobProgress(job: BackgroundJob | undefined): number {
   if (!job) return 0;
@@ -164,7 +177,7 @@ export function PlotHeader({
     exportStyle: PlotStyle,
     scope: PlotDataExportScope,
   ) => void;
-  /** Time/Capacity can export either every cycle or only its configured cycle range. */
+  /** Time/Capacity can export either the full series or the current plot range. */
   dataExportScopeEnabled?: boolean;
   getExportPreview?: (exportStyle: PlotStyle) => Promise<string | null>;
   style?: PlotStyle;
@@ -309,7 +322,7 @@ export function PlotHeader({
               disabled={!canExport}
               onClick={exportData}
             >
-              {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
+              {dataExportFormatLabel(exportStyle.data_export_format)}
             </Button>
             <Popover
               withinPortal
@@ -338,6 +351,7 @@ export function PlotHeader({
                     data={[
                       { value: "csv", label: "CSV (text)" },
                       { value: "xlsx", label: "Excel (.xlsx)" },
+                      { value: "parquet", label: "Parquet (.parquet)" },
                     ]}
                     value={exportStyle.data_export_format}
                     comboboxProps={{ withinPortal: false }}
@@ -352,8 +366,8 @@ export function PlotHeader({
                     <Select
                       label="Data range"
                       data={[
-                        { value: "full_series", label: "Full data series (all cycles)" },
-                        { value: "plot_range", label: "Current plot cycle range" },
+                        { value: "full_series", label: "Full data series" },
+                        { value: "plot_range", label: "Current range shown in plot" },
                       ]}
                       value={dataExportScope}
                       comboboxProps={{ withinPortal: false }}
@@ -416,33 +430,33 @@ export function PlotHeader({
                       />
                     </>
                   )}
-                  <Text size="10px" c="dimmed">
-                    Exports every source point at full resolution; adaptive plot downsampling is
-                    never used. Hidden samples and dispersion bands are excluded. Standard numeric
-                    precision removes meaningless floating-point tails; full precision preserves
-                    every stored digit.
-                  </Text>
                   <Divider />
                   <TextInput
                     label="Filename"
                     value={filename}
+                    rightSection={
+                      <Text size="xs" c="dimmed" style={{ pointerEvents: "none" }}>
+                        .{exportStyle.data_export_format}
+                      </Text>
+                    }
+                    rightSectionWidth={filenameSuffixWidth(`.${exportStyle.data_export_format}`)}
+                    rightSectionPointerEvents="none"
+                    styles={{
+                      input: {
+                        paddingRight: filenameSuffixWidth(`.${exportStyle.data_export_format}`) + 8,
+                      },
+                    }}
                     onChange={(event) => {
                       filenameEdited.current = true;
-                      setFilename(event.currentTarget.value);
+                      setFilename(exportFilenameBase(event.currentTarget.value));
                     }}
                   />
-                  <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-                    <Text size="xs" c="dimmed">Result</Text>
-                    <Text size="sm" fw={600} lineClamp={2}>
-                      {renderedFilename}.{exportStyle.data_export_format}
-                    </Text>
-                  </Paper>
                   <Button
                     fullWidth
                     leftSection={<IconTable size={14} />}
                     onClick={exportData}
                   >
-                    Download {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
+                    Download {dataExportFormatLabel(exportStyle.data_export_format)}
                   </Button>
                 </Stack>
               </Popover.Dropdown>
@@ -611,17 +625,23 @@ export function PlotHeader({
                       <TextInput
                         label="Filename"
                         value={filename}
+                        rightSection={
+                          <Text size="xs" c="dimmed" style={{ pointerEvents: "none" }}>
+                            .{selectedFormat}
+                          </Text>
+                        }
+                        rightSectionWidth={filenameSuffixWidth(`.${selectedFormat}`)}
+                        rightSectionPointerEvents="none"
+                        styles={{
+                          input: {
+                            paddingRight: filenameSuffixWidth(`.${selectedFormat}`) + 8,
+                          },
+                        }}
                         onChange={(event) => {
                           filenameEdited.current = true;
-                          setFilename(event.currentTarget.value);
+                          setFilename(exportFilenameBase(event.currentTarget.value));
                         }}
                       />
-                      <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-                        <Text size="xs" c="dimmed">Result</Text>
-                        <Text size="sm" fw={600} lineClamp={2}>
-                          {renderedFilename}.{selectedFormat}
-                        </Text>
-                      </Paper>
                       <Button
                         fullWidth
                         leftSection={<IconDownload size={14} />}

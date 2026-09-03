@@ -661,18 +661,23 @@ const CyclePositionTrigger = forwardRef<HTMLButtonElement, CyclePositionTriggerP
 export function TimeCapacityCycleNavigation({
   config,
   maxAvailableCycle,
+  viewportCycleRange = null,
   onCommitRange,
   onCommitSpecificCycles,
+  onResetViewport,
   onPreviewRangeChange,
   onWarmRange,
   isVirgin = false,
   navigationResetKey = "",
+  viewportChangeKey,
   spec,
 }: {
   config: Pick<TimeCapacityConfig, "cycle_start" | "cycle_end" | "cycles">;
   maxAvailableCycle: number | null;
+  viewportCycleRange?: TimeCapacityCycleRange | null;
   onCommitRange: (range: TimeCapacityCycleRange) => void;
   onCommitSpecificCycles: (cycles: number[]) => void;
+  onResetViewport?: () => void;
   onPreviewRangeChange?: (
     range: TimeCapacityCycleRange | null,
     continuousStart?: number | null,
@@ -680,6 +685,7 @@ export function TimeCapacityCycleNavigation({
   onWarmRange?: (range: TimeCapacityCycleRange) => void;
   isVirgin?: boolean;
   navigationResetKey?: string | number;
+  viewportChangeKey?: number;
   spec: AnalysisSpec;
 }) {
   const storedRange = useMemo(
@@ -690,25 +696,34 @@ export function TimeCapacityCycleNavigation({
     () => normalizeCycleRangeForNavigation(config.cycle_start, config.cycle_end, maxAvailableCycle),
     [config.cycle_end, config.cycle_start, maxAvailableCycle],
   );
+  const navigationRange = useMemo(
+    () =>
+      viewportCycleRange
+        ? normalizeCycleRangeForNavigation(
+            viewportCycleRange.start,
+            viewportCycleRange.end,
+            maxAvailableCycle,
+          )
+        : boundedRange,
+    [boundedRange, maxAvailableCycle, viewportCycleRange],
+  );
   // Plotly may still be finishing the previous frame when the user presses an
   // arrow again. Keep an optimistic button-only range so rapid presses compose
   // instead of reusing a stale render and silently dropping a step.
-  const buttonRangeRef = useRef(boundedRange);
+  const buttonRangeRef = useRef(navigationRange);
   useEffect(() => {
-    buttonRangeRef.current = boundedRange;
-  }, [boundedRange.end, boundedRange.start, navigationResetKey]);
-  const currentWidth = cycleRangeWidth(storedRange);
+    buttonRangeRef.current = navigationRange;
+  }, [navigationRange.end, navigationRange.start, navigationResetKey]);
+  const currentWidth = cycleRangeWidth(viewportCycleRange ? navigationRange : storedRange);
   const hasBound = maxAvailableCycle !== null && maxAvailableCycle > 0;
   const specificCyclesActive = timeCapacityRangeNavigationDisabled(config.cycles);
   const boundDependentDisabled = !hasBound;
-  const boundedNavigationDisabled = specificCyclesActive || boundDependentDisabled;
-  const disabledReason = specificCyclesActive
-    ? "Clear Specific cycles in the Cycles settings to navigate a continuous range"
-    : "Cycle extent is not available yet";
+  const boundedNavigationDisabled = boundDependentDisabled;
+  const disabledReason = "Cycle extent is not available yet";
   const previousNavigationDisabled =
     boundedNavigationDisabled ||
     timeCapacityCycleNavigationDisabledAtBoundary(
-      boundedRange,
+      navigationRange,
       -1,
       "cycle",
       maxAvailableCycle,
@@ -716,7 +731,7 @@ export function TimeCapacityCycleNavigation({
   const nextNavigationDisabled =
     boundedNavigationDisabled ||
     timeCapacityCycleNavigationDisabledAtBoundary(
-      boundedRange,
+      navigationRange,
       1,
       "cycle",
       maxAvailableCycle,
@@ -742,17 +757,19 @@ export function TimeCapacityCycleNavigation({
   const historyRef = useRef<TimeCapacityCycleRange[]>([]);
   const [sliderOpened, setSliderOpened] = useState(false);
   const [sliderPreviewRange, setSliderPreviewRange] = useState<TimeCapacityCycleRange | null>(null);
-  const [specificCyclesDraft, setSpecificCyclesDraft] = useState("");
+  const [specificCyclesDraft, setSpecificCyclesDraft] = useState(() => (config.cycles ?? []).join(", "));
   const { ref: navigationRef, width: navigationWidth } = useElementSize();
   const sliderCloseTimerRef = useRef<number | null>(null);
   const triggerHoveredRef = useRef(false);
   const dropdownHoveredRef = useRef(false);
   const sliderFocusRef = useRef(false);
+  const specificCyclesResetKeyRef = useRef(navigationResetKey);
+  const specificCyclesViewportChangeKeyRef = useRef(viewportChangeKey);
   const virginDefaultPendingRef = useRef(isVirgin);
   const virginDefaultAppliedRef = useRef(false);
   const applyingVirginDefaultRef = useRef(false);
 
-  const visibleRange = sliderPreviewRange ?? boundedRange;
+  const visibleRange = sliderPreviewRange ?? navigationRange;
 
   useEffect(() => {
     virginDefaultPendingRef.current = isVirgin;
@@ -772,26 +789,39 @@ export function TimeCapacityCycleNavigation({
   }, [clearHistory, navigationResetKey, selectionIdentity]);
 
   useEffect(() => {
-    if (specificCyclesActive || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) {
+    if (!hasBound || cycleRangeWidth(navigationRange) >= maxAvailableCycle!) {
       setSliderOpened(false);
       setSliderPreviewRange(null);
       onPreviewRangeChange?.(null);
     }
-  }, [boundedRange, hasBound, maxAvailableCycle, onPreviewRangeChange, specificCyclesActive]);
+  }, [hasBound, maxAvailableCycle, navigationRange, onPreviewRangeChange]);
+
+  useEffect(() => {
+    // The component stays mounted while plots are switched. Refresh the field
+    // for the newly selected plot, but do not overwrite text the user has
+    // entered while editing the current one.
+    if (specificCyclesResetKeyRef.current === navigationResetKey) return;
+    specificCyclesResetKeyRef.current = navigationResetKey;
+    setSpecificCyclesDraft((config.cycles ?? []).join(", "));
+  }, [config.cycles, navigationResetKey]);
+
+  useEffect(() => {
+    if (specificCyclesViewportChangeKeyRef.current === viewportChangeKey) return;
+    specificCyclesViewportChangeKeyRef.current = viewportChangeKey;
+    setSpecificCyclesDraft("");
+  }, [viewportChangeKey]);
 
   const commitRange = useCallback(
     (nextRange: TimeCapacityCycleRange, recordHistory = true) => {
       if (!applyingVirginDefaultRef.current) {
         virginDefaultPendingRef.current = false;
       }
-      const currentForHistory = normalizeCycleRangeForNavigation(
-        config.cycle_start,
-        config.cycle_end,
-        maxAvailableCycle,
-      );
+      const currentForHistory = navigationRange;
       const sameStoredRange =
         config.cycle_start === nextRange.start && config.cycle_end === nextRange.end;
+      setSpecificCyclesDraft("");
       if (sameStoredRange) {
+        onResetViewport?.();
         setSliderPreviewRange(null);
         onPreviewRangeChange?.(null);
         return false;
@@ -810,7 +840,14 @@ export function TimeCapacityCycleNavigation({
       onPreviewRangeChange?.(null);
       return true;
     },
-    [config.cycle_end, config.cycle_start, maxAvailableCycle, onCommitRange, onPreviewRangeChange],
+    [
+      config.cycle_end,
+      config.cycle_start,
+      navigationRange,
+      onCommitRange,
+      onPreviewRangeChange,
+      onResetViewport,
+    ],
   );
 
   useEffect(() => {
@@ -862,7 +899,6 @@ export function TimeCapacityCycleNavigation({
       mode: "cycle" | "window",
       boundary?: "first" | "last",
     ) => {
-      if (specificCyclesActive) return;
       const next = navigateTimeCapacityCycleRange(
         buttonRangeRef.current,
         direction,
@@ -875,15 +911,15 @@ export function TimeCapacityCycleNavigation({
         commitRange(next);
       }
     },
-    [commitRange, maxAvailableCycle, specificCyclesActive],
+    [commitRange, maxAvailableCycle],
   );
 
   const resize = useCallback(
     (value: string | null) => {
       if (!value || boundedNavigationDisabled || !hasBound) return;
-      commitRange(resizeTimeCapacityCycleRange(boundedRange, Number(value), maxAvailableCycle));
+      commitRange(resizeTimeCapacityCycleRange(navigationRange, Number(value), maxAvailableCycle));
     },
-    [boundedNavigationDisabled, boundedRange, commitRange, hasBound, maxAvailableCycle],
+    [boundedNavigationDisabled, commitRange, hasBound, maxAvailableCycle, navigationRange],
   );
 
   const commitSpecificCycles = useCallback(() => {
@@ -892,7 +928,6 @@ export function TimeCapacityCycleNavigation({
     if (parsed === null) return;
     if (parsed.length === 0 && !specificCyclesActive) return;
     onCommitSpecificCycles(parsed);
-    setSpecificCyclesDraft("");
   }, [hasBound, maxAvailableCycle, onCommitSpecificCycles, specificCyclesActive, specificCyclesDraft]);
 
   const showAll = useCallback(() => {
@@ -927,16 +962,16 @@ export function TimeCapacityCycleNavigation({
   );
 
   const openSlider = useCallback(() => {
-    if (boundedNavigationDisabled || !hasBound || cycleRangeWidth(boundedRange) >= maxAvailableCycle!) return;
+    if (boundedNavigationDisabled || !hasBound || cycleRangeWidth(navigationRange) >= maxAvailableCycle!) return;
     setSliderPreviewRange(null);
     onPreviewRangeChange?.(null);
-    onWarmRange?.(boundedRange);
+    onWarmRange?.(navigationRange);
     setSliderOpened(true);
   }, [
     boundedNavigationDisabled,
-    boundedRange,
     hasBound,
     maxAvailableCycle,
+    navigationRange,
     onPreviewRangeChange,
     onWarmRange,
   ]);
@@ -1046,17 +1081,15 @@ export function TimeCapacityCycleNavigation({
     [boundedNavigationDisabled, commitRange, hasBound, maxAvailableCycle],
   );
 
-  const sliderAtFullExtent = hasBound && cycleRangeWidth(boundedRange) >= maxAvailableCycle!;
+  const sliderAtFullExtent = hasBound && cycleRangeWidth(navigationRange) >= maxAvailableCycle!;
   const sliderDisabled = boundedNavigationDisabled || sliderAtFullExtent;
-  const sliderDisabledReason = specificCyclesActive || !hasBound
+  const sliderDisabledReason = !hasBound
     ? disabledReason
     : sliderAtFullExtent
       ? "The current window already shows all cycles"
       : "Move cycle window";
   const previousDisabled = timeCapacityPreviousViewDisabled(config.cycles, history.length);
-  const previousDisabledReason = specificCyclesActive
-    ? disabledReason
-    : "No previous cycle view";
+  const previousDisabledReason = "No previous cycle view";
   const twoRowNavigation = navigationWidth === 0 || navigationWidth < 760;
 
   return (
@@ -1215,7 +1248,7 @@ export function TimeCapacityCycleNavigation({
             label="From cycle"
             onCommit={commitManualStart}
             extreme="first"
-            disabled={specificCyclesActive}
+            disabled={boundDependentDisabled}
             disabledReason={disabledReason}
             max={hasBound ? maxAvailableCycle! : undefined}
           />
@@ -1270,7 +1303,7 @@ export function TimeCapacityCycleNavigation({
             label="To cycle"
             onCommit={commitManualEnd}
             extreme="last"
-            disabled={specificCyclesActive}
+            disabled={boundDependentDisabled}
             disabledReason={disabledReason}
             max={hasBound ? maxAvailableCycle! : undefined}
           />
@@ -1296,13 +1329,13 @@ export function TimeCapacityCycleNavigation({
             </NavigationSegmentButton>
           </Button.Group>
           {specificCyclesActive && (
-            <Tooltip label={disabledReason} withArrow>
+            <Tooltip label="Specific cycles are selected; cycle navigation remains available." withArrow>
               <Text size="xs" c="dimmed" style={{ flex: "0 1 auto" }}>
-                Specific cycles active
+                Specific cycles selected
               </Text>
             </Tooltip>
           )}
-          {!specificCyclesActive && !hasBound && (
+          {!hasBound && (
             <Tooltip label={disabledReason} withArrow>
               <Text size="xs" c="dimmed" style={{ flex: "0 1 auto" }}>
                 Cycle extent pending
@@ -1327,9 +1360,9 @@ export function TimeCapacityCycleNavigation({
             Specific cycle
           </Text>
           <Tooltip
-            label="Enter one cycle (145) or a comma-separated list (1, 5, 10), then press Enter."
+            label="Enter one cycle (145), a comma-separated list (1, 5, 10), or a range (120-140). Combine values and ranges, then press Enter. Clear the field and press Enter to remove the selection."
             multiline
-            w={260}
+            w={300}
             withArrow
           >
             <ActionIcon size="sm" variant="subtle" aria-label="Specific cycle syntax">
@@ -1340,7 +1373,7 @@ export function TimeCapacityCycleNavigation({
             "Specific cycle",
             <TextInput
               aria-label="Specific cycle"
-              placeholder="145 or 1, 5, 10"
+              placeholder="145, 1, 5, 120-140"
               value={specificCyclesDraft}
               onChange={(event) => setSpecificCyclesDraft(event.currentTarget.value)}
               onKeyDown={(event) => {

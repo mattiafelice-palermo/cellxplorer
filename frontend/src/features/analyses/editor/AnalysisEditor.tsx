@@ -241,6 +241,7 @@ import {
   cePalette,
   plotMode,
   plotStylePresetFamilyForTab,
+  defaultPlotStyleForTab,
 } from "./plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "./plotting/paletteDraft";
 import {
@@ -1112,10 +1113,13 @@ function AddEntriesModal({
   currentFolderId: number | null;
 }) {
   const [search, setSearch] = useState("");
-  const [mode, setMode] = useState<"replicate_group" | "cell">("replicate_group");
+  const [mode, setMode] = useState<"replicate_group" | "cell">("cell");
   const [branchOnly, setBranchOnly] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (opened) setMode("cell");
+  }, [opened]);
   const cells = useQuery({
     queryKey: ["cells", "analysis-picker"],
     queryFn: () => get<CellSummary[]>("/api/cells"),
@@ -1434,7 +1438,18 @@ function AddEntriesModal({
                 setSelected(new Set());
               }}
             >
-              Add selected
+              Add
+            </Button>
+            <Button
+              disabled={selectedEntries.length === 0}
+              leftSection={<IconPlus size={14} />}
+              onClick={() => {
+                onAdd(selectedEntries);
+                setSelected(new Set());
+                onClose();
+              }}
+            >
+              Add and close
             </Button>
           </Group>
         </Group>
@@ -3653,9 +3668,7 @@ function AnalysisEditorView({
       defaults.find(
         (item) => item.is_default && item.plot_family === "all",
       );
-    const initialStyle = preset
-      ? normalizePlotStyle(preset.style)
-      : normalizePlotStyle(DEFAULT_PLOT_STYLE);
+    const initialStyle = defaultPlotStyleForTab(activeTab, preset?.style);
     if (activeTab === "time_capacity") {
       setTimeCapacityNavigationSession((value) => value + 1);
       setTimeCapacityVirginNavigation(true);

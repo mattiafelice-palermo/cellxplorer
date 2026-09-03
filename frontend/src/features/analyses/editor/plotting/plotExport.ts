@@ -39,12 +39,22 @@ export function textFromDataUrl(dataUrl: string): string {
     : decodeURIComponent(payload);
 }
 
-// ------------------------------------------------------ data export (CSV/XLSX)
+// ------------------------------------------------------ data export (CSV/XLSX/Parquet)
 
 // Export exactly what is plotted: one x/y column pair per visible trace
 // (works for any tab â€” traces need not share an x grid). Dispersion bands
 // (fill traces) are skipped.
-export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.Layout>): DataColumn[] {
+export type PlotDataXRange = readonly [number, number];
+
+function valuesAtIndices<T>(values: readonly T[], indices: readonly number[] | null): T[] {
+  return indices === null ? [...values] : indices.map((index) => values[index]);
+}
+
+export function tracesToColumns(
+  traces: Plotly.Data[],
+  layout: Partial<Plotly.Layout>,
+  xRange: PlotDataXRange | null = null,
+): DataColumn[] {
   const axisTitle = (axis: unknown): string =>
     String((axis as { title?: { text?: string } })?.title?.text ?? "");
   const columns: DataColumn[] = [];
@@ -54,11 +64,33 @@ export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.La
     const exportXs = (
       t.meta as { cellxplorer_export_x?: (number | null)[] } | undefined
     )?.cellxplorer_export_x;
-    const xs = exportXs ?? ((t.x as (number | null)[]) ?? []);
-    const ys = (t.y as (number | null)[]) ?? [];
+    const plottedXs = (t.x as (number | null)[]) ?? [];
+    const normalizedRange = xRange
+      ? [Math.min(xRange[0], xRange[1]), Math.max(xRange[0], xRange[1])] as const
+      : null;
+    const selectedIndices = normalizedRange
+      ? plottedXs.flatMap((value, index) =>
+          typeof value === "number" &&
+          Number.isFinite(value) &&
+          value >= normalizedRange[0] &&
+          value <= normalizedRange[1]
+            ? [index]
+            : [],
+        )
+      : null;
+    if (selectedIndices !== null && selectedIndices.length === 0) continue;
+    const xs = valuesAtIndices(exportXs ?? plottedXs, selectedIndices);
+    const ys = valuesAtIndices((t.y as (number | null)[]) ?? [], selectedIndices);
     if (!ys.length) continue;
     const exportColumns = t.cellxplorer_export_columns as DataColumn[] | undefined;
-    if (Array.isArray(exportColumns)) columns.push(...exportColumns);
+    if (Array.isArray(exportColumns)) {
+      columns.push(
+        ...exportColumns.map((column) => ({
+          ...column,
+          values: valuesAtIndices(column.values, selectedIndices),
+        })),
+      );
+    }
     const name = String(t.name ?? "series");
     const layoutRec = layout as Record<string, unknown>;
     const yKey = t.yaxis === "y3" ? "yaxis3" : t.yaxis === "y2" ? "yaxis2" : "yaxis";
@@ -126,6 +158,36 @@ export function xlsxDataRowRanges(rowCount: number): Array<{ start: number; end:
   return ranges;
 }
 
+/**
+ * Convert the shared column representation into the column source expected by
+ * hyparquet-writer. Plotly/export metadata can contain nulls, so numeric
+ * columns are explicitly nullable and non-numeric columns are normalized to
+ * strings instead of relying on mixed-type inference.
+ */
+export function parquetColumnData(columns: DataColumn[]) {
+  const rowCount = columns.reduce((max, column) => Math.max(max, column.values.length), 0);
+  return columns.map((column) => {
+    const values = [...column.values, ...Array<SourceExportValue>(rowCount - column.values.length).fill(null)];
+    const numeric =
+      values.some((value) => typeof value === "number") &&
+      values.every((value) => value === null || typeof value === "number");
+    return {
+      name: column.header,
+      data: numeric
+        ? values.map((value) =>
+            typeof value === "number" && !Number.isNaN(value) ? value : null,
+          )
+        : values.map((value) =>
+            value === null || (typeof value === "number" && Number.isNaN(value))
+              ? null
+              : String(value),
+          ),
+      type: numeric ? ("DOUBLE" as const) : ("STRING" as const),
+      nullable: true,
+    };
+  });
+}
+
 export async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
   if (columns.length === 0) return;
   if (style.data_export_format === "xlsx") {
@@ -154,6 +216,15 @@ export async function downloadDataExport(columns: DataColumn[], style: PlotStyle
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }),
       `${baseName}.xlsx`
+    );
+    return;
+  }
+  if (style.data_export_format === "parquet") {
+    const { parquetWriteBuffer } = await import("hyparquet-writer");
+    const bytes = parquetWriteBuffer({ columnData: parquetColumnData(columns) });
+    await downloadBlob(
+      new Blob([bytes], { type: "application/vnd.apache.parquet" }),
+      `${baseName}.parquet`,
     );
     return;
   }

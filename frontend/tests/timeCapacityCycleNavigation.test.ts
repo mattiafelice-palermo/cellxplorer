@@ -216,6 +216,14 @@ test("cycle navigation keeps endpoint actions inside the fields and the window m
   assert.match(source, /Specific cycle/);
   assert.match(source, /IconInfoCircle/);
   assert.match(source, /onCommitSpecificCycles/);
+  assert.match(source, /const boundedNavigationDisabled = boundDependentDisabled;/);
+  assert.doesNotMatch(source, /if \(specificCyclesActive\) return;/);
+  const specificCommitStart = source.indexOf("const commitSpecificCycles");
+  const specificCommitEnd = source.indexOf("const showAll", specificCommitStart);
+  assert.ok(specificCommitStart >= 0 && specificCommitEnd > specificCommitStart);
+  assert.doesNotMatch(source.slice(specificCommitStart, specificCommitEnd), /setSpecificCyclesDraft\(\"\"\)/);
+  assert.match(source, /viewportChangeKey/);
+  assert.match(source, /120-140/);
   assert.match(source, /withScrollArea=\{false\}/);
   assert.match(source, /comboboxProps=\{\{ width: 96 \}\}/);
 });
@@ -569,12 +577,12 @@ test("selected maximum ignores invalid summaries and returns null without a reli
   assert.equal(selectedTimeCapacityCycleMax([{ kind: "cell", ref_id: 1 }], undefined, []), null);
 });
 
-test("explicit cycles disable range navigation without changing the retained range", () => {
+test("explicit cycles remain a selection state without disabling cycle navigation history", () => {
   assert.equal(timeCapacityRangeNavigationDisabled([]), false);
   assert.equal(timeCapacityRangeNavigationDisabled([1, 4, 9]), true);
   assert.equal(timeCapacityPreviousViewDisabled([], 1), false);
   assert.equal(timeCapacityPreviousViewDisabled([], 0), true);
-  assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), true);
+  assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), false);
 });
 
 test("cycle navigation buttons disable only at known range boundaries", () => {
@@ -616,13 +624,20 @@ test("cycle navigation buttons disable only at known range boundaries", () => {
   );
 });
 
-test("specific cycle input accepts one or a sorted unique list and rejects invalid values", () => {
+test("specific cycle input accepts values, ranges, and mixed syntax", () => {
   assert.deepEqual(parseTimeCapacitySpecificCycles("145", 332), [145]);
   assert.deepEqual(parseTimeCapacitySpecificCycles("10, 1 10 5", 332), [1, 5, 10]);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("120-123", 332), [120, 121, 122, 123]);
+  assert.deepEqual(
+    parseTimeCapacitySpecificCycles("120-122, 130, 132 - 133", 332),
+    [120, 121, 122, 130, 132, 133],
+  );
   assert.deepEqual(parseTimeCapacitySpecificCycles("", 332), []);
   assert.equal(parseTimeCapacitySpecificCycles("0", 332), null);
   assert.equal(parseTimeCapacitySpecificCycles("1, nope", 332), null);
   assert.equal(parseTimeCapacitySpecificCycles("333", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("123-120", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("120-333", 332), null);
   assert.deepEqual(parseTimeCapacitySpecificCycles("145", null), [145]);
 });
 

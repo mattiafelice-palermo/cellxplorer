@@ -825,28 +825,43 @@ export function parseTimeCapacitySpecificCycles(
   if (trimmed === "") return [];
 
   const maximum = positiveMaximum(maxAvailableCycle);
-  const values: number[] = [];
-  for (const token of trimmed.split(/[,\s]+/).filter(Boolean)) {
-    if (!/^\d+$/.test(token)) return null;
-    const value = Number(token);
+  const values = new Set<number>();
+  // Normalize optional whitespace around a range dash before accepting the
+  // same comma/whitespace-separated syntax as the previous single-cycle
+  // parser. A range is expanded here because the backend contract stores
+  // explicit cycles as a concrete list.
+  const tokens = trimmed.replace(/\s*-\s*/g, "-").split(/[,\s]+/).filter(Boolean);
+  for (const token of tokens) {
+    const range = /^(\d+)-(\d+)$/.exec(token);
+    const startText = range?.[1] ?? token;
+    const endText = range?.[2] ?? token;
+    if (!/^\d+$/.test(startText) || !/^\d+$/.test(endText)) return null;
+
+    const start = Number(startText);
+    const end = Number(endText);
     if (
-      !Number.isSafeInteger(value) ||
-      value <= 0 ||
-      (maximum !== null && value > maximum)
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start <= 0 ||
+      end <= 0 ||
+      end < start ||
+      (maximum !== null && end > maximum)
     ) {
       return null;
     }
-    values.push(value);
+
+    for (let value = start; value < end; value += 1) values.add(value);
+    values.add(end);
   }
 
-  return [...new Set(values)].sort((left, right) => left - right);
+  return [...values].sort((left, right) => left - right);
 }
 
 export function timeCapacityPreviousViewDisabled(
-  cycles: readonly number[] | null | undefined,
+  _cycles: readonly number[] | null | undefined,
   historyLength: number,
 ): boolean {
-  return timeCapacityRangeNavigationDisabled(cycles) || historyLength <= 0;
+  return historyLength <= 0;
 }
 
 export function selectedTimeCapacityCycleMax(

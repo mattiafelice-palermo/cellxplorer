@@ -35,7 +35,7 @@ import {
   type TimeCapacityRefinementResult,
   type TimeCapacityTrace,
 } from "../../../../../api";
-import { DebouncedNumberInput, DebouncedTextInput } from "../../../../../components/DebouncedInputs";
+import { DebouncedNumberInput } from "../../../../../components/DebouncedInputs";
 import {
   shouldShowVoltageChannelSelector,
   normalizeVoltageChannels,
@@ -141,6 +141,7 @@ import {
   timeCapacityRefinementTransitionDuration,
   timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
+  timeCapacityVisibleCycleRangeForViewport,
   type TimeCapacityViewport,
 } from "./timeCapacityRefinementPolicy";
 import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
@@ -1083,8 +1084,11 @@ export function timeCapacityLayout(
       ? {}
       : {
           // A refreshed/cached result must not reset a user's local zoom.
-          // Only a change in X semantics should start a new viewport.
-          uirevision: `${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`,
+          // X semantics or an explicit cycle-navigation commit do start a new
+          // automatic viewport.
+          uirevision: `${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.cycle_start ?? ""}|${
+            cfg.cycle_end ?? ""
+          }|${(cfg.cycles ?? []).join(",")}`,
         }),
     showlegend: spec.presentation.legend,
     legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
@@ -1297,7 +1301,6 @@ export function TimeCapacitySettings({
   voltageChannels?: TimeCapacityResult["voltage_channels"];
 }) {
   const cfg = timeCapacityConfig(spec);
-  const cyclesText = (cfg.cycles ?? []).join(", ");
   // Only offer electrode potentials that actually have data for the current
   // selection — never a disabled/greyed entry that merely advertises a
   // feature no selected source has (spec 040.4). An ordinary two-electrode
@@ -1315,12 +1318,6 @@ export function TimeCapacitySettings({
       fn(next);
       s.computation.time_capacity = next;
     });
-
-  const parseCycles = (value: string) =>
-    value
-      .split(/[,\s]+/)
-      .map((part) => Number(part.trim()))
-      .filter((value) => Number.isInteger(value) && value > 0);
 
   return (
     <Paper p="sm" withBorder>
@@ -1534,19 +1531,14 @@ export function TimeCapacitySettings({
         <Accordion.Item value="cycles">
           <Accordion.Control>
             <Text fw={700} size="sm">
-              Cycles
+              Adaptive rendering
             </Text>
           </Accordion.Control>
           <Accordion.Panel>
             <Stack gap="xs">
-              <DebouncedTextInput
-                label="Specific cycles"
-                placeholder="e.g. 1, 2, 5, 10"
-                value={cyclesText}
-                onCommit={(value) => updateTime((next) => void (next.cycles = parseCycles(value)))}
-              />
               <DebouncedNumberInput
-                label="Max points per cell"
+                label="Adaptive display point budget"
+                description="Limits interactive preview density only. Data exports always use full resolution."
                 min={100}
                 step={500}
                 value={cfg.max_points_per_cell}
@@ -1623,6 +1615,10 @@ function TimeCapacityPlotCardView({
   const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
   const queryClient = useQueryClient();
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
+  const [plotViewportCycleRange, setPlotViewportCycleRange] =
+    useState<TimeCapacityCycleRange | null>(null);
+  const [plotViewportChangeKey, setPlotViewportChangeKey] = useState(0);
+  useEffect(() => setPlotViewportCycleRange(null), [navigationResetKey]);
   const [panWarmRange, setPanWarmRange] = useState<TimeCapacityCycleRange | null>(null);
   const [previewRequest, setPreviewRequest] = useState<TimeCapacityPreviewRequest | null>(null);
   const [committedNavigationRequest, setCommittedNavigationRequest] =
@@ -2628,6 +2624,8 @@ function TimeCapacityPlotCardView({
   );
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
+  const zoomResetRef = useRef(zoom.reset);
+  zoomResetRef.current = zoom.reset;
 
   // Spec 052.8: y is frozen for the duration of one drag. Letting Plotly
   // reautoscale y as each buffer landed made the whole plot rescale and blink
@@ -2654,6 +2652,25 @@ function TimeCapacityPlotCardView({
     setFrozenY(null);
   }, [cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.voltage_channels.join("|"), cfg.stacked, cfg.display_mode]);
   const fitYAxis = useCallback(() => setFrozenY(null), []);
+
+  const resetPlotViewportForNavigation = useCallback(() => {
+    setPlotViewportCycleRange(null);
+    zoomResetRef.current();
+    invalidateRefinement();
+    const graphDiv = plotDivRef.current;
+    if (!graphDiv) return;
+    const relayout = {
+      "xaxis.autorange": true,
+      ...(cfg.stacked ? { "xaxis2.autorange": true } : {}),
+    };
+    void Promise.resolve(
+      (PlotlyLib as unknown as {
+        relayout: (element: HTMLElement, update: Record<string, unknown>) => unknown;
+      }).relayout(graphDiv, relayout),
+    ).catch(() => {
+      // The plot may unmount while a navigation event is being committed.
+    });
+  }, [cfg.stacked, invalidateRefinement]);
 
   const layout = useMemo(() => {
     // Use the same neutral scientific spec as the stable figure data. The
@@ -2940,6 +2957,7 @@ function TimeCapacityPlotCardView({
   ]);
   const commitCycleRange = useCallback(
     (range: TimeCapacityCycleRange) => {
+      resetPlotViewportForNavigation();
       if (panActiveRef.current) {
         panSettlingWindowRef.current = { ...range };
         panLiveWindowRef.current = { ...range };
@@ -2957,10 +2975,11 @@ function TimeCapacityPlotCardView({
         s.computation.time_capacity = next;
       });
     },
-    [scheduleCommittedNavigationRange, update],
+    [resetPlotViewportForNavigation, scheduleCommittedNavigationRange, update],
   );
   const commitSpecificCycles = useCallback(
     (cycles: number[]) => {
+      resetPlotViewportForNavigation();
       update((s) => {
         const next = timeCapacityConfig(s);
         next.cycles = cycles;
@@ -2971,10 +2990,11 @@ function TimeCapacityPlotCardView({
         s.computation.time_capacity = next;
       });
     },
-    [update],
+    [resetPlotViewportForNavigation, update],
   );
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
-    zoom.onRelayout(event);
+    const pointerDriven = zoom.onRelayout(event);
+    if (pointerDriven) setPlotViewportChangeKey((current) => current + 1);
     const relayout = event as Record<string, unknown>;
     const axisPrefixes = cfg.stacked ? ["xaxis", "xaxis2"] : ["xaxis"];
     const readRange = (prefix: string): TimeCapacityViewport | null => {
@@ -2988,17 +3008,30 @@ function TimeCapacityPlotCardView({
       const max = Number(relayout[`${prefix}.range[1]`]);
       return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
     };
+    const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
     if (axisPrefixes.some((prefix) => relayout[`${prefix}.autorange`] === true)) {
+      if (pointerDriven) setPlotViewportCycleRange(null);
       cancelPendingRefinement();
       cancelRefinementTransition();
       clearDisplayedRefinement();
-    } else if (
-      !cyclePreviewRange &&
-      !previewQueryRange &&
-      timeCapacityRefinementCanSchedule(active, spec)
-    ) {
-      const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
-      const previousViewport = refinementLifecycle.requestedViewport;
+    } else {
+      if (pointerDriven && viewport) {
+        const visibleCycleRange = timeCapacityVisibleCycleRangeForViewport(
+          currentResultRef.current,
+          viewport,
+        );
+        setPlotViewportCycleRange((current) =>
+          current?.start === visibleCycleRange?.start && current?.end === visibleCycleRange?.end
+            ? current
+            : visibleCycleRange,
+        );
+      }
+      if (
+        !cyclePreviewRange &&
+        !previewQueryRange &&
+        timeCapacityRefinementCanSchedule(active, spec)
+      ) {
+        const previousViewport = refinementLifecycle.requestedViewport;
       const sameViewport =
         viewport !== null &&
         previousViewport !== null &&
@@ -3080,6 +3113,7 @@ function TimeCapacityPlotCardView({
               });
           }, 150);
         }
+        }
       }
     }
     if (style.legend_mode === "outside") return;
@@ -3134,6 +3168,20 @@ function TimeCapacityPlotCardView({
     const requestedVoltageChannels = requestCfg.voltage_channels;
     const requestedSourceDataIdentity = voltageChannelDataIdentity(currentResult);
     const exportSpec = timeCapacityDataExportSpec(spec, timeCapacityConfig(spec), scope);
+    const livePlotXRange = (() => {
+      if (scope !== "plot_range") return null;
+      const range = (
+        plotDivRef.current as unknown as {
+          _fullLayout?: { xaxis?: { range?: unknown[] } };
+        } | null
+      )?._fullLayout?.xaxis?.range;
+      if (!Array.isArray(range) || range.length < 2) return null;
+      const first = Number(range[0]);
+      const second = Number(range[1]);
+      return Number.isFinite(first) && Number.isFinite(second)
+        ? ([first, second] as const)
+        : null;
+    })();
     setDataExporting(true);
     try {
       const fullResult = await post<TimeCapacityResult>(
@@ -3169,7 +3217,11 @@ function TimeCapacityPlotCardView({
       if (fullTraces.length === 0) {
         throw new Error("No data is available for the selected voltage quantity.");
       }
-      await downloadDataExport(tracesToColumns(fullTraces, layout), exportStyle, baseName);
+      await downloadDataExport(
+        tracesToColumns(fullTraces, layout, livePlotXRange),
+        exportStyle,
+        baseName,
+      );
     } catch (e) {
       notifications.show({ message: e instanceof Error ? e.message : "Data export failed.", color: "red" });
     } finally {
@@ -3317,10 +3369,13 @@ function TimeCapacityPlotCardView({
         <TimeCapacityCycleNavigation
           config={cfg}
           maxAvailableCycle={maxAvailableCycle}
+          viewportCycleRange={plotViewportCycleRange}
           isVirgin={isVirginNavigation}
           navigationResetKey={navigationResetKey}
+          viewportChangeKey={plotViewportChangeKey}
           onCommitRange={commitCycleRange}
           onCommitSpecificCycles={commitSpecificCycles}
+          onResetViewport={resetPlotViewportForNavigation}
           onPreviewRangeChange={handleCyclePreviewRange}
           onWarmRange={panningEnabled ? setPanWarmRange : undefined}
           spec={spec}

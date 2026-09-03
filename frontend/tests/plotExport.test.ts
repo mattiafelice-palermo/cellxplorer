@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildDelimitedText,
   exportFigure,
+  parquetColumnData,
   resolveExportPlan,
   slugFilename,
   tracesToColumns,
@@ -51,12 +52,60 @@ test("scientific export keeps raw semantic axis labels after Plotly escaping", (
   assert.equal(columns[1].header, "Cell A | Working potential vs R&D %{y}<br> (V)");
 });
 
+test("plot-range export crops full-resolution values and provenance to the live x viewport", () => {
+  const columns = tracesToColumns(
+    [
+      {
+        x: [0, 1, 2, 3, 4],
+        y: [10, 11, 12, 13, 14],
+        name: "Cell A",
+        cellxplorer_export_columns: [
+          { header: "Cell A | Global cycle", values: [1, 1, 2, 2, 3] },
+          { header: "Cell A | Source file", values: ["a", "a", "b", "b", "c"] },
+        ],
+      } as any,
+    ],
+    {
+      xaxis: { title: { text: "Time (min)" } },
+      yaxis: { title: { text: "Voltage (V)" } },
+    },
+    [1.25, 3.25],
+  );
+
+  assert.deepEqual(columns, [
+    { header: "Cell A | Global cycle", values: [2, 2] },
+    { header: "Cell A | Source file", values: ["b", "b"] },
+    { header: "Cell A | Time (min)", values: [2, 3] },
+    { header: "Cell A | Voltage (V)", values: [12, 13] },
+  ]);
+});
+
 test("Excel data exports split at the worksheet row limit while retaining a header per sheet", () => {
   assert.deepEqual(xlsxDataRowRanges(0), [{ start: 0, end: 0 }]);
   assert.deepEqual(xlsxDataRowRanges(1_048_575), [{ start: 0, end: 1_048_575 }]);
   assert.deepEqual(xlsxDataRowRanges(1_048_576), [
     { start: 0, end: 1_048_575 },
     { start: 1_048_575, end: 1_048_576 },
+  ]);
+});
+
+test("Parquet export columns preserve numeric values and nullable metadata columns", () => {
+  assert.deepEqual(parquetColumnData([
+    { header: "Time (min)", values: [0, 1.25, null] },
+    { header: "Source", values: ["first", null] },
+  ]), [
+    {
+      name: "Time (min)",
+      data: [0, 1.25, null],
+      type: "DOUBLE",
+      nullable: true,
+    },
+    {
+      name: "Source",
+      data: ["first", null, null],
+      type: "STRING",
+      nullable: true,
+    },
   ]);
 });
 

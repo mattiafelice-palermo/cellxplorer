@@ -245,11 +245,14 @@ export function afterPaint(): Promise<void> {
 
 
 type ZoomMemory = {
-  onRelayout: (event: Readonly<Plotly.PlotRelayoutEvent>) => void;
+  /** Returns true when the relayout originated from a pointer interaction. */
+  onRelayout: (event: Readonly<Plotly.PlotRelayoutEvent>) => boolean;
   apply: (layout: Partial<Plotly.Layout>) => Partial<Plotly.Layout>;
   /** Attach to the plot wrapper's onPointerDownCapture so only relayouts
    *  triggered by real pointer interaction are ever recorded. */
   armOnPointerDown: () => void;
+  /** Forget a user viewport before application-owned navigation. */
+  reset: () => void;
 };
 
 export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
@@ -272,9 +275,14 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     armed.current = true;
   };
 
+  const reset = () => {
+    stored.current = null;
+    armed.current = false;
+  };
+
   const onRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
-    if (!enabled) return;
     const ev = event as Record<string, unknown>;
+    const pointerDriven = armed.current;
     if (
       ev["xaxis.autorange"] === true ||
       ev["xaxis2.autorange"] === true ||
@@ -283,9 +291,9 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     ) {
       stored.current = null; // double-click / modebar autoscale
       armed.current = false;
-      return;
+      return pointerDriven;
     }
-    if (!armed.current) return; // programmatic echo â€” never record
+    if (!pointerDriven) return false; // programmatic echo â€” never record
     const xRange = Array.isArray(ev["xaxis.range"]) ? ev["xaxis.range"] as unknown[] : [];
     const yRange = Array.isArray(ev["yaxis.range"]) ? ev["yaxis.range"] as unknown[] : [];
     const xr0 = ev["xaxis.range[0]"] ?? xRange[0];
@@ -294,14 +302,16 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     const yr1 = ev["yaxis.range[1]"] ?? yRange[1];
     const hasX = typeof xr0 === "number" && typeof xr1 === "number";
     const hasY = typeof yr0 === "number" && typeof yr1 === "number";
-    if (!hasX && !hasY) return;
+    if (!hasX && !hasY) return false;
     armed.current = false;
+    if (!enabled) return true;
     const prev = stored.current?.signature === signature ? stored.current : null;
     stored.current = {
       signature,
       x: hasX ? [xr0 as number, xr1 as number] : prev?.x,
       y: hasY ? [yr0 as number, yr1 as number] : prev?.y,
     };
+    return true;
   };
 
   const apply = (layout: Partial<Plotly.Layout>): Partial<Plotly.Layout> => {
@@ -326,7 +336,7 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     return layout;
   };
 
-  return { onRelayout, apply, armOnPointerDown };
+  return { onRelayout, apply, armOnPointerDown, reset };
 }
 
 export function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {

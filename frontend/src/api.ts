@@ -1188,8 +1188,8 @@ export interface PlotStyle {
   /** Paper coordinates (0..1) of the legend center when legend_mode=custom. */
   legend_custom_x: number;
   legend_custom_y: number;
-  /** Data (CSV/XLSX) export preferences. */
-  data_export_format: "csv" | "xlsx";
+  /** Data export preferences. */
+  data_export_format: "csv" | "xlsx" | "parquet";
   data_precision: "standard" | "full";
   data_decimal_separator: "point" | "comma";
   data_delimiter: "comma" | "semicolon" | "tab";
