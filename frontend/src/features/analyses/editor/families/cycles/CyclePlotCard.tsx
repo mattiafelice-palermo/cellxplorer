@@ -83,7 +83,10 @@ import {
 } from "../../plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
   isAnalysisSampleHidden,
+  plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import {
   aggregateSeriesDescriptor,
@@ -102,6 +105,14 @@ import {
   sourceBoundaryPointIndices,
   sourceExportColumns,
 } from "../../plotting/sourceChainPlot";
+import {
+  cycleCeSeriesKey,
+  cycleCeVisibilityKey,
+  cycleSeriesVisibilityCandidatesForResult,
+  cycleTraceEmissionPlan,
+  cycleTraceVisibility,
+  cycleVisibilityKey,
+} from "./cycleVisibility";
 
 const CAPACITY_LIKE_KEYS = new Set([
   "discharge_capacity",
@@ -414,6 +425,29 @@ export function diagnosticCyclesFor(result: ComputeResult, spec: AnalysisSpec): 
   );
 }
 
+/** Primary CellXplorer visibility targets for the current Cycles plot. */
+export function cycleSeriesVisibilityCandidates(
+  original: ComputeResult,
+  spec: AnalysisSpec,
+): { key: string; label: string }[] {
+  const result = withoutDiagnosticCycles(
+    original,
+    diagnosticCyclesFor(original, spec),
+    spec.presentation.reindex_diagnostic_cycles ?? false,
+  );
+  const { column } = resolveCycleQuantity(result, spec);
+  const showCeOverlay =
+    (spec.presentation.ce_overlay ?? false) &&
+    CAPACITY_LIKE_KEYS.has(spec.presentation.quantity ?? "discharge_capacity");
+  const showIndividual =
+    spec.presentation.show_individual_cells || result.aggregates.length === 0;
+  return cycleSeriesVisibilityCandidatesForResult(result, spec, {
+    column,
+    showIndividual,
+    includeCoulombicEfficiency: showCeOverlay,
+  });
+}
+
 export function cycleTracesForResult(
   original: ComputeResult,
   spec: AnalysisSpec,
@@ -474,6 +508,7 @@ export function cycleTracesForResult(
     axis: "y2",
     measure: "coulombic_efficiency",
     sourceKey,
+    visibilityKey: cycleCeVisibilityKey(sourceKey),
     secondarySuffix: " CE",
   });
 
@@ -484,6 +519,7 @@ export function cycleTracesForResult(
   const colorKeyFor = new Map<string, string>();
   for (const agg of result.aggregates) {
     const aggDescriptor = aggregateSeriesDescriptor(agg, compact);
+    aggDescriptor.visibilityKey = cycleVisibilityKey(aggDescriptor.key);
     colorKeyFor.set(aggDescriptor.key, `g${agg.group_id}`);
     descriptors.push(aggDescriptor);
     if (showCeOverlay && agg.quantities[column] && agg.quantities["coulombic_efficiency_pct"]) {
@@ -494,6 +530,7 @@ export function cycleTracesForResult(
     if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
     const descriptor = cellSeriesDescriptor(s);
+    descriptor.visibilityKey = cycleVisibilityKey(descriptor.key);
     colorKeyFor.set(descriptor.key, grouped ? `g${s.group_id}` : `c${s.cell_id}`);
     descriptors.push(descriptor);
     if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
@@ -556,117 +593,132 @@ export function cycleTracesForResult(
     const q = agg.quantities[column];
     if (!q) continue;
     const aggResolved = resolvedStyles.get(aggKey);
-    if (!aggResolved || aggResolved.hidden) continue;
-    if (!compact) {
-      out.push(
-        ...bandSegmentTraces(
-          agg.x,
-          q.band_low,
-          q.band_high,
-          aggResolved.color,
-          style.band_opacity,
-          `${agg.group_name} band`,
-        ),
-      );
-    }
-    out.push({
-      x: agg.x,
-      y: q.mean,
-      name: aggResolved.name,
-      line: {
-        color: aggResolved.color,
-        width: aggResolved.lineWidth,
-        dash: aggResolved.lineDash,
-        shape: aggResolved.lineShape,
-      },
-      marker: {
-        color: aggResolved.color,
-        size: aggResolved.markerSize,
-        symbol: seriesPlotlySymbol(aggResolved),
-      },
-      opacity: aggResolved.opacity,
-      showlegend: aggResolved.showInLegend,
-      legendrank: legendRanks.get(aggKey),
-      type: "scatter",
-      mode: compact ? mode : seriesPlotlyMode(aggResolved),
-      customdata: q.n,
-      hovertemplate: compact
-        ? undefined
-        : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
-    } as Plotly.Data);
-    if (!compact) {
-      const lowCountX: number[] = [];
-      const lowCountY: number[] = [];
-      const lowCountN: number[] = [];
-      q.n.forEach((count, index) => {
-        const value = q.mean[index];
-        if (
-          count > 0 &&
-          count < spec.aggregation.min_n_for_band &&
-          value !== null &&
-          Number.isFinite(value)
-        ) {
-          lowCountX.push(agg.x[index]);
-          lowCountY.push(value);
-          lowCountN.push(count);
-        }
-      });
-      if (lowCountX.length > 0) {
-        out.push({
-          x: lowCountX,
-          y: lowCountY,
-          name: `${agg.group_name} below minimum n`,
-          type: "scatter",
-          mode: "markers",
-          marker: {
-            color: style.low_n_color,
-            size: style.low_n_marker_size,
-            symbol: style.low_n_marker_symbol,
-            line: { color: style.paper_bgcolor, width: 0.8 },
-          },
-          customdata: lowCountN,
-          showlegend: false,
-          hovertemplate:
-            `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
-            `<extra>${agg.group_name}</extra>`,
-        } as Plotly.Data);
-      }
-    }
-    if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
-      const ceResolved = resolvedStyles.get(
-        composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" }),
-      );
-      if (ceResolved && !ceResolved.hidden) {
-        out.push({
-          x: agg.x,
-          y: agg.quantities["coulombic_efficiency_pct"].mean,
-          name: ceResolved.name,
-          yaxis: "y2",
-          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
-          marker: {
-            color: ceResolved.color,
-            size: ceResolved.markerSize,
-            symbol: seriesPlotlySymbol(ceResolved),
-          },
-          type: "scatter",
-          mode: seriesPlotlyMode(ceResolved),
-          opacity: ceResolved.opacity,
-          showlegend: ceResolved.showInLegend,
-          legendrank: legendRanks.get(
-            composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" }),
+    const ceKey = cycleCeSeriesKey(aggKey);
+    const ceResolved = resolvedStyles.get(ceKey);
+    const aggregateEmission = cycleTraceEmissionPlan(spec, aggKey, {
+      primary: Boolean(aggResolved && !aggResolved.hidden),
+      ce: Boolean(
+        showCeOverlay &&
+          agg.quantities["coulombic_efficiency_pct"] &&
+          ceResolved &&
+          !ceResolved.hidden,
+      ),
+    });
+    if (aggregateEmission.primary && aggResolved) {
+      if (!compact) {
+        out.push(
+          ...bandSegmentTraces(
+            agg.x,
+            q.band_low,
+            q.band_high,
+            aggResolved.color,
+            style.band_opacity,
+            `${agg.group_name} band`,
           ),
-        } as Plotly.Data);
+        );
       }
+      out.push({
+        x: agg.x,
+        y: q.mean,
+        name: aggResolved.name,
+        line: {
+          color: aggResolved.color,
+          width: aggResolved.lineWidth,
+          dash: aggResolved.lineDash,
+          shape: aggResolved.lineShape,
+        },
+        marker: {
+          color: aggResolved.color,
+          size: aggResolved.markerSize,
+          symbol: seriesPlotlySymbol(aggResolved),
+        },
+        opacity: aggResolved.opacity,
+        showlegend: aggResolved.showInLegend,
+        legendrank: legendRanks.get(aggKey),
+        type: "scatter",
+        mode: compact ? mode : seriesPlotlyMode(aggResolved),
+        customdata: q.n,
+        hovertemplate: compact
+          ? undefined
+          : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
+      } as Plotly.Data);
+      if (!compact) {
+        const lowCountX: number[] = [];
+        const lowCountY: number[] = [];
+        const lowCountN: number[] = [];
+        q.n.forEach((count, index) => {
+          const value = q.mean[index];
+          if (
+            count > 0 &&
+            count < spec.aggregation.min_n_for_band &&
+            value !== null &&
+            Number.isFinite(value)
+          ) {
+            lowCountX.push(agg.x[index]);
+            lowCountY.push(value);
+            lowCountN.push(count);
+          }
+        });
+        if (lowCountX.length > 0) {
+          out.push({
+            x: lowCountX,
+            y: lowCountY,
+            name: `${agg.group_name} below minimum n`,
+            type: "scatter",
+            mode: "markers",
+            marker: {
+              color: style.low_n_color,
+              size: style.low_n_marker_size,
+              symbol: style.low_n_marker_symbol,
+              line: { color: style.paper_bgcolor, width: 0.8 },
+            },
+            customdata: lowCountN,
+            showlegend: false,
+            hovertemplate:
+              `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
+              `<extra>${agg.group_name}</extra>`,
+          } as Plotly.Data);
+        }
+      }
+    }
+    if (aggregateEmission.ce && ceResolved) {
+      out.push({
+        x: agg.x,
+        y: agg.quantities["coulombic_efficiency_pct"]!.mean,
+        name: ceResolved.name,
+        yaxis: "y2",
+        line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
+        marker: {
+          color: ceResolved.color,
+          size: ceResolved.markerSize,
+          symbol: seriesPlotlySymbol(ceResolved),
+        },
+        type: "scatter",
+        mode: seriesPlotlyMode(ceResolved),
+        opacity: ceResolved.opacity,
+        showlegend: ceResolved.showInLegend,
+        legendrank: legendRanks.get(ceKey),
+      } as Plotly.Data);
     }
   }
 
   for (const s of result.cell_series) {
+    const cellKey = `c${s.cell_id}`;
     if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
-    const cellKey = `c${s.cell_id}`;
-    const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
     const resolved = resolvedStyles.get(cellKey);
-    if (!resolved || resolved.hidden) continue;
+    const ceKey = cycleCeSeriesKey(cellKey);
+    const ceResolved = resolvedStyles.get(ceKey);
+    const cellEmission = cycleTraceEmissionPlan(spec, cellKey, {
+      primary: Boolean(resolved && !resolved.hidden),
+      ce: Boolean(
+        showCeOverlay &&
+          !grouped &&
+          s.quantities["coulombic_efficiency_pct"] &&
+          ceResolved &&
+          !ceResolved.hidden,
+      ),
+    });
     const sourceCycle = s.source_cycle ?? s.x.map(() => null);
     const sourcePosition = s.source_position ?? s.x.map(() => null);
     const sourceFilename = s.source_filename ?? s.x.map(() => null);
@@ -679,90 +731,86 @@ export function cycleTracesForResult(
       sourceFilename,
       sourceHash,
     );
-    const customdata = s.x.map((cycle, index) => [
-      cycle,
-      sourceCycle[index] ?? "",
-      sourcePosition[index] ?? "",
-      shortSourceName(String(sourceFilename[index] ?? "")),
-    ]);
-    out.push({
-      x: s.x,
-      y: s.quantities[column] ?? [],
-      name: resolved.name,
-      line: {
-        color: resolved.color,
-        width: resolved.lineWidth,
-        dash: resolved.lineDash,
-        shape: resolved.lineShape,
-      },
-      marker: {
-        color: resolved.color,
-        size: resolved.markerSize,
-        symbol: seriesPlotlySymbol(resolved),
-      },
-      opacity: resolved.opacity,
-      type: "scatter",
-      mode: compact ? mode : seriesPlotlyMode(resolved),
-      showlegend: !compact && !grouped && resolved.showInLegend,
-      legendrank: legendRanks.get(cellKey),
-      customdata,
-      cellxplorer_export_columns: sourceColumns,
-      hovertemplate:
-        `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
-        `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
-    } as Plotly.Data);
     const values = s.quantities[column] ?? [];
-    const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
-    if (boundaryIndices.length) {
+    if (cellEmission.primary && resolved) {
+      const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
+      const customdata = s.x.map((cycle, index) => [
+        cycle,
+        sourceCycle[index] ?? "",
+        sourcePosition[index] ?? "",
+        shortSourceName(String(sourceFilename[index] ?? "")),
+      ]);
       out.push({
-        x: boundaryIndices.map((index) => s.x[index]),
-        y: boundaryIndices.map((index) => values[index]),
-        name: "Source boundary",
-        type: "scatter",
-        mode: "markers",
-        marker: {
-          color,
-          size: Math.max(style.marker_size + 2, 7),
-          symbol: "diamond-open",
-          line: { color: style.paper_bgcolor, width: 1.2 },
+        x: s.x,
+        y: values,
+        name: resolved.name,
+        line: {
+          color: resolved.color,
+          width: resolved.lineWidth,
+          dash: resolved.lineDash,
+          shape: resolved.lineShape,
         },
-        showlegend: false,
-        customdata: boundaryIndices.map((index) => [
-          s.x[index],
-          sourceCycle[index] ?? "",
-          sourcePosition[index] ?? "",
-          shortSourceName(String(sourceFilename[index] ?? "")),
-        ]),
+        marker: {
+          color: resolved.color,
+          size: resolved.markerSize,
+          symbol: seriesPlotlySymbol(resolved),
+        },
+        opacity: resolved.opacity,
+        type: "scatter",
+        mode: compact ? mode : seriesPlotlyMode(resolved),
+        showlegend: !compact && !grouped && resolved.showInLegend,
+        legendrank: legendRanks.get(cellKey),
+        customdata,
+        cellxplorer_export_columns: sourceColumns,
         hovertemplate:
-          "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
-          "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+          `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
+          `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
       } as Plotly.Data);
-    }
-    if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
-      const ceResolved = resolvedStyles.get(
-        composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" }),
-      );
-      if (ceResolved && !ceResolved.hidden) {
+      const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
+      if (boundaryIndices.length) {
         out.push({
-          x: s.x,
-          y: s.quantities["coulombic_efficiency_pct"],
-          name: ceResolved.name,
-          yaxis: "y2",
-          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
-          marker: {
-            color: ceResolved.color,
-            size: ceResolved.markerSize,
-            symbol: seriesPlotlySymbol(ceResolved),
-          },
+          x: boundaryIndices.map((index) => s.x[index]),
+          y: boundaryIndices.map((index) => values[index]),
+          name: "Source boundary",
           type: "scatter",
-          mode: seriesPlotlyMode(ceResolved),
-          opacity: ceResolved.opacity,
-          showlegend: ceResolved.showInLegend,
-          legendrank: legendRanks.get(
-            composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" }),
-          ),
+          mode: "markers",
+          marker: {
+            color,
+            size: Math.max(style.marker_size + 2, 7),
+            symbol: "diamond-open",
+            line: { color: style.paper_bgcolor, width: 1.2 },
+          },
+          showlegend: false,
+          customdata: boundaryIndices.map((index) => [
+            s.x[index],
+            sourceCycle[index] ?? "",
+            sourcePosition[index] ?? "",
+            shortSourceName(String(sourceFilename[index] ?? "")),
+          ]),
+          hovertemplate:
+            "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
+            "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
         } as Plotly.Data);
       }
+    }
+    if (cellEmission.ce && ceResolved) {
+      out.push({
+        x: s.x,
+        y: s.quantities["coulombic_efficiency_pct"],
+        name: ceResolved.name,
+        yaxis: "y2",
+        line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
+        marker: {
+          color: ceResolved.color,
+          size: ceResolved.markerSize,
+          symbol: seriesPlotlySymbol(ceResolved),
+        },
+        type: "scatter",
+        mode: seriesPlotlyMode(ceResolved),
+        opacity: ceResolved.opacity,
+        showlegend: ceResolved.showInLegend,
+        legendrank: legendRanks.get(ceKey),
+      } as Plotly.Data);
     }
   }
   return out;
@@ -1198,7 +1246,7 @@ export function CyclePlotCard({
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   // Rebuild traces/layout only when the fields they actually read change —
-  // unrelated spec edits (other tabs' styles, autosave echoes) must not
+  // unrelated spec edits (other tabs' styles, persistence echoes) must not
   // trigger a full Plotly re-render.
   //
   // Any presentation field that changes what is plotted (not merely how it is
@@ -1220,6 +1268,7 @@ export function CyclePlotCard({
         visibility: {
           exclusions: spec.selection.exclusions,
           hiddenReplicateGroups: spec.selection.hidden_replicate_group_ids ?? [],
+          hiddenSeries: spec.presentation.hidden_series_ids ?? [],
         },
         style: currentPlotStyle(spec, "cycles"),
       }),
@@ -1262,6 +1311,29 @@ export function CyclePlotCard({
     [result, viewSignature, exportTraces],
   );
   const style = currentPlotStyle(spec, "cycles");
+  const seriesVisibilityCandidates = useMemo(
+    () => (result ? cycleSeriesVisibilityCandidates(result, spec) : []),
+    [result, spec],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = (key: string) =>
+    update((draft) => {
+      draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+        draft.presentation.hidden_series_ids,
+        seriesVisibilityCandidates,
+        key,
+      );
+    });
+  const showAllSeries = () =>
+    update((draft) => {
+      draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+        draft.presentation.hidden_series_ids,
+        seriesVisibilityCandidates,
+      );
+    });
   const explainer = getCycleQuantityExplainer(
     spec.presentation.quantity ?? "discharge_capacity",
     Boolean(spec.presentation.normalize_by_mass),
@@ -1297,14 +1369,14 @@ export function CyclePlotCard({
     return { width: Math.round(rect.width), height: Math.round(rect.height) };
   };
 
-  const getExportPreview = async (): Promise<string | null> => {
+  const getExportPreview = async (exportStyle: PlotStyle = style): Promise<string | null> => {
     if (!plotDivRef.current || exportTraces.length === 0) return null;
-    const plan = resolveExportPlan(style, currentViewSize(), layout);
+    const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
     ).toImage;
-    const previewTraces = style.export_format === "png" ? traces : exportTraces;
-    return toImage(exportFigure(previewTraces, layout, style, plotName, plan), {
+    const previewTraces = exportStyle.export_format === "png" ? traces : exportTraces;
+    return toImage(exportFigure(previewTraces, layout, exportStyle, plotName, plan), {
       format: "png",
       width: plan.layoutWidth,
       height: plan.layoutHeight,
@@ -1312,20 +1384,24 @@ export function CyclePlotCard({
     });
   };
 
-  const handleDataExport = (baseName: string) => {
-    downloadDataExport(tracesToColumns(exportTraces, layout), style, baseName).catch(
+  const handleDataExport = (baseName: string, exportStyle: PlotStyle = style) => {
+    downloadDataExport(tracesToColumns(exportTraces, layout), exportStyle, baseName).catch(
       (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" }),
     );
   };
 
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
+  const exportPlot = async (
+    format: PlotExportFormat,
+    baseName: string,
+    exportStyle: PlotStyle = style,
+  ) => {
     if (!plotDivRef.current || !result) return;
     try {
-      const plan = resolveExportPlan(style, currentViewSize(), layout);
-      const ppi = Math.max(36, style.export_ppi ?? 96);
+      const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
+      const ppi = Math.max(36, exportStyle.export_ppi ?? 96);
       const filename = slugFilename(baseName);
       const outputTraces = format === "png" ? traces : exportTraces;
-      const figure = exportFigure(outputTraces, layout, style, plotName, plan);
+      const figure = exportFigure(outputTraces, layout, exportStyle, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -1340,7 +1416,7 @@ export function CyclePlotCard({
           await makeVectorPdf(
             svgUrl,
             plan.pixelWidth / plan.pixelHeight,
-            style.export_aspect_ratio,
+            exportStyle.export_aspect_ratio,
           ),
           `${filename}.pdf`,
         );
@@ -1427,7 +1503,6 @@ export function CyclePlotCard({
           onDataExport={handleDataExport}
           getExportPreview={getExportPreview}
           style={style}
-          updateStyle={updatePlotStyle}
           viewSize={plotSize}
           layout={layout}
           canExport={exportTraces.length > 0}

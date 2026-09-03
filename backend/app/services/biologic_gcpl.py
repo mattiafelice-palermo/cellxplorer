@@ -21,6 +21,7 @@ extension recognition remains intentionally owned by Spec 041.4.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import math
 from pathlib import Path
@@ -44,18 +45,18 @@ from .source_format_errors import (
 )
 
 
-# gcpl10 changes the logical-cycle contract: supported repeated GCPL execution
-# can now be reconstructed from validated protocol/observed Ns structure, and
-# prior gcpl9 metadata-only registrations must be re-inspected.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl10"
+# gcpl11 adds registry-resolved settings profiles for compatible GCPL technique
+# discriminators. It also keeps the prior gcpl10 cycle/provenance contract, so
+# sources registered under gcpl10 must be re-inspected before using the current
+# parser identity.
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl11"
 
-# Spec 041.3's supported settings contract is deliberately narrow.  The
-# supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by
-# its technique byte, module version, parameter-count discriminator, and
-# fixed item size.  Other software generations fail closed instead of being
-# decoded through positional guesses.
-GCPL_SETTINGS_LAYOUT = "ec-lab-11.60-gcpl-v1"
-GCPL_TECHNIQUE_ID = 0x77
+# Spec 041.3's supported settings contract remains deliberately explicit. The
+# registry below separates source-family recognition from the common parameter
+# decoder: a new compatible family can provide its own discriminator and
+# validated sign/layout rules without changing the decoding logic. Unknown
+# discriminators and fields still fail closed instead of being decoded through
+# positional guesses.
 GCPL_SETTINGS_PARAMETER_OFFSET = 0x1847
 GCPL_SETTINGS_PARAMETER_COUNT = 33
 GCPL_SETTINGS_PARAMETER_ITEMSIZE = 108
@@ -65,7 +66,71 @@ GCPL_STEP_INDEX_BASE_ADJUSTMENT = (
     GCPL_CANONICAL_STEP_BASE - GCPL_SOURCE_SEQUENCE_BASE
 )
 
-_GCPL_SETTINGS_MINIMUM_SIZE = GCPL_SETTINGS_PARAMETER_OFFSET + 4
+
+@dataclass(frozen=True)
+class GcplSettingsProfile:
+    """Validated settings interpretation selected by the technique byte."""
+
+    profile_id: str
+    layout: str
+    technique_ids: frozenset[int]
+    parameter_offset: int
+    parameter_count: int
+    parameter_itemsize: int
+    current_sign_factors: tuple[tuple[int, int], ...]
+    current_is_magnitude: bool
+    ns_change_policy: str
+    counter_increment_policy: str
+    capacity_boundary_policy: str
+
+    def current_sign_factor(self, sign_code: int) -> int | None:
+        for code, factor in self.current_sign_factors:
+            if code == sign_code:
+                return factor
+        return None
+
+
+_PRIMARY_GCPL_SETTINGS_PROFILE = GcplSettingsProfile(
+    profile_id="gcpl-technique-77-v1",
+    layout="ec-lab-11.60-gcpl-v1",
+    technique_ids=frozenset({0x77}),
+    parameter_offset=GCPL_SETTINGS_PARAMETER_OFFSET,
+    parameter_count=GCPL_SETTINGS_PARAMETER_COUNT,
+    parameter_itemsize=GCPL_SETTINGS_PARAMETER_ITEMSIZE,
+    current_sign_factors=((0, 1),),
+    current_is_magnitude=False,
+    ns_change_policy="strict",
+    counter_increment_policy="reject",
+    capacity_boundary_policy="strict",
+)
+_TECHNIQUE_04_GCPL_SETTINGS_PROFILE = GcplSettingsProfile(
+    profile_id="gcpl-technique-04-v1",
+    layout="ec-lab-gcpl-technique-04-v1",
+    technique_ids=frozenset({0x04}),
+    parameter_offset=GCPL_SETTINGS_PARAMETER_OFFSET,
+    parameter_count=GCPL_SETTINGS_PARAMETER_COUNT,
+    parameter_itemsize=GCPL_SETTINGS_PARAMETER_ITEMSIZE,
+    current_sign_factors=((0, 1), (1, -1)),
+    current_is_magnitude=True,
+    ns_change_policy="one_record_late",
+    counter_increment_policy="latched_after_loop_wrap",
+    capacity_boundary_policy="delayed_active_transfer",
+)
+GCPL_SETTINGS_PROFILES = (
+    _PRIMARY_GCPL_SETTINGS_PROFILE,
+    _TECHNIQUE_04_GCPL_SETTINGS_PROFILE,
+)
+_GCPL_SETTINGS_PROFILE_BY_TECHNIQUE_ID = {
+    technique_id: profile
+    for profile in GCPL_SETTINGS_PROFILES
+    for technique_id in profile.technique_ids
+}
+
+# These names remain the primary-profile compatibility constants used by
+# callers and persisted metadata checks. Profile-specific values are used by
+# the decoder once the source discriminator has selected a profile.
+GCPL_SETTINGS_LAYOUT = _PRIMARY_GCPL_SETTINGS_PROFILE.layout
+GCPL_TECHNIQUE_ID = next(iter(_PRIMARY_GCPL_SETTINGS_PROFILE.technique_ids))
 _GCPL_LOG_TIMESTAMP_OFFSET = 0x0249
 _GCPL_LOG_TIMESTAMP_SIZE = 8
 _GCPL_OLE_BASE = datetime(1899, 12, 30)
@@ -101,10 +166,9 @@ _CAPACITY_UNIT_FACTORS_MAH = {
     4: 0.000000001,
 }
 _SUPPORTED_CURRENT_VS_CODES = frozenset({2})
-# The supplied EC-Lab 11.60 layout establishes current-reference selector 2
-# as the only independently verified value. Other selectors remain unresolved
-# until their source meaning is established and therefore fail closed.
-_SUPPORTED_CURRENT_SIGN_CODES = frozenset({0})
+# The settings-profile registry establishes the accepted current-reference and
+# sign selectors. Other selectors remain unresolved until their source meaning
+# is established and therefore fail closed.
 
 # BioLogic's packed mode code is a source-level categorical value.  The
 # values below are locked to the supported GCPL contract: current control,
@@ -235,9 +299,13 @@ def _capacity_to_mah(value: float | None, unit_code: int) -> float | None:
     return value * factor
 
 
-def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any]:
-    base = GCPL_SETTINGS_PARAMETER_OFFSET + 4 + (
-        (sequence_number - 1) * GCPL_SETTINGS_PARAMETER_ITEMSIZE
+def _decode_gcpl_sequence(
+    payload: bytes,
+    sequence_number: int,
+    profile: GcplSettingsProfile,
+) -> dict[str, Any]:
+    base = profile.parameter_offset + 4 + (
+        (sequence_number - 1) * profile.parameter_itemsize
     )
     set_i_c = _read_u8(payload, base, "Set I/C")
     if set_i_c not in {0, 1, 2}:
@@ -253,9 +321,14 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
         )
     rate_value = _read_f32(payload, base + 10, "N")
     sign_code = _read_u32(payload, base + 14, "I sign")
-    if sign_code not in _SUPPORTED_CURRENT_SIGN_CODES:
+    sign_factor = profile.current_sign_factor(sign_code)
+    if sign_factor is None:
         raise UnsupportedBiologicGcplError(
             f"unsupported GCPL current-sign code {sign_code}"
+        )
+    if profile.current_is_magnitude and current_raw is not None and current_raw < 0.0:
+        raise UnsupportedBiologicGcplError(
+            f"GCPL settings profile {profile.profile_id} requires a non-negative Is magnitude"
         )
     t1_s = _positive_setting(_read_f32(payload, base + 18, "t1"))
     current_range_code = _read_u8(payload, base + 22, "I Range")
@@ -296,10 +369,13 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
     goto_step = _read_u32(payload, base + 100, "goto Ns")
     repeat_count = _read_u32(payload, base + 104, "nc cycles")
 
-    # EC-Lab stores the signed Is value even when the control selector is
-    # C/C×N.  Preserve that measured/set current alongside the explicit C-rate
-    # instead of fabricating one from active mass.
-    current_ma = _current_to_ma(current_raw, current_unit_code)
+    # The profile determines whether Is is already signed or is a magnitude
+    # paired with an explicit sign selector. Preserve both the source value and
+    # the resolved current so protocol direction remains evidence-backed.
+    current_ma = _current_to_ma(
+        None if current_raw is None else current_raw * sign_factor,
+        current_unit_code,
+    )
     c_rate = _positive_setting(rate_value) if set_i_c in {1, 2} else None
     # A finite zero EM is meaningful for active current/C-rate control. In the
     # verified layout it is disabled only for a zero-current sequence with no
@@ -350,6 +426,7 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
         "current_vs_code": current_vs_code,
         "rate_value": rate_value,
         "current_sign_code": sign_code,
+        "current_sign_factor": sign_factor,
         "t1_s": t1_s,
         "current_range_code": current_range_code,
         "bandwidth_code": bandwidth_code,
@@ -388,6 +465,7 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
         "direction": direction,
         "current_vs_code": current_vs_code,
         "current_sign_code": sign_code,
+        "current_sign_factor": sign_factor,
         "time_limit_s": t1_s,
         "voltage_cutoff_v": voltage_limit_v,
         "hold_duration_s": hold_duration_s,
@@ -415,37 +493,41 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
 
 
 def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
-    """Decode the independently verified modern GCPL settings layout."""
+    """Decode settings through the profile selected by the technique byte."""
 
     payload = bytes(module.payload)
     if module.version != 10 or module.old_version != 0:
         raise UnsupportedBiologicGcplError(
             "GCPL settings module version is outside the verified contract"
         )
-    if len(payload) < _GCPL_SETTINGS_MINIMUM_SIZE:
+    if not payload:
         raise UnsupportedBiologicGcplError("GCPL settings payload is truncated")
     technique_id = payload[0]
-    if technique_id != GCPL_TECHNIQUE_ID:
+    profile = _GCPL_SETTINGS_PROFILE_BY_TECHNIQUE_ID.get(technique_id)
+    if profile is None:
         raise UnsupportedBiologicGcplError(
             f"unsupported BioLogic technique discriminator 0x{technique_id:02x}"
         )
-    n_sequences = struct.unpack_from("<H", payload, GCPL_SETTINGS_PARAMETER_OFFSET)[0]
+    minimum_size = profile.parameter_offset + 4
+    if len(payload) < minimum_size:
+        raise UnsupportedBiologicGcplError("GCPL settings payload is truncated")
+    n_sequences = struct.unpack_from("<H", payload, profile.parameter_offset)[0]
     n_parameters = struct.unpack_from(
-        "<H", payload, GCPL_SETTINGS_PARAMETER_OFFSET + 2
+        "<H", payload, profile.parameter_offset + 2
     )[0]
     if n_sequences == 0 or n_sequences > 100:
         raise UnsupportedBiologicGcplError(
             f"GCPL settings declares unsupported sequence count {n_sequences}"
         )
-    if n_parameters != GCPL_SETTINGS_PARAMETER_COUNT:
+    if n_parameters != profile.parameter_count:
         raise UnsupportedBiologicGcplError(
             "GCPL settings parameter-count discriminator is not the verified "
-            f"{GCPL_SETTINGS_PARAMETER_COUNT}-field layout"
+            f"{profile.parameter_count}-field layout"
         )
     params_end = (
-        GCPL_SETTINGS_PARAMETER_OFFSET
+        profile.parameter_offset
         + 4
-        + n_sequences * GCPL_SETTINGS_PARAMETER_ITEMSIZE
+        + n_sequences * profile.parameter_itemsize
     )
     if params_end > len(payload):
         raise UnsupportedBiologicGcplError("GCPL settings parameter block is truncated")
@@ -487,7 +569,7 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
     )
     acquisition_start_raw = _read_f32(payload, 0x0117, "acquisition start")
     sequences = list(
-        _decode_gcpl_sequence(payload, sequence_number)
+        _decode_gcpl_sequence(payload, sequence_number, profile)
         for sequence_number in range(1, n_sequences + 1)
     )
     for sequence in sequences:
@@ -502,7 +584,8 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
             )
         sequence["loop_start_step"] = raw_goto + GCPL_STEP_INDEX_BASE_ADJUSTMENT
     return {
-        "layout": GCPL_SETTINGS_LAYOUT,
+        "layout": profile.layout,
+        "settings_profile": profile.profile_id,
         "technique_id": technique_id,
         "technique": "GCPL",
         "technique_family": "GCPL",
@@ -526,9 +609,12 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
         "battery_capacity_unit_code": battery_capacity_unit_code,
         "battery_capacity_mah": battery_capacity_mah,
         "acquisition_start_raw": acquisition_start_raw,
-        "parameter_offset": GCPL_SETTINGS_PARAMETER_OFFSET,
+        "parameter_offset": profile.parameter_offset,
         "parameter_count": n_parameters,
-        "parameter_itemsize": GCPL_SETTINGS_PARAMETER_ITEMSIZE,
+        "parameter_itemsize": profile.parameter_itemsize,
+        "ns_change_policy": profile.ns_change_policy,
+        "counter_increment_policy": profile.counter_increment_policy,
+        "capacity_boundary_policy": profile.capacity_boundary_policy,
         "n_sequences": int(n_sequences),
         "sequences": sequences,
     }
@@ -1365,6 +1451,55 @@ def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
         )
 
 
+def _validate_one_record_late_ns_changed_flags(
+    ns: np.ndarray,
+    ns_changed: np.ndarray,
+) -> None:
+    """Validate a profile whose Ns-change flag follows the transition by one row."""
+
+    if len(ns) <= 1:
+        return
+    flagged = np.flatnonzero(np.asarray(ns_changed, dtype=bool))
+    for index in flagged:
+        if index == 0:
+            continue
+        if index < 2 or ns[index] != ns[index - 1] or ns[index - 1] == ns[index - 2]:
+            raise UnsupportedBiologicGcplError(
+                "GCPL delayed Ns-change flag is not aligned with the preceding Ns transition"
+            )
+
+
+def _validate_latched_counter_increment_flag(
+    counter_incremented: np.ndarray,
+    ns: np.ndarray,
+    ns_changed: np.ndarray,
+    declared_loop: Mapping[str, Any] | None,
+) -> None:
+    """Validate the alternate profile's loop-wrap counter flag state."""
+
+    values = np.asarray(counter_incremented, dtype=bool)
+    if not np.any(values):
+        return
+    if declared_loop is None:
+        raise UnsupportedBiologicGcplError(
+            "GCPL counter-increment flag requires a declared repeated loop"
+        )
+    if len(values) > 1 and np.any(values[:-1] & ~values[1:]):
+        raise UnsupportedBiologicGcplError(
+            "GCPL counter-increment flag regresses after becoming active"
+        )
+    first = int(np.flatnonzero(values)[0])
+    if (
+        first < 2
+        or not bool(ns_changed[first])
+        or ns[first] != ns[first - 1]
+        or ns[first - 1] >= ns[first - 2]
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL counter-increment flag is not aligned with a delayed repeated-loop wrap"
+        )
+
+
 def _validate_capacity_boundaries(
     raw_capacity: np.ndarray,
     raw_dq_mAh: np.ndarray,
@@ -1372,18 +1507,22 @@ def _validate_capacity_boundaries(
     *,
     ns: np.ndarray | None = None,
     mode: np.ndarray | None = None,
-) -> None:
+    allow_delayed_active_transfer: bool = False,
+) -> dict[int, float]:
     """Reject ambiguous capacity ownership at an executed-step boundary.
 
     The source counters are cumulative, but the canonical columns reset at
     each executed step. Without paired evidence for whether a boundary row's
     interval belongs to the preceding or following operation, only a boundary
-    with no incremental transfer and no cumulative counter jump is safe.
+    with no incremental transfer and no cumulative counter jump is safe. An
+    alternate profile may explicitly allow a delayed active-to-rest transfer;
+    those accepted boundaries are returned for ownership adjustment by the
+    caller.
     """
 
     starts = np.flatnonzero(boundaries)[1:]
     if len(starts) == 0:
-        return
+        return {}
     boundary_dq = raw_dq_mAh[starts]
     q_delta = raw_capacity[starts] - raw_capacity[starts - 1]
     ambiguous = (np.abs(boundary_dq) > _CAPACITY_TOLERANCE_MAH) | (
@@ -1401,11 +1540,26 @@ def _validate_capacity_boundaries(
         first_interval = np.abs(raw_capacity[starts] - raw_dq_mAh[starts]) <= _CAPACITY_TOLERANCE_MAH
         verified_resets = ns_transition & active_start & counter_origin & first_interval
         ambiguous &= ~verified_resets
+    delayed_active_transfers: dict[int, float] = {}
+    if allow_delayed_active_transfer and mode is not None:
+        delayed = (
+            (mode[starts - 1] != MPR_MODE_REST)
+            & (mode[starts] == MPR_MODE_REST)
+            & (np.abs(q_delta) > _CAPACITY_TOLERANCE_MAH)
+            & (np.abs(q_delta - boundary_dq) <= _CAPACITY_TOLERANCE_MAH)
+        )
+        ambiguous &= ~delayed
+        delayed_active_transfers = {
+            int(start): float(delta)
+            for start, delta, is_delayed in zip(starts, q_delta, delayed, strict=True)
+            if is_delayed
+        }
     if np.any(ambiguous):
         raise UnsupportedBiologicGcplError(
             "GCPL capacity transfer is ambiguous at an executed-step boundary; "
             "boundary rows must have zero incremental and cumulative transfer"
         )
+    return delayed_active_transfers
 
 
 def _step_time_column(records: np.ndarray) -> np.ndarray | None:
@@ -1726,6 +1880,13 @@ def _reconstruct_loop_cycles(
             continue
 
         if previous_step == control_step:
+            if step_index == control_step and direction == 0:
+                # GCPL may emit a post-step rest block under the same Ns as
+                # the loop's final active sequence. It belongs to the current
+                # iteration and must not be mistaken for a failed loop wrap.
+                cycles.append(current_cycle)
+                iteration_directions.append(direction)
+                continue
             if step_index != start_step:
                 raise UnsupportedBiologicGcplError(
                     f"GCPL loop control step {control_step} does not return to loop start "
@@ -2066,10 +2227,6 @@ def map_gcpl_to_canonical(
         raise InvalidBiologicGcplError(
             "GCPL data contains a row with the BioLogic error flag set"
         )
-    if np.any(_flag_column(records, flags, "counter_incremented")):
-        raise UnsupportedBiologicGcplError(
-            "GCPL counter-increment flag semantics are outside the verified adapter contract"
-        )
     current_ma = _raw_current_ma(records, mode, control)
     direct_cycle = _optional_column(records, "raw_cycle_index")
     cycle = _cycle_column(records) if direct_cycle is not None else None
@@ -2100,7 +2257,26 @@ def map_gcpl_to_canonical(
             ) from None
 
     ns_changed = _flag_column(records, flags, "ns_changed")
-    _validate_ns_changed_flags(ns, ns_changed)
+    ns_change_policy = str((declared_settings or {}).get("ns_change_policy") or "strict")
+    if ns_change_policy == "one_record_late":
+        _validate_one_record_late_ns_changed_flags(ns, ns_changed)
+    else:
+        _validate_ns_changed_flags(ns, ns_changed)
+    counter_incremented = _flag_column(records, flags, "counter_incremented")
+    if np.any(counter_incremented):
+        counter_policy = str(
+            (declared_settings or {}).get("counter_increment_policy") or "reject"
+        )
+        if counter_policy != "latched_after_loop_wrap":
+            raise UnsupportedBiologicGcplError(
+                "GCPL counter-increment flag semantics are outside the verified adapter contract"
+            )
+        _validate_latched_counter_increment_flag(
+            counter_incremented,
+            ns,
+            ns_changed,
+            declared_loop,
+        )
     boundaries = _step_boundaries(
         ns=ns,
         half_cycle=half_cycle,
@@ -2109,19 +2285,33 @@ def map_gcpl_to_canonical(
         step_time=step_time,
     )
     _validate_step_time_boundaries(step_time, boundaries)
-    _validate_capacity_boundaries(
+    capacity_boundary_policy = str(
+        (declared_settings or {}).get("capacity_boundary_policy") or "strict"
+    )
+    delayed_active_transfers = _validate_capacity_boundaries(
         raw_capacity,
         raw_dq_mAh,
         boundaries,
         ns=ns,
         mode=mode,
+        allow_delayed_active_transfer=(
+            capacity_boundary_policy == "delayed_active_transfer"
+        ),
     )
+    capacity_for_mapping = raw_capacity
+    dq_for_mapping = raw_dq_mAh
+    if delayed_active_transfers:
+        capacity_for_mapping = raw_capacity.copy()
+        dq_for_mapping = raw_dq_mAh.copy()
+        for boundary, _delta in delayed_active_transfers.items():
+            capacity_for_mapping[boundary - 1] = raw_capacity[boundary]
+            dq_for_mapping[boundary] = 0.0
     ranges = _block_ranges(boundaries)
     directions = [
         _direction_for_block(
             current_ma,
-            raw_capacity,
-            raw_dq_mAh,
+            capacity_for_mapping,
+            dq_for_mapping,
             start,
             end,
             mode=mode,
@@ -2160,7 +2350,7 @@ def map_gcpl_to_canonical(
     else:
         cycle_identity_source = "explicit_full_cycle"
     charge_capacity, discharge_capacity = _capacity_columns(
-        raw_capacity, directions, ranges
+        capacity_for_mapping, directions, ranges
     )
 
     step = np.empty(len(records), dtype=np.int64)
@@ -2207,6 +2397,7 @@ def map_gcpl_to_canonical(
     frame = pd.DataFrame(frame_values)
     frame.attrs["biologic_gcpl"] = {
         "adapter_revision": BIOLOGIC_GCPL_ADAPTER_REVISION,
+        "settings_profile": (declared_settings or {}).get("settings_profile"),
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": GCPL_STEP_INDEX_BASE_ADJUSTMENT,
@@ -2249,6 +2440,8 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
 
 __all__ = [
     "BIOLOGIC_GCPL_ADAPTER_REVISION",
+    "GcplSettingsProfile",
+    "GCPL_SETTINGS_PROFILES",
     "GCPL_SETTINGS_LAYOUT",
     "GCPL_SETTINGS_PARAMETER_COUNT",
     "GCPL_SETTINGS_PARAMETER_ITEMSIZE",

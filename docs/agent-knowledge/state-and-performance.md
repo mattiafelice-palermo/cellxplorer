@@ -216,6 +216,18 @@ fallbacks are persisted artifacts. Updating a saved plot must invalidate and reg
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails
 during every report export when the valid saved artifact already exists.
 
+User-level series visibility is presentation state in
+`AnalysisSpec.presentation.hidden_series_ids`, separate from scientific selection and cache
+identity. The shared `frontend/src/components/Plot.tsx` wrapper keeps Plotly legends passive by
+disabling both native item-click and double-click visibility mutations; it memoizes the derived
+passive layout by incoming layout identity so this policy does not defeat Plotly relayout guards.
+Family-owned header actions update the persistent set through `analysisVisibility.ts`. Applicable
+series are rebuilt from the current data/filter context; first-class descriptors such as Cycles CE
+and selected Time/capacity voltage channels have independent stable keys, while helper traces
+follow their primary target and are not independent visibility entries. Because the presentation
+state is part of the saved-plot view signature, isolating or restoring a series is a real saved-
+plot edit and survives update/reopen.
+
 Plot cards that remember their rendered size for export settings must guard the `setPlotSize`
 update by comparing width and height with the current state. Plotly's `onUpdate` fires again after
 React rerenders; storing an equivalent new size object on every callback creates an update loop
@@ -295,6 +307,14 @@ windows only; every response is independently re-zeroed, moving requests use lat
 backpressure and a mildly reduced point budget, and placeholder data keeps the previous plot visible
 until the newest admitted window is ready.
 
+Ordinary committed cycle navigation has a separate request-admission boundary: the first selected
+range remains the only in-flight query and subsequent button/jump/history selections replace one
+latest pending range. The parent analysis spec is still updated for the intentional dirty state, so
+the current range is persisted only by the explicit plot Update action. A semantic plot-setting
+change or the start of slider preview cancels this committed-navigation session; slider preview and
+buffered panning continue to use their own schedulers and are never routed through the committed
+range request.
+
 Adaptive Time refinement is also display-only and ephemeral. Its response-generation check remains
 strict for accepting a newly arriving response, but it is independent from the compatibility check
 for the refinement already on screen: a compatible old viewport may remain visible while a newer
@@ -367,11 +387,13 @@ The generic cycle query must stay disabled while any of those tabs is active; ot
 saved-plot change starts an unrelated cycle computation beside the visible request. Their query
 observers should retain previous data during a key change, and a delayed loading indicator should
 appear only when no plot is available.
-An ordinary editor autosave is a persistence update, not a scientific invalidation: its returned
-`AnalysisFull` is written directly to `['analysis', analysisId]` and `['analyses']` is invalidated
-for compact index metadata. Source/cell/scientific mutations continue to use the broad scoped
-invalidation helper. Saved-plot create/update/delete paths retain their explicit artifact,
-thumbnail, prepared-marker, and preview lifecycle rather than depending on autosave side effects.
+Analysis editor persistence is explicit rather than timer-driven: plot Update, Save-as-new,
+rename, and delete actions issue the save request deliberately, while local edits remain visibly
+unsaved until the user saves or uses the existing leave flow. A successful explicit save writes its
+returned `AnalysisFull` directly to `['analysis', analysisId]` and invalidates `['analyses']` for
+compact index metadata. Source/cell/scientific mutations continue to use the broad scoped
+invalidation helper. Saved-plot create/update/delete paths therefore own their explicit artifact,
+thumbnail, prepared-marker, and preview lifecycle without depending on autosave side effects.
 Within a newly mounted analysis family, the live plot has request priority. Saved rows may look up
 and display already-cached thumbnails immediately, but missing saved-plot computations are admitted
 sequentially during idle time only after the live plot is ready. Do not prefetch every thumbnail
@@ -602,9 +624,9 @@ still rendering from its own older-identity cache.
 One exception is an adapter identity that has been scientifically withdrawn. Before the ordinary
 parsed-source work set is selected, startup reconciles persisted BioLogic `bm:gcpl3:r1` and
 pre-R8 `bm:gcpl4:r1` rows in one bounded extension-plus-identity query. It does not open source or
-cache files, and it includes offline rows. A gcpl3 row becomes current `bm:gcpl10:r1`
+cache files, and it includes offline rows. A gcpl3 row becomes current `bm:gcpl11:r1`
 metadata-only state, with live cycle and capacity fields cleared. A gcpl4 row becomes current
-`bm:gcpl10:r1` only when its stored data header proves a registry-resolved layout; an unrecorded,
+`bm:gcpl11:r1` only when its stored data header proves a registry-resolved layout; an unrecorded,
 ambiguous, or non-resolvable layout instead clears the parser identity and marks the row
 metadata-only with `requires_reinspection=true`. Old caches remain non-live forensic material. The
 same retired/pre-R8 capability check is part of the shared source boundary, which

@@ -5,13 +5,15 @@ import {
   Button,
   Center,
   Group,
+  Modal,
   Paper,
   Stack,
   Text,
+  TextInput,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { IconDeviceFloppy } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { IconDeviceFloppy, IconPencil } from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AnalysisDraftPlot,
@@ -20,6 +22,11 @@ import type {
   SavedAnalysisPlot,
 } from "../../../../api";
 import { draftAsSavedPlot, draftPlotFromWorkspace } from "../policies/analysisDraftPolicy";
+import {
+  SAVED_PLOT_NAME_MAX_LENGTH,
+  shouldOpenSavedPlotCardFromKey,
+  validateSavedPlotName,
+} from "../policies/analysisPlotPolicy";
 import { DraftPlotCard } from "./DraftPlotCard";
 import {
   SavedPlotPreview,
@@ -136,6 +143,7 @@ export function SavedPlotsPanel({
   activePlotDirty,
   onSaveNew,
   onOpen,
+  onRename,
   onDelete,
   allowPreviewGeneration,
   hasSamples,
@@ -152,6 +160,7 @@ export function SavedPlotsPanel({
   activePlotDirty: boolean;
   onSaveNew: () => void;
   onOpen: (plot: SavedAnalysisPlot) => void;
+  onRename: (plotId: string, name: string) => void;
   onDelete: (plotId: string) => void;
   allowPreviewGeneration: boolean;
   hasSamples: boolean;
@@ -163,6 +172,31 @@ export function SavedPlotsPanel({
   const visiblePlots = plots.filter((plot) => plot.tab === activeTab);
   const visiblePlotKey = visiblePlots.map((plot) => plot.id).join("|");
   const [generationPlotIds, setGenerationPlotIds] = useState<Set<string>>(new Set());
+  const [renamePlot, setRenamePlot] = useState<SavedAnalysisPlot | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameValidation = validateSavedPlotName(renameName);
+  const focusRenameInput = () => {
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  };
+
+  useEffect(() => {
+    if (!renamePlot) return;
+    const frame = window.requestAnimationFrame(focusRenameInput);
+    return () => window.cancelAnimationFrame(frame);
+  }, [renamePlot]);
+
+  const closeRename = () => {
+    setRenamePlot(null);
+    setRenameName("");
+  };
+
+  const submitRename = () => {
+    if (!renamePlot || renameValidation.error) return;
+    onRename(renamePlot.id, renameValidation.value);
+    closeRename();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -251,10 +285,11 @@ export function SavedPlotsPanel({
                   onOpen(plot);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onOpen(plot);
-                  }
+                  const originatedInNestedButton =
+                    event.target instanceof HTMLElement && event.target.closest("button") !== null;
+                  if (!shouldOpenSavedPlotCardFromKey(event.key, originatedInNestedButton)) return;
+                  event.preventDefault();
+                  onOpen(plot);
                 }}
                 style={{
                   border: active
@@ -328,6 +363,19 @@ export function SavedPlotsPanel({
                     <Button
                       size="compact-xs"
                       variant="subtle"
+                      leftSection={<IconPencil size={14} />}
+                      aria-label={`Rename ${plot.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setRenamePlot(plot);
+                        setRenameName(plot.name);
+                      }}
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
                       color="red"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -354,6 +402,39 @@ export function SavedPlotsPanel({
         </Stack>
       )}
       </Paper>
+      <Modal
+        opened={renamePlot !== null}
+        onClose={closeRename}
+        onEnterTransitionEnd={focusRenameInput}
+        title="Rename saved plot"
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitRename();
+          }}
+        >
+          <Stack gap="md">
+            <TextInput
+              ref={renameInputRef}
+              label="Plot name"
+              value={renameName}
+              autoFocus
+              maxLength={SAVED_PLOT_NAME_MAX_LENGTH}
+              error={renameName.length > 0 ? renameValidation.error : null}
+              onChange={(event) => setRenameName(event.currentTarget.value)}
+            />
+            <Group justify="flex-end">
+              <Button type="button" variant="default" onClick={closeRename}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={Boolean(renameValidation.error)}>
+                Rename
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
     </>
   );
 }

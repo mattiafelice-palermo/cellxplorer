@@ -1704,7 +1704,7 @@ def refine_time_capacity_analysis(
     req: TimeCapacityRefinementRequest,
     db: Session = Depends(get_db),
 ):
-    """Return a non-persistent viewport refinement for ordinary Time/Capacity."""
+    """Return a non-persistent viewport refinement for consecutive Time/Capacity."""
 
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
@@ -1721,9 +1721,8 @@ def refine_time_capacity_analysis(
         and settings["x_axis"]
         in {"time", "capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
         and settings["display_mode"] == "consecutive"
-        and not settings["stacked"]
     ):
-        raise HTTPException(422, "viewport refinement is only available for ordinary consecutive Time/Capacity")
+        raise HTTPException(422, "viewport refinement is only available for consecutive Time/Capacity")
     if settings["cycles"]:
         raise HTTPException(
             422,

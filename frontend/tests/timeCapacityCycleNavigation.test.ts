@@ -30,6 +30,7 @@ import {
   normalizeCycleRangeForNavigation,
   normalizeManualTimeCapacityRange,
   normalizeTimeCapacityRange,
+  parseTimeCapacitySpecificCycles,
   resizeTimeCapacityCycleRange,
   selectedTimeCapacityCycleMax,
   selectTimeCapacityCycleHistory,
@@ -49,6 +50,11 @@ import {
   timeCapacityPreviewPromoteOnIdle,
   timeCapacityPreviewRequestIsCurrent,
   timeCapacityPreviewSchedulerInitialState,
+  timeCapacityCommittedNavigationOnRange,
+  timeCapacityCommittedNavigationOnRequestSettled,
+  timeCapacityCommittedNavigationRequestIsCurrent,
+  timeCapacityCommittedNavigationSchedulerInitialState,
+  timeCapacityCycleNavigationDisabledAtBoundary,
   timeCapacityRangeNavigationDisabled,
   timeCapacityVirginDefaultCanApply,
   timeCapacityVirginCycleRange,
@@ -170,11 +176,15 @@ test("pointer and track positions retain sub-cycle motion for true panning", () 
     1000,
     100,
   );
-  assert.ok(clicked > 29 && clicked < 30, String(clicked));
+  assert.ok(clicked > 30 && clicked < 31, String(clicked));
 });
 
-test("track clicks center the existing window and clamp at both ends", () => {
+test("track clicks place the window start at the pointer and clamp at both ends", () => {
   const range = { start: 40, end: 49 };
+  assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 250, 1000, 100), {
+    start: 24,
+    end: 33,
+  });
   assert.deepEqual(timeCapacityCycleRangeAtTrackPosition(range, 500, 1000, 100), {
     start: 46,
     end: 55,
@@ -187,6 +197,35 @@ test("track clicks center the existing window and clamp at both ends", () => {
     start: 91,
     end: 100,
   });
+});
+
+test("cycle navigation keeps endpoint actions inside the fields and the window menu free of overflow scrolling", () => {
+  const source = readFileSync(
+    new URL(
+      "../src/features/analyses/editor/families/time-capacity/TimeCapacityCycleNavigation.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(source, /extreme="first"/);
+  assert.match(source, /extreme="last"/);
+  assert.match(source, /leftSectionPointerEvents="all"/);
+  assert.doesNotMatch(source, /rightSectionPointerEvents="all"/);
+  assert.match(source, /IconPlayerTrackPrev/);
+  assert.match(source, /IconPlayerTrackNext/);
+  assert.match(source, /Specific cycle/);
+  assert.match(source, /IconInfoCircle/);
+  assert.match(source, /onCommitSpecificCycles/);
+  assert.match(source, /const boundedNavigationDisabled = boundDependentDisabled;/);
+  assert.doesNotMatch(source, /if \(specificCyclesActive\) return;/);
+  const specificCommitStart = source.indexOf("const commitSpecificCycles");
+  const specificCommitEnd = source.indexOf("const showAll", specificCommitStart);
+  assert.ok(specificCommitStart >= 0 && specificCommitEnd > specificCommitStart);
+  assert.doesNotMatch(source.slice(specificCommitStart, specificCommitEnd), /setSpecificCyclesDraft\(\"\"\)/);
+  assert.match(source, /viewportChangeKey/);
+  assert.match(source, /120-140/);
+  assert.match(source, /withScrollArea=\{false\}/);
+  assert.match(source, /comboboxProps=\{\{ width: 96 \}\}/);
 });
 
 test("narrow windows retain a graspable visual handle without changing their range", () => {
@@ -363,6 +402,82 @@ test("delayed moving requests are backpressured and retain only the newest range
   assert.deepEqual(canonical, { max_points_per_cell: 4000 });
 });
 
+test("committed navigation keeps one request active and promotes only the latest pending range", () => {
+  const first = { start: 1, end: 20 };
+  const second = { start: 2, end: 21 };
+  const third = { start: 3, end: 22 };
+
+  const leading = timeCapacityCommittedNavigationOnRange(
+    timeCapacityCommittedNavigationSchedulerInitialState(),
+    first,
+    "context-a",
+  );
+  assert.deepEqual(leading.request, {
+    range: first,
+    generation: 1,
+    contextSignature: "context-a",
+  });
+
+  let state = leading.state;
+  const firstRequest = leading.request!;
+  const queued = timeCapacityCommittedNavigationOnRange(state, second, "context-a");
+  state = queued.state;
+  assert.equal(queued.request, null);
+  assert.equal(state.inFlight, true);
+  assert.deepEqual(state.pendingRange, second);
+
+  const replaced = timeCapacityCommittedNavigationOnRange(state, third, "context-a");
+  state = replaced.state;
+  assert.equal(replaced.request, null);
+  assert.deepEqual(state.pendingRange, third);
+  assert.equal(timeCapacityCommittedNavigationRequestIsCurrent(state, firstRequest), true);
+
+  const promoted = timeCapacityCommittedNavigationOnRequestSettled(state, firstRequest);
+  assert.deepEqual(promoted.request?.range, third);
+  assert.equal(promoted.request?.generation, 4);
+  assert.equal(promoted.state.inFlight, true);
+  assert.equal(
+    timeCapacityCommittedNavigationRequestIsCurrent(promoted.state, promoted.request!),
+    true,
+  );
+  assert.equal(
+    timeCapacityCommittedNavigationOnRequestSettled(promoted.state, firstRequest).request,
+    null,
+  );
+
+  const complete = timeCapacityCommittedNavigationOnRequestSettled(
+    promoted.state,
+    promoted.request!,
+  );
+  assert.equal(complete.request, null);
+  assert.equal(complete.state.active, false);
+  assert.equal(complete.state.inFlight, false);
+  assert.equal(complete.state.publishedRequest, null);
+});
+
+test("committed navigation admits a new request when the plot context changes", () => {
+  const first = { start: 1, end: 20 };
+  const second = { start: 2, end: 21 };
+  const leading = timeCapacityCommittedNavigationOnRange(
+    timeCapacityCommittedNavigationSchedulerInitialState(),
+    first,
+    "context-a",
+  );
+  const changed = timeCapacityCommittedNavigationOnRange(
+    leading.state,
+    second,
+    "context-b",
+  );
+
+  assert.deepEqual(changed.request?.range, second);
+  assert.equal(changed.state.contextSignature, "context-b");
+  assert.equal(timeCapacityCommittedNavigationRequestIsCurrent(changed.state, leading.request!), false);
+  assert.equal(
+    timeCapacityCommittedNavigationRequestIsCurrent(changed.state, changed.request!),
+    true,
+  );
+});
+
 test("idle promotion sharpens the same range and renewed movement obsoletes it immediately", () => {
   const first = { start: 10, end: 29 };
   const second = { start: 11, end: 30 };
@@ -462,12 +577,68 @@ test("selected maximum ignores invalid summaries and returns null without a reli
   assert.equal(selectedTimeCapacityCycleMax([{ kind: "cell", ref_id: 1 }], undefined, []), null);
 });
 
-test("explicit cycles disable range navigation without changing the retained range", () => {
+test("explicit cycles remain a selection state without disabling cycle navigation history", () => {
   assert.equal(timeCapacityRangeNavigationDisabled([]), false);
   assert.equal(timeCapacityRangeNavigationDisabled([1, 4, 9]), true);
   assert.equal(timeCapacityPreviousViewDisabled([], 1), false);
   assert.equal(timeCapacityPreviousViewDisabled([], 0), true);
-  assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), true);
+  assert.equal(timeCapacityPreviousViewDisabled([1, 4, 9], 1), false);
+});
+
+test("cycle navigation buttons disable only at known range boundaries", () => {
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 1, end: 20 }, -1, "cycle", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 1, end: 20 }, -1, "window", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 2, end: 21 }, -1, "cycle", 720),
+    false,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 700, end: 720 }, 1, "cycle", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 700, end: 720 }, 1, "window", 720),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 699, end: 719 }, 1, "cycle", 720),
+    false,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 10, end: 20 }, -1, "cycle", null),
+    false,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 10, end: 20 }, 1, "cycle", null),
+    true,
+  );
+  assert.equal(
+    timeCapacityCycleNavigationDisabledAtBoundary({ start: 10, end: 20 }, -1, "window", null),
+    true,
+  );
+});
+
+test("specific cycle input accepts values, ranges, and mixed syntax", () => {
+  assert.deepEqual(parseTimeCapacitySpecificCycles("145", 332), [145]);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("10, 1 10 5", 332), [1, 5, 10]);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("120-123", 332), [120, 121, 122, 123]);
+  assert.deepEqual(
+    parseTimeCapacitySpecificCycles("120-122, 130, 132 - 133", 332),
+    [120, 121, 122, 130, 132, 133],
+  );
+  assert.deepEqual(parseTimeCapacitySpecificCycles("", 332), []);
+  assert.equal(parseTimeCapacitySpecificCycles("0", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("1, nope", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("333", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("123-120", 332), null);
+  assert.equal(parseTimeCapacitySpecificCycles("120-333", 332), null);
+  assert.deepEqual(parseTimeCapacitySpecificCycles("145", null), [145]);
 });
 
 // Spec 052.3 Stage 5 evidence gate.

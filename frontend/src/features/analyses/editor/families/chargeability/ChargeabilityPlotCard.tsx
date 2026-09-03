@@ -43,7 +43,13 @@ import {
   markerSymbol,
   plotPalette,
 } from "../../plotting/plotStyle";
-import { isCellHiddenInAnalysis } from "../../policies/analysisVisibility";
+import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
+  isCellHiddenInAnalysis,
+  isSeriesHidden,
+  plotSeriesVisibilityItems,
+} from "../../policies/analysisVisibility";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
   decimatePreviewTraces,
@@ -291,6 +297,7 @@ export function chargeabilitySeriesDescriptors(
       label: name,
       cellName: match.cell_name,
       groupName: null,
+      visibilityKey: `chargeability-${match.id}`,
     };
   });
 }
@@ -309,7 +316,8 @@ export function chargeabilityTracesForResult(
       hasFinite(x) &&
       hasFinite(match.y[view.y_axis]) &&
       // Respect the "Analysis samples" eye toggle: a hidden cell draws nothing.
-      !isCellHiddenInAnalysis(spec, match.cell_id)
+      !isCellHiddenInAnalysis(spec, match.cell_id) &&
+      !isSeriesHidden(spec, `chargeability-${match.id}`)
     );
   });
   const descriptors = chargeabilitySeriesDescriptors(visibleMatches, result);
@@ -749,6 +757,35 @@ export function ChargeabilityPlotCard({
         : [],
     [visibleSeriesItems, result.data]
   );
+  const seriesVisibilityCandidates = useMemo(
+    () => seriesDescriptors.map(({ key, label }) => ({ key, label })),
+    [seriesDescriptors],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
 
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
@@ -774,12 +811,16 @@ export function ChargeabilityPlotCard({
     [result.data, spec],
   );
 
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
+  const exportPlot = async (
+    format: PlotExportFormat,
+    baseName: string,
+    exportStyle: PlotStyle = style,
+  ) => {
     try {
       await downloadStyledPlotExport(
         traces,
         layout,
-        style,
+        exportStyle,
         plotName,
         format,
         baseName,
@@ -792,11 +833,11 @@ export function ChargeabilityPlotCard({
       });
     }
   };
-  const getExportPreview = () =>
-    styledPlotExportPreview(traces, layout, style, plotName, plotSize);
-  const dataExport = async (baseName: string) => {
+  const getExportPreview = (exportStyle: PlotStyle = style) =>
+    styledPlotExportPreview(traces, layout, exportStyle, plotName, plotSize);
+  const dataExport = async (baseName: string, exportStyle: PlotStyle = style) => {
     try {
-      await downloadDataExport(tracesToColumns(traces, layout), style, baseName);
+      await downloadDataExport(tracesToColumns(traces, layout), exportStyle, baseName);
     } catch (error) {
       notifications.show({
         color: "red",
@@ -839,15 +880,6 @@ export function ChargeabilityPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
-          updateStyle={(fn) =>
-            update((draft) => {
-              const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=
-                {}) as Record<string, unknown>;
-              const current = (styles.chargeability ?? {}) as Record<string, unknown>;
-              fn(current as never);
-              styles.chargeability = current;
-            })
-          }
           layout={layout}
           viewSize={plotSize}
           canExport={traces.length > 0}

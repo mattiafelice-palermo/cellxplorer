@@ -248,12 +248,151 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl10",
+                "adapter_revision": "gcpl11",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl10:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl11:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
+
+    def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
+        rows = [
+            _row(0.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+            _row(1.0, ns=1, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, ns=2, control=-1.0, q_mAh=0.0),
+            _row(3.0, ns=2, control=-1.0, q_mAh=-1.0, dq_mAh=-1.0, ns_changed=True),
+        ]
+        settings = encode_gcpl_settings(
+            [
+                {"set_i_c": 0, "current": 0.0, "rest_duration_s": 1.0},
+                {"set_i_c": 1, "current": 1.0, "c_rate": 1.0},
+                {
+                    "set_i_c": 1,
+                    "current": 1.0,
+                    "c_rate": 1.0,
+                    "sign_code": 1,
+                    "goto_step": 1,
+                    "repeat_count": 1,
+                },
+            ],
+            technique_id=0x04,
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "technique-04-loop.mpr",
+                rows,
+                settings_payload=settings,
+            )
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["settings_profile"],
+            "gcpl-technique-04-v1",
+        )
+        self.assertEqual(frame["step"].tolist(), [1, 1, 2, 2])
+        self.assertEqual(frame["status"].tolist(), ["CC_Chg", "CC_Chg", "CC_DChg", "CC_DChg"])
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1, 1])
+        self.assertEqual(frame["current_ma"].tolist(), [1.0, 1.0, -1.0, -1.0])
+        self.assertEqual(frame["charge_capacity_mah"].tolist(), [0.0, 1.0, 0.0, 0.0])
+        self.assertEqual(frame["discharge_capacity_mah"].tolist(), [0.0, 0.0, 0.0, 1.0])
+
+    def test_technique_04_profile_validates_latched_flag_and_delayed_rest_transfer(self) -> None:
+        rows = [
+            _row(0.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+            _row(1.0, ns=1, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, ns=1, mode=MPR_MODE_REST, control=0.0, q_mAh=1.5, dq_mAh=0.5),
+            _row(3.0, ns=1, mode=MPR_MODE_REST, control=0.0, q_mAh=1.5),
+            _row(4.0, ns=2, control=-1.0, q_mAh=0.0, dq_mAh=0.0),
+            _row(5.0, ns=2, control=-1.0, q_mAh=-1.0, dq_mAh=-1.0, ns_changed=True),
+            _row(6.0, ns=2, mode=MPR_MODE_REST, control=0.0, q_mAh=-1.5, dq_mAh=-0.5),
+            _row(7.0, ns=2, mode=MPR_MODE_REST, control=0.0, q_mAh=-1.5),
+            _row(8.0, ns=1, control=1.0, q_mAh=0.0, dq_mAh=0.0),
+            _row(
+                9.0,
+                ns=1,
+                control=1.0,
+                q_mAh=1.0,
+                dq_mAh=1.0,
+                ns_changed=True,
+                counter_incremented=True,
+            ),
+            _row(
+                10.0,
+                ns=1,
+                mode=MPR_MODE_REST,
+                control=0.0,
+                q_mAh=1.5,
+                dq_mAh=0.5,
+                counter_incremented=True,
+            ),
+            _row(11.0, ns=1, mode=MPR_MODE_REST, control=0.0, q_mAh=1.5, counter_incremented=True),
+            _row(12.0, ns=2, control=-1.0, q_mAh=0.0, dq_mAh=0.0, counter_incremented=True),
+            _row(
+                13.0,
+                ns=2,
+                control=-1.0,
+                q_mAh=-1.0,
+                dq_mAh=-1.0,
+                ns_changed=True,
+                counter_incremented=True,
+            ),
+            _row(
+                14.0,
+                ns=2,
+                mode=MPR_MODE_REST,
+                control=0.0,
+                q_mAh=-1.5,
+                dq_mAh=-0.5,
+                counter_incremented=True,
+            ),
+            _row(15.0, ns=2, mode=MPR_MODE_REST, control=0.0, q_mAh=-1.5, counter_incremented=True),
+        ]
+        settings = encode_gcpl_settings(
+            [
+                {"set_i_c": 0, "current": 0.0, "rest_duration_s": 1.0},
+                {"set_i_c": 1, "current": 1.0, "c_rate": 1.0},
+                {
+                    "set_i_c": 1,
+                    "current": 1.0,
+                    "c_rate": 1.0,
+                    "sign_code": 1,
+                    "goto_step": 1,
+                    "repeat_count": 2,
+                },
+            ],
+            technique_id=0x04,
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "technique-04-flags-and-rest.mpr",
+                rows,
+                settings_payload=settings,
+            )
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame["cycle"].tolist(), [1] * 8 + [2] * 8)
+        self.assertEqual(
+            frame["status"].tolist(),
+            [
+                "CC_Chg",
+                "CC_Chg",
+                "Rest",
+                "Rest",
+                "CC_DChg",
+                "CC_DChg",
+                "Rest",
+                "Rest",
+            ]
+            * 2,
+        )
+        np.testing.assert_allclose(
+            frame["charge_capacity_mah"],
+            [0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] * 2,
+        )
+        np.testing.assert_allclose(
+            frame["discharge_capacity_mah"],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0] * 2,
+        )
 
     def test_extended_registry_layout_preserves_canonical_output(self) -> None:
         rows = [

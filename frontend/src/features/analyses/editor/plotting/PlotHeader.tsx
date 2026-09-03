@@ -5,16 +5,15 @@ import {
   Divider,
   Group,
   Loader,
-  Paper,
   Popover,
   Progress,
   Select,
   Stack,
   Switch,
   Text,
+  TextInput,
   Tooltip,
 } from "@mantine/core";
-import { useQuery } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconDownload,
@@ -25,19 +24,16 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import {
-  get,
   type BackgroundJob,
-  type DownloadSettings,
   type PlotAspectRatioKey,
   type PlotExportFormat,
   type PlotStyle,
 } from "../../../../api";
 import { DebouncedNumberInput } from "../../../../components/DebouncedInputs";
-import { FilenameTemplateEditor } from "../../../../components/FilenameTemplateEditor";
-import { renderExportFilename, sanitizeExportFilename } from "../../../../exportFilenames";
+import { sanitizeExportFilename } from "../../../../exportFilenames";
 import { resolveExportPlan } from "./plotExport";
 import { type PlotExplainer } from "./plotExplainers";
-import { DEFAULT_PLOT_STYLE } from "./plotStyle";
+import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "./plotStyle";
 
 const ASPECT_RATIO_OPTIONS: { value: PlotAspectRatioKey; label: string }[] = [
   { value: "view", label: "Current view" },
@@ -54,6 +50,22 @@ const EXPORT_FORMAT_OPTIONS: { value: PlotExportFormat; label: string }[] = [
   { value: "svg", label: "SVG" },
   { value: "pdf", label: "PDF" },
 ];
+
+export type PlotDataExportScope = "full_series" | "plot_range";
+
+function dataExportFormatLabel(format: PlotStyle["data_export_format"]): string {
+  if (format === "xlsx") return "XLSX";
+  if (format === "parquet") return "Parquet";
+  return "CSV";
+}
+
+function exportFilenameBase(value: string): string {
+  return value.replace(/\.(?:csv|xlsx|parquet|png|svg|pdf)$/i, "");
+}
+
+function filenameSuffixWidth(suffix: string): number {
+  return Math.max(56, suffix.length * 8 + 18);
+}
 
 export function jobProgress(job: BackgroundJob | undefined): number {
   if (!job) return 0;
@@ -132,18 +144,14 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
 
 export function PlotHeader({
   analysisTitle,
-  tabName,
   plotName,
   subtitle,
-  quantityName,
-  xAxisName,
-  sampleSummary,
   explainer,
   onExport,
   onDataExport,
+  dataExportScopeEnabled = false,
   getExportPreview,
   style,
-  updateStyle,
   viewSize,
   layout,
   canExport = false,
@@ -163,11 +171,16 @@ export function PlotHeader({
   xAxisName?: string;
   sampleSummary?: string;
   explainer?: PlotExplainer;
-  onExport?: (format: PlotExportFormat, baseName: string) => void;
-  onDataExport?: (baseName: string) => void;
-  getExportPreview?: () => Promise<string | null>;
+  onExport?: (format: PlotExportFormat, baseName: string, exportStyle: PlotStyle) => void;
+  onDataExport?: (
+    baseName: string,
+    exportStyle: PlotStyle,
+    scope: PlotDataExportScope,
+  ) => void;
+  /** Time/Capacity can export either the full series or the current plot range. */
+  dataExportScopeEnabled?: boolean;
+  getExportPreview?: (exportStyle: PlotStyle) => Promise<string | null>;
   style?: PlotStyle;
-  updateStyle?: (fn: (style: PlotStyle) => void) => void;
   viewSize?: { width: number; height: number } | null;
   layout?: Partial<Plotly.Layout>;
   canExport?: boolean;
@@ -184,21 +197,24 @@ export function PlotHeader({
   /** `Save as` for new drafts; `Update` for edited saved plots. */
   updatePlotLabel?: string;
 }) {
-  const exportStyle = style ?? DEFAULT_PLOT_STYLE;
+  const persistedExportStyle = normalizePlotStyle(style);
+  const persistedStyleSignature = JSON.stringify(persistedExportStyle);
+  const [exportStyle, setExportStyleState] = useState<PlotStyle>(
+    () => persistedExportStyle,
+  );
+  useEffect(() => {
+    setExportStyleState(persistedExportStyle);
+    // The signature changes only when the persisted style changes. Keeping the
+    // normalized object out of the dependency list prevents local export
+    // choices from being reset on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedStyleSignature]);
   const plotExportEnabled = canPlotExport ?? canExport;
   const selectedFormat = exportStyle.export_format ?? "png";
   const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
   const [dataExportPopoverOpen, setDataExportPopoverOpen] = useState(false);
+  const [dataExportScope, setDataExportScope] = useState<PlotDataExportScope>("full_series");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [filenameTemplate, setFilenameTemplate] = useState(
-    "{analysis} - {plot_title}",
-  );
-  const filenameTemplateInitialized = useRef(false);
-  const downloadSettings = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => get<DownloadSettings>("/api/settings"),
-    staleTime: 5 * 60_000,
-  });
   const exportPreviewSignature = JSON.stringify(exportStyle);
   const plan = resolveExportPlan(exportStyle, viewSize ?? null, layout ?? {});
   const exportWidthValue = plan.pixelWidth;
@@ -206,7 +222,13 @@ export function PlotHeader({
   const ppi = Math.max(36, exportStyle.export_ppi || DEFAULT_PLOT_STYLE.export_ppi);
   const printWidthCm = (exportWidthValue / ppi) * 2.54;
   const printHeightCm = (exportHeightValue / ppi) * 2.54;
-  const setExportStyle = (fn: (style: PlotStyle) => void) => updateStyle?.(fn);
+  const setExportStyle = (fn: (style: PlotStyle) => void) => {
+    setExportStyleState((current) => {
+      const next = normalizePlotStyle(current);
+      fn(next);
+      return next;
+    });
+  };
   const setAspect = (value: PlotAspectRatioKey) => {
     setExportStyle((next) => {
       next.export_aspect_ratio = value;
@@ -217,34 +239,24 @@ export function PlotHeader({
       next.export_width = value;
     });
   };
-  const filenameContext = {
-    analysis: analysisTitle?.trim() || "Analysis",
-    plotTitle:
-      plotName === "Unsaved plot" || plotName === "New plot"
-        ? subtitle || "Plot"
-        : plotName,
-    quantity: quantityName?.trim() || subtitle || "Plot",
-    xAxis: xAxisName?.trim() || "X axis",
-    tab: tabName?.trim() || "Analysis",
-    sampleSummary: sampleSummary?.trim() || "samples",
-  };
+  const defaultFilename = `${analysisTitle?.trim() || "Analysis"} - ${
+    plotName === "Unsaved plot" || plotName === "New plot"
+      ? subtitle || "Plot"
+      : plotName
+  }`;
+  const defaultFilenameSignature = sanitizeExportFilename(defaultFilename, "plot");
+  const [filename, setFilename] = useState(defaultFilenameSignature);
+  const filenameEdited = useRef(false);
   useEffect(() => {
-    if (filenameTemplateInitialized.current || !downloadSettings.data) return;
-    filenameTemplateInitialized.current = true;
-    setFilenameTemplate(
-      downloadSettings.data.export_filename_template || "{analysis} - {plot_title}",
-    );
-  }, [downloadSettings.data]);
-  const renderedFilename = sanitizeExportFilename(
-    renderExportFilename(filenameTemplate, filenameContext),
-    "plot",
-  );
+    if (!filenameEdited.current) setFilename(defaultFilenameSignature);
+  }, [defaultFilenameSignature]);
+  const renderedFilename = sanitizeExportFilename(filename, "plot");
   const exportPlot = () => {
-    onExport?.(selectedFormat, renderedFilename);
+    onExport?.(selectedFormat, renderedFilename, exportStyle);
     setExportPopoverOpen(false);
   };
   const exportData = () => {
-    onDataExport?.(renderedFilename);
+    onDataExport?.(renderedFilename, exportStyle, dataExportScope);
     setDataExportPopoverOpen(false);
   };
 
@@ -254,7 +266,7 @@ export function PlotHeader({
     if (!exportPopoverOpen || !getExportPreview || !plotExportEnabled) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      getExportPreview()
+      getExportPreview(exportStyle)
         .then((url) => {
           if (!cancelled) setPreviewUrl(url);
         })
@@ -310,7 +322,7 @@ export function PlotHeader({
               disabled={!canExport}
               onClick={exportData}
             >
-              {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
+              {dataExportFormatLabel(exportStyle.data_export_format)}
             </Button>
             <Popover
               withinPortal
@@ -339,6 +351,7 @@ export function PlotHeader({
                     data={[
                       { value: "csv", label: "CSV (text)" },
                       { value: "xlsx", label: "Excel (.xlsx)" },
+                      { value: "parquet", label: "Parquet (.parquet)" },
                     ]}
                     value={exportStyle.data_export_format}
                     comboboxProps={{ withinPortal: false }}
@@ -349,6 +362,20 @@ export function PlotHeader({
                       )
                     }
                   />
+                  {dataExportScopeEnabled ? (
+                    <Select
+                      label="Data range"
+                      data={[
+                        { value: "full_series", label: "Full data series" },
+                        { value: "plot_range", label: "Current range shown in plot" },
+                      ]}
+                      value={dataExportScope}
+                      comboboxProps={{ withinPortal: false }}
+                      onChange={(value) =>
+                        value && setDataExportScope(value as PlotDataExportScope)
+                      }
+                    />
+                  ) : null}
                   <Select
                     label="Numeric precision"
                     data={[
@@ -403,28 +430,33 @@ export function PlotHeader({
                       />
                     </>
                   )}
-                  <Text size="10px" c="dimmed">
-                    Exports the plotted series as x/y column pairs per trace (dispersion bands
-                    excluded). Standard precision removes meaningless floating-point tails; full
-                    precision preserves every stored digit.
-                  </Text>
                   <Divider />
-                  <FilenameTemplateEditor
-                    value={filenameTemplate}
-                    onChange={setFilenameTemplate}
+                  <TextInput
+                    label="Filename"
+                    value={filename}
+                    rightSection={
+                      <Text size="xs" c="dimmed" style={{ pointerEvents: "none" }}>
+                        .{exportStyle.data_export_format}
+                      </Text>
+                    }
+                    rightSectionWidth={filenameSuffixWidth(`.${exportStyle.data_export_format}`)}
+                    rightSectionPointerEvents="none"
+                    styles={{
+                      input: {
+                        paddingRight: filenameSuffixWidth(`.${exportStyle.data_export_format}`) + 8,
+                      },
+                    }}
+                    onChange={(event) => {
+                      filenameEdited.current = true;
+                      setFilename(exportFilenameBase(event.currentTarget.value));
+                    }}
                   />
-                  <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-                    <Text size="xs" c="dimmed">Result</Text>
-                    <Text size="sm" fw={600} lineClamp={2}>
-                      {renderedFilename}.{exportStyle.data_export_format}
-                    </Text>
-                  </Paper>
                   <Button
                     fullWidth
                     leftSection={<IconTable size={14} />}
                     onClick={exportData}
                   >
-                    Download {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
+                    Download {dataExportFormatLabel(exportStyle.data_export_format)}
                   </Button>
                 </Stack>
               </Popover.Dropdown>
@@ -590,16 +622,26 @@ export function PlotHeader({
                       style={{ gridColumn: "1 / -1" }}
                     >
                       <Divider />
-                      <FilenameTemplateEditor
-                        value={filenameTemplate}
-                        onChange={setFilenameTemplate}
+                      <TextInput
+                        label="Filename"
+                        value={filename}
+                        rightSection={
+                          <Text size="xs" c="dimmed" style={{ pointerEvents: "none" }}>
+                            .{selectedFormat}
+                          </Text>
+                        }
+                        rightSectionWidth={filenameSuffixWidth(`.${selectedFormat}`)}
+                        rightSectionPointerEvents="none"
+                        styles={{
+                          input: {
+                            paddingRight: filenameSuffixWidth(`.${selectedFormat}`) + 8,
+                          },
+                        }}
+                        onChange={(event) => {
+                          filenameEdited.current = true;
+                          setFilename(exportFilenameBase(event.currentTarget.value));
+                        }}
                       />
-                      <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-                        <Text size="xs" c="dimmed">Result</Text>
-                        <Text size="sm" fw={600} lineClamp={2}>
-                          {renderedFilename}.{selectedFormat}
-                        </Text>
-                      </Paper>
                       <Button
                         fullWidth
                         leftSection={<IconDownload size={14} />}

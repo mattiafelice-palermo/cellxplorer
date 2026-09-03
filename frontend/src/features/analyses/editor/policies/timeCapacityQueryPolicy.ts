@@ -4,10 +4,62 @@ export type TimeCapacityQueryConfig = NonNullable<
   AnalysisSpec["computation"]["time_capacity"]
 >;
 
+export type TimeCapacityDataExportScope = "full_series" | "plot_range";
+
 type TimeCapacityCompatibilitySpec = Pick<
   AnalysisSpec,
   "selection" | "protocol_segments" | "computation" | "presentation"
 >;
+
+/**
+ * Build the Time/Capacity scientific request without the Analysis samples
+ * display filters. The live spec remains the source of truth for rendering
+ * and persistence; this copy is only for the interactive scientific query.
+ */
+export function timeCapacityScientificRequestSpec<T extends Pick<AnalysisSpec, "selection">>(
+  spec: T,
+): T {
+  return {
+    ...spec,
+    selection: {
+      ...spec.selection,
+      exclusions: [],
+      hidden_replicate_group_ids: [],
+    },
+  } as T;
+}
+
+/**
+ * Build the full-resolution data-export request without mutating the live
+ * plot. A full-series export removes only the plot's cycle window; every
+ * other scientific setting and the live sample visibility remain intact.
+ */
+export function timeCapacityDataExportSpec(
+  spec: AnalysisSpec,
+  config: TimeCapacityQueryConfig,
+  scope: TimeCapacityDataExportScope,
+): AnalysisSpec {
+  return {
+    ...spec,
+    selection: {
+      ...spec.selection,
+      entries: [...spec.selection.entries],
+      exclusions: [...(spec.selection.exclusions ?? [])],
+      hidden_replicate_group_ids: [
+        ...(spec.selection.hidden_replicate_group_ids ?? []),
+      ],
+    },
+    computation: {
+      ...spec.computation,
+      time_capacity: {
+        ...config,
+        ...(scope === "full_series"
+          ? { cycles: [], cycle_start: null, cycle_end: null }
+          : {}),
+      },
+    },
+  };
+}
 
 /**
  * Return the identity of the meaning carried by a compact Time/Capacity
@@ -21,11 +73,12 @@ export function timeCapacityCompatibilitySignature(
   config: TimeCapacityQueryConfig,
   _viewportWidth: number,
 ): string {
+  const scientificSpec = timeCapacityScientificRequestSpec(spec);
   return JSON.stringify({
-    selection: spec.selection,
-    protocol_segments: spec.protocol_segments ?? [],
-    protocol_filter: spec.computation.protocol_filter ?? {},
-    hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
+    selection: scientificSpec.selection,
+    protocol_segments: scientificSpec.protocol_segments ?? [],
+    protocol_filter: scientificSpec.computation.protocol_filter ?? {},
+    hidden_protocol_segment_ids: scientificSpec.presentation.hidden_protocol_segment_ids ?? [],
     x_axis: config.x_axis,
     time_unit: config.time_unit,
     display_mode: config.display_mode,
@@ -37,6 +90,45 @@ export function timeCapacityCompatibilitySignature(
     derivative_specific: config.derivative_specific,
     derivative_absolute_discharge: config.derivative_absolute_discharge,
     smoothing_window: config.smoothing_window,
+  });
+}
+
+/**
+ * Identity of the compact Time/Capacity data request. Analysis-sample eye
+ * state is deliberately excluded here, while selected entries and every
+ * scientific/display coordinate input remain part of the identity.
+ */
+export function timeCapacityDataSignature(
+  spec: TimeCapacityCompatibilitySpec,
+  config: TimeCapacityQueryConfig,
+  viewportWidth: number,
+  coordinateOriginCycle: number | null = null,
+): string {
+  const scientificSpec = timeCapacityScientificRequestSpec(spec);
+  return JSON.stringify({
+    selection: scientificSpec.selection,
+    protocol_segments: scientificSpec.protocol_segments ?? [],
+    protocol_filter: scientificSpec.computation.protocol_filter,
+    hidden_protocol_segment_ids: scientificSpec.presentation.hidden_protocol_segment_ids ?? [],
+    cycles: config.cycles,
+    start: config.cycle_start,
+    end: config.cycle_end,
+    points: config.max_points_per_cell,
+    xAxis: config.x_axis,
+    timeUnit: config.time_unit,
+    displayMode: config.display_mode,
+    electrodeArea: config.electrode_area_cm2,
+    voltageChannel: config.voltage_channel,
+    voltageChannels: config.voltage_channels,
+    viewportWidth,
+    coordinateOriginCycle,
+    derivative: config.view === "voltage_current" ? null : {
+      view: config.view,
+      phase: config.derivative_phase,
+      specific: config.derivative_specific,
+      absoluteDischarge: config.derivative_absolute_discharge,
+      smoothing: config.smoothing_window,
+    },
   });
 }
 
@@ -74,17 +166,21 @@ export function timeCapacityPlaceholderData<T>(
 }
 
 /**
- * A retained compatible result is visible plot content, but it is not the
- * resolved result for the current request identity and must not be serialized
- * as a plot export.
+ * Decide whether the currently visible plot can be exported.
+ *
+ * Ordinary range navigation may temporarily retain the last resolved result
+ * while the replacement query is running. That result is still the complete
+ * plot shown to the user, so range replacement must not toggle export controls
+ * or close their settings menu. The transient flag is reserved for states
+ * whose visible result is only a pan/refill fallback.
  */
 export function timeCapacityPlotExportReady(
-  isPlaceholderData: boolean,
+  isTransientRenderState: boolean,
   hasCurrentResult: boolean,
   voltageUnavailable: boolean,
   hasTraces: boolean,
 ): boolean {
-  return !isPlaceholderData && hasCurrentResult && !voltageUnavailable && hasTraces;
+  return !isTransientRenderState && hasCurrentResult && !voltageUnavailable && hasTraces;
 }
 
 /** A transient pan/refill must never replace the last valid plot with an empty loader. */

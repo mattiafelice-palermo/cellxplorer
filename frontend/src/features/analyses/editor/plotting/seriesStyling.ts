@@ -61,6 +61,16 @@ export interface SeriesDescriptor {
   measure?: string | null;
   /** Identity within a plot/axis/measure, e.g. "c12", "g3", "dcir-abc". */
   sourceKey?: string;
+  /**
+   * Stable application visibility identity. Secondary and helper traces can
+   * point at their primary series here so one visibility action controls a
+   * complete user-facing series rather than a fragile trace index. Distinct
+   * first-class descriptors, such as a CE overlay or selected voltage channel,
+   * must receive distinct identities even when they share a Cell/replicate
+   * source. Genuine Plotly helpers may share their owner's identity or remain
+   * outside the descriptor list entirely.
+   */
+  visibilityKey?: string;
   /** Default legend suffix when deriving a name from a linked primary, e.g. " CE". */
   secondarySuffix?: string;
   /** Human name of the plotted quantity, e.g. "Discharge capacity", "Coulombic efficiency". */
@@ -229,6 +239,7 @@ export function cyclesSeriesDescriptors(
   const out: SeriesDescriptor[] = [];
   for (const agg of aggregates) {
     const descriptor = aggregateSeriesDescriptor(agg);
+    descriptor.visibilityKey = `cycles:${descriptor.key}`;
     if (primaryMeasureLabel) descriptor.measureLabel = primaryMeasureLabel;
     out.push(descriptor);
   }
@@ -237,6 +248,7 @@ export function cyclesSeriesDescriptors(
     if (s.excluded) continue;
     if (s.group_id !== null && !showIndividual) continue;
     const descriptor = cellSeriesDescriptor(s);
+    descriptor.visibilityKey = `cycles:${descriptor.key}`;
     if (primaryMeasureLabel) descriptor.measureLabel = primaryMeasureLabel;
     out.push(descriptor);
   }
@@ -257,6 +269,11 @@ export function cyclesSeriesDescriptors(
         axis: "y2",
         measure: "coulombic_efficiency",
         sourceKey,
+        visibilityKey: `cycles:${composeSeriesKey({
+          sourceKey,
+          axis: "y2",
+          measure: "coulombic_efficiency",
+        })}`,
         secondarySuffix: " CE",
         measureLabel: "Coulombic efficiency",
       });
@@ -275,6 +292,11 @@ export function cyclesSeriesDescriptors(
         axis: "y2",
         measure: "coulombic_efficiency",
         sourceKey,
+        visibilityKey: `cycles:${composeSeriesKey({
+          sourceKey,
+          axis: "y2",
+          measure: "coulombic_efficiency",
+        })}`,
         secondarySuffix: " CE",
         measureLabel: "Coulombic efficiency",
       });
@@ -293,12 +315,14 @@ export function cyclesSeriesDescriptors(
  * the plot cannot match.
  */
 export function timeCapacitySeriesDescriptor(trace: CellSeriesLike): SeriesDescriptor {
+  const key = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
   return {
-    key: trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`,
+    key,
     kind: trace.group_id ? "group" : "cell",
     label: trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label,
     cellName: trace.cell_name,
     groupName: trace.group_name,
+    visibilityKey: `time_capacity:${key}`,
   };
 }
 
@@ -313,6 +337,7 @@ export function timeCapacityVoltageSeriesDescriptor(
     key: `${base.key}|${channel}`,
     label: `${base.label} — ${timeCapacityVoltageChannelShortLabel(channel)}`,
     sourceKey: base.key,
+    visibilityKey: `${base.visibilityKey ?? base.key}|${channel}`,
     measureLabel: timeCapacityVoltageChannelShortLabel(channel),
     channel,
   };
@@ -380,6 +405,11 @@ export function primarySeriesKeyFor(descriptor: SeriesDescriptor): string | null
     (descriptor.measure === undefined || descriptor.measure === null);
   if (isPrimary) return null;
   return composeSeriesKey({ sourceKey: descriptor.sourceKey, plot: descriptor.plot });
+}
+
+/** Resolve the persisted user-level visibility identity for a descriptor. */
+export function seriesVisibilityKey(descriptor: SeriesDescriptor): string {
+  return descriptor.visibilityKey ?? descriptor.key;
 }
 
 /** True when a series is on the secondary axis, or plots a named (non-primary) measure. */

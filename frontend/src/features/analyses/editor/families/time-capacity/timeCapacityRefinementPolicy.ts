@@ -34,11 +34,33 @@ export function timeCapacityCycleRangeForViewport(
   result: TimeCapacityResult | undefined,
   viewport: TimeCapacityViewport,
 ): TimeCapacityCycleRange | null {
-  if (!result) return null;
-  let selectedMin = Number.POSITIVE_INFINITY;
-  let selectedMax = Number.NEGATIVE_INFINITY;
+  const visible = timeCapacityVisibleCycleRangeForViewport(result, viewport);
+  if (!result || !visible) return null;
   let globalMin = Number.POSITIVE_INFINITY;
   let globalMax = Number.NEGATIVE_INFINITY;
+  for (const trace of result.cell_traces) {
+    if (trace.excluded) continue;
+    for (const cycle of trace.cycle) {
+      if (typeof cycle !== "number" || !Number.isInteger(cycle)) continue;
+      globalMin = Math.min(globalMin, cycle);
+      globalMax = Math.max(globalMax, cycle);
+    }
+  }
+  return {
+    start: Math.max(globalMin, visible.start - 1),
+    end: Math.min(globalMax, visible.end + 1),
+  };
+}
+
+/** Exact cycle bounds intersecting the live Plotly x viewport. */
+export function timeCapacityVisibleCycleRangeForViewport(
+  result: TimeCapacityResult | undefined,
+  viewport: TimeCapacityViewport,
+): TimeCapacityCycleRange | null {
+  if (!result) return null;
+  const viewportMin = Math.min(viewport.min, viewport.max);
+  const viewportMax = Math.max(viewport.min, viewport.max);
+  const cycleSpans = new Map<number, TimeCapacityViewport>();
   for (const trace of result.cell_traces) {
     if (trace.excluded) continue;
     const x = trace.display_x ?? [];
@@ -46,19 +68,23 @@ export function timeCapacityCycleRangeForViewport(
       const cycle = trace.cycle[index];
       const xValue = x[index];
       if (typeof cycle !== "number" || !Number.isInteger(cycle) || !finite(xValue)) continue;
-      globalMin = Math.min(globalMin, cycle);
-      globalMax = Math.max(globalMax, cycle);
-      if (xValue >= viewport.min && xValue <= viewport.max) {
-        selectedMin = Math.min(selectedMin, cycle);
-        selectedMax = Math.max(selectedMax, cycle);
-      }
+      const span = cycleSpans.get(cycle);
+      cycleSpans.set(cycle, {
+        min: Math.min(span?.min ?? xValue, xValue),
+        max: Math.max(span?.max ?? xValue, xValue),
+      });
+    }
+  }
+  let selectedMin = Number.POSITIVE_INFINITY;
+  let selectedMax = Number.NEGATIVE_INFINITY;
+  for (const [cycle, span] of cycleSpans) {
+    if (span.max >= viewportMin && span.min <= viewportMax) {
+      selectedMin = Math.min(selectedMin, cycle);
+      selectedMax = Math.max(selectedMax, cycle);
     }
   }
   if (!Number.isFinite(selectedMin) || !Number.isFinite(selectedMax)) return null;
-  return {
-    start: Math.max(globalMin, selectedMin - 1),
-    end: Math.min(globalMax, selectedMax + 1),
-  };
+  return { start: selectedMin, end: selectedMax };
 }
 
 export function timeCapacityRefinementWorthwhile(
@@ -164,26 +190,23 @@ export function timeCapacityRefinementEligible(spec: AnalysisSpec): boolean {
       xAxis === "capacity_mah_g" ||
       xAxis === "capacity_mah_cm2") &&
     (cfg?.display_mode ?? "consecutive") === "consecutive" &&
-    cfg?.stacked !== true &&
     !(cfg?.cycles?.length)
   );
 }
 
 /**
- * A refinement can never be displayed by the stacked renderer. This keeps a
- * stacked transition from reusing a previously accepted flat-view refinement
- * without adding stacked to the scientific/query/cache identity.
+ * A refinement uses the same server result for flat and stacked rendering.
+ * Stacking and the current-axis choices are client-side presentation, so they
+ * must not invalidate an otherwise compatible high-resolution response.
  */
 export function timeCapacityRefinementDisplayIsCurrent(
-  stacked: boolean,
   response: TimeCapacityRefinementResult | null,
   currentResult: TimeCapacityResult | undefined,
   displayedCompatibilitySignature: string | null,
   compatibilitySignature: string,
 ): boolean {
   return Boolean(
-    !stacked &&
-      response &&
+    response &&
       displayedCompatibilitySignature === compatibilitySignature &&
       timeCapacityRefinementResultMatchesOverview(response, currentResult),
   );

@@ -199,7 +199,8 @@ def reinspect_legacy_biologic_sources(db: Session) -> int:
     ``gcpl5`` through ``gcpl9`` sources were registered before the current
     candidate/verified boundary. The single-direction fallback, the
     gcpl7-to-gcpl8 neutral-preamble widening, the gcpl9 registry-layout change,
-    and gcpl10 protocol-cycle reconstruction change the canonical capability contract, so an online source must pass the current
+    the gcpl10 protocol-cycle reconstruction change, and gcpl11 settings-profile
+    support change the canonical capability contract, so an online source must pass the current
     header/full-parse path before it can become usable. Offline rows are
     downgraded database-only so their old relational summaries cannot remain
     live; they stay relinkable and are retried when the user restores the
@@ -323,7 +324,7 @@ def start_capacity_summary_backfill(
     try:
         # Do this before selecting parsed sources. A withdrawn or pre-R8 row
         # can otherwise enter the normal identity path with stale capability
-        # state when the current gcpl10 build fails closed.
+        # state when the current gcpl11 build fails closed.
         reconcile_retired_biologic_sources(db)
         reinspect_legacy_biologic_sources(db)
         preparation_state = scientific_preparation.get_state(db)

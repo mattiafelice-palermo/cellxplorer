@@ -6,6 +6,7 @@ import {
   DEFAULT_PLOT_STYLE,
   applyAllSeriesStylePatch,
   applyPaletteToStyle,
+  defaultPlotStyleForTab,
   normalizePlotStyle,
   plotPalette,
   withoutSeriesColors,
@@ -56,6 +57,18 @@ test("plot-style normalization round-trips series order without sharing its arra
   const normalized = normalizePlotStyle(input);
   assert.deepEqual(normalized.series_order, ["c2", "c1"]);
   assert.notEqual(normalized.series_order, input.series_order);
+});
+
+test("only the Time/Capacity new-plot default forces line rendering", () => {
+  const markerStyle = styleWith({ marker_mode: "points", ce_marker_mode: "lines_points" });
+  const timeCapacity = defaultPlotStyleForTab("time_capacity", markerStyle);
+  const cycles = defaultPlotStyleForTab("cycles", markerStyle);
+
+  assert.equal(timeCapacity.marker_mode, "none");
+  assert.equal(timeCapacity.ce_marker_mode, "none");
+  assert.equal(cycles.marker_mode, "points");
+  assert.equal(cycles.ce_marker_mode, "lines_points");
+  assert.equal(markerStyle.marker_mode, "points");
 });
 
 test("a saved palette id marks the palette custom; a built-in leaves the key alone", () => {

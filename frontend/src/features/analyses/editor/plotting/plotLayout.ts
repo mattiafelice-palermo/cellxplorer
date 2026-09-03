@@ -1,5 +1,14 @@
 import type { AnalysisSpec, PlotStyle } from "../../../../api";
+import { APP_BRANDING } from "../../../../appChannel.ts";
 import { axisLayout, numericTraceExtent } from "./plotAxisLayout.ts";
+
+const HOVER_LABEL_CHANNEL_COLORS = {
+  stable: "#e6fcf5",
+  beta: "#eef7ff",
+  alpha: "#f3f0ff",
+} as const;
+const HOVER_LABEL_TEXT_COLOR = "#343a40";
+const HOVER_LABEL_BORDER_COLOR = "#495057";
 
 export function plotAxisStyle(
   style: PlotStyle,
@@ -148,11 +157,17 @@ export function draggedLegendPoint(event: Readonly<Plotly.PlotRelayoutEvent>): {
 }
 
 export function hoverLabelLayout(style: PlotStyle) {
+  const channelColors = HOVER_LABEL_CHANNEL_COLORS[APP_BRANDING.channel];
   return {
-    bgcolor: style.paper_bgcolor || "#ffffff",
-    bordercolor: style.frame_color || "#adb5bd",
+    bgcolor: channelColors,
+    bordercolor: HOVER_LABEL_BORDER_COLOR,
     borderwidth: 1,
-    font: { size: Math.max(10, style.tick_font_size - 1), family: "inherit" },
+    font: {
+      size: Math.max(10, style.tick_font_size - 1),
+      family: "inherit",
+      color: HOVER_LABEL_TEXT_COLOR,
+      weight: 400,
+    },
     align: "left" as const,
     // Plotly cannot wrap hover text. Keep the fallback name lane bounded for
     // plot families that still use `<extra>` and use compact static names in

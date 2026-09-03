@@ -38,6 +38,26 @@ export interface TimeCapacityPreviewSchedulerDecision {
   waitMs: number | null;
 }
 
+export interface TimeCapacityCommittedNavigationRequest {
+  range: TimeCapacityCycleRange;
+  generation: number;
+  contextSignature: string;
+}
+
+export interface TimeCapacityCommittedNavigationSchedulerState {
+  active: boolean;
+  generation: number;
+  contextSignature: string | null;
+  inFlight: boolean;
+  pendingRange: TimeCapacityCycleRange | null;
+  publishedRequest: TimeCapacityCommittedNavigationRequest | null;
+}
+
+export interface TimeCapacityCommittedNavigationSchedulerDecision {
+  state: TimeCapacityCommittedNavigationSchedulerState;
+  request: TimeCapacityCommittedNavigationRequest | null;
+}
+
 export type TimeCapacityCycleRangePatch = {
   start?: number | string | null;
   end?: number | string | null;
@@ -275,6 +295,127 @@ export function timeCapacityPreviewRequestIsCurrent(
   );
 }
 
+export function timeCapacityCommittedNavigationSchedulerInitialState():
+  TimeCapacityCommittedNavigationSchedulerState {
+  return {
+    active: false,
+    generation: 0,
+    contextSignature: null,
+    inFlight: false,
+    pendingRange: null,
+    publishedRequest: null,
+  };
+}
+
+function committedNavigationRequest(
+  range: TimeCapacityCycleRange,
+  generation: number,
+  contextSignature: string,
+): TimeCapacityCommittedNavigationRequest {
+  return { range: { ...range }, generation, contextSignature };
+}
+
+function admitCommittedNavigationRequest(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  range: TimeCapacityCycleRange,
+  generation: number,
+  contextSignature: string,
+): TimeCapacityCommittedNavigationSchedulerDecision {
+  const request = committedNavigationRequest(range, generation, contextSignature);
+  return {
+    state: {
+      ...state,
+      active: true,
+      generation,
+      contextSignature,
+      inFlight: true,
+      pendingRange: null,
+      publishedRequest: request,
+    },
+    request,
+  };
+}
+
+/** Admit one committed range and keep only the newest range while it runs. */
+export function timeCapacityCommittedNavigationOnRange(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  range: TimeCapacityCycleRange,
+  contextSignature: string,
+): TimeCapacityCommittedNavigationSchedulerDecision {
+  const nextGeneration = state.generation + 1;
+  if (state.inFlight && state.contextSignature === contextSignature) {
+    const current = state.publishedRequest?.range;
+    return {
+      state: {
+        ...state,
+        generation: nextGeneration,
+        pendingRange:
+          current && cycleRangesEqual(current, range) ? null : { ...range },
+      },
+      request: null,
+    };
+  }
+  return admitCommittedNavigationRequest(state, range, nextGeneration, contextSignature);
+}
+
+/** Complete one committed request, immediately admitting the latest pending range. */
+export function timeCapacityCommittedNavigationOnRequestSettled(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  request: TimeCapacityCommittedNavigationRequest,
+): TimeCapacityCommittedNavigationSchedulerDecision {
+  if (
+    !state.active ||
+    !state.inFlight ||
+    state.publishedRequest === null ||
+    state.publishedRequest.generation !== request.generation ||
+    state.publishedRequest.contextSignature !== request.contextSignature ||
+    !cycleRangesEqual(state.publishedRequest.range, request.range)
+  ) {
+    return { state, request: null };
+  }
+
+  if (state.pendingRange && !cycleRangesEqual(state.pendingRange, request.range)) {
+    return admitCommittedNavigationRequest(
+      state,
+      state.pendingRange,
+      state.generation + 1,
+      request.contextSignature,
+    );
+  }
+
+  return {
+    state: {
+      ...timeCapacityCommittedNavigationSchedulerInitialState(),
+      generation: state.generation,
+    },
+    request: null,
+  };
+}
+
+/** Cancel committed navigation work when the plot context changes or a preview starts. */
+export function timeCapacityCommittedNavigationCancel(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+): TimeCapacityCommittedNavigationSchedulerState {
+  return {
+    ...timeCapacityCommittedNavigationSchedulerInitialState(),
+    generation: state.generation + 1,
+  };
+}
+
+export function timeCapacityCommittedNavigationRequestIsCurrent(
+  state: TimeCapacityCommittedNavigationSchedulerState,
+  request: TimeCapacityCommittedNavigationRequest,
+): boolean {
+  return (
+    state.active &&
+    state.inFlight &&
+    state.publishedRequest !== null &&
+    state.publishedRequest.generation === request.generation &&
+    state.publishedRequest.contextSignature === request.contextSignature &&
+    cycleRangesEqual(state.publishedRequest.range, request.range)
+  );
+}
+
 /** Resolve the request-only point budget without changing the canonical config. */
 export function timeCapacityPreviewMaxPoints(
   configuredMaxPoints: number,
@@ -416,7 +557,7 @@ export function timeCapacityCycleSliderGeometry(
   return { leftPercent, widthPercent, visualWidthCycles };
 }
 
-/** Center the current-width window on a click position along the slider track. */
+/** Place the current-width window's left edge at a click position along the slider track. */
 export function timeCapacityCycleRangeAtTrackPosition(
   range: TimeCapacityCycleRange,
   pointerOffsetPx: number,
@@ -434,8 +575,10 @@ export function timeCapacityCycleRangeAtTrackPosition(
     return current;
   }
   const fraction = clamp(pointerOffsetPx / trackWidthPx, 0, 1);
-  const targetCycle = 1 + Math.round(fraction * Math.max(0, maximum - 1));
-  return centerTimeCapacityCycleRange(current, targetCycle, maximum);
+  const width = cycleRangeWidth(current);
+  const availableStarts = Math.max(0, maximum - width);
+  const targetStart = 1 + Math.round(fraction * availableStarts);
+  return clampCycleWindow(targetStart, width, maximum);
 }
 
 /**
@@ -465,8 +608,7 @@ export function timeCapacityCycleStartAtTrackPosition(
   const width = cycleRangeWidth(current);
   const availableStarts = Math.max(0, maximum - width);
   const fraction = clamp(pointerOffsetPx / trackWidthPx, 0, 1);
-  const targetCycle = 1 + fraction * Math.max(0, maximum - 1);
-  return clamp(targetCycle - (width - 1) / 2, 1, availableStarts + 1);
+  return clamp(1 + fraction * availableStarts, 1, availableStarts + 1);
 }
 
 export function timeCapacityCycleRangeAtBoundary(
@@ -659,11 +801,67 @@ export function timeCapacityRangeNavigationDisabled(
   return (cycles ?? []).length > 0;
 }
 
+export function timeCapacityCycleNavigationDisabledAtBoundary(
+  range: TimeCapacityCycleRange,
+  direction: -1 | 1,
+  mode: "cycle" | "window",
+  maxAvailableCycle: number | null | undefined,
+): boolean {
+  const maximum = positiveMaximum(maxAvailableCycle);
+  if (maximum === null) {
+    // A previous single-cycle move remains safe without an extent; forward and
+    // window moves need the known upper bound to avoid an unbounded request.
+    return direction === 1 || mode === "window";
+  }
+  const current = normalizeCycleRangeForNavigation(range.start, range.end, maximum);
+  return direction === -1 ? current.start <= 1 : current.end >= maximum;
+}
+
+export function parseTimeCapacitySpecificCycles(
+  input: string,
+  maxAvailableCycle: number | null | undefined,
+): number[] | null {
+  const trimmed = input.trim();
+  if (trimmed === "") return [];
+
+  const maximum = positiveMaximum(maxAvailableCycle);
+  const values = new Set<number>();
+  // Normalize optional whitespace around a range dash before accepting the
+  // same comma/whitespace-separated syntax as the previous single-cycle
+  // parser. A range is expanded here because the backend contract stores
+  // explicit cycles as a concrete list.
+  const tokens = trimmed.replace(/\s*-\s*/g, "-").split(/[,\s]+/).filter(Boolean);
+  for (const token of tokens) {
+    const range = /^(\d+)-(\d+)$/.exec(token);
+    const startText = range?.[1] ?? token;
+    const endText = range?.[2] ?? token;
+    if (!/^\d+$/.test(startText) || !/^\d+$/.test(endText)) return null;
+
+    const start = Number(startText);
+    const end = Number(endText);
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start <= 0 ||
+      end <= 0 ||
+      end < start ||
+      (maximum !== null && end > maximum)
+    ) {
+      return null;
+    }
+
+    for (let value = start; value < end; value += 1) values.add(value);
+    values.add(end);
+  }
+
+  return [...values].sort((left, right) => left - right);
+}
+
 export function timeCapacityPreviousViewDisabled(
-  cycles: readonly number[] | null | undefined,
+  _cycles: readonly number[] | null | undefined,
   historyLength: number,
 ): boolean {
-  return timeCapacityRangeNavigationDisabled(cycles) || historyLength <= 0;
+  return historyLength <= 0;
 }
 
 export function selectedTimeCapacityCycleMax(

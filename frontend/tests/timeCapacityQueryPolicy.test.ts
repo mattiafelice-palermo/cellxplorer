@@ -3,12 +3,16 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { AnalysisSpec } from "../src/api.ts";
+import { timeCapacityTraceIsHidden } from "../src/features/analyses/editor/families/time-capacity/timeCapacityVisibility.ts";
 import {
   timeCapacityCompatibilitySignature,
+  timeCapacityDataExportSpec,
+  timeCapacityDataSignature,
   timeCapacityPlotExportReady,
   timeCapacityPlaceholderCompatible,
   timeCapacityPlaceholderData,
   timeCapacityRetainedPanResult,
+  timeCapacityScientificRequestSpec,
   type TimeCapacityQueryConfig,
 } from "../src/features/analyses/editor/policies/timeCapacityQueryPolicy.ts";
 
@@ -22,6 +26,7 @@ function makeSpec(): CompatibilitySpec {
     selection: {
       entries: [{ kind: "cell", ref_id: 7 }],
       exclusions: [],
+      hidden_replicate_group_ids: [],
     },
     protocol_segments: [
       {
@@ -88,6 +93,100 @@ test("range and density changes are compatible placeholder identities", () => {
   assert.equal(signature(makeSpec(), range), signature(makeSpec(), explicitCycles));
   assert.equal(signature(makeSpec(), range), signature(makeSpec(), denser));
   assert.equal(signature(makeSpec(), range, 1200), signature(makeSpec(), range, 6000));
+});
+
+test("analysis-sample visibility does not change Time/Capacity scientific identities", () => {
+  const visible = makeSpec();
+  const hidden = makeSpec();
+  hidden.selection.exclusions = [{ cell_id: 7, reason: null }];
+  hidden.selection.hidden_replicate_group_ids = [42];
+
+  assert.equal(signature(visible), signature(hidden));
+  assert.equal(
+    timeCapacityDataSignature(visible, makeConfig(), 1200),
+    timeCapacityDataSignature(hidden, makeConfig(), 1200),
+  );
+});
+
+test("analysis sample membership still changes the Time/Capacity data identity", () => {
+  const selected = makeSpec();
+  const changedSelection = makeSpec();
+  changedSelection.selection.entries = [{ kind: "cell", ref_id: 8 }];
+
+  assert.notEqual(
+    timeCapacityDataSignature(selected, makeConfig(), 1200),
+    timeCapacityDataSignature(changedSelection, makeConfig(), 1200),
+  );
+});
+
+test("scientific request specs neutralize only display visibility without mutating the live spec", () => {
+  const live = makeSpec();
+  live.selection.exclusions = [{ cell_id: 7, reason: null }];
+  live.selection.hidden_replicate_group_ids = [42];
+  const before = structuredClone(live);
+
+  const scientific = timeCapacityScientificRequestSpec(live);
+
+  assert.deepEqual(scientific.selection.entries, live.selection.entries);
+  assert.deepEqual(scientific.selection.exclusions, []);
+  assert.deepEqual(scientific.selection.hidden_replicate_group_ids, []);
+  assert.deepEqual(scientific.computation, live.computation);
+  assert.deepEqual(scientific.presentation, live.presentation);
+  assert.notStrictEqual(scientific.selection, live.selection);
+  assert.deepEqual(live, before);
+});
+
+test("Time/Capacity data export scopes preserve full resolution settings and live visibility", () => {
+  const live = makeSpec() as AnalysisSpec;
+  live.selection.exclusions = [{ cell_id: 7, reason: null }];
+  live.selection.hidden_replicate_group_ids = [42];
+  live.computation.time_capacity = makeConfig();
+  const before = structuredClone(live);
+
+  const fullSeries = timeCapacityDataExportSpec(live, makeConfig(), "full_series");
+  const plotRange = timeCapacityDataExportSpec(live, makeConfig(), "plot_range");
+
+  assert.deepEqual(fullSeries.computation.time_capacity?.cycles, []);
+  assert.equal(fullSeries.computation.time_capacity?.cycle_start, null);
+  assert.equal(fullSeries.computation.time_capacity?.cycle_end, null);
+  assert.equal(fullSeries.computation.time_capacity?.max_points_per_cell, 4000);
+  assert.deepEqual(fullSeries.selection.exclusions, live.selection.exclusions);
+  assert.deepEqual(
+    fullSeries.selection.hidden_replicate_group_ids,
+    live.selection.hidden_replicate_group_ids,
+  );
+  assert.equal(plotRange.computation.time_capacity?.cycle_start, 1);
+  assert.equal(plotRange.computation.time_capacity?.cycle_end, 3);
+  assert.deepEqual(live, before);
+});
+
+test("live Analysis-sample visibility filters an already returned Time/Capacity trace", () => {
+  const visible = makeSpec() as AnalysisSpec;
+  const hidden = structuredClone(visible);
+  hidden.selection.exclusions = [{ cell_id: 7, reason: null }];
+
+  const trace = { cell_id: 7, group_id: null, excluded: false };
+  assert.equal(timeCapacityTraceIsHidden(trace, visible), false);
+  assert.equal(timeCapacityTraceIsHidden(trace, hidden), true);
+  assert.equal(signature(visible), signature(hidden));
+});
+
+test("interactive Plot visibility uses style restyle instead of a calc replot", () => {
+  const plotSource = readFileSync(
+    new URL("../src/components/Plot.tsx", import.meta.url),
+    "utf8",
+  );
+  const restyleStart = plotSource.indexOf("await Plotly.restyle(");
+  assert.ok(restyleStart >= 0);
+  const restyleEnd = plotSource.indexOf("        } finally", restyleStart);
+  assert.ok(restyleEnd > restyleStart);
+  const restyleSource = plotSource.slice(restyleStart, restyleEnd);
+
+  assert.match(restyleSource, /opacity: opacityValues/);
+  assert.match(restyleSource, /showlegend: legendValues/);
+  assert.doesNotMatch(restyleSource, /\bvisible\s*:/);
+  assert.match(plotSource, /internalVisibilityRestyleRef/);
+  assert.match(plotSource, /figureUpdatePendingRef/);
 });
 
 test("selection and protocol visibility changes are incompatible", () => {
@@ -162,9 +261,9 @@ test("placeholder data is retained only for the same compatibility identity", ()
   );
 });
 
-test("plot export is unavailable while a compatible placeholder is displayed", () => {
-  assert.equal(timeCapacityPlotExportReady(true, true, false, true), false);
+test("plot export remains available for a displayed range during query replacement", () => {
   assert.equal(timeCapacityPlotExportReady(false, true, false, true), true);
+  assert.equal(timeCapacityPlotExportReady(true, true, false, true), false);
   assert.equal(timeCapacityPlotExportReady(false, false, false, true), false);
   assert.equal(timeCapacityPlotExportReady(false, true, true, true), false);
   assert.equal(timeCapacityPlotExportReady(false, true, false, false), false);
@@ -203,8 +302,19 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /queryFn: async \(\{ signal \}\) =>/);
   assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
   assert.match(liveSource, /timeCapacityPlotExportReady/);
+  assert.match(liveSource, /timeCapacityScientificRequestSpec/);
+  assert.match(liveSource, /const plotConfig = useMemo\(/);
+  assert.match(liveSource, /config=\{plotConfig\}/);
+  assert.match(liveSource, /voltageChannelAvailabilitySignature\(scientificRequestSpec,/);
+  const queryStart = liveSource.indexOf("const timeResult = useQuery");
+  assert.ok(queryStart >= 0);
+  assert.match(liveSource.slice(queryStart), /spec: scientificRequestSpec,/);
   assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
-  assert.match(liveSource, /panActive \|\| timeResult\.isPlaceholderData \|\| resultIsRetainedPanFallback/);
+  assert.match(liveSource, /panActive \|\| resultIsRetainedPanFallback/);
+  assert.match(
+    liveSource,
+    /timeResult\.isPlaceholderData \|\| resultIsCompatibleFallback \|\| resultIsRetainedPanFallback/,
+  );
   assert.match(liveSource, /const token = transientPreviewRequest \? null : newComputeToken\(\)/);
   assert.match(liveSource, /onReadyChange\?\.\(readyForParent\)/);
   assert.match(liveSource, /panSettlingWindowRef\.current = \{ \.\.\.range \}/);
@@ -213,6 +323,13 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /absolute_time_origin_cycle: panRequest\.window\.start/);
   assert.match(liveSource, /const panRelayoutInFlightRef = useRef\(false\)/);
   assert.match(liveSource, /if \(panPendingRef\.current\) queuePanFrameRef\.current\(\)/);
+  assert.match(liveSource, /timeCapacityCommittedNavigationOnRange/);
+  assert.match(liveSource, /timeCapacityCommittedNavigationOnRequestSettled/);
+  assert.match(liveSource, /scheduleCommittedNavigationRange\(range\)/);
+  assert.match(liveSource, /timeCapacitySpecWithCycleRange/);
+  assert.match(liveSource, /if \(cyclePreviewRange === null && committedNavigationRange\)/);
+  assert.match(liveSource, /timeCapacityPreviewOnMove\(/);
+  assert.match(liveSource, /timeCapacityBufferOnMove\(/);
   assert.match(navigationSource, /const final = previewAtPointer\(\s*event\.clientX,/s);
   assert.doesNotMatch(navigationSource, /onPreview\(finalRange, final\.position\)/);
   assert.match(navigationSource, /const final = previewAtPointer\([\s\S]*onCommit\(finalRange\);/);
@@ -220,12 +337,14 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(navigationSource, /if \(event\.detail === 0\) onActivate\(event\.ctrlKey\)/);
   assert.match(navigationSource, /navigateTimeCapacityCycleRange\(\s*buttonRangeRef\.current,/s);
   assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);
-  assert.match(liveSource, /new TimeCapacityRefinementLifecycle\(cfg\.stacked\)/);
+  assert.match(liveSource, /new TimeCapacityRefinementLifecycle\(\)/);
   assert.match(
     liveSource,
-    /useLayoutEffect\(\(\) => \{\s*if \(stackedModeChanged && cfg\.stacked\) invalidateRefinement\(\);/s,
+    /useLayoutEffect\(\(\) => \{\s*if \(stackedModeChanged\) invalidateRefinement\(\);/s,
   );
   assert.match(liveSource, /timeCapacityRefinementDisplayIsCurrent\(/);
+  assert.match(liveSource, /const refinementViewport =/);
+  assert.match(liveSource, /next\.xaxis2 = \{ \.\.\.\(base\.xaxis2 \?\? \{\}\)/);
   assert.match(liveSource, /if \(panPresentationActive \|\| cfg\.stacked \|\| !refinementTransition\) return null;/);
   assert.match(liveSource, /timeCapacityRefinementCanSchedule\(active, spec\)/);
   assert.match(liveSource, /refinementLifecycle\.acceptResponse\(/);
@@ -235,10 +354,19 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(savedPreviewSource, /queryFn: \(\{ signal \}\) =>/);
   assert.match(savedPreviewSource, /background: warmup,\s*\n\s*\}, \{ signal \}\),/);
 
-  const autosaveStart = editorSource.indexOf("const signatureAtSchedule = autosaveSignature;");
-  const autosaveEnd = editorSource.indexOf("const displayResult", autosaveStart);
-  assert.ok(autosaveStart >= 0 && autosaveEnd > autosaveStart);
-  const autosaveSource = editorSource.slice(autosaveStart, autosaveEnd);
-  assert.match(autosaveSource, /refreshPersistedAnalysisQueries\(qc, aid, saved\)/);
-  assert.doesNotMatch(autosaveSource, /invalidateAnalysisQueries/);
+  assert.doesNotMatch(editorSource, /autosave/i);
+  const persistStart = editorSource.indexOf("const buildPersistPayload");
+  const displayResultStart = editorSource.indexOf("const displayResult", persistStart);
+  assert.ok(persistStart >= 0 && displayResultStart > persistStart);
+  const persistenceSource = editorSource.slice(persistStart, displayResultStart);
+  assert.match(persistenceSource, /const persistAnalysisSpec =/);
+  assert.doesNotMatch(persistenceSource, /useEffect|setTimeout|signatureAtSchedule/);
+
+  const updateStart = editorSource.indexOf("const applyUpdateActivePlot");
+  const updateEnd = editorSource.indexOf("const updateActivePlot", updateStart);
+  assert.ok(updateStart >= 0 && updateEnd > updateStart);
+  const updateSource = editorSource.slice(updateStart, updateEnd);
+  assert.match(updateSource, /setSpec\(next\)/);
+  assert.match(updateSource, /persistAnalysisSpec\(persistSpec, persistTitle\)/);
+  assert.match(editorSource, /dirty \? "Unsaved" : "Saved"/);
 });

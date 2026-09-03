@@ -53,17 +53,25 @@ export function interactivePlotTraces(traces: Plotly.Data[]): Plotly.Data[] {
   });
 }
 
-type PlotlyHoverNode = Element & {
-  onmousemove: ((event: MouseEvent) => unknown) | null;
+type PlotlyZoomLayout = {
+  _invScaleX?: number;
+  _invScaleY?: number;
+  _invTransform?: number[][];
+  _calcInverseTransform?: (graphDiv: HTMLElement) => unknown;
 };
 
-type PlotlyHoverPatch = {
-  original: NonNullable<PlotlyHoverNode["onmousemove"]>;
-  patched: NonNullable<PlotlyHoverNode["onmousemove"]>;
-  scale: { x: number; y: number };
+type PlotlyZoomScaleState = {
+  baseX: number;
+  baseY: number;
+  appliedX: number;
+  appliedY: number;
+  baseTransform?: number[][];
+  appliedTransform?: number[][];
+  originalCalculate?: PlotlyZoomLayout["_calcInverseTransform"];
+  patchedCalculate?: PlotlyZoomLayout["_calcInverseTransform"];
 };
 
-const plotlyHoverPatches = new WeakMap<Element, PlotlyHoverPatch>();
+const plotlyZoomScaleStates = new WeakMap<HTMLElement, PlotlyZoomScaleState>();
 const plotlyHoverRefreshers = new WeakMap<HTMLElement, () => void>();
 
 function cssZoomScale(target: Element): { x: number; y: number } {
@@ -82,96 +90,90 @@ function cssZoomScale(target: Element): { x: number; y: number } {
   return { x, y };
 }
 
-function correctPlotlyHoverEvent(
-  event: MouseEvent,
-  target: Element,
-  scale: { x: number; y: number },
-): MouseEvent {
-  if (
-    Math.abs(scale.x - 1) < 0.0001 &&
-    Math.abs(scale.y - 1) < 0.0001
-  ) {
-    return event;
-  }
+function applyPlotlyCssZoomInteractionScale(graphDiv: HTMLElement): void {
+  const layout = (graphDiv as HTMLElement & { _fullLayout?: PlotlyZoomLayout })._fullLayout;
+  if (!layout || typeof layout._invScaleX !== "number" || typeof layout._invScaleY !== "number") return;
 
-  const rect = target.getBoundingClientRect();
-  const corrected = Object.create(event) as MouseEvent;
-  Object.defineProperties(corrected, {
-    clientX: {
-      configurable: true,
-      enumerable: true,
-      value: rect.left + (event.clientX - rect.left) / scale.x,
-      writable: true,
-    },
-    clientY: {
-      configurable: true,
-      enumerable: true,
-      value: rect.top + (event.clientY - rect.top) / scale.y,
-      writable: true,
-    },
-    // Plotly's hover-layer handler retargets the event before calling Fx.hover.
-    // Make the cloned event writable without mutating the browser event.
-    target: {
-      configurable: true,
-      enumerable: true,
-      value: event.target,
-      writable: true,
-    },
+  const scale = cssZoomScale(graphDiv);
+  const currentX = layout._invScaleX;
+  const currentY = layout._invScaleY;
+  const previous = plotlyZoomScaleStates.get(graphDiv);
+  // Plotly may recalculate its inverse transform after a resize. Preserve the
+  // unzoomed transform as the new base only when the current values are not
+  // the values that this adapter applied on the previous refresh.
+  const baseX = previous && Math.abs(currentX - previous.appliedX) < 0.0001
+    ? previous.baseX
+    : currentX;
+  const baseY = previous && Math.abs(currentY - previous.appliedY) < 0.0001
+    ? previous.baseY
+    : currentY;
+  const currentTransform = layout._invTransform;
+  const transformIsApplied = Boolean(
+    previous?.appliedTransform &&
+    currentTransform &&
+    currentTransform.length === previous.appliedTransform.length &&
+    currentTransform.every((row, index) =>
+      row.length === previous.appliedTransform?.[index]?.length &&
+      row.every((value, column) => Math.abs(value - (previous.appliedTransform?.[index]?.[column] ?? Number.NaN)) < 0.0001),
+    ),
+  );
+  const baseTransform = transformIsApplied
+    ? previous?.baseTransform
+    : currentTransform?.map((row) => [...row]);
+  const appliedTransform = baseTransform?.map((row) => row.map((value, column) => {
+    if (column === 0) return value / scale.x;
+    if (column === 1) return value / scale.y;
+    return value;
+  }));
+  const appliedX = baseX / scale.x;
+  const appliedY = baseY / scale.y;
+  layout._invScaleX = appliedX;
+  layout._invScaleY = appliedY;
+  if (appliedTransform) layout._invTransform = appliedTransform;
+  plotlyZoomScaleStates.set(graphDiv, {
+    baseX,
+    baseY,
+    appliedX,
+    appliedY,
+    baseTransform,
+    appliedTransform,
+    originalCalculate: previous?.originalCalculate,
+    patchedCalculate: previous?.patchedCalculate,
   });
-  return corrected;
 }
 
-function patchPlotlyHoverNode(
-  node: Element,
-  eventTarget: () => Element | null,
-): void {
-  const hoverNode = node as PlotlyHoverNode;
-  const original = hoverNode.onmousemove;
-  if (typeof original !== "function") return;
-  const existing = plotlyHoverPatches.get(node);
-  const currentTarget = eventTarget() ?? node;
-  if (existing?.original === original || existing?.patched === original) {
-    existing.scale = cssZoomScale(currentTarget);
-    return;
-  }
+function patchPlotlyInverseTransformCalculation(graphDiv: HTMLElement): void {
+  const layout = (graphDiv as HTMLElement & { _fullLayout?: PlotlyZoomLayout })._fullLayout;
+  const originalCalculate = layout?._calcInverseTransform;
+  if (!layout || typeof originalCalculate !== "function") return;
+  const existing = plotlyZoomScaleStates.get(graphDiv);
+  if (existing?.patchedCalculate === originalCalculate) return;
 
-  let patch: PlotlyHoverPatch;
-  const patched = function (this: Element, event: MouseEvent) {
-    const target = eventTarget() ?? node;
-    return original.call(this, correctPlotlyHoverEvent(event, target, patch.scale));
+  const patchedCalculate = function (this: unknown, target: HTMLElement) {
+    const result = originalCalculate.call(this, target);
+    applyPlotlyCssZoomInteractionScale(graphDiv);
+    return result;
   };
-  patch = { original, patched, scale: cssZoomScale(currentTarget) };
-  plotlyHoverPatches.set(node, patch);
-  hoverNode.onmousemove = patched;
+  layout._calcInverseTransform = patchedCalculate;
+  plotlyZoomScaleStates.set(graphDiv, {
+    ...(existing ?? { baseX: 0, baseY: 0, appliedX: 0, appliedY: 0 }),
+    originalCalculate,
+    patchedCalculate,
+  });
 }
 
 function refreshPlotlyCssZoomHoverCompensation(graphDiv: HTMLElement): void {
-  const dragNodes = graphDiv.querySelectorAll(".nsewdrag");
-  dragNodes.forEach((node) => patchPlotlyHoverNode(node, () => node));
-
-  const layout = (graphDiv as HTMLElement & {
-    _fullLayout?: {
-      _hoverlayer?: { node?: () => Element | null };
-      _lasthover?: Element | null;
-    };
-  })._fullLayout;
-  const hoverLayer = layout?._hoverlayer?.node?.() ?? null;
-  if (hoverLayer) {
-    patchPlotlyHoverNode(
-      hoverLayer,
-      () => layout?._lasthover ?? graphDiv,
-    );
-  }
+  patchPlotlyInverseTransformCalculation(graphDiv);
+  applyPlotlyCssZoomInteractionScale(graphDiv);
 }
 
 /**
  * Plotly understands CSS transforms when converting pointer coordinates, but
  * not the CSS `zoom` used by the app's compact UI scaling. Under a zoomed
  * surface, the drag layer receives physical pixels while Plotly searches in
- * its unzoomed axis dimensions; hover labels then drift and the lower part of
- * the plot can fall outside Plotly's perceived hit area. Correct only the
- * hover event's local coordinates, leaving Plotly's pan/zoom drag handlers
- * untouched.
+ * its unzoomed axis dimensions; hover labels and zoom/selection rectangles
+ * then drift. Correct Plotly's inverse transform and scale in one place while
+ * leaving application-owned plot state untouched.
  */
 export function installPlotlyCssZoomHoverCompensation(graphDiv: HTMLElement): void {
   if (typeof window === "undefined") return;
@@ -189,12 +191,30 @@ export function disposePlotlyCssZoomHoverCompensation(graphDiv: HTMLElement): vo
   if (!refresh) return;
   window.removeEventListener("resize", refresh);
   plotlyHoverRefreshers.delete(graphDiv);
-  graphDiv.querySelectorAll(".nsewdrag").forEach((node) => plotlyHoverPatches.delete(node));
-  const layout = (graphDiv as HTMLElement & {
-    _fullLayout?: { _hoverlayer?: { node?: () => Element | null } };
-  })._fullLayout;
-  const hoverLayer = layout?._hoverlayer?.node?.();
-  if (hoverLayer) plotlyHoverPatches.delete(hoverLayer);
+  const zoomState = plotlyZoomScaleStates.get(graphDiv);
+  const layout = (graphDiv as HTMLElement & { _fullLayout?: PlotlyZoomLayout })._fullLayout;
+  if (zoomState && layout) {
+    if (Math.abs((layout._invScaleX ?? Number.NaN) - zoomState.appliedX) < 0.0001) {
+      layout._invScaleX = zoomState.baseX;
+    }
+    if (Math.abs((layout._invScaleY ?? Number.NaN) - zoomState.appliedY) < 0.0001) {
+      layout._invScaleY = zoomState.baseY;
+    }
+    if (zoomState.appliedTransform && zoomState.baseTransform) {
+      const transformIsApplied = layout._invTransform?.length === zoomState.appliedTransform.length &&
+        layout._invTransform.every((row, index) =>
+          row.length === zoomState.appliedTransform?.[index]?.length &&
+          row.every((value, column) => Math.abs(value - (zoomState.appliedTransform?.[index]?.[column] ?? Number.NaN)) < 0.0001),
+        );
+      if (transformIsApplied) {
+        layout._invTransform = zoomState.baseTransform.map((row) => [...row]);
+      }
+    }
+    if (layout._calcInverseTransform === zoomState.patchedCalculate) {
+      layout._calcInverseTransform = zoomState.originalCalculate;
+    }
+  }
+  plotlyZoomScaleStates.delete(graphDiv);
 }
 
 
@@ -225,11 +245,14 @@ export function afterPaint(): Promise<void> {
 
 
 type ZoomMemory = {
-  onRelayout: (event: Readonly<Plotly.PlotRelayoutEvent>) => void;
+  /** Returns true when the relayout originated from a pointer interaction. */
+  onRelayout: (event: Readonly<Plotly.PlotRelayoutEvent>) => boolean;
   apply: (layout: Partial<Plotly.Layout>) => Partial<Plotly.Layout>;
   /** Attach to the plot wrapper's onPointerDownCapture so only relayouts
    *  triggered by real pointer interaction are ever recorded. */
   armOnPointerDown: () => void;
+  /** Forget a user viewport before application-owned navigation. */
+  reset: () => void;
 };
 
 export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
@@ -252,9 +275,14 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     armed.current = true;
   };
 
+  const reset = () => {
+    stored.current = null;
+    armed.current = false;
+  };
+
   const onRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
-    if (!enabled) return;
     const ev = event as Record<string, unknown>;
+    const pointerDriven = armed.current;
     if (
       ev["xaxis.autorange"] === true ||
       ev["xaxis2.autorange"] === true ||
@@ -263,9 +291,9 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     ) {
       stored.current = null; // double-click / modebar autoscale
       armed.current = false;
-      return;
+      return pointerDriven;
     }
-    if (!armed.current) return; // programmatic echo â€” never record
+    if (!pointerDriven) return false; // programmatic echo â€” never record
     const xRange = Array.isArray(ev["xaxis.range"]) ? ev["xaxis.range"] as unknown[] : [];
     const yRange = Array.isArray(ev["yaxis.range"]) ? ev["yaxis.range"] as unknown[] : [];
     const xr0 = ev["xaxis.range[0]"] ?? xRange[0];
@@ -274,14 +302,16 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     const yr1 = ev["yaxis.range[1]"] ?? yRange[1];
     const hasX = typeof xr0 === "number" && typeof xr1 === "number";
     const hasY = typeof yr0 === "number" && typeof yr1 === "number";
-    if (!hasX && !hasY) return;
+    if (!hasX && !hasY) return false;
     armed.current = false;
+    if (!enabled) return true;
     const prev = stored.current?.signature === signature ? stored.current : null;
     stored.current = {
       signature,
       x: hasX ? [xr0 as number, xr1 as number] : prev?.x,
       y: hasY ? [yr0 as number, yr1 as number] : prev?.y,
     };
+    return true;
   };
 
   const apply = (layout: Partial<Plotly.Layout>): Partial<Plotly.Layout> => {
@@ -306,7 +336,7 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     return layout;
   };
 
-  return { onRelayout, apply, armOnPointerDown };
+  return { onRelayout, apply, armOnPointerDown, reset };
 }
 
 export function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {

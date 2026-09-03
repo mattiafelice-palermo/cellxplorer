@@ -63,9 +63,12 @@ import {
   plotPalette,
 } from "../../plotting/plotStyle";
 import {
+  hiddenSeriesIdsAfterShowAll,
+  hiddenSeriesIdsAfterShowOnly,
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
+  plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
@@ -711,12 +714,18 @@ export function StepsSettings({
  * sidebar swatches both palette over this list so their colours stay aligned.
  */
 export function stepsVisibleSeries(result: StepsResult, spec: AnalysisSpec): StepSeries[] {
+  return stepsApplicableSeries(result, spec).filter(
+    (item) => !isSeriesHidden(spec, item.series_id),
+  );
+}
+
+/** Series that are valid for the current selection/segment layer. */
+export function stepsApplicableSeries(result: StepsResult, spec: AnalysisSpec): StepSeries[] {
   return result.cell_series.filter(
     (item) =>
       item.n_blocks > 0 &&
       !isCellHiddenInAnalysis(spec, item.cell_id) &&
-      !isAnalysisSegmentHidden(spec, item.segment_id) &&
-      !isSeriesHidden(spec, item.series_id)
+      !isAnalysisSegmentHidden(spec, item.segment_id),
   );
 }
 
@@ -731,6 +740,7 @@ export function stepsSeriesDescriptors(items: StepSeries[]): SeriesDescriptor[] 
     label: item.label,
     cellName: item.cell_name,
     groupName: null,
+    visibilityKey: item.series_id,
   }));
 }
 
@@ -865,6 +875,41 @@ export function StepsPlotCard({
     () => stepsSeriesDescriptors(visibleSeriesItems),
     [visibleSeriesItems]
   );
+  const seriesVisibilityCandidates = useMemo(
+    () =>
+      data
+        ? stepsApplicableSeries(data, spec).map((item) => ({
+            key: item.series_id,
+            label: item.label,
+          }))
+        : [],
+    [data, spec],
+  );
+  const seriesVisibilityItems = useMemo(
+    () => plotSeriesVisibilityItems(seriesVisibilityCandidates, spec),
+    [seriesVisibilityCandidates, spec],
+  );
+  const showOnlySeries = useCallback(
+    (key: string) =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowOnly(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+          key,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
+  const showAllSeries = useCallback(
+    () =>
+      update((draft) => {
+        draft.presentation.hidden_series_ids = hiddenSeriesIdsAfterShowAll(
+          draft.presentation.hidden_series_ids,
+          seriesVisibilityCandidates,
+        );
+      }),
+    [seriesVisibilityCandidates, update],
+  );
 
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
@@ -890,12 +935,16 @@ export function StepsPlotCard({
     [data, spec],
   );
 
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
+  const exportPlot = async (
+    format: PlotExportFormat,
+    baseName: string,
+    exportStyle: PlotStyle = style,
+  ) => {
     try {
       await downloadStyledPlotExport(
         traces,
         layout,
-        style,
+        exportStyle,
         plotName,
         format,
         baseName,
@@ -909,12 +958,12 @@ export function StepsPlotCard({
     }
   };
 
-  const getExportPreview = () =>
-    styledPlotExportPreview(traces, layout, style, plotName, plotSize);
+  const getExportPreview = (exportStyle: PlotStyle = style) =>
+    styledPlotExportPreview(traces, layout, exportStyle, plotName, plotSize);
 
-  const handleDataExport = async (baseName: string) => {
+  const handleDataExport = async (baseName: string, exportStyle: PlotStyle = style) => {
     try {
-      await downloadDataExport(tracesToColumns(traces, layout), style, baseName);
+      await downloadDataExport(tracesToColumns(traces, layout), exportStyle, baseName);
     } catch (error) {
       notifications.show({
         message: error instanceof Error ? error.message : "Data export failed.",
@@ -948,15 +997,6 @@ export function StepsPlotCard({
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
-          updateStyle={(fn) =>
-            update((draft) => {
-              const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=
-                {}) as Record<string, unknown>;
-              const current = (styles.steps ?? {}) as Record<string, unknown>;
-              fn(current as never);
-              styles.steps = current;
-            })
-          }
           layout={layout}
           viewSize={plotSize}
           canExport={traces.length > 0}

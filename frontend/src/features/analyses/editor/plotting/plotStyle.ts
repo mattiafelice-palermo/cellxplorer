@@ -151,6 +151,24 @@ export const DEFAULT_PLOT_STYLE: PlotStyle = {
   export_include_title: false,
 };
 
+/**
+ * Resolve the style used when starting a new plot on a specific tab.
+ * Time/Capacity defaults to lines because its dense scientific series are
+ * much easier to read that way; existing saved styles and every other tab
+ * retain their configured marker defaults.
+ */
+export function defaultPlotStyleForTab(
+  scope: AnalysisTabKey,
+  style: Partial<PlotStyle> | undefined = DEFAULT_PLOT_STYLE,
+): PlotStyle {
+  const next = normalizePlotStyle(style);
+  if (scope === "time_capacity") {
+    next.marker_mode = "none";
+    next.ce_marker_mode = "none";
+  }
+  return next;
+}
+
 export function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
   const legacyExportSettings = style?.export_settings_version !== DEFAULT_PLOT_STYLE.export_settings_version;
   const xAxis = { ...DEFAULT_PLOT_STYLE.x_axis, ...(style?.x_axis ?? {}) };

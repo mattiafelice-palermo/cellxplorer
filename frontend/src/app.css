@@ -147,3 +147,23 @@ body {
   border-radius: 8px;
   overflow: hidden;
 }
+
+/* Plotly hover labels are SVG paths rather than Mantine surfaces. Rounded
+   joins soften their small pointer box without affecting exported figures. */
+.js-plotly-plot .hovertext > path {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* The first hover line is emitted from the template's <b> tag. Keep the
+   SVG text readable even when Plotly derives its default contrast from a
+   pale channel surface. */
+.js-plotly-plot .hovertext text.nums,
+.js-plotly-plot .hovertext text.name {
+  fill: #343a40 !important;
+}
+
+.js-plotly-plot .hovertext text.nums tspan[style*="font-weight"],
+.js-plotly-plot .hovertext text.name {
+  font-weight: 700;
+}

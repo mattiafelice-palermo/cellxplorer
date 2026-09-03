@@ -2213,7 +2213,7 @@ def build(
             if index is not None:
                 cached_cycle_identity_source = index.get("biologic_cycle_identity_source")
             if cached_cycle_identity_source is None:
-                # A gcpl10 cache created before provenance was persisted is
+                # A pre-gcpl11 cache created before provenance was persisted is
                 # scientifically usable but cannot safely promote a pending
                 # candidate. Reparse once to publish exact adapter evidence.
                 reparse_for_biologic_provenance = True

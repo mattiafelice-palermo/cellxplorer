@@ -15,6 +15,7 @@ import {
   timeCapacityRefinementTransitionDuration,
   timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
+  timeCapacityVisibleCycleRangeForViewport,
   timeCapacityViewportContains,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementPolicy.ts";
 
@@ -84,6 +85,14 @@ test("overview extent and cycle range use visible overview points only", () => {
   assert.deepEqual(
     timeCapacityCycleRangeForViewport(current, { min: 1.5, max: 3.5 }),
     { start: 1, end: 3 },
+  );
+  assert.deepEqual(
+    timeCapacityVisibleCycleRangeForViewport(current, { min: 1.5, max: 3.5 }),
+    { start: 2, end: 2 },
+  );
+  assert.deepEqual(
+    timeCapacityVisibleCycleRangeForViewport(current, { min: 3.5, max: 1.5 }),
+    { start: 2, end: 2 },
   );
 });
 
@@ -182,7 +191,7 @@ test("refinement transition is bounded and reduced-motion safe", () => {
   assert.equal(timeCapacityRefinementTransitionProgress(10, 0), 1);
 });
 
-test("ordinary Time/Capacity specs are eligible and unsafe refinement modes are not", () => {
+test("ordinary and stacked Time/Capacity specs are eligible while unsafe modes are not", () => {
   const base = { computation: { time_capacity: undefined } } as never;
   assert.equal(timeCapacityRefinementEligible(base), true);
   assert.equal(
@@ -195,7 +204,7 @@ test("ordinary Time/Capacity specs are eligible and unsafe refinement modes are 
     timeCapacityRefinementEligible({
       computation: { time_capacity: { view: "voltage_current", x_axis: "time", stacked: true } },
     } as never),
-    false,
+    true,
   );
   assert.equal(
     timeCapacityRefinementEligible({
@@ -205,7 +214,7 @@ test("ordinary Time/Capacity specs are eligible and unsafe refinement modes are 
   );
 });
 
-test("stacked mode cannot display a previously accepted flat refinement", () => {
+test("flat and stacked renderers can display the same accepted refinement", () => {
   const current = result();
   const response = {
     ...current,
@@ -214,18 +223,14 @@ test("stacked mode cannot display a previously accepted flat refinement", () => 
     request_generation: "g1",
   } as TimeCapacityRefinementResult;
   assert.equal(
-    timeCapacityRefinementDisplayIsCurrent(false, response, current, "compat", "compat"),
+    timeCapacityRefinementDisplayIsCurrent(response, current, "compat", "compat"),
     true,
-  );
-  assert.equal(
-    timeCapacityRefinementDisplayIsCurrent(true, response, current, "compat", "compat"),
-    false,
   );
 });
 
 test("production refinement lifecycle schedules, accepts, retains, and invalidates displays", () => {
   const current = result();
-  const lifecycle = new TimeCapacityRefinementLifecycle(false);
+  const lifecycle = new TimeCapacityRefinementLifecycle();
   const responseFor = (generation: string): TimeCapacityRefinementResult => ({
     ...current,
     data_signature: "overview",
@@ -260,16 +265,8 @@ test("production refinement lifecycle schedules, accepts, retains, and invalidat
   );
   assert.equal(lifecycle.displayed?.result.request_generation, generationC);
 
-  lifecycle.setStacked(true);
   lifecycle.invalidate();
   assert.equal(lifecycle.displayed, null);
-  assert.equal(
-    lifecycle.acceptResponse(responseFor(generationC), current, generationC, viewportC, "compat"),
-    false,
-  );
-
-  lifecycle.setStacked(false);
-  lifecycle.cancelPending();
   const freshGeneration = lifecycle.beginRequest(viewportC);
   assert.equal(
     lifecycle.acceptResponse(

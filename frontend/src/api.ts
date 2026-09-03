@@ -1188,8 +1188,8 @@ export interface PlotStyle {
   /** Paper coordinates (0..1) of the legend center when legend_mode=custom. */
   legend_custom_x: number;
   legend_custom_y: number;
-  /** Data (CSV/XLSX) export preferences. */
-  data_export_format: "csv" | "xlsx";
+  /** Data export preferences. */
+  data_export_format: "csv" | "xlsx" | "parquet";
   data_precision: "standard" | "full";
   data_decimal_separator: "point" | "comma";
   data_delimiter: "comma" | "semicolon" | "tab";
@@ -1311,9 +1311,11 @@ export interface AnalysisSpec {
     legend: boolean;
     hidden_protocol_segment_ids?: string[];
     /**
-     * Display-only visibility for the series-based tabs (DCIR, steps). Kept out
-     * of the compute cache key (see analysis_cache._scientific_spec) so toggling
-     * a line on or off never triggers a recompute.
+     * Display-only visibility for user-visible series across plot families.
+     * Keys are family-owned stable application identities; existing DCIR/Steps
+     * identifiers remain supported. Kept out of the compute cache key (see
+     * analysis_cache._scientific_spec) so toggling a line on or off never
+     * triggers a recompute.
      */
     hidden_series_ids?: string[];
     /** Display-only: segment ids hidden across DCIR/steps series (all cells). */
