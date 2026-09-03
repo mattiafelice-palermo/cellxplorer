@@ -132,6 +132,7 @@ import {
   timeCapacityVisibleVoltageChannels,
   timeCapacityVoltageVisibilityKey,
 } from "./timeCapacityVisibility";
+import { consecutiveTimeCapacityExportColumns } from "./timeCapacityDataExport";
 import {
   timeCapacityCycleRangeForViewport,
   timeCapacityOverviewExtent,
@@ -3228,15 +3229,27 @@ function TimeCapacityPlotCardView({
             : "A selected voltage quantity is unavailable for the current selection.",
         );
       }
-      const traceStarted = performance.now();
-      const fullTraces = timeCapacityTracesForResult(fullResult, exportSpec);
-      markExportStage("trace_build_ms", traceStarted);
-      if (fullTraces.length === 0) {
+      const columnStarted = performance.now();
+      const directColumns = consecutiveTimeCapacityExportColumns(
+        fullResult,
+        exportSpec,
+        timeCapacityConfig(exportSpec),
+        currentPlotStyle(exportSpec, "time_capacity"),
+        livePlotXRange,
+      );
+      let traceCount = 0;
+      let columns = directColumns;
+      if (columns === null) {
+        const traceStarted = performance.now();
+        const fullTraces = timeCapacityTracesForResult(fullResult, exportSpec);
+        traceCount = fullTraces.length;
+        markExportStage("trace_build_ms", traceStarted);
+        columns = tracesToColumns(fullTraces, layout, livePlotXRange);
+      }
+      markExportStage("column_build_ms", columnStarted);
+      if (columns.length === 0) {
         throw new Error("No data is available for the selected voltage quantity.");
       }
-      const columnStarted = performance.now();
-      const columns = tracesToColumns(fullTraces, layout, livePlotXRange);
-      markExportStage("column_build_ms", columnStarted);
       const fileStarted = performance.now();
       await downloadDataExport(
         columns,
@@ -3257,7 +3270,8 @@ function TimeCapacityPlotCardView({
         console.debug("[Time/Capacity data export]", {
           format: exportFormat,
           scope,
-          trace_count: fullTraces.length,
+          path: directColumns === null ? "plotly_traces" : "direct_columns",
+          trace_count: traceCount,
           column_count: columns.length,
           row_count: columns.reduce((max, column) => Math.max(max, column.values.length), 0),
           ...exportTimings,

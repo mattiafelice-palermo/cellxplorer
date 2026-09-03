@@ -271,8 +271,11 @@ export controls. The export request uses `precision=full` with a compact, non-pe
 shape: full precision retains every selected row, while compactness omits unused derivative,
 capacity, status, and repeated source-provenance arrays. Do not persist these potentially very
 large one-shot JSON payloads in the analysis result cache. XLSX/CSV formatting remains a
-browser-side operation, so Parquet is the lighter large-export format and the full-resolution
-result is still built only once per export.
+browser-side operation. Consecutive voltage/current exports build their columns directly from the
+full-resolution response; routing those rows through interactive Plotly trace construction first
+needlessly allocates per-point hover, segment, and marker objects and roughly doubles latency on
+large selections. Unsupported layouts retain the established trace-based fallback. Parquet is the
+lighter large-export format and the full-resolution result is still built only once per export.
 
 Compact time/capacity responses are specific to the selected X-axis and display mode: the backend
 ships `display_x` plus only the raw X array needed for that request. Therefore the frontend query

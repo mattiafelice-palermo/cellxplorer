@@ -47,7 +47,9 @@ export function textFromDataUrl(dataUrl: string): string {
 export type PlotDataXRange = readonly [number, number];
 
 function valuesAtIndices<T>(values: readonly T[], indices: readonly number[] | null): T[] {
-  return indices === null ? [...values] : indices.map((index) => values[index]);
+  // Export encoders only read column arrays. Reuse full-range arrays instead
+  // of copying every value before formatting large scientific exports.
+  return indices === null ? (values as T[]) : indices.map((index) => values[index]);
 }
 
 export function tracesToColumns(
