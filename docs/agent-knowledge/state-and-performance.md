@@ -261,6 +261,15 @@ exports and scientific calculations must not silently inherit display-only downs
 reports keep serialized Plotly figures for interactive browsers and frozen SVG fallbacks for
 restricted viewers. See `docs/portable-analysis-html.md`.
 
+Full-resolution Time/Capacity voltage/current data exports use the same indexed per-Cell boundary
+as ordinary requests and may dispatch through the already-warmed bounded process pool when more
+than one Cell is selected. The worker result is parity-checked against the established full
+serial path and falls back to it when the indexed plan, pool, or publication boundary is not safe;
+derivative and other unsupported full-resolution requests remain on the established path. The
+frontend keeps the plot mounted and reports request, file-formatting, and save stages beside the
+export controls. XLSX/CSV formatting remains a browser-side operation, so Parquet is the lighter
+large-export format and the full-resolution result is still built only once per export.
+
 Compact time/capacity responses are specific to the selected X-axis and display mode: the backend
 ships `display_x` plus only the raw X array needed for that request. Therefore the frontend query
 signature must include every setting that changes those values, including `x_axis`, `time_unit`,

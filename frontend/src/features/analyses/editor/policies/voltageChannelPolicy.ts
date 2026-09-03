@@ -138,8 +138,20 @@ export function voltageChannelDataIdentity(
   result: TimeCapacityResult | undefined,
 ): string | undefined {
   if (!result) return undefined;
-  if (result.source_data_signature) return result.source_data_signature;
-  const sources = result.cell_traces
+  // The server field historically called `source_data_signature` is derived
+  // from the complete scientific request. It therefore changes when a
+  // full-resolution export deliberately removes the current cycle window.
+  // Prefer the source descriptors, whose identity remains stable across
+  // cycle ranges and render modes, while still changing for real source or
+  // parser-version changes.
+  const traces = Array.isArray(result.cell_traces) ? result.cell_traces : [];
+  const hasSourceDescriptors = traces.some((trace) =>
+    Array.isArray(trace.source_descriptors),
+  );
+  if (!hasSourceDescriptors && result.source_data_signature) {
+    return result.source_data_signature;
+  }
+  const sources = traces
     .flatMap((trace) =>
       (trace.source_descriptors ?? []).map((source) => ({
         cell_id: trace.cell_id,
@@ -149,11 +161,19 @@ export function voltageChannelDataIdentity(
       }))
     )
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const voltageChannels = result.voltage_channels
+    ? Object.fromEntries(
+        Object.entries(result.voltage_channels).sort(([left], [right]) =>
+          left.localeCompare(right),
+        ),
+      )
+    : null;
   return JSON.stringify({
     parser_version: result.parser_version,
     calc_version: result.calc_version,
+    cells: traces.map((trace) => trace.cell_id).sort((left, right) => left - right),
     sources,
-    voltage_channels: result.voltage_channels ?? null,
+    voltage_channels: voltageChannels,
   });
 }
 

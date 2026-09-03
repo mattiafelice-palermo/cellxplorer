@@ -929,6 +929,111 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(len(full_trace["voltage_v"]), 200)
         self.assertEqual(full_trace["voltage_v"][0], 3.5)
 
+    def test_full_time_capacity_worker_matches_legacy_export_result(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {
+            "cycle_end": 30,
+            "x_axis": "time",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 100,
+        }
+
+        # Keep the established implementation as a parity oracle while the
+        # worker receives the same indexed full-resolution request directly.
+        with patch.object(time_capacity_workers, "try_compute_time_capacity", return_value=None):
+            legacy = engine.compute_time_capacity(
+                self.db,
+                deepcopy(spec),
+                None,
+                viewport_width=1200,
+                precision="full",
+                compact=False,
+            )
+        worker = time_capacity_workers.try_compute_time_capacity(
+            self.db,
+            deepcopy(spec),
+            None,
+            viewport_width=1200,
+            precision="full",
+            compact=False,
+            force_serial=True,
+        )
+
+        self.assertIsNotNone(worker)
+        legacy.pop("computed_at", None)
+        worker.pop("computed_at", None)
+        self.assertEqual(worker, legacy)
+
+    def test_full_time_capacity_worker_process_matches_serial_export_result(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {
+            "cycle_end": 30,
+            "x_axis": "time",
+            "display_mode": "consecutive",
+            "max_points_per_cell": 100,
+        }
+        pool = None
+        published = False
+        try:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            pool = time_capacity_workers._new_pool(2)
+            time_capacity_workers._warm_pool(pool, 2)
+            with time_capacity_workers._POOL_LOCK:
+                time_capacity_workers._POOL = pool
+                time_capacity_workers._POOL_WORKERS = 2
+                time_capacity_workers._POOL_STATE = "ready"
+            published = True
+            kwargs = {
+                "viewport_width": 1200,
+                "precision": "full",
+                "compact": False,
+            }
+            serial = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                deepcopy(spec),
+                None,
+                force_serial=True,
+                **kwargs,
+            )
+            process_decision = time_capacity_workers.ExecutionDecision(
+                "process",
+                2,
+                "focused_test",
+                logical_cpus=16,
+                total_memory_bytes=32 * 1024 * 1024 * 1024,
+                available_memory_bytes=16 * 1024 * 1024 * 1024,
+            )
+            with patch.object(
+                time_capacity_workers,
+                "choose_execution",
+                return_value=process_decision,
+            ):
+                process = time_capacity_workers.try_compute_time_capacity(
+                    self.db,
+                    deepcopy(spec),
+                    None,
+                    **kwargs,
+                )
+            self.assertIsNotNone(serial)
+            self.assertIsNotNone(process)
+            serial.pop("computed_at", None)
+            process.pop("computed_at", None)
+            self.assertEqual(process, serial)
+        finally:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            if pool is not None and not published:
+                pool.shutdown(wait=True, cancel_futures=True)
+
     def test_time_capacity_data_signature_includes_unit_scientific_inputs(self):
         cell = self.cells["c1"]
         spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])

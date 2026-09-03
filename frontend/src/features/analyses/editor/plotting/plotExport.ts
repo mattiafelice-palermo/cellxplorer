@@ -122,16 +122,19 @@ export function buildDelimitedText(
   delimiter: PlotStyle["data_delimiter"],
 ): string {
   const sep = delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",";
-  const formatNumber = (v: SourceExportValue | undefined, header: string) => {
-    if (v === null || v === undefined || Number.isNaN(v)) return "";
-    if (typeof v === "string") return v;
-    const rounded =
-      precision === "full"
-        ? v
-        : Number(v.toFixed(exportDecimalPlaces(header)));
-    const s = String(rounded);
-    return decimal === "comma" ? s.replace(".", ",") : s;
-  };
+  const formatters = columns.map((column) => {
+    const decimalPlaces = exportDecimalPlaces(column.header);
+    return (v: SourceExportValue | undefined) => {
+      if (v === null || v === undefined || Number.isNaN(v)) return "";
+      if (typeof v === "string") return v;
+      const rounded =
+        precision === "full"
+          ? v
+          : Number(v.toFixed(decimalPlaces));
+      const s = String(rounded);
+      return decimal === "comma" ? s.replace(".", ",") : s;
+    };
+  });
   const quote = (s: string) =>
     s.includes(sep) || s.includes('"') || s.includes("\n")
       ? `"${s.replace(/"/g, '""')}"`
@@ -139,7 +142,7 @@ export function buildDelimitedText(
   const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
   const lines = [columns.map((c) => quote(c.header)).join(sep)];
   for (let i = 0; i < rowCount; i += 1) {
-    lines.push(columns.map((c) => formatNumber(c.values[i], c.header)).join(sep));
+    lines.push(formatters.map((format, columnIndex) => format(columns[columnIndex].values[i])).join(sep));
   }
   // BOM so Excel detects UTF-8
   return "\uFEFF" + lines.join("\r\n");
@@ -188,29 +191,57 @@ export function parquetColumnData(columns: DataColumn[]) {
   });
 }
 
-export async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
+export type DataExportStage = "formatting" | "saving";
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+export async function downloadDataExport(
+  columns: DataColumn[],
+  style: PlotStyle,
+  baseName: string,
+  onStage?: (stage: DataExportStage) => void,
+): Promise<void> {
   if (columns.length === 0) return;
+  onStage?.("formatting");
+  // Give React a chance to paint the formatting state before a large
+  // synchronous CSV/XLSX/Parquet encoder occupies the main thread.
+  await yieldToBrowser();
   if (style.data_export_format === "xlsx") {
     const XLSX = await import("xlsx");
     const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
+    const valueReaders = columns.map((column) => {
+      const decimalPlaces = exportDecimalPlaces(column.header);
+      return (value: SourceExportValue | undefined): string | number | null => {
+        if (value === null || value === undefined || (typeof value === "number" && Number.isNaN(value))) {
+          return null;
+        }
+        if (typeof value === "string") return value;
+        return style.data_precision === "full"
+          ? value
+          : Number(value.toFixed(decimalPlaces));
+      };
+    });
     const book = XLSX.utils.book_new();
     for (const [sheetIndex, range] of xlsxDataRowRanges(rowCount).entries()) {
       const aoa: (string | number | null)[][] = [columns.map((c) => c.header)];
       for (let i = range.start; i < range.end; i += 1) {
         aoa.push(
-          columns.map((c) => {
-            const v = c.values[i];
-            if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return null;
-            if (typeof v === "string") return v;
-            if (style.data_precision === "full") return v;
-            return Number(v.toFixed(exportDecimalPlaces(c.header)));
-          })
+          valueReaders.map((read, columnIndex) => read(columns[columnIndex].values[i]))
         );
       }
       const sheet = XLSX.utils.aoa_to_sheet(aoa);
       XLSX.utils.book_append_sheet(book, sheet, sheetIndex === 0 ? "Data" : `Data ${sheetIndex + 1}`);
     }
     const bytes = XLSX.write(book, { bookType: "xlsx", type: "array" });
+    onStage?.("saving");
     await downloadBlob(
       new Blob([bytes], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -222,6 +253,7 @@ export async function downloadDataExport(columns: DataColumn[], style: PlotStyle
   if (style.data_export_format === "parquet") {
     const { parquetWriteBuffer } = await import("hyparquet-writer");
     const bytes = parquetWriteBuffer({ columnData: parquetColumnData(columns) });
+    onStage?.("saving");
     await downloadBlob(
       new Blob([bytes], { type: "application/vnd.apache.parquet" }),
       `${baseName}.parquet`,
@@ -234,6 +266,7 @@ export async function downloadDataExport(columns: DataColumn[], style: PlotStyle
     style.data_decimal_separator,
     style.data_delimiter
   );
+  onStage?.("saving");
   await downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), `${baseName}.csv`);
 }
 

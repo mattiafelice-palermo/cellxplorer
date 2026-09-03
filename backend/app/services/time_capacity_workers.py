@@ -7,8 +7,11 @@ Parquet cache.  The same per-Cell function is used directly for the serial
 path and by the persistent spawned process pool.
 
 The optimized path is intentionally narrow.  Legacy caches, protocol filters,
-derivatives, full exports and any publication/freshness failure return control
-to the established analysis engine, which remains the fail-closed fallback.
+derivatives and any publication/freshness failure return control to the
+established analysis engine, which remains the fail-closed fallback.  Full
+voltage/current export requests are eligible because they use the same indexed
+raw path and per-Cell result boundary; the legacy engine remains the fallback
+for every other full-resolution request.
 """
 from __future__ import annotations
 
@@ -1383,7 +1386,7 @@ def _build_jobs(
     configured = max(100, settings["max_points_per_cell"])
     display_max = (
         configured
-        if refinement
+        if refinement or precision == "full" or not compact
         else analysis_engine.time_capacity_display_budget(configured, width, visible_count)
     )
     calc_version = analysis_engine.CALC_VERSION
@@ -1477,7 +1480,9 @@ def try_compute_time_capacity(
     from . import analysis_engine
 
     settings = analysis_engine.time_capacity_settings(spec.get("computation", {}))
-    if precision != "standard" or not compact or settings.get("view") != "voltage_current":
+    ordinary_compact = precision == "standard" and compact
+    full_export = precision == "full" and not compact and not refinement
+    if not (ordinary_compact or full_export) or settings.get("view") != "voltage_current":
         return None
     if refinement and (
         settings.get("x_axis")

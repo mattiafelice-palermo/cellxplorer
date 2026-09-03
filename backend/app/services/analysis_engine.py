@@ -3770,11 +3770,19 @@ def compute_time_capacity(
             "exact capacity refinement origins are unavailable; recompute the overview"
         )
 
-    # Spec 050.14: ordinary compact requests may use the owner-resolved
-    # indexed path and bounded persistent process pool. The service returns
-    # ``None`` for every unsupported or unsafe case, leaving this established
-    # implementation as the exact serial/legacy fallback.
-    if precision == "standard" and compact:
+    # Spec 050.14: ordinary compact requests and full-resolution interactive
+    # export requests may use the owner-resolved indexed path and bounded
+    # persistent process pool. The service returns ``None`` for every
+    # unsupported or unsafe case, leaving this established implementation as
+    # the exact serial/legacy fallback.
+    full_voltage_current_export = (
+        precision == "full"
+        and not compact
+        and not refinement
+        and time_capacity_settings(spec.get("computation", {}))["view"]
+        == "voltage_current"
+    )
+    if (precision == "standard" and compact) or full_voltage_current_export:
         from . import time_capacity_workers
 
         optimized = time_capacity_workers.try_compute_time_capacity(

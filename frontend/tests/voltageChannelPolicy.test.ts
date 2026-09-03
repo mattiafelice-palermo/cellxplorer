@@ -207,6 +207,77 @@ test("full-resolution export rejects delayed results for either auxiliary channe
   }
 });
 
+test("full-series exports tolerate a range-specific server signature when source descriptors match", () => {
+  const channelAvailability = {
+    voltage: { available: true, label: "Cell voltage (V)", role: "cell" },
+    working_potential: {
+      available: false,
+      label: "Working potential vs ref (V)",
+      role: "working_vs_reference",
+    },
+    counter_potential: {
+      available: false,
+      label: "Counter potential vs ref (V)",
+      role: "counter_vs_reference",
+    },
+  };
+  const resultForCurrentRange = {
+    parser_version: "parser-a",
+    calc_version: "calc-a",
+    source_data_signature: "current-cycle-range",
+    settings: { voltage_channel: "voltage" },
+    voltage_channels: {
+      counter_potential: channelAvailability.counter_potential,
+      voltage: channelAvailability.voltage,
+      working_potential: channelAvailability.working_potential,
+    },
+    cell_traces: [
+      {
+        cell_id: 4,
+        source_descriptors: [
+          { source_position: 1, source_hash: "hash-a", parser_version: "parser-a", status: "ready" },
+        ],
+      },
+    ],
+  } as any;
+  const fullSeriesResult = {
+    ...resultForCurrentRange,
+    source_data_signature: "all-cycles-range",
+    voltage_channels: {
+      voltage: channelAvailability.voltage,
+      working_potential: channelAvailability.working_potential,
+      counter_potential: channelAvailability.counter_potential,
+    },
+  };
+  const sourceIdentity = voltageChannelDataIdentity(resultForCurrentRange);
+
+  assert.equal(voltageChannelDataIdentity(fullSeriesResult), sourceIdentity);
+  assert.equal(
+    timeCapacityExportMatchesRequest(
+      "data-a",
+      "data-a",
+      "voltage",
+      "voltage",
+      fullSeriesResult,
+      sourceIdentity,
+    ),
+    true,
+  );
+
+  const changedSource = {
+    ...fullSeriesResult,
+    cell_traces: [
+      {
+        cell_id: 4,
+        source_descriptors: [
+          { source_position: 1, source_hash: "hash-b", parser_version: "parser-a", status: "ready" },
+        ],
+      },
+    ],
+  };
+  assert.notEqual(voltageChannelDataIdentity(changedSource), sourceIdentity);
+});
+
 test("source identity changes reset availability even when selection is unchanged", () => {
   const result = {
     parser_version: "mpr:1",

@@ -1603,6 +1603,10 @@ function TimeCapacityPlotCardView({
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
   const [computeToken, setComputeToken] = useState<string | null>(null);
   const [dataExporting, setDataExporting] = useState(false);
+  const [dataExportStage, setDataExportStage] = useState<
+    "requesting" | "formatting" | "saving" | null
+  >(null);
+  const [dataExportFormat, setDataExportFormat] = useState<PlotStyle["data_export_format"] | null>(null);
   const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
   const [refinementTransition, setRefinementTransition] = useState<RefinementTransition | null>(null);
   const [refinementTransitionProgress, setRefinementTransitionProgress] = useState(1);
@@ -3182,8 +3186,18 @@ function TimeCapacityPlotCardView({
         ? ([first, second] as const)
         : null;
     })();
+    const exportStarted = performance.now();
+    const exportTimings: Record<string, number> = {};
+    let saveStarted: number | null = null;
+    const markExportStage = (name: string, started: number) => {
+      exportTimings[name] = performance.now() - started;
+    };
+    const exportFormat = exportStyle.data_export_format.toUpperCase();
+    setDataExportFormat(exportStyle.data_export_format);
+    setDataExportStage("requesting");
     setDataExporting(true);
     try {
+      const requestStarted = performance.now();
       const fullResult = await post<TimeCapacityResult>(
         `/api/analyses/${analysisId}/time-capacity`,
         {
@@ -3191,6 +3205,7 @@ function TimeCapacityPlotCardView({
           ...timeCapacityExportOptions(viewportWidth),
         }
       );
+      markExportStage("full_request_ms", requestStarted);
       if (
         !timeCapacityExportMatchesRequest(
           dataSignatureRef.current,
@@ -3213,21 +3228,59 @@ function TimeCapacityPlotCardView({
             : "A selected voltage quantity is unavailable for the current selection.",
         );
       }
+      const traceStarted = performance.now();
       const fullTraces = timeCapacityTracesForResult(fullResult, exportSpec);
+      markExportStage("trace_build_ms", traceStarted);
       if (fullTraces.length === 0) {
         throw new Error("No data is available for the selected voltage quantity.");
       }
+      const columnStarted = performance.now();
+      const columns = tracesToColumns(fullTraces, layout, livePlotXRange);
+      markExportStage("column_build_ms", columnStarted);
+      const fileStarted = performance.now();
       await downloadDataExport(
-        tracesToColumns(fullTraces, layout, livePlotXRange),
+        columns,
         exportStyle,
         baseName,
+        (stage) => {
+          setDataExportStage(stage);
+          if (stage === "saving") {
+            markExportStage("formatting_ms", fileStarted);
+            saveStarted = performance.now();
+          }
+        },
       );
+      if (saveStarted !== null) markExportStage("save_ms", saveStarted);
+      markExportStage("file_and_save_ms", fileStarted);
+      markExportStage("total_ms", exportStarted);
+      if (import.meta.env.DEV) {
+        console.debug("[Time/Capacity data export]", {
+          format: exportFormat,
+          scope,
+          trace_count: fullTraces.length,
+          column_count: columns.length,
+          row_count: columns.reduce((max, column) => Math.max(max, column.values.length), 0),
+          ...exportTimings,
+        });
+      }
     } catch (e) {
       notifications.show({ message: e instanceof Error ? e.message : "Data export failed.", color: "red" });
     } finally {
       setDataExporting(false);
+      setDataExportStage(null);
+      setDataExportFormat(null);
     }
   };
+
+  const statusFormat = (dataExportFormat ?? style.data_export_format).toUpperCase();
+  const dataExportStatus =
+    dataExportStage === "requesting"
+      ? `Preparing full-resolution ${statusFormat}…`
+      : dataExportStage === "formatting"
+        ? `Creating ${statusFormat} file…`
+        : dataExportStage === "saving"
+          ? `Saving ${statusFormat} file…`
+          : undefined;
 
   const exportPlot = async (
     format: PlotExportFormat,
@@ -3358,6 +3411,8 @@ function TimeCapacityPlotCardView({
           viewSize={plotSize}
           layout={layout}
           canExport={!panActive && Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
+          dataExporting={dataExporting}
+          dataExportStatus={dataExportStatus}
           canPlotExport={plotExportReady && !dataExporting}
           edited={edited}
           onNewPlot={onNewPlot}
