@@ -48,10 +48,21 @@ class TimeCapacityTransformNeeds:
         precision: str,
         compact: bool,
     ) -> "TimeCapacityTransformNeeds":
-        full_response = precision == "full" or not compact
+        # Precision controls rounding/downsampling; compact controls which
+        # scientific arrays the caller consumes. A full-precision compact
+        # export still needs every selected point and retains the established
+        # phase labels, but it must not calculate unrelated capacity transforms
+        # for a time-axis voltage export.
+        full_response = not compact
         normal_view = settings.get("view") == "voltage_current"
         x_axis = settings.get("x_axis")
         derivative = not normal_view
+        compact_consecutive_time = (
+            compact
+            and normal_view
+            and x_axis == "time"
+            and settings.get("display_mode") == "consecutive"
+        )
         capacity_axis = normal_view and x_axis in {
             "capacity_mah",
             "capacity_mah_g",
@@ -63,7 +74,7 @@ class TimeCapacityTransformNeeds:
             # engine and all alternate display modes. The narrow production
             # worker path applies its stricter consecutive-only omission after
             # resolving this common request shape.
-            phase=True,
+            phase=precision == "full" or not compact_consecutive_time,
             phase_capacity=full_response or derivative or capacity_axis,
             specific_capacity=(
                 full_response

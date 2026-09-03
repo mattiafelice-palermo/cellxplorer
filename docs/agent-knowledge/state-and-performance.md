@@ -261,6 +261,25 @@ exports and scientific calculations must not silently inherit display-only downs
 reports keep serialized Plotly figures for interactive browsers and frozen SVG fallbacks for
 restricted viewers. See `docs/portable-analysis-html.md`.
 
+Full-resolution Time/Capacity voltage/current data exports use the same indexed per-Cell boundary
+as ordinary requests and may dispatch through the already-warmed bounded process pool when more
+than one Cell is selected. The worker result is parity-checked against the established full
+serial path and falls back to it when the indexed plan, pool, or publication boundary is not safe;
+derivative and other unsupported full-resolution requests remain on the established path. The
+frontend keeps the plot mounted and reports request and save stages beside the export controls.
+Consecutive single-source CSV and Parquet exports use the backend-native `/time-capacity/export`
+boundary: the frontend sends only resolved live visibility/naming metadata, while the backend
+computes `precision=full`, `compact=True` rows and writes the file directly. Both full-series and
+current-plot-range exports use this path; range filtering is inclusive and happens before file
+serialization. This avoids a large JSON round trip and browser-side table construction. Compact
+full-precision time-axis planning retains the established phase labels but omits unconsumed
+capacity transforms: precision retains source rows, while compactness controls which scientific
+arrays are calculated and returned. Do not persist these one-shot results in the analysis result
+cache. XLSX, derivative,
+and unsupported or multi-source layouts retain the established full-result browser fallback,
+including source-boundary semantics. Parquet is the preferred large-export format because its
+columnar encoding is much smaller and faster to write than text CSV.
+
 Compact time/capacity responses are specific to the selected X-axis and display mode: the backend
 ships `display_x` plus only the raw X array needed for that request. Therefore the frontend query
 signature must include every setting that changes those values, including `x_axis`, `time_unit`,

@@ -3770,11 +3770,18 @@ def compute_time_capacity(
             "exact capacity refinement origins are unavailable; recompute the overview"
         )
 
-    # Spec 050.14: ordinary compact requests may use the owner-resolved
-    # indexed path and bounded persistent process pool. The service returns
-    # ``None`` for every unsupported or unsafe case, leaving this established
-    # implementation as the exact serial/legacy fallback.
-    if precision == "standard" and compact:
+    # Spec 050.14: ordinary compact requests and full-resolution interactive
+    # export requests may use the owner-resolved indexed path and bounded
+    # persistent process pool. The service returns ``None`` for every
+    # unsupported or unsafe case, leaving this established implementation as
+    # the exact serial/legacy fallback.
+    full_voltage_current_export = (
+        precision == "full"
+        and not refinement
+        and time_capacity_settings(spec.get("computation", {}))["view"]
+        == "voltage_current"
+    )
+    if (precision == "standard" and compact) or full_voltage_current_export:
         from . import time_capacity_workers
 
         optimized = time_capacity_workers.try_compute_time_capacity(
@@ -3813,7 +3820,6 @@ def compute_time_capacity(
     settings = time_capacity_settings(computation)
     compact_ordinary_time = (
         compact
-        and precision == "standard"
         and settings["view"] == "voltage_current"
         and settings["x_axis"] == "time"
         and settings["display_mode"] == "consecutive"
@@ -4491,9 +4497,9 @@ def compute_time_capacity(
                 if "segment" in raw.columns and len(raw) > 1
                 else np.array([], dtype="int64")
             )
-        # A full, non-compact request is used by scientific data export. It
-        # must retain every selected-channel row even when the interactive
-        # setting intentionally limits the on-screen point count.
+        # Full precision is used by scientific data export. It must retain
+        # every selected-channel row even when the compact response shape
+        # omits arrays that the exporter does not consume.
         if len(raw) > display_max and not (precision == "full" or not compact):
             envelope_series = (
                 [derivative_x, derivative_y]

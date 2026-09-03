@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Divider,
   Group,
@@ -155,6 +156,8 @@ export function PlotHeader({
   viewSize,
   layout,
   canExport = false,
+  dataExporting = false,
+  dataExportStatus,
   canPlotExport,
   edited = false,
   onNewPlot,
@@ -184,6 +187,9 @@ export function PlotHeader({
   viewSize?: { width: number; height: number } | null;
   layout?: Partial<Plotly.Layout>;
   canExport?: boolean;
+  /** A visible status for the asynchronous full-resolution data export. */
+  dataExporting?: boolean;
+  dataExportStatus?: string;
   /** Plot/image/vector export readiness; defaults to the data-export readiness. */
   canPlotExport?: boolean;
   /** Amber chip when the open saved plot has unsaved edits. */
@@ -310,6 +316,17 @@ export function PlotHeader({
         <Text size="sm" c="dimmed">
           {subtitle}
         </Text>
+        {dataExporting ? (
+          <Box mt={4} w="min(280px, 100%)" role="status" aria-live="polite" aria-busy="true">
+            <Group gap={6} wrap="nowrap">
+              <Loader size={13} type="dots" />
+              <Text size="xs" c="dimmed">
+                {dataExportStatus ?? "Preparing data export…"}
+              </Text>
+            </Group>
+            <Progress value={100} striped animated size={3} mt={3} />
+          </Box>
+        ) : null}
       </div>
       <Group gap="xs" align="start">
         <PlotExplainerButton explainer={explainer} />
@@ -319,6 +336,7 @@ export function PlotHeader({
               size="xs"
               variant="default"
               leftSection={<IconTable size={14} />}
+              loading={dataExporting}
               disabled={!canExport}
               onClick={exportData}
             >

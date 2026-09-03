@@ -1,4 +1,6 @@
+import csv
 import sys
+import tempfile
 import time
 import unittest
 from dataclasses import FrozenInstanceError
@@ -28,6 +30,103 @@ class TimeCapacityWorkerTests(unittest.TestCase):
         self.assertEqual(analysis_engine.time_capacity_display_budget(4000, 320, 20), 800)
         self.assertEqual(analysis_engine.time_capacity_display_budget(100_000, 10_000, 5), 24_000)
         self.assertEqual(analysis_engine.time_capacity_display_budget(100_000, 50_000, 5), 24_000)
+
+    @staticmethod
+    def _export_fixture():
+        trace = {
+            "cell_id": 1,
+            "group_id": None,
+            "label": "Cell A",
+            "cycle": [1, 1, 2],
+            "source_cycle": [4, 4, 5],
+            "display_x": [0.0, 1.0, 2.0],
+            "voltage_v": [3.1234567, 3.2345678, 3.3456789],
+            "current_ma": [10.0, 20.0, 30.0],
+            "electrode_area_cm2": 2.0,
+            "nominal_capacity_mah": 100.0,
+            "sources": [{"position": 1, "filename": "cell-a.ndax", "hash": "hash-a"}],
+            "source_index": [0, 0, 0],
+        }
+        plan = {
+            "x_title": "Time (min)",
+            "traces": [{
+                "cell_id": 1,
+                "group_id": None,
+                "current_name": "Cell A",
+                "voltage_series": [{
+                    "channel": "voltage",
+                    "name": "Cell A",
+                    "y_title": "Cell voltage (V)",
+                }],
+            }],
+        }
+        settings = {
+            "voltage_channel": "voltage",
+            "stacked": True,
+            "current_left": "current_density",
+            "current_right": "c_rate",
+            "electrode_area_cm2": None,
+        }
+        return {"cell_traces": [trace]}, plan, settings
+
+    def test_native_csv_export_crops_the_full_resolution_rows(self):
+        result, plan, settings = self._export_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "range.csv"
+            summary = workers.write_time_capacity_data_export(
+                result,
+                plan,
+                settings,
+                destination,
+                export_format="csv",
+                data_precision="standard",
+                x_range=(0.5, 1.5),
+            )
+            with destination.open("r", encoding="utf-8-sig", newline="") as source:
+                rows = list(csv.reader(source))
+
+        self.assertEqual(summary["rows"], 1)
+        self.assertEqual(rows[0][:8], [
+            "Cell",
+            "Global cycle",
+            "Local cycle",
+            "Source position",
+            "Source file",
+            "Source hash",
+            "Cell A | Time (min)",
+            "Cell A | Cell voltage (V)",
+        ])
+        self.assertEqual(rows[1][:8], [
+            "Cell A", "1", "4", "1", "cell-a.ndax", "hash-a", "1", "3.23457"
+        ])
+        self.assertEqual(rows[1][-4:], ["1", "10", "1", "0.2"])
+
+    def test_native_parquet_export_keeps_full_rows_and_unique_field_names(self):
+        import pyarrow.parquet as pq
+
+        result, plan, settings = self._export_fixture()
+        duplicate_plan = {
+            **plan,
+            "traces": [*plan["traces"], {**plan["traces"][0]}],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "full.parquet"
+            summary = workers.write_time_capacity_data_export(
+                result,
+                duplicate_plan,
+                settings,
+                destination,
+                export_format="parquet",
+            )
+            table = pq.read_table(destination)
+
+        self.assertEqual(summary["rows"], 3)
+        self.assertEqual(table.num_rows, 3)
+        self.assertEqual(len(table.column_names), len(set(table.column_names)))
+        self.assertIn("Cell (2)", table.column_names)
+        self.assertEqual(table.column(table.column_names.index("Cell A | Cell voltage (V)" )).to_pylist(), [
+            3.1234567, 3.2345678, 3.3456789
+        ])
 
     def test_workload_gate_is_deterministic_and_bounded(self):
         rich = workers.HostResources(
