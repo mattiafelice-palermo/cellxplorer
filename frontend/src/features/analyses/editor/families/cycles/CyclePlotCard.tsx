@@ -1595,7 +1595,6 @@ export function CyclePlotCard({
                 edits: { legendPosition: style.legend_mode !== "outside" },
               }}
               style={{ width: "100%" }}
-              onViewportIntent={zoom.armOnPointerDown}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);

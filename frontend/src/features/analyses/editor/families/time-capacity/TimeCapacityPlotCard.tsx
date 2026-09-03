@@ -3564,7 +3564,6 @@ function TimeCapacityPlotCardView({
               config={plotConfig}
               traceVisibility={traceVisibility}
               style={{ width: "100%" }}
-              onViewportIntent={zoom.armOnPointerDown}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);

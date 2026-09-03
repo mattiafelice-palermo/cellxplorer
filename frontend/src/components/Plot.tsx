@@ -12,10 +12,6 @@ import {
   blockPlotlyLegendVisibility,
   disablePlotlyLegendVisibility,
 } from "../features/analyses/editor/policies/analysisVisibility";
-import {
-  disposePlotNavigation,
-  installPlotNavigation,
-} from "../features/analyses/editor/plotting/plotNavigation";
 
 const createPlotlyComponent = resolvePlotlyFactory(factoryModule);
 
@@ -103,11 +99,9 @@ type PlotProps = PlotParams & {
    * with a stable trace array can use this for fast local visibility edits.
    */
   traceVisibility?: PlotTraceVisibility;
-  /** Mark shared wheel/touchpad navigation as a user-owned viewport change. */
-  onViewportIntent?: () => void;
 };
 
-function Plot({ traceVisibility, onViewportIntent, ...props }: PlotProps) {
+function Plot({ traceVisibility, ...props }: PlotProps) {
   const graphDivRef = useRef<HTMLElement | null>(null);
   const latestVisibilityRef = useRef<PlotTraceVisibility | undefined>(traceVisibility);
   latestVisibilityRef.current = traceVisibility;
@@ -252,7 +246,6 @@ function Plot({ traceVisibility, onViewportIntent, ...props }: PlotProps) {
     frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
     installPlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
-    installPlotNavigation(graphDiv as HTMLElement, onViewportIntent);
     props.onInitialized?.(figure, graphDiv);
   };
 
@@ -268,7 +261,6 @@ function Plot({ traceVisibility, onViewportIntent, ...props }: PlotProps) {
     frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
     installPlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
-    installPlotNavigation(graphDiv as HTMLElement, onViewportIntent);
     props.onUpdate?.(figure, graphDiv);
   };
 
@@ -278,7 +270,6 @@ function Plot({ traceVisibility, onViewportIntent, ...props }: PlotProps) {
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     disposePlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
-    disposePlotNavigation(graphDiv as HTMLElement);
     props.onPurge?.(figure, graphDiv);
   };
 
