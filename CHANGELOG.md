@@ -4,6 +4,22 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.19 - 2026-09-03
+
+### New features
+
+- Add saved-plot renaming with validation, persistence, and custom names in analysis exports.
+- Add full-resolution Time/Capacity data exports with full-series or current-plot-range selection, source precision, and Parquet output.
+- Improve Time/Capacity cycle navigation with explicit cycle ranges, adaptive display refinement, viewport-aware navigation, and line-oriented defaults for new plots.
+- Support alternate BioLogic GCPL settings profiles with corresponding parsing, cache, and metadata coverage.
+
+### Bug fixes
+
+- Keep plot image export, data export, and export previews from falsely marking plots as edited or enabling Update.
+- Reduce unnecessary Time/Capacity refetches, redraws, and visibility flashes while preserving application-owned plot state.
+- Keep Plotly legend interactions passive and fix Cycles CE-only rendering so visible charge-efficiency curves are not lost when primary curves are hidden.
+- Polish plot hover, pointer, zoom, and cycle-navigation behavior for more stable interactive coordinates and view state.
+
 ## 0.27.1-alpha.18 - 2026-08-31
 
 - Use the eventual release tag for draft updater URLs.
