@@ -7,10 +7,11 @@ export type DataColumn = SourceExportColumn;
 export function slugFilename(value: string): string {
   return (
     value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 80) || "analysis-plot"
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[. ]+$/g, "")
+      .slice(0, 180) || "analysis plot"
   );
 }
 
@@ -112,26 +113,41 @@ export function buildDelimitedText(
   return "\uFEFF" + lines.join("\r\n");
 }
 
+const XLSX_MAX_ROWS_PER_SHEET = 1_048_576;
+const XLSX_DATA_ROWS_PER_SHEET = XLSX_MAX_ROWS_PER_SHEET - 1;
+
+export function xlsxDataRowRanges(rowCount: number): Array<{ start: number; end: number }> {
+  const safeCount = Math.max(0, Math.floor(rowCount));
+  if (safeCount === 0) return [{ start: 0, end: 0 }];
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let start = 0; start < safeCount; start += XLSX_DATA_ROWS_PER_SHEET) {
+    ranges.push({ start, end: Math.min(safeCount, start + XLSX_DATA_ROWS_PER_SHEET) });
+  }
+  return ranges;
+}
+
 export async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
   if (columns.length === 0) return;
   if (style.data_export_format === "xlsx") {
     const XLSX = await import("xlsx");
     const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
-    const aoa: (string | number | null)[][] = [columns.map((c) => c.header)];
-    for (let i = 0; i < rowCount; i += 1) {
-      aoa.push(
-        columns.map((c) => {
-          const v = c.values[i];
-          if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return null;
-          if (typeof v === "string") return v;
-          if (style.data_precision === "full") return v;
-          return Number(v.toFixed(exportDecimalPlaces(c.header)));
-        })
-      );
-    }
-    const sheet = XLSX.utils.aoa_to_sheet(aoa);
     const book = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(book, sheet, "Data");
+    for (const [sheetIndex, range] of xlsxDataRowRanges(rowCount).entries()) {
+      const aoa: (string | number | null)[][] = [columns.map((c) => c.header)];
+      for (let i = range.start; i < range.end; i += 1) {
+        aoa.push(
+          columns.map((c) => {
+            const v = c.values[i];
+            if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return null;
+            if (typeof v === "string") return v;
+            if (style.data_precision === "full") return v;
+            return Number(v.toFixed(exportDecimalPlaces(c.header)));
+          })
+        );
+      }
+      const sheet = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(book, sheet, sheetIndex === 0 ? "Data" : `Data ${sheetIndex + 1}`);
+    }
     const bytes = XLSX.write(book, { bookType: "xlsx", type: "array" });
     await downloadBlob(
       new Blob([bytes], {

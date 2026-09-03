@@ -54,7 +54,6 @@ import {
   type SourceMonitoringSettings,
 } from "../api";
 import { isTauriApp } from "../downloads";
-import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { WARMUP_NOW_EVENT } from "../features/analyses/editor/artifacts/CacheWarmupCoordinator";
 import { PAUSE_QUERY_KEY } from "../components/QuickSettingsMenu";
 import {
@@ -293,9 +292,6 @@ export function SettingsPage() {
   });
   const [mode, setMode] = useState<DownloadSettings["download_mode"]>("ask");
   const [folder, setFolder] = useState("");
-  const [filenameTemplate, setFilenameTemplate] = useState(
-    "{analysis} - {plot_title}"
-  );
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [monitorForm, setMonitorForm] = useState<SourceMonitoringSettings>({
@@ -333,7 +329,6 @@ export function SettingsPage() {
     if (!settings.data) return;
     setMode(settings.data.download_mode);
     setFolder(settings.data.download_folder ?? "");
-    setFilenameTemplate(settings.data.export_filename_template);
   }, [settings.data]);
 
   useEffect(() => {
@@ -396,12 +391,15 @@ export function SettingsPage() {
       put<DownloadSettings>("/api/settings", {
         download_mode: mode,
         download_folder: folder.trim() || null,
-        export_filename_template: filenameTemplate.trim(),
+        // Retain the legacy value for settings/API compatibility. Export
+        // dialogs now own one explicit editable filename instead of a global
+        // token template.
+        export_filename_template:
+          settings.data?.export_filename_template || "{analysis} - {plot_title}",
       }),
     onSuccess: (saved) => {
       queryClient.setQueryData(["settings"], saved);
       setFolder(saved.download_folder ?? "");
-      setFilenameTemplate(saved.export_filename_template);
       notifications.show({ message: "Download settings saved.", color: "teal" });
     },
     onError: (error: Error) =>
@@ -618,8 +616,7 @@ export function SettingsPage() {
   const dirty =
     Boolean(settings.data) &&
     (settings.data?.download_mode !== mode ||
-      (settings.data?.download_folder ?? "") !== folder ||
-      settings.data?.export_filename_template !== filenameTemplate);
+      (settings.data?.download_folder ?? "") !== folder);
   const monitorConfig = (value: SourceMonitoringSettings) => ({
     enabled: value.enabled,
     schedule_mode: value.schedule_mode,
@@ -899,15 +896,6 @@ export function SettingsPage() {
                     : "Your browser handles each download; whether it asks for a location follows its download settings."}
                 </Text>
               )}
-
-              <div>
-                <Text fw={600} size="sm" mb={6}>Default export filename</Text>
-                <FilenameTemplateEditor
-                  value={filenameTemplate}
-                  onChange={setFilenameTemplate}
-                  label="Template"
-                />
-              </div>
 
               <Group justify="flex-end">
                 <Button

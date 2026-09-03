@@ -8,6 +8,7 @@ import {
   resolveExportPlan,
   slugFilename,
   tracesToColumns,
+  xlsxDataRowRanges,
 } from "../src/features/analyses/editor/plotting/plotExport.ts";
 import { DEFAULT_PLOT_STYLE } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 import { plotViewSignature } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
@@ -48,6 +49,15 @@ test("scientific export keeps raw semantic axis labels after Plotly escaping", (
 
   assert.equal(columns[0].header, "Cell A | Time (min)");
   assert.equal(columns[1].header, "Cell A | Working potential vs R&D %{y}<br> (V)");
+});
+
+test("Excel data exports split at the worksheet row limit while retaining a header per sheet", () => {
+  assert.deepEqual(xlsxDataRowRanges(0), [{ start: 0, end: 0 }]);
+  assert.deepEqual(xlsxDataRowRanges(1_048_575), [{ start: 0, end: 1_048_575 }]);
+  assert.deepEqual(xlsxDataRowRanges(1_048_576), [
+    { start: 0, end: 1_048_575 },
+    { start: 1_048_575, end: 1_048_576 },
+  ]);
 });
 
 test("export figures isolate nested live inputs from Plotly normalization", () => {
@@ -158,10 +168,10 @@ test("export settings do not dirty a saved-view signature", () => {
   );
   assert.doesNotMatch(headerSource, /updateStyle/);
   assert.match(headerSource, /onExport\?\.\(selectedFormat, renderedFilename, exportStyle\)/);
-  assert.match(headerSource, /onDataExport\?\.\(renderedFilename, exportStyle\)/);
+  assert.match(headerSource, /onDataExport\?\.\(renderedFilename, exportStyle, dataExportScope\)/);
 });
 
-test("saved plot names remain the sanitized export filename base", () => {
-  assert.equal(slugFilename("Gen2H 6 bar retention"), "gen2h-6-bar-retention");
-  assert.equal(slugFilename("Unsaved plot"), "unsaved-plot");
+test("editable export filenames preserve readable casing and spaces", () => {
+  assert.equal(slugFilename("Gen2H 6 bar retention"), "Gen2H 6 bar retention");
+  assert.equal(slugFilename('LFP: "test" / plot.'), "LFP test plot");
 });

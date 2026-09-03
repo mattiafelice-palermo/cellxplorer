@@ -19,252 +19,77 @@ const PlotlyComponent = createPlotlyComponent(Plotly as never);
 
 type PlotTraceVisibility = readonly (boolean | "legendonly")[];
 
-type ScatterGlOpacity = number | readonly number[];
-
-type ScatterGlSceneOption = {
-  opacity?: ScatterGlOpacity;
-};
-
-type ScatterGlComponent = {
-  update(options: unknown): void;
-};
-
-type ScatterGlText = ScatterGlComponent & {
-  render(): void;
-};
-
-type ScatterGlScene = {
-  count?: number;
-  lineOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  fillOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  markerOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  markerSelectedOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  markerUnselectedOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  errorXOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  errorYOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  textOptions?: Array<ScatterGlSceneOption | null | undefined>;
-  selectBatch?: Array<readonly unknown[]>;
-  unselectBatch?: Array<readonly unknown[]>;
-  line2d?: unknown;
-  fill2d?: unknown;
-  scatter2d?: unknown;
-  error2d?: unknown;
-  select2d?: unknown;
-  glText?: Array<ScatterGlText | null | undefined>;
-  draw?: () => void;
-};
-
-type ScatterGlCalcDatum = {
-  trace?: { type?: string };
-  t?: { _scene?: ScatterGlScene; index?: number };
+type PlotTraceVisibilityStyle = {
+  opacity: number;
+  showlegend: boolean;
 };
 
 type PlotlyGraphDiv = HTMLElement & {
-  calcdata?: Array<Array<ScatterGlCalcDatum>>;
-  _fullLayout?: {
-    _glcanvas?: {
-      each?: (callback: (canvas: { regl?: { clear(options: unknown): void } }) => void) => void;
-    };
-  };
+  calcdata?: Array<Array<{ trace?: { type?: string } }>>;
+  once?: (eventName: string, listener: () => void) => void;
+  removeListener?: (eventName: string, listener: () => void) => void;
 };
 
-type ScatterGlOpacitySnapshot = {
-  line?: ScatterGlOpacity;
-  fill?: ScatterGlOpacity;
-  marker?: ScatterGlOpacity;
-  markerSelected?: ScatterGlOpacity;
-  markerUnselected?: ScatterGlOpacity;
-  errorX?: ScatterGlOpacity;
-  errorY?: ScatterGlOpacity;
-  text?: ScatterGlOpacity;
-};
-
-type ScatterGlVisibilityTarget = {
-  scene: ScatterGlScene;
-  index: number;
-  traceIndex: number;
-};
-
-function hasScatterGlUpdate(value: unknown): value is ScatterGlComponent {
-  return Boolean(value && typeof (value as Partial<ScatterGlComponent>).update === "function");
-}
-
-function cloneScatterGlOpacity(value: ScatterGlOpacity | undefined): ScatterGlOpacity | undefined {
-  return Array.isArray(value) ? [...value] : value;
-}
-
-function hiddenScatterGlOpacity(value: ScatterGlOpacity | undefined): ScatterGlOpacity {
-  return Array.isArray(value) ? value.map(() => 0) : 0;
-}
-
-function sceneOpacitySnapshot(
-  scene: ScatterGlScene,
-  index: number,
-): ScatterGlOpacitySnapshot {
-  return {
-    line: cloneScatterGlOpacity(scene.lineOptions?.[index]?.opacity),
-    fill: cloneScatterGlOpacity(scene.fillOptions?.[index]?.opacity),
-    marker: cloneScatterGlOpacity(scene.markerOptions?.[index]?.opacity),
-    markerSelected: cloneScatterGlOpacity(scene.markerSelectedOptions?.[index]?.opacity),
-    markerUnselected: cloneScatterGlOpacity(scene.markerUnselectedOptions?.[index]?.opacity),
-    errorX: cloneScatterGlOpacity(scene.errorXOptions?.[index]?.opacity),
-    errorY: cloneScatterGlOpacity(scene.errorYOptions?.[index]?.opacity),
-    text: cloneScatterGlOpacity(scene.textOptions?.[index]?.opacity),
-  };
-}
-
-function setSceneOptionOpacity(
-  option: ScatterGlSceneOption | null | undefined,
-  opacity: ScatterGlOpacity | undefined,
-  hidden: boolean,
-): void {
-  if (!option) return;
-  option.opacity = hidden ? hiddenScatterGlOpacity(opacity) : opacity ?? 1;
-}
-
-function setScatterGlSceneVisibility(
-  scene: ScatterGlScene,
-  index: number,
-  hidden: boolean,
-  snapshots: Map<number, ScatterGlOpacitySnapshot>,
-): void {
-  let snapshot = snapshots.get(index);
-  if (!snapshot) {
-    snapshot = sceneOpacitySnapshot(scene, index);
-    snapshots.set(index, snapshot);
-  }
-  setSceneOptionOpacity(scene.lineOptions?.[index], snapshot.line, hidden);
-  setSceneOptionOpacity(scene.fillOptions?.[index], snapshot.fill, hidden);
-  setSceneOptionOpacity(scene.markerOptions?.[index], snapshot.marker, hidden);
-  setSceneOptionOpacity(scene.markerSelectedOptions?.[index], snapshot.markerSelected, hidden);
-  setSceneOptionOpacity(scene.markerUnselectedOptions?.[index], snapshot.markerUnselected, hidden);
-  setSceneOptionOpacity(scene.errorXOptions?.[index], snapshot.errorX, hidden);
-  setSceneOptionOpacity(scene.errorYOptions?.[index], snapshot.errorY, hidden);
-  setSceneOptionOpacity(scene.textOptions?.[index], snapshot.text, hidden);
-}
-
-function sceneOpacityBatch(
-  options: Array<ScatterGlSceneOption | null | undefined> | undefined,
-  indices: readonly number[],
-  count: number,
-): Array<ScatterGlSceneOption | undefined> {
-  const batch: Array<ScatterGlSceneOption | undefined> = new Array(
-    Math.max(count, options?.length ?? 0),
-  ).fill(undefined);
-  for (const index of indices) {
-    const option = options?.[index];
-    if (option) batch[index] = { opacity: option.opacity };
-  }
-  return batch;
-}
-
-function updateScatterGlSceneStyles(
-  scene: ScatterGlScene,
-  indices: readonly number[],
-): void {
-  const count = scene.count ?? 0;
-  if (hasScatterGlUpdate(scene.line2d)) {
-    scene.line2d.update(sceneOpacityBatch(scene.lineOptions, indices, count));
-  }
-  if (hasScatterGlUpdate(scene.fill2d)) {
-    scene.fill2d.update(sceneOpacityBatch(scene.fillOptions, indices, count));
-  }
-  if (hasScatterGlUpdate(scene.error2d)) {
-    const errorBatch = new Array<ScatterGlSceneOption | undefined>(count * 2).fill(undefined);
-    for (const index of indices) {
-      const errorX = scene.errorXOptions?.[index];
-      const errorY = scene.errorYOptions?.[index];
-      if (errorX) errorBatch[index] = { opacity: errorX.opacity };
-      if (errorY) errorBatch[count + index] = { opacity: errorY.opacity };
-    }
-    scene.error2d.update(errorBatch);
-  }
-
-  const selected = indices.filter(
-    (index) =>
-      Boolean(scene.selectBatch?.[index]?.length) ||
-      Boolean(scene.unselectBatch?.[index]?.length),
-  );
-  const activeMarkerOptions = selected.length ? scene.markerUnselectedOptions : scene.markerOptions;
-  if (hasScatterGlUpdate(scene.scatter2d)) {
-    scene.scatter2d.update(sceneOpacityBatch(activeMarkerOptions, indices, count));
-  }
-  if (hasScatterGlUpdate(scene.select2d)) {
-    scene.select2d.update(sceneOpacityBatch(scene.markerOptions, indices, count));
-    scene.select2d.update(sceneOpacityBatch(scene.markerSelectedOptions, indices, count));
-  }
-  for (const index of indices) {
-    const text = scene.glText?.[index];
-    if (hasScatterGlUpdate(text)) {
-      text.update({ opacity: scene.textOptions?.[index]?.opacity ?? 1 });
-    }
-  }
-}
-
-function scatterGlVisibilityTargets(
-  graphDiv: PlotlyGraphDiv,
-  data: PlotParams["data"],
-  indices: readonly number[],
-): ScatterGlVisibilityTarget[] {
-  const targets: ScatterGlVisibilityTarget[] = [];
-  for (const traceIndex of indices) {
-    const dataTrace = data[traceIndex] as (Plotly.Data & { type?: string }) | undefined;
-    const calcDatum = graphDiv.calcdata?.[traceIndex]?.[0];
-    if (dataTrace?.type !== "scattergl" && calcDatum?.trace?.type !== "scattergl") continue;
-    const scene = calcDatum?.t?._scene;
-    const index = calcDatum?.t?.index;
-    if (!scene || index === undefined) continue;
-    targets.push({ scene, index, traceIndex });
-  }
-  return targets;
-}
-
-function redrawScatterGlScenes(graphDiv: PlotlyGraphDiv, scenes: Iterable<ScatterGlScene>): void {
-  graphDiv._fullLayout?._glcanvas?.each?.((canvas) => {
-    canvas.regl?.clear({ color: true, depth: true });
-  });
-  for (const scene of scenes) scene.draw?.();
-}
-
-function applyScatterGlVisibility(
+function hasScatterGlVisibilityChange(
   graphDiv: HTMLElement,
   data: PlotParams["data"],
-  changed: readonly { index: number; hidden: boolean }[],
-  snapshots: Map<ScatterGlScene, Map<number, ScatterGlOpacitySnapshot>>,
-): Set<number> {
+  changed: readonly { index: number }[],
+): boolean {
   const typedGraphDiv = graphDiv as PlotlyGraphDiv;
-  const targets = scatterGlVisibilityTargets(
-    typedGraphDiv,
-    data,
-    changed.map(({ index }) => index),
-  );
-  if (!targets.length) return new Set();
-
-  const hiddenByTraceIndex = new Map(changed.map(({ index, hidden }) => [index, hidden]));
-  const indicesByScene = new Map<ScatterGlScene, number[]>();
-  const scenes = new Set<ScatterGlScene>();
-  for (const row of typedGraphDiv.calcdata ?? []) {
-    const scene = row[0]?.t?._scene;
-    if (scene) scenes.add(scene);
-  }
-  for (const target of targets) {
-    const sceneSnapshots = snapshots.get(target.scene) ?? new Map();
-    snapshots.set(target.scene, sceneSnapshots);
-    setScatterGlSceneVisibility(
-      target.scene,
-      target.index,
-      hiddenByTraceIndex.get(target.traceIndex) ?? false,
-      sceneSnapshots,
+  return changed.some(({ index }) => {
+    const dataTrace = data[index] as (Plotly.Data & { type?: string }) | undefined;
+    return (
+      dataTrace?.type === "scattergl" ||
+      typedGraphDiv.calcdata?.[index]?.[0]?.trace?.type === "scattergl"
     );
-    const sceneIndices = indicesByScene.get(target.scene) ?? [];
-    if (!sceneIndices.includes(target.index)) sceneIndices.push(target.index);
-    indicesByScene.set(target.scene, sceneIndices);
+  });
+}
+
+type PlotFrameHold = {
+  remove(): void;
+};
+
+function holdVisibleScatterGlFrame(graphDiv: HTMLElement): PlotFrameHold | null {
+  const sourceCanvases = Array.from(
+    graphDiv.querySelectorAll<HTMLCanvasElement>(
+      ".gl-canvas-context, .gl-canvas-focus",
+    ),
+  );
+  const overlays: HTMLCanvasElement[] = [];
+
+  for (const source of sourceCanvases) {
+    const parent = source.parentElement;
+    if (!parent || source.width === 0 || source.height === 0) continue;
+
+    const overlay = document.createElement("canvas");
+    overlay.className = "cellxplorer-gl-frame-hold";
+    overlay.width = source.width;
+    overlay.height = source.height;
+    overlay.style.cssText = source.style.cssText;
+    overlay.style.pointerEvents = "none";
+
+    const context = overlay.getContext("2d");
+    if (!context) continue;
+    try {
+      context.drawImage(source, 0, 0);
+    } catch {
+      continue;
+    }
+
+    parent.appendChild(overlay);
+    overlays.push(overlay);
   }
-  for (const [scene, sceneIndices] of indicesByScene) {
-    updateScatterGlSceneStyles(scene, sceneIndices);
-  }
-  redrawScatterGlScenes(typedGraphDiv, scenes);
-  return new Set(targets.map(({ traceIndex }) => traceIndex));
+
+  if (overlays.length === 0) return null;
+
+  let removed = false;
+  return {
+    remove() {
+      if (removed) return;
+      removed = true;
+      for (const overlay of overlays) overlay.remove();
+    },
+  };
 }
 
 type PlotProps = PlotParams & {
@@ -281,11 +106,10 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
   const latestVisibilityRef = useRef<PlotTraceVisibility | undefined>(traceVisibility);
   latestVisibilityRef.current = traceVisibility;
   const appliedVisibilityRef = useRef<PlotTraceVisibility | null>(null);
+  const baseVisibilityStylesRef = useRef<PlotTraceVisibilityStyle[]>([]);
   const visibilityUpdateRef = useRef(Promise.resolve());
   const internalVisibilityRestyleRef = useRef(0);
-  const scatterGlVisibilitySnapshotsRef = useRef(
-    new Map<ScatterGlScene, Map<number, ScatterGlOpacitySnapshot>>(),
-  );
+  const frameHoldsRef = useRef(new Set<PlotFrameHold>());
   const previousFigureRef = useRef<{
     data: PlotParams["data"];
     layout: PlotParams["layout"];
@@ -304,6 +128,21 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
 
   useLayoutEffect(() => {
     const previous = previousFigureRef.current;
+    if (!previous || previous.data !== props.data) {
+      // Plotly.restyle mutates its resident trace objects. Capture the authored
+      // values before the first visibility edit so showing a trace restores
+      // its real style rather than the opacity:0/showlegend:false hide state.
+      baseVisibilityStylesRef.current = props.data.map((trace) => {
+        const styledTrace = trace as Plotly.Data & {
+          opacity?: number;
+          showlegend?: boolean;
+        };
+        return {
+          opacity: Number(styledTrace.opacity ?? 1),
+          showlegend: styledTrace.showlegend !== false,
+        };
+      });
+    }
     if (
       previous &&
       (previous.data !== props.data || previous.layout !== passiveLayout || previous.config !== props.config)
@@ -340,44 +179,59 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
         });
         if (changed.length === 0) return;
 
-        // scattergl classifies even opacity/showlegend edits as calc changes.
-        // Update its resident GPU scene directly so hiding a trace does not
-        // enter Plotly's full replot path or clear the shared canvas.
-        const scatterGlIndices = applyScatterGlVisibility(
-          graphDiv,
-          props.data,
-          changed,
-          scatterGlVisibilitySnapshotsRef.current,
-        );
-        const restyleChanges = changed.filter(({ index }) => !scatterGlIndices.has(index));
-        if (restyleChanges.length > 0) {
-          const indices = restyleChanges.map(({ index }) => index);
-          const opacityValues = restyleChanges.map(({ index, hidden }) => {
-            const trace = props.data[index] as Plotly.Data & { opacity?: number } | undefined;
-            return hidden ? 0 : Number(trace?.opacity ?? 1);
-          });
-          const legendValues = restyleChanges.map(({ hidden, index }) => {
-            const trace = props.data[index] as Plotly.Data & { showlegend?: boolean } | undefined;
-            return hidden ? false : trace?.showlegend !== false;
-          });
-          internalVisibilityRestyleRef.current += 1;
-          try {
-            // SVG traces support a genuine style-only restyle. Keep this
-            // fallback for callers that provide a mixed SVG/WebGL figure or
-            // for a graph whose private WebGL scene is not available yet.
-            await Plotly.restyle(
-              graphDiv as never,
-              { opacity: opacityValues, showlegend: legendValues } as unknown as Plotly.Data,
-              indices,
-            );
-          } finally {
-            // Plotly emits plotly_restyle before resolving the promise. The
-            // fallback also prevents a failed/mocked implementation from
-            // suppressing the next real figure update.
-            internalVisibilityRestyleRef.current = Math.max(
-              0,
-              internalVisibilityRestyleRef.current - 1,
-            );
+        const indices = changed.map(({ index }) => index);
+        const opacityValues = changed.map(({ index, hidden }) => {
+          const baseStyle = baseVisibilityStylesRef.current[index];
+          return hidden ? 0 : baseStyle?.opacity ?? 1;
+        });
+        const legendValues = changed.map(({ hidden, index }) => {
+          const baseStyle = baseVisibilityStylesRef.current[index];
+          return hidden ? false : baseStyle?.showlegend ?? true;
+        });
+        const frameHold = hasScatterGlVisibilityChange(graphDiv, props.data, changed)
+          ? holdVisibleScatterGlFrame(graphDiv)
+          : null;
+        let releaseFrameHold: (() => void) | null = null;
+        if (frameHold) {
+          frameHoldsRef.current.add(frameHold);
+          const plotlyGraphDiv = graphDiv as PlotlyGraphDiv;
+          let fallbackTimer: number | null = null;
+          releaseFrameHold = () => {
+            plotlyGraphDiv.removeListener?.("plotly_afterplot", releaseFrameHold!);
+            if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+            frameHold.remove();
+            frameHoldsRef.current.delete(frameHold);
+          };
+          if (plotlyGraphDiv.once) {
+            // scattergl resolves restyle before the browser necessarily shows
+            // the replacement canvas. Hold the previous frame until Plotly's
+            // own completed-paint boundary instead of guessing one RAF.
+            plotlyGraphDiv.once("plotly_afterplot", releaseFrameHold);
+            fallbackTimer = window.setTimeout(releaseFrameHold, 1_000);
+          }
+        }
+        internalVisibilityRestyleRef.current += 1;
+        try {
+          // Plotly's supported restyle keeps its canonical trace, legend, and
+          // hover state in sync. A short-lived copy of the visible WebGL
+          // frame masks the shared-canvas clear while scattergl recalculates.
+          await Plotly.restyle(
+            graphDiv as never,
+            { opacity: opacityValues, showlegend: legendValues } as unknown as Plotly.Data,
+            indices,
+          );
+        } finally {
+          // Plotly emits plotly_restyle before resolving the promise. The
+          // guard prevents that internal event from being treated as a new
+          // externally-driven figure update.
+          internalVisibilityRestyleRef.current = Math.max(
+            0,
+            internalVisibilityRestyleRef.current - 1,
+          );
+          if (frameHold && !(graphDiv as PlotlyGraphDiv).once) {
+            requestAnimationFrame(() => {
+              releaseFrameHold?.();
+            });
           }
         }
         appliedVisibilityRef.current = [...next];
@@ -388,7 +242,8 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
     graphDivRef.current = graphDiv as HTMLElement;
     figureUpdatePendingRef.current = false;
     appliedVisibilityRef.current = null;
-    scatterGlVisibilitySnapshotsRef.current.clear();
+    for (const frameHold of frameHoldsRef.current) frameHold.remove();
+    frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
     installPlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
     props.onInitialized?.(figure, graphDiv);
@@ -402,7 +257,8 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
     graphDivRef.current = graphDiv as HTMLElement;
     figureUpdatePendingRef.current = false;
     appliedVisibilityRef.current = null;
-    scatterGlVisibilitySnapshotsRef.current.clear();
+    for (const frameHold of frameHoldsRef.current) frameHold.remove();
+    frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
     installPlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
     props.onUpdate?.(figure, graphDiv);
@@ -411,7 +267,8 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
   const handlePlotPurged = (figure: Readonly<Figure>, graphDiv: Readonly<HTMLElement>) => {
     graphDivRef.current = null;
     appliedVisibilityRef.current = null;
-    scatterGlVisibilitySnapshotsRef.current.clear();
+    for (const frameHold of frameHoldsRef.current) frameHold.remove();
+    frameHoldsRef.current.clear();
     disposePlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);
     props.onPurge?.(figure, graphDiv);
   };

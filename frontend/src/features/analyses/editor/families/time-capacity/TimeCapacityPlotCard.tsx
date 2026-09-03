@@ -57,6 +57,7 @@ import {
 } from "../../policies/voltageChannelPolicy";
 import {
   timeCapacityCompatibilitySignature,
+  timeCapacityDataExportSpec,
   timeCapacityDataSignature,
   timeCapacityPlotExportReady,
   timeCapacityPlaceholderData,
@@ -185,7 +186,11 @@ import {
   type TimeCapacityBufferSchedulerState,
   type TimeCapacityPanMotion,
 } from "./timeCapacityViewportBuffer";
-import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
+import {
+  ComputeProgress,
+  PlotHeader,
+  type PlotDataExportScope,
+} from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
   newTimeCapacityProfileRequestId,
@@ -2298,19 +2303,37 @@ function TimeCapacityPlotCardView({
     timeResult.isFetching,
     timeResult.isPlaceholderData,
   ]);
-  const lastValidPanResultRef = useRef<TimeCapacityResult | undefined>(undefined);
-  if (queryResult) lastValidPanResultRef.current = queryResult;
+  const lastValidResultRef = useRef<{
+    compatibilitySignature: string;
+    result: TimeCapacityResult;
+  } | null>(null);
+  if (queryResult) {
+    lastValidResultRef.current = { compatibilitySignature, result: queryResult };
+  }
   const retainPanResult = panActive || panSettlingWindowRef.current !== null;
+  // Match the same compatibility boundary used by placeholderData. React
+  // Query's observer can briefly have no data while a compatible key is
+  // admitted (notably when a visibility edit overlaps range/refinement
+  // settlement). The resident overview remains scientifically valid in that
+  // interval and must not be replaced by the compute-progress surface.
+  const compatibleResultFallback =
+    !queryResult &&
+    !retainPanResult &&
+    lastValidResultRef.current?.compatibilitySignature === compatibilitySignature
+      ? lastValidResultRef.current.result
+      : undefined;
   const retainedQueryResult = timeCapacityRetainedPanResult(
-    queryResult,
-    lastValidPanResultRef.current,
+    queryResult ?? compatibleResultFallback,
+    lastValidResultRef.current?.result,
     retainPanResult,
   );
   const currentResult = retainedQueryResult;
-  const resultIsRetainedPanFallback = !queryResult && Boolean(retainedQueryResult);
+  const resultIsCompatibleFallback = !queryResult && Boolean(compatibleResultFallback);
+  const resultIsRetainedPanFallback =
+    !queryResult && !resultIsCompatibleFallback && Boolean(retainedQueryResult);
   const resolvedPlotSpecRef = useRef<AnalysisSpec>(spec);
   const renderSpecBase =
-    timeResult.isPlaceholderData || resultIsRetainedPanFallback
+    timeResult.isPlaceholderData || resultIsCompatibleFallback || resultIsRetainedPanFallback
       ? resolvedPlotSpecRef.current
       : requestSpec;
   // A retained/placeholder result deliberately keeps its old data and display
@@ -2450,7 +2473,7 @@ function TimeCapacityPlotCardView({
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
   const showComputeProgress = useDelayedFlag(
-    timeResult.isLoading || (timeResult.isFetching && !currentResult),
+    (timeResult.isLoading || timeResult.isFetching) && !currentResult,
     // Channel selection changes the render/cache identity and therefore makes
     // one compact request even when the indexed data is warm. Keep the normal
     // sub-second path silent; a genuinely slow miss can still explain the
@@ -2458,9 +2481,9 @@ function TimeCapacityPlotCardView({
     700,
     450,
   );
-  const loadingWithoutResult = timeResult.isLoading || (timeResult.isFetching && !currentResult);
-  const readyForParent =
-    !timeResult.isLoading && (!timeResult.isFetching || Boolean(currentResult));
+  const loadingWithoutResult =
+    (timeResult.isLoading || timeResult.isFetching) && !currentResult;
+  const readyForParent = !loadingWithoutResult;
   useEffect(() => {
     // Background replacement of an already visible buffer is still ready.
     // Flipping this false for every refill rerenders the entire analysis
@@ -3006,7 +3029,10 @@ function TimeCapacityPlotCardView({
             void post<TimeCapacityRefinementResult>(
               `/api/analyses/${analysisId}/time-capacity/refine`,
               {
-                spec: renderSpec,
+                // Refinement is another scientific Time/Capacity boundary.
+                // Analysis-sample eyes remain live render state and must not
+                // alter the cells read by this ephemeral high-resolution path.
+                spec: scientificRenderSpec,
                 viewport_x_min: viewport.min,
                 viewport_x_max: viewport.max,
                 viewport_width: viewportWidth,
@@ -3098,17 +3124,22 @@ function TimeCapacityPlotCardView({
     });
   };
 
-  const handleDataExport = async (baseName: string, exportStyle: PlotStyle = style) => {
+  const handleDataExport = async (
+    baseName: string,
+    exportStyle: PlotStyle = style,
+    scope: PlotDataExportScope = "full_series",
+  ) => {
     if (!currentResult || selectedVoltageUnavailable || exportTraces.length === 0 || dataExporting) return;
     const requestedSignature = dataSignature;
     const requestedVoltageChannels = requestCfg.voltage_channels;
     const requestedSourceDataIdentity = voltageChannelDataIdentity(currentResult);
+    const exportSpec = timeCapacityDataExportSpec(spec, timeCapacityConfig(spec), scope);
     setDataExporting(true);
     try {
       const fullResult = await post<TimeCapacityResult>(
         `/api/analyses/${analysisId}/time-capacity`,
         {
-          spec: requestSpec,
+          spec: exportSpec,
           ...timeCapacityExportOptions(viewportWidth),
         }
       );
@@ -3134,7 +3165,7 @@ function TimeCapacityPlotCardView({
             : "A selected voltage quantity is unavailable for the current selection.",
         );
       }
-      const fullTraces = timeCapacityTracesForResult(fullResult, requestSpec);
+      const fullTraces = timeCapacityTracesForResult(fullResult, exportSpec);
       if (fullTraces.length === 0) {
         throw new Error("No data is available for the selected voltage quantity.");
       }
@@ -3269,6 +3300,7 @@ function TimeCapacityPlotCardView({
           explainer={explainer}
           onExport={exportPlot}
           onDataExport={handleDataExport}
+          dataExportScopeEnabled
           getExportPreview={getExportPreview}
           style={style}
           viewSize={plotSize}

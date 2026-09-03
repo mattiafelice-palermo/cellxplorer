@@ -4,6 +4,8 @@ export type TimeCapacityQueryConfig = NonNullable<
   AnalysisSpec["computation"]["time_capacity"]
 >;
 
+export type TimeCapacityDataExportScope = "full_series" | "plot_range";
+
 type TimeCapacityCompatibilitySpec = Pick<
   AnalysisSpec,
   "selection" | "protocol_segments" | "computation" | "presentation"
@@ -25,6 +27,38 @@ export function timeCapacityScientificRequestSpec<T extends Pick<AnalysisSpec, "
       hidden_replicate_group_ids: [],
     },
   } as T;
+}
+
+/**
+ * Build the full-resolution data-export request without mutating the live
+ * plot. A full-series export removes only the plot's cycle window; every
+ * other scientific setting and the live sample visibility remain intact.
+ */
+export function timeCapacityDataExportSpec(
+  spec: AnalysisSpec,
+  config: TimeCapacityQueryConfig,
+  scope: TimeCapacityDataExportScope,
+): AnalysisSpec {
+  return {
+    ...spec,
+    selection: {
+      ...spec.selection,
+      entries: [...spec.selection.entries],
+      exclusions: [...(spec.selection.exclusions ?? [])],
+      hidden_replicate_group_ids: [
+        ...(spec.selection.hidden_replicate_group_ids ?? []),
+      ],
+    },
+    computation: {
+      ...spec.computation,
+      time_capacity: {
+        ...config,
+        ...(scope === "full_series"
+          ? { cycles: [], cycle_start: null, cycle_end: null }
+          : {}),
+      },
+    },
+  };
 }
 
 /**

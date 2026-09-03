@@ -12,9 +12,9 @@ import {
   Stack,
   Switch,
   Text,
+  TextInput,
   Tooltip,
 } from "@mantine/core";
-import { useQuery } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconDownload,
@@ -25,16 +25,13 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import {
-  get,
   type BackgroundJob,
-  type DownloadSettings,
   type PlotAspectRatioKey,
   type PlotExportFormat,
   type PlotStyle,
 } from "../../../../api";
 import { DebouncedNumberInput } from "../../../../components/DebouncedInputs";
-import { FilenameTemplateEditor } from "../../../../components/FilenameTemplateEditor";
-import { renderExportFilename, sanitizeExportFilename } from "../../../../exportFilenames";
+import { sanitizeExportFilename } from "../../../../exportFilenames";
 import { resolveExportPlan } from "./plotExport";
 import { type PlotExplainer } from "./plotExplainers";
 import { DEFAULT_PLOT_STYLE, normalizePlotStyle } from "./plotStyle";
@@ -54,6 +51,8 @@ const EXPORT_FORMAT_OPTIONS: { value: PlotExportFormat; label: string }[] = [
   { value: "svg", label: "SVG" },
   { value: "pdf", label: "PDF" },
 ];
+
+export type PlotDataExportScope = "full_series" | "plot_range";
 
 export function jobProgress(job: BackgroundJob | undefined): number {
   if (!job) return 0;
@@ -132,15 +131,12 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
 
 export function PlotHeader({
   analysisTitle,
-  tabName,
   plotName,
   subtitle,
-  quantityName,
-  xAxisName,
-  sampleSummary,
   explainer,
   onExport,
   onDataExport,
+  dataExportScopeEnabled = false,
   getExportPreview,
   style,
   viewSize,
@@ -163,7 +159,13 @@ export function PlotHeader({
   sampleSummary?: string;
   explainer?: PlotExplainer;
   onExport?: (format: PlotExportFormat, baseName: string, exportStyle: PlotStyle) => void;
-  onDataExport?: (baseName: string, exportStyle: PlotStyle) => void;
+  onDataExport?: (
+    baseName: string,
+    exportStyle: PlotStyle,
+    scope: PlotDataExportScope,
+  ) => void;
+  /** Time/Capacity can export either every cycle or only its configured cycle range. */
+  dataExportScopeEnabled?: boolean;
   getExportPreview?: (exportStyle: PlotStyle) => Promise<string | null>;
   style?: PlotStyle;
   viewSize?: { width: number; height: number } | null;
@@ -198,16 +200,8 @@ export function PlotHeader({
   const selectedFormat = exportStyle.export_format ?? "png";
   const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
   const [dataExportPopoverOpen, setDataExportPopoverOpen] = useState(false);
+  const [dataExportScope, setDataExportScope] = useState<PlotDataExportScope>("full_series");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [filenameTemplate, setFilenameTemplate] = useState(
-    "{analysis} - {plot_title}",
-  );
-  const filenameTemplateInitialized = useRef(false);
-  const downloadSettings = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => get<DownloadSettings>("/api/settings"),
-    staleTime: 5 * 60_000,
-  });
   const exportPreviewSignature = JSON.stringify(exportStyle);
   const plan = resolveExportPlan(exportStyle, viewSize ?? null, layout ?? {});
   const exportWidthValue = plan.pixelWidth;
@@ -232,34 +226,24 @@ export function PlotHeader({
       next.export_width = value;
     });
   };
-  const filenameContext = {
-    analysis: analysisTitle?.trim() || "Analysis",
-    plotTitle:
-      plotName === "Unsaved plot" || plotName === "New plot"
-        ? subtitle || "Plot"
-        : plotName,
-    quantity: quantityName?.trim() || subtitle || "Plot",
-    xAxis: xAxisName?.trim() || "X axis",
-    tab: tabName?.trim() || "Analysis",
-    sampleSummary: sampleSummary?.trim() || "samples",
-  };
+  const defaultFilename = `${analysisTitle?.trim() || "Analysis"} - ${
+    plotName === "Unsaved plot" || plotName === "New plot"
+      ? subtitle || "Plot"
+      : plotName
+  }`;
+  const defaultFilenameSignature = sanitizeExportFilename(defaultFilename, "plot");
+  const [filename, setFilename] = useState(defaultFilenameSignature);
+  const filenameEdited = useRef(false);
   useEffect(() => {
-    if (filenameTemplateInitialized.current || !downloadSettings.data) return;
-    filenameTemplateInitialized.current = true;
-    setFilenameTemplate(
-      downloadSettings.data.export_filename_template || "{analysis} - {plot_title}",
-    );
-  }, [downloadSettings.data]);
-  const renderedFilename = sanitizeExportFilename(
-    renderExportFilename(filenameTemplate, filenameContext),
-    "plot",
-  );
+    if (!filenameEdited.current) setFilename(defaultFilenameSignature);
+  }, [defaultFilenameSignature]);
+  const renderedFilename = sanitizeExportFilename(filename, "plot");
   const exportPlot = () => {
     onExport?.(selectedFormat, renderedFilename, exportStyle);
     setExportPopoverOpen(false);
   };
   const exportData = () => {
-    onDataExport?.(renderedFilename, exportStyle);
+    onDataExport?.(renderedFilename, exportStyle, dataExportScope);
     setDataExportPopoverOpen(false);
   };
 
@@ -364,6 +348,20 @@ export function PlotHeader({
                       )
                     }
                   />
+                  {dataExportScopeEnabled ? (
+                    <Select
+                      label="Data range"
+                      data={[
+                        { value: "full_series", label: "Full data series (all cycles)" },
+                        { value: "plot_range", label: "Current plot cycle range" },
+                      ]}
+                      value={dataExportScope}
+                      comboboxProps={{ withinPortal: false }}
+                      onChange={(value) =>
+                        value && setDataExportScope(value as PlotDataExportScope)
+                      }
+                    />
+                  ) : null}
                   <Select
                     label="Numeric precision"
                     data={[
@@ -419,14 +417,19 @@ export function PlotHeader({
                     </>
                   )}
                   <Text size="10px" c="dimmed">
-                    Exports the plotted series as x/y column pairs per trace (dispersion bands
-                    excluded). Standard precision removes meaningless floating-point tails; full
-                    precision preserves every stored digit.
+                    Exports every source point at full resolution; adaptive plot downsampling is
+                    never used. Hidden samples and dispersion bands are excluded. Standard numeric
+                    precision removes meaningless floating-point tails; full precision preserves
+                    every stored digit.
                   </Text>
                   <Divider />
-                  <FilenameTemplateEditor
-                    value={filenameTemplate}
-                    onChange={setFilenameTemplate}
+                  <TextInput
+                    label="Filename"
+                    value={filename}
+                    onChange={(event) => {
+                      filenameEdited.current = true;
+                      setFilename(event.currentTarget.value);
+                    }}
                   />
                   <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                     <Text size="xs" c="dimmed">Result</Text>
@@ -605,9 +608,13 @@ export function PlotHeader({
                       style={{ gridColumn: "1 / -1" }}
                     >
                       <Divider />
-                      <FilenameTemplateEditor
-                        value={filenameTemplate}
-                        onChange={setFilenameTemplate}
+                      <TextInput
+                        label="Filename"
+                        value={filename}
+                        onChange={(event) => {
+                          filenameEdited.current = true;
+                          setFilename(event.currentTarget.value);
+                        }}
                       />
                       <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                         <Text size="xs" c="dimmed">Result</Text>

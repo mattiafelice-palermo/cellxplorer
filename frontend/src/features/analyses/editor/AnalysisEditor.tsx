@@ -207,7 +207,6 @@ import {
   rateCapabilityViewFor,
   type RateCapabilityResult,
 } from "./families/rate-capability/RateCapabilityPlotCard";
-import { FilenameTemplateEditor } from "../../../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "./protocol/ProtocolSegmentsPanel";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../../../navigationEvents";
 import {

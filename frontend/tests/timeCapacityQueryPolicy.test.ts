@@ -6,6 +6,7 @@ import type { AnalysisSpec } from "../src/api.ts";
 import { timeCapacityTraceIsHidden } from "../src/features/analyses/editor/families/time-capacity/timeCapacityVisibility.ts";
 import {
   timeCapacityCompatibilitySignature,
+  timeCapacityDataExportSpec,
   timeCapacityDataSignature,
   timeCapacityPlotExportReady,
   timeCapacityPlaceholderCompatible,
@@ -135,6 +136,30 @@ test("scientific request specs neutralize only display visibility without mutati
   assert.deepEqual(live, before);
 });
 
+test("Time/Capacity data export scopes preserve full resolution settings and live visibility", () => {
+  const live = makeSpec() as AnalysisSpec;
+  live.selection.exclusions = [{ cell_id: 7, reason: null }];
+  live.selection.hidden_replicate_group_ids = [42];
+  live.computation.time_capacity = makeConfig();
+  const before = structuredClone(live);
+
+  const fullSeries = timeCapacityDataExportSpec(live, makeConfig(), "full_series");
+  const plotRange = timeCapacityDataExportSpec(live, makeConfig(), "plot_range");
+
+  assert.deepEqual(fullSeries.computation.time_capacity?.cycles, []);
+  assert.equal(fullSeries.computation.time_capacity?.cycle_start, null);
+  assert.equal(fullSeries.computation.time_capacity?.cycle_end, null);
+  assert.equal(fullSeries.computation.time_capacity?.max_points_per_cell, 4000);
+  assert.deepEqual(fullSeries.selection.exclusions, live.selection.exclusions);
+  assert.deepEqual(
+    fullSeries.selection.hidden_replicate_group_ids,
+    live.selection.hidden_replicate_group_ids,
+  );
+  assert.equal(plotRange.computation.time_capacity?.cycle_start, 1);
+  assert.equal(plotRange.computation.time_capacity?.cycle_end, 3);
+  assert.deepEqual(live, before);
+});
+
 test("live Analysis-sample visibility filters an already returned Time/Capacity trace", () => {
   const visible = makeSpec() as AnalysisSpec;
   const hidden = structuredClone(visible);
@@ -153,7 +178,7 @@ test("interactive Plot visibility uses style restyle instead of a calc replot", 
   );
   const restyleStart = plotSource.indexOf("await Plotly.restyle(");
   assert.ok(restyleStart >= 0);
-  const restyleEnd = plotSource.indexOf("        } catch", restyleStart);
+  const restyleEnd = plotSource.indexOf("        } finally", restyleStart);
   assert.ok(restyleEnd > restyleStart);
   const restyleSource = plotSource.slice(restyleStart, restyleEnd);
 
@@ -286,7 +311,10 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource.slice(queryStart), /spec: scientificRequestSpec,/);
   assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
   assert.match(liveSource, /panActive \|\| resultIsRetainedPanFallback/);
-  assert.match(liveSource, /timeResult\.isPlaceholderData \|\| resultIsRetainedPanFallback/);
+  assert.match(
+    liveSource,
+    /timeResult\.isPlaceholderData \|\| resultIsCompatibleFallback \|\| resultIsRetainedPanFallback/,
+  );
   assert.match(liveSource, /const token = transientPreviewRequest \? null : newComputeToken\(\)/);
   assert.match(liveSource, /onReadyChange\?\.\(readyForParent\)/);
   assert.match(liveSource, /panSettlingWindowRef\.current = \{ \.\.\.range \}/);
