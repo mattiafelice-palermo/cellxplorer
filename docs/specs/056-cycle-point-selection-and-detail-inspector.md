@@ -8,7 +8,8 @@
 
 ## Status
 
-Plan. This is one implementable, Cycles-only frontend feature. No child specs are expected.
+Implemented on the feature branch and awaiting independent review. This is one implementable,
+Cycles-only frontend feature; no child specs are expected.
 
 ## Goal
 
@@ -699,10 +700,27 @@ Spec 056 is complete when:
 
 ## Implementation record
 
-Not implemented. When implementation begins, record:
+Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`.
 
-- branch and implementation commit(s);
-- actual files changed and any moved ownership anchors;
-- focused test/build/preflight results;
-- manual browser matrix as RUN/NOT RUN;
-- review document link and final reviewer status.
+- Implementation checkpoint: this pre-review handoff commit (hash assigned at commit).
+- Files changed: `AnalysisEditor.tsx`, `CyclePlotCard.tsx`, new
+  `CyclePointInspector.tsx`, new `useCyclePointSelection.ts`, new
+  `cyclePointSelectionPolicy.ts`, `cycleTraceRenderer.test.ts`, and new
+  `cyclePointSelectionPolicy.test.ts`.
+- Ownership: Cycles trace construction publishes explicit selectable-point metadata; the
+  Cycles-local hook owns pointer capture, screen projection, geometry, lifecycle, and selection;
+  the non-modal inspector owns transient table/detail state. Shared `Plot.tsx`, saved plot state,
+  exports, the backend, schemas, migrations, and calculation versions are unchanged.
+- Scientific detail: collapsed selection is request-free. Expansion derives one immutable
+  Time/Capacity request for the active original global cycle and exact contributing Cells, with
+  canonical query-key/body identity, cancellation, compatible placeholder reuse, and the existing
+  refinement endpoint.
+- Focused verification: `node --test frontend\tests\cyclePointSelectionPolicy.test.ts
+  frontend\tests\cycleTraceRenderer.test.ts` PASS (17/17); adding
+  `frontend\tests\timeCapacityQueryPolicy.test.ts` PASS (30/30); full frontend suite PASS
+  (773/773); `npx.cmd tsc --noEmit` PASS; `npm.cmd run build` PASS.
+- Canonical verification: `python scripts\preflight.py --no-cache` PASS — 4/4 stages and all 163
+  backend/frontend test files/modules passed in 59.06 seconds.
+- Manual browser acceptance matrix: NOT RUN in this implementation turn.
+- Review: initial design consultation completed; formal implementation review is pending. The
+  reviewer owns any review document and final completion decision.

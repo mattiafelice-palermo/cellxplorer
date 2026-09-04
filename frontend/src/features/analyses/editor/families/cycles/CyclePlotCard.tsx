@@ -113,6 +113,12 @@ import {
   cycleTraceVisibility,
   cycleVisibilityKey,
 } from "./cycleVisibility";
+import type { CycleSelectableTraceMeta } from "./cyclePointSelectionPolicy";
+import {
+  CyclePointInspector,
+  CyclePointSelectionOverlay,
+} from "./CyclePointInspector";
+import { useCyclePointSelection } from "./useCyclePointSelection";
 
 const CAPACITY_LIKE_KEYS = new Set([
   "discharge_capacity",
@@ -448,6 +454,34 @@ export function cycleSeriesVisibilityCandidates(
   });
 }
 
+function aggregateContributorCellIds(
+  result: ComputeResult,
+  groupId: number,
+  quantityColumn: string,
+  scientificCycles: number[],
+): number[][] {
+  const eligibleCyclesByCell = result.cell_series
+    .filter((series) => series.group_id === groupId && !series.excluded)
+    .map((series) => {
+      const values = series.quantities[quantityColumn] ?? [];
+      const eligibleCycles = new Set<number>();
+      series.x.forEach((cycle, index) => {
+        const value = values[index];
+        if (value !== null && value !== undefined && Number.isFinite(value)) {
+          eligibleCycles.add(cycle);
+        }
+      });
+      return { cellId: series.cell_id, eligibleCycles };
+    });
+  return scientificCycles.map((cycle) => [
+    ...new Set(
+      eligibleCyclesByCell
+        .filter(({ eligibleCycles }) => eligibleCycles.has(cycle))
+        .map(({ cellId }) => cellId),
+    ),
+  ]);
+}
+
 export function cycleTracesForResult(
   original: ComputeResult,
   spec: AnalysisSpec,
@@ -455,13 +489,15 @@ export function cycleTracesForResult(
 ): Plotly.Data[] {
   // Filter here rather than at each call site so the live plot, the saved
   // thumbnail and the exported figure cannot disagree about what is shown.
+  const hiddenDiagnosticCycles = diagnosticCyclesFor(original, spec);
   const result = withoutDiagnosticCycles(
     original,
-    diagnosticCyclesFor(original, spec),
+    hiddenDiagnosticCycles,
     spec.presentation.reindex_diagnostic_cycles ?? false,
   );
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  const { column } = resolveCycleQuantity(result, spec);
+  const quantityInfo = resolveCycleQuantity(result, spec);
+  const { column } = quantityInfo;
   const showCeOverlay =
     !compact && (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
   const style = currentPlotStyle(spec, "cycles");
@@ -588,7 +624,7 @@ export function cycleTracesForResult(
   });
   const legendRanks = seriesLegendRanks(descriptors, style.series_order);
 
-  for (const agg of result.aggregates) {
+  for (const [aggregateIndex, agg] of result.aggregates.entries()) {
     const aggKey = `g${agg.group_id}`;
     const q = agg.quantities[column];
     if (!q) continue;
@@ -604,6 +640,30 @@ export function cycleTracesForResult(
           !ceResolved.hidden,
       ),
     });
+    const scientificCycles = (original.aggregates[aggregateIndex]?.x ?? agg.x).filter(
+      (cycle) => !hiddenDiagnosticCycles.has(cycle),
+    );
+    const primaryDetailCellIds = aggregateContributorCellIds(
+      original,
+      agg.group_id,
+      column,
+      scientificCycles,
+    );
+    const primarySelectionMeta: CycleSelectableTraceMeta = {
+      cellxplorerCycleSelection: {
+        version: 1,
+        seriesKey: aggKey,
+        sampleKind: "replicate",
+        cellId: null,
+        groupId: agg.group_id,
+        sampleLabel: agg.group_name,
+        scientificCycles,
+        detailCellIds: primaryDetailCellIds,
+        quantityKey: quantityInfo.key,
+        quantityLabel: quantityInfo.label,
+        axis: "y",
+      },
+    };
     if (aggregateEmission.primary && aggResolved) {
       if (!compact) {
         out.push(
@@ -637,6 +697,7 @@ export function cycleTracesForResult(
         legendrank: legendRanks.get(aggKey),
         type: "scatter",
         mode: compact ? mode : seriesPlotlyMode(aggResolved),
+        meta: primarySelectionMeta,
         customdata: q.n,
         hovertemplate: compact
           ? undefined
@@ -682,6 +743,27 @@ export function cycleTracesForResult(
       }
     }
     if (aggregateEmission.ce && ceResolved) {
+      const ceDetailCellIds = aggregateContributorCellIds(
+        original,
+        agg.group_id,
+        "coulombic_efficiency_pct",
+        scientificCycles,
+      );
+      const ceSelectionMeta: CycleSelectableTraceMeta = {
+        cellxplorerCycleSelection: {
+          version: 1,
+          seriesKey: ceKey,
+          sampleKind: "replicate",
+          cellId: null,
+          groupId: agg.group_id,
+          sampleLabel: agg.group_name,
+          scientificCycles,
+          detailCellIds: ceDetailCellIds,
+          quantityKey: "coulombic_efficiency_pct",
+          quantityLabel: "Coulombic efficiency (%)",
+          axis: "y2",
+        },
+      };
       out.push({
         x: agg.x,
         y: agg.quantities["coulombic_efficiency_pct"]!.mean,
@@ -698,11 +780,12 @@ export function cycleTracesForResult(
         opacity: ceResolved.opacity,
         showlegend: ceResolved.showInLegend,
         legendrank: legendRanks.get(ceKey),
+        meta: ceSelectionMeta,
       } as Plotly.Data);
     }
   }
 
-  for (const s of result.cell_series) {
+  for (const [seriesIndex, s] of result.cell_series.entries()) {
     const cellKey = `c${s.cell_id}`;
     if (cycleSeriesIsHidden(s, spec) || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
@@ -723,6 +806,9 @@ export function cycleTracesForResult(
     const sourcePosition = s.source_position ?? s.x.map(() => null);
     const sourceFilename = s.source_filename ?? s.x.map(() => null);
     const sourceHash = s.source_hash ?? s.x.map(() => null);
+    const scientificCycles = (original.cell_series[seriesIndex]?.x ?? s.x).filter(
+      (cycle) => !hiddenDiagnosticCycles.has(cycle),
+    );
     const sourceColumns = sourceExportColumns(
       s.label,
       s.x,
@@ -734,12 +820,30 @@ export function cycleTracesForResult(
     const values = s.quantities[column] ?? [];
     if (cellEmission.primary && resolved) {
       const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
-      const customdata = s.x.map((cycle, index) => [
+      const customdata = scientificCycles.map((cycle, index) => [
         cycle,
         sourceCycle[index] ?? "",
         sourcePosition[index] ?? "",
         shortSourceName(String(sourceFilename[index] ?? "")),
       ]);
+      const primarySelectionMeta: CycleSelectableTraceMeta = {
+        cellxplorerCycleSelection: {
+          version: 1,
+          seriesKey: cellKey,
+          sampleKind: "cell",
+          cellId: s.cell_id,
+          groupId: s.group_id,
+          sampleLabel: s.label,
+          scientificCycles,
+          detailCellIds: scientificCycles.map(() => [s.cell_id]),
+          localCycles: sourceCycle,
+          sourcePositions: sourcePosition,
+          sourceFilenames: sourceFilename,
+          quantityKey: quantityInfo.key,
+          quantityLabel: quantityInfo.label,
+          axis: "y",
+        },
+      };
       out.push({
         x: s.x,
         y: values,
@@ -760,6 +864,7 @@ export function cycleTracesForResult(
         mode: compact ? mode : seriesPlotlyMode(resolved),
         showlegend: !compact && !grouped && resolved.showInLegend,
         legendrank: legendRanks.get(cellKey),
+        meta: primarySelectionMeta,
         customdata,
         cellxplorer_export_columns: sourceColumns,
         hovertemplate:
@@ -794,6 +899,24 @@ export function cycleTracesForResult(
       }
     }
     if (cellEmission.ce && ceResolved) {
+      const ceSelectionMeta: CycleSelectableTraceMeta = {
+        cellxplorerCycleSelection: {
+          version: 1,
+          seriesKey: ceKey,
+          sampleKind: "cell",
+          cellId: s.cell_id,
+          groupId: s.group_id,
+          sampleLabel: s.label,
+          scientificCycles,
+          detailCellIds: scientificCycles.map(() => [s.cell_id]),
+          localCycles: sourceCycle,
+          sourcePositions: sourcePosition,
+          sourceFilenames: sourceFilename,
+          quantityKey: "coulombic_efficiency_pct",
+          quantityLabel: "Coulombic efficiency (%)",
+          axis: "y2",
+        },
+      };
       out.push({
         x: s.x,
         y: s.quantities["coulombic_efficiency_pct"],
@@ -810,6 +933,7 @@ export function cycleTracesForResult(
         opacity: ceResolved.opacity,
         showlegend: ceResolved.showInLegend,
         legendrank: legendRanks.get(ceKey),
+        meta: ceSelectionMeta,
       } as Plotly.Data);
     }
   }
@@ -1208,6 +1332,7 @@ export function CycleSettings({
 }
 
 export function CyclePlotCard({
+  analysisId,
   analysisTitle,
   plotName,
   subtitle,
@@ -1224,6 +1349,7 @@ export function CyclePlotCard({
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
 }: {
+  analysisId: number;
   analysisTitle: string;
   plotName: string;
   subtitle: string;
@@ -1244,7 +1370,14 @@ export function CyclePlotCard({
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
   const showComputeProgress = useDelayedFlag(updating);
   const plotDivRef = useRef<HTMLElement | null>(null);
+  const selectionContainerRef = useRef<HTMLDivElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
+  const plotSizeContainerRef = useRef(containerRef);
+  plotSizeContainerRef.current = containerRef;
+  const attachSelectionContainer = useCallback((node: HTMLDivElement | null) => {
+    selectionContainerRef.current = node;
+    plotSizeContainerRef.current(node);
+  }, []);
   // Rebuild traces/layout only when the fields they actually read change —
   // unrelated spec edits (other tabs' styles, persistence echoes) must not
   // trigger a full Plotly re-render.
@@ -1282,6 +1415,32 @@ export function CyclePlotCard({
     [result, viewSignature],
   );
   const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
+  const pointSelectionIdentity = useMemo(
+    () =>
+      JSON.stringify({
+        result: {
+          dataSignature: result?.data_signature ?? "no-data",
+          computedAt: result?.computed_at ?? "no-data",
+        },
+        quantity: spec.presentation.quantity,
+        normalize: spec.presentation.normalize_by_mass ?? false,
+        diagnostics: {
+          hidden: spec.presentation.hide_diagnostic_cycles ?? false,
+          reindexed: spec.presentation.reindex_diagnostic_cycles ?? false,
+          tolerance: spec.presentation.diagnostic_tolerance ?? null,
+        },
+        formationCycles: spec.computation.formation_cycles,
+        aggregation: spec.aggregation,
+        entries: spec.selection.entries,
+      }),
+    [result?.computed_at, result?.data_signature, spec],
+  );
+  const pointSelection = useCyclePointSelection({
+    traces,
+    graphDivRef: plotDivRef,
+    containerRef: selectionContainerRef,
+    selectionIdentity: pointSelectionIdentity,
+  });
   const diagnostics = useMemo(() => {
     if (!result || !spec.presentation.hide_diagnostic_cycles) return null;
     const hidden = diagnosticCyclesFor(result, spec);
@@ -1311,6 +1470,13 @@ export function CyclePlotCard({
     [result, viewSignature, exportTraces],
   );
   const style = currentPlotStyle(spec, "cycles");
+  const plotConfig = useMemo(
+    () => ({
+      displaylogo: false,
+      edits: { legendPosition: style.legend_mode !== "outside" },
+    }),
+    [style.legend_mode],
+  );
   const seriesVisibilityCandidates = useMemo(
     () => (result ? cycleSeriesVisibilityCandidates(result, spec) : []),
     [result, spec],
@@ -1352,6 +1518,7 @@ export function CyclePlotCard({
   };
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     zoom.onRelayout(event);
+    window.requestAnimationFrame(pointSelection.invalidateGeometry);
     if (style.legend_mode === "outside") return;
     const point = draggedLegendPoint(event);
     if (!point) return;
@@ -1578,11 +1745,18 @@ export function CyclePlotCard({
           </Center>
         ) : (
           <Box
-            ref={containerRef}
-            onPointerDownCapture={zoom.armOnPointerDown}
+            ref={attachSelectionContainer}
+            onPointerDownCapture={(event) => {
+              pointSelection.onPointerDownCapture(event);
+              if (!event.defaultPrevented) zoom.armOnPointerDown();
+            }}
+            onPointerMoveCapture={pointSelection.onPointerMoveCapture}
+            onPointerUpCapture={pointSelection.onPointerUpCapture}
+            onPointerCancelCapture={pointSelection.onPointerCancelCapture}
             style={{
               width: "100%",
               minWidth: 0,
+              position: "relative",
               opacity: updating ? 0.42 : 1,
               transition: "opacity 160ms ease",
             }}
@@ -1590,21 +1764,61 @@ export function CyclePlotCard({
             <Plot
               data={traces}
               layout={layout}
-              config={{
-                displaylogo: false,
-                edits: { legendPosition: style.legend_mode !== "outside" },
-              }}
+              config={plotConfig}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
+                window.requestAnimationFrame(pointSelection.refresh);
               }}
               onUpdate={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
+                window.requestAnimationFrame(pointSelection.refresh);
               }}
             />
+            <Box
+              data-cycle-point-inspector
+              style={{ position: "absolute", left: 6, top: 6, zIndex: 4 }}
+            >
+              <Tooltip
+                label="Ctrl+drag: rectangle · Ctrl+click: polygon; release Ctrl to select"
+                multiline
+                maw={300}
+                withArrow
+              >
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  color="gray"
+                  aria-label="How to select cycle points"
+                >
+                  <IconInfoCircle size={15} />
+                </ActionIcon>
+              </Tooltip>
+            </Box>
+            <CyclePointSelectionOverlay
+              completedShape={pointSelection.completedShape}
+              constructionVertices={pointSelection.constructionVertices}
+              dragPreview={pointSelection.dragPreview}
+              halos={pointSelection.halos}
+            />
+            {pointSelection.records.length > 0 &&
+              pointSelection.anchorBounds &&
+              plotSize && (
+                <CyclePointInspector
+                  key={pointSelection.records.map((record) => record.key).join("|")}
+                  analysisId={analysisId}
+                  records={pointSelection.records}
+                  anchorBounds={pointSelection.anchorBounds}
+                  containerWidth={plotSize.width}
+                  containerHeight={plotSize.height}
+                  spec={spec}
+                  cyclesResult={result}
+                  onClose={pointSelection.clear}
+                />
+              )}
           </Box>
         )}
       </Paper>

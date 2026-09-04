@@ -38,6 +38,13 @@ async function loadCycleTraceRenderer(): Promise<CycleTraceRenderer> {
         "__plot": "export default ()=>null;",
         "__header": "export const PlotHeader=()=>null; export const ComputeProgress=()=>null;",
         "__stylepanel": "export const PlotStylePanel=()=>null;",
+        "__pointinspector":
+          "export const CyclePointInspector=()=>null; export const CyclePointSelectionOverlay=()=>null;",
+        "__pointselection":
+          "export const useCyclePointSelection=()=>({records:[],completedShape:null,constructionVertices:[]," +
+          "dragPreview:null,halos:[],anchorBounds:null,clear(){},refresh(){}," +
+          "invalidateGeometry(){}," +
+          "onPointerDownCapture(){},onPointerMoveCapture(){},onPointerUpCapture(){},onPointerCancelCapture(){}});",
         "__runtime":
           "export const interactivePlotTraces=()=>[]; export const newComputeToken=()=>42; " +
           "export const useDelayedFlag=()=>false; export const usePlotSizeSync=()=>{}; " +
@@ -56,6 +63,18 @@ async function loadCycleTraceRenderer(): Promise<CycleTraceRenderer> {
           if (normalized.endsWith("/plotting/PlotHeader")) return virtualPrefix + "__header";
           if (normalized.endsWith("/plotting/PlotStylePanel")) {
             return virtualPrefix + "__stylepanel";
+          }
+          if (
+            normalized.includes("/families/cycles/CyclePointInspector") ||
+            normalized === "./CyclePointInspector"
+          ) {
+            return virtualPrefix + "__pointinspector";
+          }
+          if (
+            normalized.includes("/families/cycles/useCyclePointSelection") ||
+            normalized === "./useCyclePointSelection"
+          ) {
+            return virtualPrefix + "__pointselection";
           }
           if (normalized.endsWith("/plotting/plotRuntime")) return virtualPrefix + "__runtime";
           return undefined;
@@ -184,4 +203,44 @@ test("Cycles renderer preserves primary helpers and CE when both targets are vis
   assert.equal(traces.some((trace) => trace.name === "LFP mean"), true);
   assert.equal(traces.some((trace) => trace.name === "LFP band"), true);
   assert.equal(traces.some((trace) => trace.name === "LFP CE"), true);
+});
+
+test("aggregate selection metadata identifies the exact contributing Cells per point", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = aggregateResult();
+  result.cell_series = [
+    {
+      cell_id: 11,
+      label: "Cell A",
+      group_id: 7,
+      excluded: false,
+      x: [1, 2],
+      quantities: { capacity: [1, 2], coulombic_efficiency_pct: [98, null] },
+    },
+    {
+      cell_id: 12,
+      label: "Cell B",
+      group_id: 7,
+      excluded: false,
+      x: [1, 2],
+      quantities: { capacity: [1, null], coulombic_efficiency_pct: [null, 99] },
+    },
+  ] as ComputeResult["cell_series"];
+  const traces = render(result, {
+    ...cycleSpec(),
+    presentation: { ...cycleSpec().presentation, show_individual_cells: false },
+  } as AnalysisSpec);
+
+  const primary = traces.find((trace) => trace.name === "LFP mean");
+  const ce = traces.find((trace) => trace.name === "LFP CE");
+  assert.deepEqual(
+    (primary?.meta as { cellxplorerCycleSelection?: { detailCellIds?: number[][] } })
+      .cellxplorerCycleSelection?.detailCellIds,
+    [[11, 12], [11]],
+  );
+  assert.deepEqual(
+    (ce?.meta as { cellxplorerCycleSelection?: { detailCellIds?: number[][] } })
+      .cellxplorerCycleSelection?.detailCellIds,
+    [[11], [12]],
+  );
 });

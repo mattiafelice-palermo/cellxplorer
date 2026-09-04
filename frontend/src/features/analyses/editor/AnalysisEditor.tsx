@@ -4167,6 +4167,7 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "cycles",
                 <CyclePlotCard
+                  analysisId={aid}
                   analysisTitle={title}
                   plotName={displayPlotName}
                   subtitle={displaySubtitle}

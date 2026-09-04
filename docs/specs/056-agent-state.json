@@ -6,9 +6,9 @@
   "children": [
     "056"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "IMPLEMENT",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [],
   "resume_review": null,
-  "updated_at": "2026-09-04T19:23:40+02:00"
+  "updated_at": "2026-09-04T20:14:46+02:00"
 }
