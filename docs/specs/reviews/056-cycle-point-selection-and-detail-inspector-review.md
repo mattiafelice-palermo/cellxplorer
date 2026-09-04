@@ -5,7 +5,7 @@ Branch: `feature/cycle-point-selection-inspector`
 Merge base: `main` at `7aae0021db94bd565320922a1a5be80fb7a1c05d`
 Initial implementation commit: `c36d35607e8e55f234a059dc7cf18375aed8bade`
 R1-R4 fix commit: `55abb63a4104232c03a4eab6a82d601f953d5b02`
-Status: **Review clean — entering final cumulative review**
+Status: **Changes required in final cumulative review**
 
 ## Confirmed
 
@@ -15,6 +15,7 @@ Status: **Review clean — entering final cumulative review**
 - Aggregate point metadata still derives the exact finite contributing Cell IDs for the plotted quantity at each cycle.
 - The lazy detail request remains an immutable derived one-cycle Time/Capacity request with query-key/body parity, cancellation through React Query, shared cache identity, existing trace construction, and the existing refinement endpoint.
 - Selection/inspector state remains transient and does not use the normal Cycles `update(...)`, dirty, autosave, saved-plot, or export state paths.
+- The cumulative implementation diff remains limited to Spec 056 documentation/workflow, Cycles/analysis-editor frontend ownership, saved-artifact sanitization, and focused frontend regression coverage. There are no backend, migration, calculation-version, parser, shared Plot-wrapper, or persistent schema changes.
 
 ## Verification record
 
@@ -32,9 +33,10 @@ Status: **Review clean — entering final cumulative review**
 
 I independently:
 
-- refreshed branch head `55abb63a4104232c03a4eab6a82d601f953d5b02` and current `main`/merge base `7aae0021db94bd565320922a1a5be80fb7a1c05d`;
-- re-read the authoritative workflow/review/spec and compared the cumulative branch against the merge base;
-- inspected the R1-R4 code paths, focused regressions, and the affected export/artifact/refinement boundaries;
+- refreshed fix head `55abb63a4104232c03a4eab6a82d601f953d5b02` and current `main`/merge base `7aae0021db94bd565320922a1a5be80fb7a1c05d`;
+- re-read the authoritative workflow/review/spec and compared the cumulative feature branch against the merge base;
+- inspected the R1-R4 code paths, focused regressions, query/refinement behavior, original-cycle provenance, aggregate contributor truth, and export/artifact boundaries;
+- confirmed current `main` remains exactly the merge base and the cumulative branch is ahead only;
 - queried commit status/workflow evidence; no GitHub status checks or workflow runs are attached to the fix SHA.
 
 I did **not** independently execute the reported test/build/preflight commands or a browser/manual acceptance session.
@@ -57,8 +59,35 @@ Homogeneous selections keep the compact shared Y heading. Mixed-measure selectio
 
 `invalidateGeometry()` now delegates to the full `clear()` path. Any Plotly relayout therefore cancels construction and clears the committed outline, records, halos, anchor, and inspector together instead of preserving a partially represented selection.
 
+## Findings
+
+### R5 — Low: durable Spec 056 status documentation still describes the pre-review state
+
+Affected files:
+- `docs/specs/056-cycle-point-selection-and-detail-inspector.md`
+- `docs/specs/README.md`
+
+**Current**
+
+The cumulative implementation and R1-R4 re-review are clean, but the durable status documentation has not been closed accordingly. The Spec 056 status still says that R1-R4 fixes are "awaiting independent re-review", while `docs/specs/README.md` still labels Spec 056 **Plan.**. Those statements are now false after the reviewer closed R1-R4 and entered final cumulative review.
+
+**Target**
+
+Update the current status documentation to reflect the actual reviewed state without overstating completion: Spec 056 is implemented, R1-R4 are review-clean/closed, and final cumulative completion is still pending the manual browser acceptance matrix. Preserve the historical implementation/review record and do not claim manual checks were run.
+
+**Acceptance criteria**
+
+- `docs/specs/056-cycle-point-selection-and-detail-inspector.md` no longer says R1-R4 are awaiting independent re-review and accurately states that R1-R4 are closed/review-clean.
+- `docs/specs/README.md` no longer labels Spec 056 **Plan.** and instead records the implemented/review-clean code state plus the outstanding final manual-browser gate.
+- Both files continue to state the manual browser acceptance matrix truthfully as NOT RUN/pending; neither file declares the workflow COMPLETE or merge-ready before that evidence exists.
+- No historical spec/review text or unrelated status entries are rewritten.
+
+## Final-review external gate
+
+The manual browser acceptance matrix is still **NOT RUN**. This is not an additional implementation finding. The spec explicitly defines browser checks for the real Ctrl/pointer gesture boundary, Plotly zoom/pan/modebar/legend regressions, theme/layout behavior, dirty/autosave/network behavior, saved previews/exports, and detail interaction. Under the repository workflow, final `COMPLETE` requires this remaining manual acceptance evidence after R5 is resolved.
+
 ## Decision
 
-**REVIEW CLEAN — R1, R2, R3, and R4 are closed. Enter final cumulative review.**
+**CHANGES REQUIRED — R1-R4 are closed; implement R5 only.**
 
-The remaining manual browser matrix is not an implementation finding. Its status and merge-readiness consequence are evaluated in the final cumulative review.
+After R5 is handed back, resume `FINAL_REVIEW`. If the documentation is clean but the manual browser matrix is still unavailable, the workflow should enter `BLOCKED` rather than invent another finding or mark `COMPLETE`.
