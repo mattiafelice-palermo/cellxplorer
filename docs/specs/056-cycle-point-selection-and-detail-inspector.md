@@ -8,8 +8,11 @@
 
 ## Status
 
-Implemented on the feature branch and awaiting independent review. This is one implementable,
-Cycles-only frontend feature; no child specs are expected.
+Implemented on the feature branch; R1-R4 fixes are awaiting independent re-review. This is one
+implementable, Cycles-only frontend feature; no child specs are expected.
+
+Review document:
+[`reviews/056-cycle-point-selection-and-detail-inspector-review.md`](reviews/056-cycle-point-selection-and-detail-inspector-review.md)
 
 ## Goal
 
@@ -702,7 +705,8 @@ Spec 056 is complete when:
 
 Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`.
 
-- Implementation checkpoint: this pre-review handoff commit (hash assigned at commit).
+- Implementation checkpoints: `c36d356` (initial implementation) plus this R1-R4 fix handoff
+  commit (hash assigned at commit).
 - Files changed: `AnalysisEditor.tsx`, `CyclePlotCard.tsx`, new
   `CyclePointInspector.tsx`, new `useCyclePointSelection.ts`, new
   `cyclePointSelectionPolicy.ts`, `cycleTraceRenderer.test.ts`, and new
@@ -715,12 +719,16 @@ Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`
   Time/Capacity request for the active original global cycle and exact contributing Cells, with
   canonical query-key/body identity, cancellation, compatible placeholder reuse, and the existing
   refinement endpoint.
-- Focused verification: `node --test frontend\tests\cyclePointSelectionPolicy.test.ts
-  frontend\tests\cycleTraceRenderer.test.ts` PASS (17/17); adding
-  `frontend\tests\timeCapacityQueryPolicy.test.ts` PASS (30/30); full frontend suite PASS
-  (773/773); `npx.cmd tsc --noEmit` PASS; `npm.cmd run build` PASS.
-- Canonical verification: `python scripts\preflight.py --no-cache` PASS — 4/4 stages and all 163
-  backend/frontend test files/modules passed in 59.06 seconds.
+- R1-R4 fixes: the inspector now uses the shared latest-generation refinement lifecycle; mixed
+  primary/CE selections show each row's exact measure label; point-selection metadata is
+  interactive-only and defensively removed from portable artifacts; and relayout clears the
+  complete transient selection when its screen-space outline can no longer remain truthful.
+- Focused re-verification: `node --test frontend\tests\cyclePointSelectionPolicy.test.ts
+  frontend\tests\cycleTraceRenderer.test.ts frontend\tests\plotArtifactPolicy.test.ts
+  frontend\tests\timeCapacityRefinementPolicy.test.ts` PASS (39/39); full frontend suite PASS
+  (779/779); `npx.cmd tsc --noEmit` PASS; `npm.cmd run build` PASS; `git diff --check` PASS.
+- Canonical re-verification: `python scripts\preflight.py --no-cache` PASS — 4/4 stages and all 163
+  backend/frontend test files/modules passed in 53.02 seconds.
 - Manual browser acceptance matrix: NOT RUN in this implementation turn.
-- Review: initial design consultation completed; formal implementation review is pending. The
-  reviewer owns any review document and final completion decision.
+- Review: initial review returned R1-R4; all four are addressed in the pending fix checkpoint.
+  Independent re-review and final completion decision remain reviewer-owned.

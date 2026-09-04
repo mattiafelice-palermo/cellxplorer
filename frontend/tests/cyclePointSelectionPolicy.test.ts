@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import type { AnalysisSpec, ComputeResult } from "../src/api.ts";
+import type {
+  AnalysisSpec,
+  ComputeResult,
+  TimeCapacityRefinementResult,
+  TimeCapacityResult,
+} from "../src/api.ts";
+import { TimeCapacityRefinementLifecycle } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementLifecycle.ts";
 import {
   CYCLE_POINT_CLICK_RADIUS_PX,
   CYCLE_POINT_DRAG_THRESHOLD_PX,
@@ -13,10 +21,12 @@ import {
   cyclePointGestureIsRectangle,
   cyclePointInPolygon,
   cyclePointInRectangle,
+  cyclePointMeasurePresentation,
   cyclePointRecordsForShape,
   cyclePointSelectedCycles,
   cyclePointSelectionKey,
   cyclePointSortRecords,
+  withoutCyclePointSelectionMetadata,
   type CyclePointSelectionRecord,
   type CycleSelectableTraceMeta,
 } from "../src/features/analyses/editor/families/cycles/cyclePointSelectionPolicy.ts";
@@ -204,6 +214,36 @@ test("rows sort by scientific cycle then draw order and selected-cycle navigatio
   assert.equal(cyclePointAdjacentCycle(records, 8, 1), null);
 });
 
+test("mixed primary and CE rows retain an explicit per-row measure identity", () => {
+  const primary = baseRecord();
+  const ce = baseRecord({
+    key: "ce",
+    seriesKey: "ce:c1",
+    quantityKey: "coulombic_efficiency_pct",
+    quantityLabel: "Coulombic efficiency (%)",
+    axis: "y2",
+  });
+  assert.deepEqual(cyclePointMeasurePresentation([primary]), {
+    yHeader: "Discharge capacity (mAh)",
+    showMeasurePerRow: false,
+  });
+  assert.deepEqual(cyclePointMeasurePresentation([primary, ce]), {
+    yHeader: "Y value",
+    showMeasurePerRow: true,
+  });
+  assert.equal(primary.quantityLabel, "Discharge capacity (mAh)");
+  assert.equal(ce.quantityLabel, "Coulombic efficiency (%)");
+});
+
+test("artifact sanitization removes only live point-selection metadata without mutating traces", () => {
+  const selectable = trace();
+  selectable.meta.otherMetadata = "preserved";
+  const cleaned = withoutCyclePointSelectionMetadata([selectable]);
+  assert.notEqual(cleaned[0], selectable);
+  assert.deepEqual(cleaned[0].meta, { otherMetadata: "preserved" });
+  assert.ok("cellxplorerCycleSelection" in selectable.meta);
+});
+
 test("visibility culling removes only hidden records and closes naturally on empty", () => {
   const first = baseRecord({ key: "first" });
   const second = baseRecord({ key: "second", cellId: 2, seriesKey: "c2" });
@@ -313,4 +353,62 @@ test("detail request identity follows X and voltage choices while preserving one
   assert.notEqual(time.dataSignature, potential.dataSignature);
   assert.equal(time.spec.computation.time_capacity?.x_axis, "time");
   assert.deepEqual(potential.spec.computation.time_capacity?.voltage_channels, ["working_potential"]);
+});
+
+test("cycle detail refinement rejects superseded and cancelled response generations", () => {
+  const current = {
+    data_signature: "overview",
+  } as TimeCapacityResult;
+  const responseFor = (generation: string): TimeCapacityRefinementResult => ({
+    ...current,
+    overview_data_signature: "overview",
+    request_generation: generation,
+  } as TimeCapacityRefinementResult);
+  const lifecycle = new TimeCapacityRefinementLifecycle();
+  const viewportA = { min: 0, max: 10 };
+  const viewportB = { min: 2, max: 6 };
+
+  lifecycle.cancelPending();
+  const generationA = lifecycle.beginRequest(viewportA);
+  lifecycle.cancelPending();
+  const generationB = lifecycle.beginRequest(viewportB);
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationA), current, generationA, viewportA, "compat"),
+    false,
+  );
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationB), current, generationB, viewportB, "compat"),
+    true,
+  );
+
+  lifecycle.cancelPending();
+  assert.equal(
+    lifecycle.acceptResponse(responseFor(generationB), current, generationB, viewportB, "compat"),
+    false,
+  );
+});
+
+test("inspector wiring invalidates refinement generations and relayout clears the full selection", () => {
+  const inspectorSource = readFileSync(
+    fileURLToPath(
+      new URL(
+        "../src/features/analyses/editor/families/cycles/CyclePointInspector.tsx",
+        import.meta.url,
+      ),
+    ),
+    "utf8",
+  );
+  const selectionSource = readFileSync(
+    fileURLToPath(
+      new URL(
+        "../src/features/analyses/editor/families/cycles/useCyclePointSelection.ts",
+        import.meta.url,
+      ),
+    ),
+    "utf8",
+  );
+  assert.match(inspectorSource, /new TimeCapacityRefinementLifecycle\(\)/);
+  assert.match(inspectorSource, /refinementLifecycle\.cancelPending\(\)/);
+  assert.match(inspectorSource, /refinementLifecycle\.acceptResponse\(/);
+  assert.match(selectionSource, /const invalidateGeometry = useCallback\(\(\) => \{[\s\S]*?clear\(\);[\s\S]*?\}, \[clear\]\);/);
 });

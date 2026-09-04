@@ -50,12 +50,13 @@ import {
 } from "../time-capacity/TimeCapacityPlotCard";
 import {
   timeCapacityOverviewExtent,
-  timeCapacityRefinementRequestIsCurrent,
   timeCapacityRefinementWorthwhile,
 } from "../time-capacity/timeCapacityRefinementPolicy";
+import { TimeCapacityRefinementLifecycle } from "../time-capacity/timeCapacityRefinementLifecycle";
 import {
   cyclePointAdjacentCycle,
   cyclePointDetailRequest,
+  cyclePointMeasurePresentation,
   cyclePointSelectedCycles,
   type CyclePoint,
   type CyclePointDetailRequest,
@@ -317,7 +318,11 @@ function CycleDetail({
   const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
   const refinementTimerRef = useRef<number | null>(null);
   const refinementAbortRef = useRef<AbortController | null>(null);
-  const refinementGenerationRef = useRef(0);
+  const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
+  if (refinementLifecycleRef.current === null) {
+    refinementLifecycleRef.current = new TimeCapacityRefinementLifecycle();
+  }
+  const refinementLifecycle = refinementLifecycleRef.current;
   const refinementGestureArmedRef = useRef(false);
   const activeRecords = useMemo(
     () => records.filter((record) => record.scientificCycle === activeCycle),
@@ -370,13 +375,14 @@ function CycleDetail({
   const overview = detailQuery.data;
 
   const cancelRefinement = useCallback(() => {
+    refinementLifecycle.cancelPending();
     if (refinementTimerRef.current !== null) {
       window.clearTimeout(refinementTimerRef.current);
       refinementTimerRef.current = null;
     }
     refinementAbortRef.current?.abort();
     refinementAbortRef.current = null;
-  }, []);
+  }, [refinementLifecycle]);
 
   useEffect(() => {
     cancelRefinement();
@@ -420,8 +426,7 @@ function CycleDetail({
       const requestAtSchedule = request;
       const requestIdentityAtSchedule = requestIdentity;
       const overviewAtSchedule = overview;
-      const generationNumber = ++refinementGenerationRef.current;
-      const generation = `cycle-inspector-${generationNumber}`;
+      const generation = refinementLifecycle.beginRequest(viewport);
       refinementTimerRef.current = window.setTimeout(() => {
         refinementTimerRef.current = null;
         const controller = new AbortController();
@@ -442,10 +447,12 @@ function CycleDetail({
           .then((response) => {
             if (
               requestIdentityRef.current === requestIdentityAtSchedule &&
-              timeCapacityRefinementRequestIsCurrent(
+              refinementLifecycle.acceptResponse(
                 response,
                 overviewAtSchedule,
                 generation,
+                viewport,
+                requestAtSchedule.compatibilitySignature,
               )
             ) {
               setRefinedResult(response);
@@ -456,7 +463,15 @@ function CycleDetail({
           });
       }, DETAIL_REFINEMENT_DELAY_MS);
     },
-    [activeCycle, analysisId, cancelRefinement, overview, request, requestIdentity],
+    [
+      activeCycle,
+      analysisId,
+      cancelRefinement,
+      overview,
+      refinementLifecycle,
+      request,
+      requestIdentity,
+    ],
   );
 
   const shownResult = refinedResult ?? overview;
@@ -668,8 +683,7 @@ export function CyclePointInspector({
   }, [activeCycle, cycles]);
   const position = inspectorPosition(anchorBounds, containerWidth, containerHeight);
   const xLabel = "Cycle";
-  const yLabels = [...new Set(records.map((record) => record.quantityLabel))];
-  const yLabel = yLabels.length === 1 ? yLabels[0] : "Y value";
+  const measurePresentation = cyclePointMeasurePresentation(records);
 
   return (
     <Paper
@@ -709,7 +723,7 @@ export function CyclePointInspector({
                 <Table.Th>Sample</Table.Th>
                 <Table.Th ta="right">Cycle</Table.Th>
                 <Table.Th ta="right">{xLabel}</Table.Th>
-                <Table.Th ta="right">{yLabel}</Table.Th>
+                <Table.Th ta="right">{measurePresentation.yHeader}</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -739,9 +753,16 @@ export function CyclePointInspector({
                   >
                     <Table.Td maw={170}>
                       <Tooltip label={sourceContext || record.sampleLabel} multiline maw={360}>
-                        <Text size="xs" fw={active ? 650 : 500} truncate="end" title={record.sampleLabel}>
-                          {record.sampleLabel}
-                        </Text>
+                        <Box>
+                          <Text size="xs" fw={active ? 650 : 500} truncate="end" title={record.sampleLabel}>
+                            {record.sampleLabel}
+                          </Text>
+                          {measurePresentation.showMeasurePerRow && (
+                            <Text size="10px" c="dimmed" lh={1.25} mt={2}>
+                              {record.quantityLabel}
+                            </Text>
+                          )}
+                        </Box>
                       </Tooltip>
                     </Table.Td>
                     <Table.Td ta="right"><Text size="xs" fw={active ? 650 : undefined}>{record.scientificCycle}</Text></Table.Td>

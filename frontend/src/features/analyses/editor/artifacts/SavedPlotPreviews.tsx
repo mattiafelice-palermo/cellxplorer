@@ -18,6 +18,7 @@ import {
   cyclePlotLayout,
   cycleTracesForResult,
 } from "../families/cycles/CyclePlotCard";
+import { withoutCyclePointSelectionMetadata } from "../families/cycles/cyclePointSelectionPolicy";
 import {
   dcirLayoutForSpec,
   dcirTracesForResult,
@@ -956,7 +957,7 @@ function portableFigure(
   delete responsiveLayout.width;
   return JSON.parse(
     JSON.stringify({
-      data: traces,
+      data: withoutCyclePointSelectionMetadata(traces),
       layout: responsiveLayout,
       config: { displaylogo: false, responsive: true },
     })

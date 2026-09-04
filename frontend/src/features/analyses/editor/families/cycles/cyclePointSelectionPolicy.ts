@@ -89,6 +89,11 @@ export type CyclePointDetailRequest = {
   viewportWidth: number;
 };
 
+export type CyclePointMeasurePresentation = {
+  yHeader: string;
+  showMeasurePerRow: boolean;
+};
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -102,6 +107,31 @@ function selectableMetadata(value: unknown): CycleSelectableTraceMetadata | null
   const metadata = (value as Partial<CycleSelectableTraceMeta>).cellxplorerCycleSelection;
   if (!metadata || metadata.version !== 1) return null;
   return metadata;
+}
+
+/** Keep live hit-test metadata out of exports and persisted plot artifacts. */
+export function withoutCyclePointSelectionMetadata<T extends object>(
+  traces: readonly T[],
+): T[] {
+  return traces.map((trace) => {
+    const meta = (trace as { meta?: unknown }).meta;
+    if (
+      !meta ||
+      typeof meta !== "object" ||
+      Array.isArray(meta) ||
+      !("cellxplorerCycleSelection" in meta)
+    ) {
+      return trace;
+    }
+    const {
+      cellxplorerCycleSelection: _selectionMetadata,
+      ...remainingMeta
+    } = meta as Record<string, unknown>;
+    const clean = { ...trace } as T & { meta?: unknown };
+    if (Object.keys(remainingMeta).length > 0) clean.meta = remainingMeta;
+    else delete clean.meta;
+    return clean;
+  });
 }
 
 export function cyclePointGestureIsRectangle(
@@ -312,6 +342,16 @@ export function cyclePointSortRecords<T extends CyclePointSelectionRecord>(recor
       a.seriesKey.localeCompare(b.seriesKey) ||
       a.axis.localeCompare(b.axis),
   );
+}
+
+export function cyclePointMeasurePresentation(
+  records: readonly CyclePointSelectionRecord[],
+): CyclePointMeasurePresentation {
+  const labels = [...new Set(records.map((record) => record.quantityLabel))];
+  return {
+    yHeader: labels.length === 1 ? labels[0] : "Y value",
+    showMeasurePerRow: labels.length > 1,
+  };
 }
 
 export function cyclePointSelectedCycles(

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   artifactDataSignatureForWrite,
@@ -36,4 +38,17 @@ test("portable snapshots require the compute endpoint's scientific identity", ()
     () => portableResultDataSignature(undefined),
     /server-owned scientific signature/,
   );
+});
+
+test("portable figures sanitize Cycles-only live point-selection metadata", () => {
+  const source = readFileSync(
+    fileURLToPath(
+      new URL(
+        "../src/features/analyses/editor/artifacts/SavedPlotPreviews.tsx",
+        import.meta.url,
+      ),
+    ),
+    "utf8",
+  );
+  assert.match(source, /data: withoutCyclePointSelectionMetadata\(traces\)/);
 });

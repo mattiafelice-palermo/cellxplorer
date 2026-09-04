@@ -169,10 +169,11 @@ export function useCyclePointSelection({
   }, []);
 
   const invalidateGeometry = useCallback(() => {
-    cancelConstruction();
-    setCompletedShape(null);
-    refresh();
-  }, [cancelConstruction, refresh]);
+    // Screen-space outlines cannot be truthfully transformed after Plotly
+    // relayout. Clear the outline, records, halos, and inspector together
+    // rather than leaving a partially represented active selection.
+    clear();
+  }, [clear]);
 
   const candidates = useCallback((): CyclePointScreenCandidate[] => {
     const graphDiv = graphDivRef.current as PlotlySelectionGraphDiv | null;

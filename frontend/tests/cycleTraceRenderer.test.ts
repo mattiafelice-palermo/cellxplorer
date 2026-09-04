@@ -8,6 +8,7 @@ type CycleTraceRenderer = (
   result: ComputeResult,
   spec: AnalysisSpec,
   compact?: boolean,
+  includePointSelectionMetadata?: boolean,
 ) => Plotly.Data[];
 
 let rendererPromise: Promise<CycleTraceRenderer> | undefined;
@@ -229,7 +230,7 @@ test("aggregate selection metadata identifies the exact contributing Cells per p
   const traces = render(result, {
     ...cycleSpec(),
     presentation: { ...cycleSpec().presentation, show_individual_cells: false },
-  } as AnalysisSpec);
+  } as AnalysisSpec, false, true);
 
   const primary = traces.find((trace) => trace.name === "LFP mean");
   const ce = traces.find((trace) => trace.name === "LFP CE");
@@ -242,5 +243,26 @@ test("aggregate selection metadata identifies the exact contributing Cells per p
     (ce?.meta as { cellxplorerCycleSelection?: { detailCellIds?: number[][] } })
       .cellxplorerCycleSelection?.detailCellIds,
     [[11], [12]],
+  );
+});
+
+test("Cycles traces expose point metadata only for the live interactive path", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = aggregateResult();
+  const viewSpec = cycleSpec();
+  const artifactTraces = render(result, viewSpec);
+  const interactiveTraces = render(result, viewSpec, false, true);
+
+  assert.equal(
+    artifactTraces.some((trace) =>
+      Boolean((trace.meta as { cellxplorerCycleSelection?: unknown } | undefined)?.cellxplorerCycleSelection),
+    ),
+    false,
+  );
+  assert.equal(
+    interactiveTraces.some((trace) =>
+      Boolean((trace.meta as { cellxplorerCycleSelection?: unknown } | undefined)?.cellxplorerCycleSelection),
+    ),
+    true,
   );
 });

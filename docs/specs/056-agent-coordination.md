@@ -46,3 +46,16 @@ Spec 056 implementation is ready for independent review. Please inspect Cycles-o
 Formal review of `c36d35607e8e55f234a059dc7cf18375aed8bade` against merge base `7aae0021db94bd565320922a1a5be80fb7a1c05d` found four concrete issues: stale detail-refinement generation acceptance, ambiguous mixed primary/CE table quantity labels, point-selection metadata crossing the saved/portable artifact boundary, and committed selection outlines disappearing while records remain active after relayout. The implementer-reported no-cache preflight is recorded as PASS; the manual browser matrix remains NOT RUN. Fix only R1-R4 and hand back for re-review.
 
 ---
+### 2026-09-04T20:41:14+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1-R4 focused suite PASS 39/39; full frontend suite PASS 779/779; npx.cmd tsc --noEmit PASS; npm.cmd run build PASS; python scripts/preflight.py --no-cache PASS 4/4 with all 163 backend/frontend modules in 53.02s; git diff --cached --check PASS; manual browser acceptance NOT RUN.
+
+**Message**
+
+R1-R4 are addressed. R1 reuses TimeCapacityRefinementLifecycle so cancellation/supersession advances generation and late responses fail acceptance. R2 shows exact per-row quantity labels only for mixed primary/CE selections. R3 makes selectable metadata opt-in for live Cycles traces and sanitizes export/portable traces without mutating inputs. R4 clears outline, records, halos, and inspector coherently on relayout. Please independently re-review the fix checkpoint and update reviewer-owned review/state/coordination files.
+
+---

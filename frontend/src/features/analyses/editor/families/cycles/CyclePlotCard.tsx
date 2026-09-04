@@ -114,6 +114,7 @@ import {
   cycleVisibilityKey,
 } from "./cycleVisibility";
 import type { CycleSelectableTraceMeta } from "./cyclePointSelectionPolicy";
+import { withoutCyclePointSelectionMetadata } from "./cyclePointSelectionPolicy";
 import {
   CyclePointInspector,
   CyclePointSelectionOverlay,
@@ -486,6 +487,7 @@ export function cycleTracesForResult(
   original: ComputeResult,
   spec: AnalysisSpec,
   compact = false,
+  includePointSelectionMetadata = false,
 ): Plotly.Data[] {
   // Filter here rather than at each call site so the live plot, the saved
   // thumbnail and the exported figure cannot disagree about what is shown.
@@ -697,7 +699,7 @@ export function cycleTracesForResult(
         legendrank: legendRanks.get(aggKey),
         type: "scatter",
         mode: compact ? mode : seriesPlotlyMode(aggResolved),
-        meta: primarySelectionMeta,
+        ...(includePointSelectionMetadata ? { meta: primarySelectionMeta } : {}),
         customdata: q.n,
         hovertemplate: compact
           ? undefined
@@ -780,7 +782,7 @@ export function cycleTracesForResult(
         opacity: ceResolved.opacity,
         showlegend: ceResolved.showInLegend,
         legendrank: legendRanks.get(ceKey),
-        meta: ceSelectionMeta,
+        ...(includePointSelectionMetadata ? { meta: ceSelectionMeta } : {}),
       } as Plotly.Data);
     }
   }
@@ -864,7 +866,7 @@ export function cycleTracesForResult(
         mode: compact ? mode : seriesPlotlyMode(resolved),
         showlegend: !compact && !grouped && resolved.showInLegend,
         legendrank: legendRanks.get(cellKey),
-        meta: primarySelectionMeta,
+        ...(includePointSelectionMetadata ? { meta: primarySelectionMeta } : {}),
         customdata,
         cellxplorer_export_columns: sourceColumns,
         hovertemplate:
@@ -933,7 +935,7 @@ export function cycleTracesForResult(
         opacity: ceResolved.opacity,
         showlegend: ceResolved.showInLegend,
         legendrank: legendRanks.get(ceKey),
-        meta: ceSelectionMeta,
+        ...(includePointSelectionMetadata ? { meta: ceSelectionMeta } : {}),
       } as Plotly.Data);
     }
   }
@@ -1410,11 +1412,15 @@ export function CyclePlotCard({
   // Build one canonical SVG-capable trace set, then change only the renderer
   // type for the interactive graph. Data, style, order and layout stay shared.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const exportTraces = useMemo(
-    () => (result ? cycleTracesForResult(result, spec) : []),
+  const selectableTraces = useMemo(
+    () => (result ? cycleTracesForResult(result, spec, false, true) : []),
     [result, viewSignature],
   );
-  const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
+  const exportTraces = useMemo(
+    () => withoutCyclePointSelectionMetadata(selectableTraces),
+    [selectableTraces],
+  );
+  const traces = useMemo(() => interactivePlotTraces(selectableTraces), [selectableTraces]);
   const pointSelectionIdentity = useMemo(
     () =>
       JSON.stringify({
@@ -1567,7 +1573,7 @@ export function CyclePlotCard({
       const plan = resolveExportPlan(exportStyle, currentViewSize(), layout);
       const ppi = Math.max(36, exportStyle.export_ppi ?? 96);
       const filename = slugFilename(baseName);
-      const outputTraces = format === "png" ? traces : exportTraces;
+      const outputTraces = format === "png" ? interactivePlotTraces(exportTraces) : exportTraces;
       const figure = exportFigure(outputTraces, layout, exportStyle, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
