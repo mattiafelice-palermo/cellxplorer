@@ -30,3 +30,19 @@ Standalone Spec 056 initialized on `feature/cycle-point-selection-inspector` aft
 Spec 056 implementation is ready for independent review. Please inspect Cycles-only gesture ownership, exact selectable trace metadata/global-cycle provenance, transient inspector state, lazy one-cycle Time/Capacity detail key/body parity, cancellation/refinement, and regression boundaries. Unrelated dirty/untracked user files were preserved and are outside the checkpoint.
 
 ---
+### 2026-09-04T20:29:40+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+- R4
+
+**Message**
+
+Formal review of `c36d35607e8e55f234a059dc7cf18375aed8bade` against merge base `7aae0021db94bd565320922a1a5be80fb7a1c05d` found four concrete issues: stale detail-refinement generation acceptance, ambiguous mixed primary/CE table quantity labels, point-selection metadata crossing the saved/portable artifact boundary, and committed selection outlines disappearing while records remain active after relayout. The implementer-reported no-cache preflight is recorded as PASS; the manual browser matrix remains NOT RUN. Fix only R1-R4 and hand back for re-review.
+
+---
