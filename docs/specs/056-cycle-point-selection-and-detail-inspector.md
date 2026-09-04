@@ -8,8 +8,10 @@
 
 ## Status
 
-Implemented on the feature branch; R1-R4 fixes are awaiting independent re-review. This is one
-implementable, Cycles-only frontend feature; no child specs are expected.
+Implementation is complete on the feature branch and R1-R4 are independently review-clean. The
+manual browser acceptance matrix remains NOT RUN/pending, so final workflow completion and merge
+readiness are not yet declared. This is one implementable, Cycles-only frontend feature; no child
+specs are expected.
 
 Review document:
 [`reviews/056-cycle-point-selection-and-detail-inspector-review.md`](reviews/056-cycle-point-selection-and-detail-inspector-review.md)
@@ -705,8 +707,7 @@ Spec 056 is complete when:
 
 Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`.
 
-- Implementation checkpoints: `c36d356` (initial implementation) plus this R1-R4 fix handoff
-  commit (hash assigned at commit).
+- Implementation checkpoints: `c36d356` (initial implementation) and `55abb63` (R1-R4 fixes).
 - Files changed: `AnalysisEditor.tsx`, `CyclePlotCard.tsx`, new
   `CyclePointInspector.tsx`, new `useCyclePointSelection.ts`, new
   `cyclePointSelectionPolicy.ts`, `cycleTraceRenderer.test.ts`, and new
@@ -730,5 +731,6 @@ Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`
 - Canonical re-verification: `python scripts\preflight.py --no-cache` PASS — 4/4 stages and all 163
   backend/frontend test files/modules passed in 53.02 seconds.
 - Manual browser acceptance matrix: NOT RUN in this implementation turn.
-- Review: initial review returned R1-R4; all four are addressed in the pending fix checkpoint.
-  Independent re-review and final completion decision remain reviewer-owned.
+- Review: initial review returned R1-R4; all four are independently closed. R5 updates only the
+  durable status documentation. The pending manual browser matrix and final completion decision
+  remain reviewer-owned.
