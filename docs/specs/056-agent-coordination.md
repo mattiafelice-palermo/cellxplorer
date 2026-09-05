@@ -217,3 +217,19 @@ User adds R9: outside Ctrl clicks dismiss the old inspector except the same sele
 R8 includes figure retention and the additional outside-Ctrl replacement requirement. R6/R7/R8 await independent final review. Broader manual matrix remains as documented; no merge, tag, or release.
 
 ---
+### 2026-09-05T15:11:00+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+- R9
+
+**Message**
+
+User requests R9: highlight points live as they enter or leave the rectangle or cursor-preview polygon before selection is finalized. Reopen this bounded follow-up and retain R6/R7/R8 for independent review.
+
+---

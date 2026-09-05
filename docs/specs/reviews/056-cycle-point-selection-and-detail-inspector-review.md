@@ -137,6 +137,13 @@ Focused selection/refinement tests passed 38/38. Final no-cache preflight at `0.
 passed 4/4 stages and all 163 files/modules in 72.86 s. R8 includes the outside-Ctrl requirement;
 R6/R7/R8 await independent review together. No merge, tag, or release was performed.
 
+### R9 - Live selection highlights
+
+The user requests immediate highlights for points inside the ongoing Ctrl rectangle or polygon,
+including the dashed cursor preview. Moving the boundary must also remove highlights from points
+that leave. Preview highlights must not open the inspector or issue detail requests before commit.
+Keep the same selected-marker styling and clear previews on cancellation.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
