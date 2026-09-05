@@ -247,3 +247,20 @@ User requests R9: highlight points live as they enter or leave the rectangle or 
 R9 live selection highlighting implemented. R6-R9 await independent final review, with the broader manual matrix still outstanding. No merge, tag, or release.
 
 ---
+### 2026-09-05T15:44:31+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+- R9
+- R10
+
+**Message**
+
+User requests R10: scroll only the selected-points table so the cycle detail plot stays visible; add an All series/default or individual-series dropdown beside the heading, filtering table and detail together.
+
+---

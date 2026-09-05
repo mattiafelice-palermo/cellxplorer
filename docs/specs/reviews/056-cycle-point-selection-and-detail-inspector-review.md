@@ -155,6 +155,13 @@ manual checks; policy tests cover both shapes expanding and contracting. See the
 No-cache preflight at `0.27.1-alpha.24` passed 4/4 stages and all 163 files/modules in 71.70 s;
 focused policy tests passed 27/27. R6-R9 await independent review; no merge, tag, or release.
 
+### R10 - Independent table scrolling and inspector series filter
+
+The user requests scrolling only the selected-points table, keeping the detail chart visible, and
+an All series (default) or individual-series dropdown beside the Selected points heading. Apply the
+filter consistently to rows and detail, retain full selected-point geometry, and keep the popup
+within the viewport when possible without covering selected points.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
