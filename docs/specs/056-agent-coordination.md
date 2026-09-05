@@ -203,3 +203,17 @@ User requests keeping the previous detail figure visible during quantity loading
 User adds R9: outside Ctrl clicks dismiss the old inspector except the same selected point. Implement alongside R8 and preserve in-progress replacement gestures.
 
 ---
+### 2026-09-05T15:09:13+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- No-cache preflight at 0.27.1-alpha.23: PASS 4/4 stages, all 163 files/modules, 72.86 s; focused tests 38/38.
+- Browser: delayed quantity swap kept old axes and plot at 504px popup height; same-point Ctrl retention, outside-Ctrl dismissal, and replacement polygon verified.
+
+**Message**
+
+R8 includes figure retention and the additional outside-Ctrl replacement requirement. R6/R7/R8 await independent final review. Broader manual matrix remains as documented; no merge, tag, or release.
+
+---

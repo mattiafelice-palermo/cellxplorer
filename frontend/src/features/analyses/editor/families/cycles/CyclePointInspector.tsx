@@ -334,7 +334,10 @@ function CycleDetail({
   const [yQuantity, setYQuantity] = useState<CyclePointDetailYQuantity>("voltage");
   const [shownCell, setShownCell] = useState("all");
   const capabilitiesRef = useRef<{ context: string; result: TimeCapacityResult } | null>(null);
-  const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
+  const [refinedResult, setRefinedResult] = useState<{
+    requestIdentity: string;
+    result: TimeCapacityRefinementResult;
+  } | null>(null);
   const refinementTimerRef = useRef<number | null>(null);
   const refinementAbortRef = useRef<AbortController | null>(null);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
@@ -482,7 +485,7 @@ function CycleDetail({
                 requestAtSchedule.compatibilitySignature,
               )
             ) {
-              setRefinedResult(response);
+              setRefinedResult({ requestIdentity: requestIdentityAtSchedule, result: response });
             }
           })
           .catch(() => {
@@ -501,7 +504,7 @@ function CycleDetail({
     ],
   );
 
-  const shownResult = refinedResult ?? overview;
+  const shownResult = refinedResult?.requestIdentity === requestIdentity ? refinedResult.result : overview;
   const cellColors = useMemo(() => {
     const colors = new Map<number, string>();
     // Direct Cell identities take precedence over a group's shared color.
@@ -592,6 +595,28 @@ function CycleDetail({
       }),
     [detailStyle, layoutSpec, request.spec, requestIdentity, shownResult, traces, xQuantity, yQuantity],
   );
+  // Retain a whole rendered figure, not an incompatible response reinterpreted
+  // through the new quantity's request and axis labels.
+  const figureContext = `${activeCycle}|${capabilityContext}`;
+  const previousFigureRef = useRef<{
+    context: string;
+    traces: Plotly.Data[];
+    layout: Partial<Plotly.Layout>;
+  } | null>(null);
+  const hasCurrentFigure = Boolean(overview && !detailQuery.isPlaceholderData);
+  const retainPreviousFigure = !hasCurrentFigure &&
+    (detailQuery.isFetching || detailQuery.isError) &&
+    previousFigureRef.current?.context === figureContext;
+  const displayedFigure = retainPreviousFigure
+    ? previousFigureRef.current!
+    : { traces, layout };
+  useLayoutEffect(() => {
+    if (hasCurrentFigure) {
+      previousFigureRef.current = traces.length > 0 ? { context: figureContext, traces, layout } : null;
+    } else if (previousFigureRef.current?.context !== figureContext) {
+      previousFigureRef.current = null;
+    }
+  }, [figureContext, hasCurrentFigure, layout, traces]);
   const plotConfig = useMemo(
     () => ({ displaylogo: false, responsive: true, displayModeBar: false }),
     [],
@@ -668,7 +693,7 @@ function CycleDetail({
           <Group justify="space-between" gap="xs">
             <Text size="xs">
               Cycle {activeCycle} detail could not be loaded
-              {overview ? "; the previous curve is retained." : "."}
+              {displayedFigure.traces.length > 0 ? "; the previous curve is retained." : "."}
             </Text>
             <Button
               size="compact-xs"
@@ -681,22 +706,24 @@ function CycleDetail({
           </Group>
         </Alert>
       )}
-      {traces.length > 0 ? (
+      {displayedFigure.traces.length > 0 ? (
         <Box
           pos="relative"
+          h={250}
+          aria-busy={detailQuery.isFetching}
           onPointerDownCapture={() => {
-            refinementGestureArmedRef.current = true;
+            refinementGestureArmedRef.current = !retainPreviousFigure;
           }}
-          style={{ opacity: detailQuery.isPlaceholderData ? 0.38 : 1 }}
+          style={{ opacity: retainPreviousFigure || detailQuery.isPlaceholderData ? 0.6 : 1 }}
         >
           <Plot
-            data={traces}
-            layout={layout}
+            data={displayedFigure.traces}
+            layout={displayedFigure.layout}
             config={plotConfig}
-            style={{ width: "100%", height: 250 }}
-            onRelayout={handleRelayout}
+            style={{ width: "100%", height: 250, pointerEvents: retainPreviousFigure ? "none" : undefined }}
+            onRelayout={retainPreviousFigure ? undefined : handleRelayout}
           />
-          {delayedLoading && (
+          {(delayedLoading || (retainPreviousFigure && detailQuery.isFetching)) && (
             <Group
               gap={6}
               px="xs"
@@ -709,7 +736,7 @@ function CycleDetail({
           )}
         </Box>
       ) : detailQuery.isFetching ? (
-        <Group justify="center" py="xl" gap="xs">
+        <Group justify="center" h={250} gap="xs">
           {delayedLoading && <Loader size="sm" />}
           <Text size="xs" c="dimmed">Loading cycle {activeCycle}…</Text>
         </Group>
@@ -731,6 +758,7 @@ export function CyclePointInspector({
   spec,
   cyclesResult,
   onClose,
+  onOutsidePointerDown,
 }: {
   analysisId: number;
   records: CyclePointSelectionRecord[];
@@ -740,6 +768,7 @@ export function CyclePointInspector({
   spec: AnalysisSpec;
   cyclesResult: ComputeResult | undefined;
   onClose: () => void;
+  onOutsidePointerDown?: (event: PointerEvent) => void;
 }) {
   const cycles = useMemo(() => cyclePointSelectedCycles(records), [records]);
   const [activeCycle, setActiveCycle] = useState(cycles[0]);
@@ -769,13 +798,12 @@ export function CyclePointInspector({
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (paperElement?.contains(target) || target.closest(".cycle-point-inspector-dropdown")) return;
-      // The plot controller owns replacement gestures and Escape cancellation.
-      if (event.ctrlKey && container.contains(target)) return;
-      onClose();
+      if (onOutsidePointerDown) onOutsidePointerDown(event);
+      else onClose();
     };
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
-  }, [container, onClose, paperElement]);
+  }, [onClose, onOutsidePointerDown, paperElement]);
   useEffect(() => {
     if (!cycles.includes(activeCycle)) setActiveCycle(cycles[0]);
   }, [activeCycle, cycles]);

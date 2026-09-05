@@ -1831,6 +1831,7 @@ export function CyclePlotCard({
                   spec={spec}
                   cyclesResult={result}
                   onClose={pointSelection.clear}
+                  onOutsidePointerDown={pointSelection.onOutsidePointerDown}
                 />
               )}
           </Box>

@@ -955,7 +955,13 @@ Changing the detail's visible Cell is a trace filter and must not change scienti
 Compact Time/Capacity responses materialize only requested coordinates. Keep capability metadata
 across coordinate-query transitions for the same selected Cell set; an absent in-flight response is
 not evidence that mass, area, or voltage channels became unavailable. Reset unsupported quantities
-only after the matching response has settled.
+only after the matching response has settled. For a pending quantity change, retain the entire last
+rendered figure (traces plus layout), rather than feeding old coordinates through the new request's
+axis labels. Disable refinement of a retained figure until a matching response arrives.
+
+Outside-click dismissal and gesture cancellation are different operations: a Ctrl click starting a
+replacement selection must remove the old inspector without discarding already collected polygon
+vertices. Keep the old inspector only for a Ctrl hit on an already selected point.
 
 Cycle hit-testing and selection geometry use screen pixels. CSS UI zoom changes the rendered
 rectangle without necessarily firing Plotly `onUpdate`; measure the overlay's rendered dimensions

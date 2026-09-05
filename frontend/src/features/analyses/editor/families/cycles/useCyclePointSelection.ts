@@ -62,6 +62,7 @@ export type CyclePointSelectionController = {
   clear: () => void;
   refresh: () => void;
   invalidateGeometry: () => void;
+  onOutsidePointerDown: (event: PointerEvent) => void;
   onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMoveCapture: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUpCapture: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -206,6 +207,25 @@ export function useCyclePointSelection({
     });
   }, [containerRef, graphDivRef, traces]);
 
+  const onOutsidePointerDown = useCallback((event: PointerEvent) => {
+    const container = containerRef.current;
+    const plotArea = graphDivRef.current ? plotAreaElement(graphDivRef.current) : null;
+    if (event.ctrlKey && event.button === 0 && container && plotArea &&
+      pointInClientRect(event.clientX, event.clientY, plotArea.getBoundingClientRect())) {
+      const hit = cyclePointRecordsForShape(candidates(), {
+        kind: "polygon", vertices: [localPoint(event, container)],
+      })[0];
+      if (hit && records.some((record) => record.key === hit.key)) return;
+      // Dismiss the old result without discarding vertices already collected for
+      // its replacement. This runs before the new pointer-down capture handler.
+      lastAnchorBoundsRef.current = null;
+      setRecords([]);
+      setCompletedShape(null);
+      return;
+    }
+    clear();
+  }, [candidates, clear, containerRef, graphDivRef, records]);
+
   const commit = useCallback(
     (shape: CyclePointSelectionShape) => {
       const screenCandidates = candidates();
@@ -279,6 +299,10 @@ export function useCyclePointSelection({
       const current = localPoint(event, container);
       const dragging = active.dragging || cyclePointGestureIsRectangle(active.start, current);
       activePointerRef.current = { ...active, current, dragging };
+      if (dragging && !active.dragging) {
+        setRecords([]);
+        setCompletedShape(null);
+      }
       if (dragging && !active.dragging && constructionVerticesRef.current.length > 0) {
         writeConstructionVertices([]);
       }
@@ -406,6 +430,7 @@ export function useCyclePointSelection({
     clear,
     refresh,
     invalidateGeometry,
+    onOutsidePointerDown,
     onPointerDownCapture,
     onPointerMoveCapture,
     onPointerUpCapture,

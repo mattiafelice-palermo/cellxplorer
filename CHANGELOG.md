@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.23 - 2026-09-05
+
+### Bug fixes
+
+- Keep the previous cycle detail figure and axes visible while a new quantity loads, preventing popup size jumps.
+- Dismiss cycle inspectors on outside Ctrl clicks while preserving replacement gestures and same-point inspection.
+
 ## 0.27.1-alpha.22 - 2026-09-05
 
 ### Bug fixes

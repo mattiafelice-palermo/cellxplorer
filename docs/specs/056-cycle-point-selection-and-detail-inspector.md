@@ -8,7 +8,7 @@
 
 ## Status
 
-The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7
+The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7/R8
 browser refinements are implemented and awaiting independent re-review. Focused browser evidence
 is recorded below; the broader original manual matrix is not declared complete. Final workflow
 completion and merge readiness remain reviewer-owned. This is one Cycles-only frontend feature.
@@ -26,8 +26,11 @@ original presentation rules below. Implement these together on the existing feat
 - Fix capability choices resetting while detail queries load, double-scaled overlay coordinates,
   and repeated polygon vertices admitting outside points.
 - Label the cycle columns **Original cycle** and **Plotted cycle**.
-- An outside click dismisses the inspector; its own portalled dropdowns count as inside, and a
-  new Ctrl gesture must not be cancelled by dismissal.
+- Any outside click, including Ctrl, dismisses the inspector; its own portalled dropdowns count
+  as inside. Ctrl-clicking the same selected point retains it. Dismissal must preserve replacement
+  polygon vertices and the incoming rectangle gesture; beginning a drag dismisses old inspection.
+- Quantity changes retain the previous complete detail figure and its axes until the new result
+  arrives. Show loading feedback without removing the plot or briefly shrinking the popup.
 - Cycle detail is always expanded (user clarification on 2026-09-05); remove the collapse toggle.
   Selection therefore starts its detail query immediately, superseding the original lazy-fetch rule.
 - The inspector grows naturally up to 70% of viewport height, keeping its header accessible.
@@ -824,3 +827,31 @@ and changelog advance to 0.27.1-alpha.22 for this completed user-facing refineme
 Final R7 verification: `python scripts/preflight.py --no-cache` at 0.27.1-alpha.22 PASS, all 4 stages
 and all 163 backend/frontend test files/modules, 67.34 seconds total. `git diff --check` PASS.
 R6 and R7 remain pending independent review with the manual limits recorded above.
+
+
+## R8 transition and replacement-gesture verification - 2026-09-05
+
+The inspector retains the last complete figure (traces and layout together) for quantity requests
+within the same cycle/sample context. It swaps to the new figure only when a matching response is
+available, with loading feedback and retained error context. Retained plots cannot issue refinement
+requests using the pending quantity; refinement responses are keyed to their original request.
+
+Outside Ctrl clicks now clear the prior selected rows/shape without clearing construction vertices.
+The incoming pointer-down still starts the replacement gesture. A nearest hit on an already selected
+point retains the popup, and crossing the rectangle drag threshold dismisses old inspection.
+
+Browser evidence using production components/controller with an isolated 18-second delayed transport:
+Time -> Specific capacity retained one plot with Time axes and a 504 px popup while fetching; after
+the response, the axes changed to Specific capacity, one plot remained, and height stayed 504 px.
+Ctrl-click on the selected point retained the popup and first polygon vertex. Clicking a second,
+outside point with Ctrl immediately closed it while retaining both vertices. A third vertex and
+Ctrl release completed selection of cycles 1,2,3,4 and excluded outside cycle 5. In live Gen2C,
+Ctrl-clicking the selected point retained detail, and Ctrl-clicking the heading dismissed it.
+Temporary fixture files/tab were removed. Native held-modifier rectangle dragging remains within the
+previously documented manual acceptance limits. Focused policy/refinement tests passed 38/38;
+TypeScript and diff whitespace checks passed. Version/changelog advance to 0.27.1-alpha.23.
+
+Final R8 verification at `0.27.1-alpha.23`: `python scripts/preflight.py --no-cache`
+passed **4/4 stages and all 163 backend/frontend files/modules**, in **72.86 s**.
+R6/R7/R8 are handed back for independent final review; the previously documented broader
+manual matrix remains outstanding. No merge, tag, or release was performed.

@@ -123,6 +123,20 @@ selected point. Dismissal must not cancel vertices already collected for the nex
 the incoming rectangle gesture. A rectangle started on a selected point dismisses the inspector
 once dragging begins. Verify same-point retention and replacement selection in the browser.
 
+### R8 implementer response - 2026-09-05
+
+The detail keeps the previous complete figure and its axes during quantity loading; refinements
+are bound to their request identity. A browser check with an 18-second delayed response kept one
+plot and a 504-pixel popup throughout Time-to-Specific-capacity replacement. Outside Ctrl clicks
+now dismiss the old inspector without cancelling replacement vertices; Ctrl-clicking the same
+selected point retains it. Browser interaction verified retention, immediate dismissal, and a
+completed replacement polygon including its boundary points. The live analysis also confirmed
+same-point retention and outside-Ctrl dismissal. Native held-Ctrl dragging remains manual.
+
+Focused selection/refinement tests passed 38/38. Final no-cache preflight at `0.27.1-alpha.23`
+passed 4/4 stages and all 163 files/modules in 72.86 s. R8 includes the outside-Ctrl requirement;
+R6/R7/R8 await independent review together. No merge, tag, or release was performed.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
