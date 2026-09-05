@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -182,6 +183,69 @@ class AnalysisEngineTests(unittest.TestCase):
         spec["selection"]["entries"] = entries
         spec["computation"].update(comp)
         return spec
+
+    def _preload_routes(self):
+        return [
+            analyses_router.compute_analysis,
+            analyses_router.compute_steps_analysis,
+            analyses_router.compute_dcir_analysis,
+            analyses_router.compute_chargeability_analysis,
+            analyses_router.compute_rate_capability_analysis,
+            analyses_router.compute_time_capacity_analysis,
+        ]
+
+    def test_cache_only_family_misses_never_compute_or_open_jobs(self):
+        from fastapi import HTTPException
+
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Cache-only preparation", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(analysis_cache, "load_result_body", return_value=None))
+            stack.enter_context(patch.object(analysis_cache, "load_result", side_effect=AssertionError("legacy lookup")))
+            stack.enter_context(patch.object(analyses_router, "_open_compute_job", side_effect=AssertionError("job created")))
+            for name in ("compute", "compute_steps", "compute_dcir", "compute_chargeability", "compute_rate_capability", "compute_time_capacity"):
+                if hasattr(engine, name):
+                    stack.enter_context(patch.object(engine, name, side_effect=AssertionError("scientific compute")))
+            for route in self._preload_routes():
+                for recompute in (False, True):
+                    with self.subTest(route=route.__name__, recompute=recompute):
+                        with self.assertRaises(HTTPException) as raised:
+                            route(analysis.id, analyses_router.ComputeRequest(cache_only=True, recompute=recompute, job_token="preload"), self.db)
+                        self.assertEqual(raised.exception.status_code, 409)
+
+    def test_cache_only_family_hits_match_ordinary_cached_responses(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Ready cached view", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        stored = (b'{"series":[],"cell_traces":[],"badges":[]}', [])
+        with patch.object(analysis_cache, "load_result_body", return_value=stored), patch.object(
+            engine, "availability_badges", return_value=[]
+        ), patch.object(analysis_cache, "load_result", side_effect=AssertionError("legacy lookup")):
+            for route in self._preload_routes():
+                with self.subTest(route=route.__name__):
+                    ordinary = route(analysis.id, analyses_router.ComputeRequest(), self.db)
+                    prepared = route(analysis.id, analyses_router.ComputeRequest(cache_only=True), self.db)
+                    self.assertEqual(prepared.body, ordinary.body)
+                    self.assertEqual(json.loads(prepared.body)["cache_status"], "hit")
+
+    def test_oversized_cached_family_views_are_not_preloaded(self):
+        from fastapi import HTTPException
+
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Large cached view", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        stored = (b"x" * (analyses_router.MAX_PRELOAD_RESULT_BYTES + 1), [])
+        with patch.object(analysis_cache, "load_result_body", return_value=stored):
+            for route in self._preload_routes():
+                with self.subTest(route=route.__name__):
+                    with self.assertRaises(HTTPException) as raised:
+                        route(analysis.id, analyses_router.ComputeRequest(cache_only=True), self.db)
+                    self.assertEqual(raised.exception.status_code, 409)
+                    self.assertIn("too large", raised.exception.detail)
 
     def _add_cached_cell(self, name: str, source_hash: str, frame: pd.DataFrame) -> Cell:
         self.FRAMES[source_hash] = frame

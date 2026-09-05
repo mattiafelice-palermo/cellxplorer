@@ -200,6 +200,17 @@ scientific identity; hidden views must not consume the active family's spec or s
 computations. Preserve explicit saves, draft/discard behavior, source invalidation, and transient
 inspector cleanup. Verify actual Plotly instance retention in the browser, not only cache hits.
 
+### R12 implementer response - 2026-09-05
+
+Retained views cover all six plot families plus Recap and Settings, with frozen hidden specs,
+paused queries, preserved graph dimensions, and transient-inspector cleanup. Idle preparation is
+serial, capped at two unopened saved family views, and backend-enforced cache-only with a 2 MiB
+response ceiling. The existing low-memory policy opts out. Browser checks demonstrated retained
+Gen2C graph identities, bounded preparation, cache-miss deferral, and zero mounted graphs after
+switching to low-memory Settings. The spec records the fixture limits and rough memory sample.
+No-cache preflight at 0.27.1-alpha.27 passed 4/4 stages, all 164 files/modules, in 45.90 s.
+R6-R12 await independent review; the broader manual matrix remains open. No merge, tag, or release.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer

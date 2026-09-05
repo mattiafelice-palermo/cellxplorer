@@ -329,3 +329,16 @@ R11 ordinary point inspection is ready. R6-R11 await independent final review; b
 User authorizes R12: retain plot-family graphs across tab switches and investigate bounded idle preloading of saved views. Preserve scientific identities, explicit-save and draft discard flows, and avoid simultaneous hidden computations.
 
 ---
+### 2026-09-05T17:34:03+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 0.27.1-alpha.27 no-cache preflight PASS 4/4 stages; all 164 files/modules in 45.90 s; focused retention and renderer tests 10/10; Gen2C browser graph retention, cache-only preparation/miss deferral and low-memory unmount checked.
+
+**Message**
+
+R12 covers all six plot families plus Recap and Settings. Bounded automatic preparation is separate from visited-view retention. R6-R12 await independent review; full manual matrix remains outstanding. No merge, tag, or release.
+
+---

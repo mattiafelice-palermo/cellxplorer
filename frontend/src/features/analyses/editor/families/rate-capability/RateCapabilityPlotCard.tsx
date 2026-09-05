@@ -1,3 +1,5 @@
+import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
+import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   Accordion,
   Alert,
@@ -419,6 +421,7 @@ export function useRateCapabilityResult(
   spec: AnalysisSpec,
   enabled = true,
 ) {
+  const familyActivity = usePlotFamilyActivity();
   const computation = rateCapabilityComputationFor(spec);
   const signature = useMemo(
     () =>
@@ -439,7 +442,7 @@ export function useRateCapabilityResult(
       try {
         return await post<RateCapabilityResult>(
           `/api/analyses/${analysisId}/rate-capability`,
-          { spec, job_token: token },
+          { spec, cache_only: familyActivity.cacheOnly, job_token: familyActivity.cacheOnly ? undefined : token },
         );
       } finally {
         window.setTimeout(() => {
@@ -447,10 +450,12 @@ export function useRateCapabilityResult(
         }, 300);
       }
     },
-    enabled: enabled && spec.selection.entries.length > 0,
+    retry: familyActivity.cacheOnly ? false : undefined,
+    enabled: familyActivity.enabled && enabled && spec.selection.entries.length > 0,
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
   });
+  usePlotFamilyQuerySettled(result);
   const computeToken = useSharedRecognitionToken(
     result.isLoading || result.isFetching ? tokenKey : null,
   );
@@ -1330,13 +1335,15 @@ export function RateCapabilityPlotCard({
   const result = useRateCapabilityResult(analysisId, spec, recognitionEnabled);
   const view = rateCapabilityViewFor(spec);
   const style = currentPlotStyle(spec, "crate");
+  const viewSignature = useMemo(() => familyPlotViewSignature(spec), [spec]);
+  const plotConfig = useMemo(() => ({ displaylogo: false, responsive: true }), []);
   const traces = useMemo(
     () => (result.data ? rateCapabilityTracesForResult(result.data, spec) : []),
-    [result.data, spec],
+    [result.data, viewSignature],
   );
   const layout = useMemo(
     () => rateCapabilityLayoutForSpec(spec, result.data, traces),
-    [spec, result.data, traces],
+    [viewSignature, result.data, traces],
   );
   const recognitionProgress = useDelayedRecognitionProgress(
     result.computeToken,
@@ -1595,7 +1602,7 @@ export function RateCapabilityPlotCard({
               <Plot
                 data={traces}
                 layout={layout}
-                config={{ displaylogo: false, responsive: true }}
+                config={plotConfig}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {

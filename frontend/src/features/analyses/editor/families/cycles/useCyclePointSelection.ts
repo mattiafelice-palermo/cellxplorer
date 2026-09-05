@@ -127,11 +127,13 @@ export function useCyclePointSelection({
   graphDivRef,
   containerRef,
   selectionIdentity,
+  active = true,
 }: {
   traces: readonly CycleSelectableTraceLike[];
   graphDivRef: RefObject<HTMLElement | null>;
   containerRef: RefObject<HTMLElement | null>;
   selectionIdentity: string;
+  active?: boolean;
 }): CyclePointSelectionController {
   const [records, setRecords] = useState<CyclePointSelectionRecord[]>([]);
   const [completedShape, setCompletedShape] = useState<CyclePointSelectionShape | null>(null);
@@ -364,6 +366,7 @@ export function useCyclePointSelection({
   );
 
   useEffect(() => {
+    if (!active) return;
     // Plotly places its drag cover outside this React subtree after mouse-down.
     // Observe the release at window capture without taking ownership of the drag.
     const onMove = (event: PointerEvent) => {
@@ -393,9 +396,10 @@ export function useCyclePointSelection({
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onCancel, true);
     };
-  }, [candidates, commit, containerRef]);
+  }, [active, candidates, commit, containerRef]);
 
   useEffect(() => {
+    if (!active) return;
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== "Control") return;
       setSuppressHover(false);
@@ -429,11 +433,11 @@ export function useCyclePointSelection({
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [cancelConstruction, clear, commit]);
+  }, [active, cancelConstruction, clear, commit]);
 
   useEffect(() => {
     clear();
-  }, [clear, selectionIdentity]);
+  }, [active, clear, selectionIdentity]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {

@@ -1,3 +1,5 @@
+import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
+import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   ActionIcon,
   Alert,
@@ -206,6 +208,7 @@ export function useStepsResult(
   spec: AnalysisSpec,
   cells: Pick<CellSummary, "id" | "name">[]
 ) {
+  const familyActivity = usePlotFamilyActivity();
   const { series, mode } = readStepsConfig(spec, cells);
   const signature = useMemo(
     () =>
@@ -219,13 +222,16 @@ export function useStepsResult(
       }),
     [spec.selection.entries, spec.protocol_segments, series, mode]
   );
-  return useQuery({
+  const result = useQuery({
     queryKey: ["steps", analysisId, signature],
-    queryFn: () => post<StepsResult>(`/api/analyses/${analysisId}/steps`, { spec }),
-    enabled: series.length > 0,
+    queryFn: () => post<StepsResult>(`/api/analyses/${analysisId}/steps`, { spec, cache_only: familyActivity.cacheOnly }),
+    enabled: familyActivity.enabled && series.length > 0,
+    retry: familyActivity.cacheOnly ? false : undefined,
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
   });
+  usePlotFamilyQuerySettled(result);
+  return result;
 }
 
 export function StepsSettings({
@@ -243,9 +249,11 @@ export function StepsSettings({
   const view = readStepsView(spec);
   const segments = spec.protocol_segments ?? [];
   const result = useStepsResult(analysisId, spec, cells);
+  const familyActivity = usePlotFamilyActivity();
   const protocolQueries = useQueries({
     queries: cells.map((cell) => ({
       queryKey: ["cell-protocol", cell.id],
+      enabled: familyActivity.enabled && !familyActivity.cacheOnly,
       queryFn: () => get<CellProtocol>(`/api/cells/${cell.id}/protocol`),
       staleTime: 5 * 60_000,
     })),
@@ -851,8 +859,10 @@ export function StepsPlotCard({
   const data = result.data;
   const yLabel = quantityLabel(view);
   const defaultXTitle = xTitle(view.x_axis);
-  const traces = useMemo(() => (data ? stepsTracesForResult(data, spec) : []), [data, spec]);
-  const layout = useMemo(() => stepsLayoutForSpec(spec, traces), [spec, traces]);
+  const viewSignature = useMemo(() => familyPlotViewSignature(spec), [spec]);
+  const plotConfig = useMemo(() => ({ displaylogo: false, responsive: true }), []);
+  const traces = useMemo(() => (data ? stepsTracesForResult(data, spec) : []), [data, viewSignature]);
+  const layout = useMemo(() => stepsLayoutForSpec(spec, traces), [viewSignature, traces]);
   const showComputeProgress = useDelayedFlag(result.isLoading);
   const plotUpdating = result.isFetching && traces.length > 0;
   const rememberPlotDiv = (graphDiv: unknown) => {
@@ -1046,7 +1056,7 @@ export function StepsPlotCard({
               <Plot
                 data={traces}
                 layout={layout}
-                config={{ displaylogo: false, responsive: true }}
+                config={plotConfig}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {

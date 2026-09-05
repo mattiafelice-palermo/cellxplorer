@@ -949,3 +949,43 @@ This bounded check confirms cache reuse for Gen2C. It does not establish an hist
 regression, isolate rendering duration, cover every analysis, or compare plugged-in versus battery
 performance. No optimization or power policy was changed. The running backend reports alpha.23
 while the inspected frontend was alpha.25/26; no backend algorithm changed in this tranche.
+
+
+### R12 retained views and idle preparation - 2026-09-05
+
+All six plot families retain their last visited saved view under the existing keep-mounted
+workspace policy; Recap and Settings retain their visited panels too. Hidden views freeze their
+own spec and subtree, keep final layout dimensions, pause scientific queries, and clear transient
+cycle inspection. Draft/discard behavior remains session-owned. The low-memory unmount policy
+also disables family retention and automatic preparation.
+
+Idle preparation runs serially after two seconds without activity and admits at most two unopened
+saved family views per visible analysis. It uses an advertised backend cache-only capability;
+all six routes reject cache misses and result bodies over 2 MiB before scientific computation.
+An older running backend permits retention but cannot enable speculative requests. The byte
+threshold limits response payloads, not browser RAM. Explicitly opening a deferred view uses the
+normal scientific request path.
+
+Browser verification used production React/Plotly components with Gen2C and a temporary read-only
+API fixture replaying its real cached scientific responses. Cycles, DCIR, and Time/Capacity kept
+their graph identities across switches (58feca, 1e3785, and 8a219a in the recorded run). Idle loading
+prepared the two other saved families; a simulated DCIR cache-only miss deferred normal loading
+until selection. Low-memory mode followed by Settings left zero mounted plot figures. The fixture
+blocked scientific-data writes. Temporary frontend instrumentation and its two servers were
+removed/stopped; the user's ordinary development app was preserved.
+
+A rough development-browser memory sample with all three Gen2C views mounted reported 166.1 MiB
+of JavaScript heap, versus 155.2 MiB with plot views unmounted and Settings visible. Cycles alone
+then reported about 160.6-161.3 MiB. These are whole-app heap samples without forced garbage
+collection: about 11 MiB additional heap for the three views, not a controlled total-RAM or GPU
+measurement and not an average across analyses. Their live trace JSON sizes were 0.207 MiB
+(Cycles, 848 points), 0.002 MiB (DCIR, 12 points), and 1.138 MiB (Time/Capacity, 7116 points).
+The two-view cap is a conservative background-work policy, not a measured hard memory limit.
+
+Final no-cache preflight at 0.27.1-alpha.27 passed 4/4 stages and all 164 files/modules in 45.90 s.
+Focused retention/renderer checks passed 10/10. An earlier full run exposed the renderer test's
+missing React context stub (updated without changing assertions) and a concurrent icon-regeneration
+race; the icon test passed alone and the complete rerun passed. Backend cache-only tests cover
+all six routes, including misses, oversized responses, and ordinary cache hits. Full six-family
+manual interaction coverage and independent R6-R12 review remain outstanding. No merge, tag,
+or release was performed.

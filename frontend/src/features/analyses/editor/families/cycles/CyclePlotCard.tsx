@@ -1,3 +1,4 @@
+import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   ActionIcon,
   Accordion,
@@ -273,6 +274,7 @@ export function useCyclesResult({
   result: UseQueryResult<ComputeResult, Error>;
   job: BackgroundJob | undefined;
 } {
+  const familyActivity = usePlotFamilyActivity();
   const [computeToken, setComputeToken] = useState<string | null>(null);
   const result = useQuery<ComputeResult, Error>({
     queryKey: ["compute", analysisId, computeSignature(spec)],
@@ -283,7 +285,8 @@ export function useCyclesResult({
       try {
         return await post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
           spec,
-          job_token: token,
+          cache_only: familyActivity.cacheOnly,
+          job_token: familyActivity.cacheOnly ? undefined : token,
         });
       } finally {
         window.setTimeout(
@@ -292,9 +295,11 @@ export function useCyclesResult({
         );
       }
     },
-    enabled: enabled && spec !== null,
+    enabled: familyActivity.enabled && enabled && spec !== null,
+    retry: familyActivity.cacheOnly ? false : undefined,
     staleTime: 5 * 60_000,
   });
+  usePlotFamilyQuerySettled(result);
   const jobQuery = useQuery<BackgroundJob | null, Error>({
     queryKey: ["background-job-token", computeToken],
     queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
@@ -1444,11 +1449,13 @@ export function CyclePlotCard({
       }),
     [result?.computed_at, result?.data_signature, spec],
   );
+  const familyActivity = usePlotFamilyActivity();
   const pointSelection = useCyclePointSelection({
     traces,
     graphDivRef: plotDivRef,
     containerRef: selectionContainerRef,
     selectionIdentity: pointSelectionIdentity,
+    active: familyActivity.enabled && !familyActivity.cacheOnly,
   });
   const diagnostics = useMemo(() => {
     if (!result || !spec.presentation.hide_diagnostic_cycles) return null;

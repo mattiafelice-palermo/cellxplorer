@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.27 - 2026-09-05
+
+- Keep opened analysis tabs mounted and prepare up to two small cached saved plot views during idle time.
+
 ## 0.27.1-alpha.26 - 2026-09-05
 
 - Open cycle point details with an ordinary click while preserving drag zoom and double-click reset.

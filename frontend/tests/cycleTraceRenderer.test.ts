@@ -22,7 +22,8 @@ async function loadCycleTraceRenderer(): Promise<CycleTraceRenderer> {
         react:
           "export const useCallback=(fn)=>fn; export const useMemo=(fn)=>fn(); " +
           "export const useRef=(value)=>({current:value}); export const useState=(value)=>[value,()=>{}]; " +
-          "export const useEffect=()=>{}; export default {createElement:()=>null};",
+          "export const useEffect=()=>{}; export const createContext=(value)=>({_currentValue:value}); " +
+          "export const useContext=(context)=>context._currentValue; export default {createElement:()=>null};",
         "react/jsx-runtime": "export const jsx=()=>null; export const jsxs=()=>null; export const Fragment={};",
         "react/jsx-dev-runtime": "export const jsxDEV=()=>null; export const Fragment={};",
         "@mantine/core":

@@ -1,3 +1,4 @@
+import { RetainedAnalysisPanel, useAnalysisFamilyRetention } from "./RetainedAnalysisPanel";
 // Analysis editor. An analysis owns the sample set; saved plots store reusable
 // views of that set: settings plus hidden/shown sample state.
 import {
@@ -2429,6 +2430,14 @@ function AnalysisSettingsPanel({
   );
 }
 
+function RetainedCyclesPlotCard(props: Omit<ComponentProps<typeof CyclePlotCard>, "result" | "updating" | "error" | "computeJob">) {
+  const { result, job } = useCyclesResult({ analysisId: props.analysisId, spec: props.spec, enabled: true });
+  const previous = useRef<ComputeResult>();
+  if (result.data) previous.current = result.data;
+  return <CyclePlotCard {...props} result={result.data ?? previous.current} updating={result.isFetching}
+    error={result.isError ? result.error : null} computeJob={job} />;
+}
+
 export interface AnalysisEditorProps {
   analysisId: number;
   workspaceVisible?: boolean;
@@ -2551,6 +2560,20 @@ function AnalysisEditorView({
   const protocolPolicyForTab = (tab: AnalysisTabKey) =>
     multiSourceAnalysisPolicy(tab, protocolSelectionCells);
   const activeProtocolPolicy = protocolPolicyForTab(activeTab);
+  const preloadPlots = useMemo(() => (spec?.saved_plots ?? []).filter((plot) => {
+    const policy = multiSourceAnalysisPolicy(plot.tab, protocolSelectionCells);
+    return !hasMetadataOnlySources && (!policy.family || policy.supported);
+  }), [hasMetadataOnlySources, protocolSelectionCells, spec?.saved_plots]);
+  const familyRetention = useAnalysisFamilyRetention({
+    activeTab,
+    workspaceVisible,
+    plots: preloadPlots,
+    preferred: lastPlotIdByTabRef.current,
+    enabled: initialComputeReady && !hasMetadataOnlySources && spec !== null && spec.selection.entries.length > 0,
+  });
+  const preloadedSpec = useMemo(() => spec && familyRetention.preload
+    ? specForSavedPlot(spec, familyRetention.preload) : null, [familyRetention.preload, spec]);
+
   const protocolCellIds = useMemo(() => {
     if (!spec) return [];
     const availableGroups = groupsQuery.data ?? analysis.data?.selection_groups ?? [];
@@ -2734,6 +2757,7 @@ function AnalysisEditorView({
     // engine beside those queries would duplicate computation without feeding
     // the visible plot.
     enabled:
+      workspaceVisible &&
       spec !== null &&
       initialComputeReady &&
       !hasMetadataOnlySources &&
@@ -2899,7 +2923,6 @@ function AnalysisEditorView({
         preferredPlotId: lastPlotIdByTabRef.current[tab] ?? null,
       });
       if (tab === "time_capacity") {
-        setTimeCapacityNavigationSession((value) => value + 1);
         setTimeCapacityVirginNavigation(false);
       }
       setActiveTab(tab);
@@ -3981,6 +4004,34 @@ function AnalysisEditorView({
     updatePlotLabel: draftPlotSession ? "Save as" : "Update",
   };
 
+  const preparingFamily = (tab: AnalysisTabKey) =>
+    tab !== activeTab && familyRetention.preload?.tab === tab;
+  const familySpec = (tab: AnalysisTabKey) => preparingFamily(tab)
+    ? preloadedSpec! : spec;
+  const familyPlotId = (tab: AnalysisTabKey) => preparingFamily(tab)
+    ? familyRetention.preload!.id : activePlot?.tab === tab ? activeSavedPlotId : null;
+  const familyPlotName = (tab: AnalysisTabKey) => preparingFamily(tab)
+    ? familyRetention.preload!.name : displayPlotName;
+  const validPlotIds = new Set((spec.saved_plots ?? []).map((plot) => plot.id));
+  const retainedPanelProps = (tab: AnalysisTabKey) => ({
+    value: tab,
+    label: TAB_DEFS.find((item) => item.value === tab)?.label ?? tab,
+    active: activeTab === tab,
+    visible: workspaceVisible,
+    preparing: preparingFamily(tab),
+    retain: !hasMetadataOnlySources && familyRetention.retain && (workspaceVisible || familyRetention.visited.has(tab)),
+    retainable: tab === "recap" || tab === "settings" || familyPlotId(tab) !== null,
+    validPlotIds,
+    plotId: familyPlotId(tab),
+    onSettled: familyRetention.settled,
+  });
+  // Hidden preparation does not mount settings or run effects that edit the live spec.
+  // Keep the sidebar's width so the graph is born at its final visible dimensions.
+  const familySidebar = (tab: AnalysisTabKey) => (
+    <Box w={330} style={{ flexShrink: 0 }}>{preparingFamily(tab) ? null : sidebar}</Box>
+  );
+  const familyUpdate = (tab: AnalysisTabKey) => preparingFamily(tab) ? (_fn: (s: AnalysisSpec) => void) => {} : update;
+
   const plotSurfaceFor = (tab: AnalysisTabKey, card: ReactNode) => {
     if (hasMetadataOnlySources && tab !== "settings") {
       return <CanonicalCyclingUnavailableState />;
@@ -3990,7 +4041,7 @@ function AnalysisEditorView({
       return <ProtocolMappingRequiredState policy={policy} />;
     }
     if (!analysisTabRequiresPlotSession(tab)) return card;
-    const sessionOnTab = plotSessionBelongsToTab({
+    const sessionOnTab = preparingFamily(tab) || plotSessionBelongsToTab({
       tab,
       activeTab,
       plotSessionActive,
@@ -4153,113 +4204,109 @@ function AnalysisEditorView({
         </Alert>
       )}
 
-      {/* keepMounted=false is load-bearing: with Mantine's default, EVERY
-          tab's plots, settings panels and saved-plot previews stay mounted
-          at once (hidden Plotly instances at 0x0, duplicated inputs, one
-          compute per preview per tab) — the source of the freezes. */}
       <AnalysisTabHeader value={activeTab} onCommit={activateAnalysisTab} />
-      <Tabs value={activeTab} keepMounted={false}>
+      <Tabs value={activeTab} keepMounted={false} pos="relative">
 
-        <Tabs.Panel value="cycles" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("cycles")}>
           <Group align="start" wrap="nowrap">
-            {sidebar}
+            {familySidebar("cycles")}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               {plotSurfaceFor(
                 "cycles",
-                <CyclePlotCard
+                <RetainedCyclesPlotCard
+                  key={familyPlotId("cycles") ?? "draft"}
                   analysisId={aid}
                   analysisTitle={title}
-                  plotName={displayPlotName}
-                  subtitle={displaySubtitle}
-                  result={displayResult}
-                  spec={spec}
-                  update={update}
-                  updating={plotUpdating}
-                  error={compute.isError ? (compute.error as Error) : null}
-                  computeJob={computeJob}
+                  plotName={familyPlotName("cycles")}
+                  subtitle={preparingFamily("cycles") ? plotSubtitle("cycles", undefined, familySpec("cycles")) : displaySubtitle}
+                  spec={familySpec("cycles")}
+                  update={familyUpdate("cycles")}
                   edited={activePlotDirty && activePlot?.tab === "cycles"}
                   {...newPlotHeaderProps}
                 />,
               )}
-              {savedPlotsPanelFor("cycles")}
+              {activeTab === "cycles" ? savedPlotsPanelFor("cycles") : null}
             </Stack>
           </Group>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
 
-        <Tabs.Panel value="steps" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("steps")}>
           <Group align="start" wrap="nowrap">
-            {sidebar}
+            {familySidebar("steps")}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               {plotSurfaceFor(
                 "steps",
                 <StepsPlotCard
+                  key={familyPlotId("steps") ?? "draft"}
                   analysisId={aid}
                   analysisTitle={title}
-                  plotName={displayPlotName}
-                  spec={spec}
+                  plotName={familyPlotName("steps")}
+                  spec={familySpec("steps")}
                   cells={currentAnalysis.selection_cells}
-                  update={update}
+                  update={familyUpdate("steps")}
                   edited={activePlotDirty && activePlot?.tab === "steps"}
                   {...newPlotHeaderProps}
                 />,
               )}
-              {savedPlotsPanelFor("steps")}
+              {activeTab === "steps" ? savedPlotsPanelFor("steps") : null}
             </Stack>
           </Group>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
 
-        <Tabs.Panel value="dcir" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("dcir")}>
           <Group align="start" wrap="nowrap">
-            {sidebar}
+            {familySidebar("dcir")}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               {plotSurfaceFor(
                 "dcir",
                 <DcirPlotCard
+                  key={familyPlotId("dcir") ?? "draft"}
                   analysisId={aid}
                   analysisTitle={title}
-                  plotName={displayPlotName}
-                  spec={spec}
-                  update={update}
+                  plotName={familyPlotName("dcir")}
+                  spec={familySpec("dcir")}
+                  update={familyUpdate("dcir")}
                   edited={activePlotDirty && activePlot?.tab === "dcir"}
                   {...newPlotHeaderProps}
                 />,
               )}
-              {savedPlotsPanelFor("dcir")}
+              {activeTab === "dcir" ? savedPlotsPanelFor("dcir") : null}
             </Stack>
           </Group>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
 
-        <Tabs.Panel value="chargeability" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("chargeability")}>
           <Group align="start" wrap="nowrap">
-            {sidebar}
+            {familySidebar("chargeability")}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               {plotSurfaceFor(
                 "chargeability",
                 <ChargeabilityPlotCard
+                  key={familyPlotId("chargeability") ?? "draft"}
                   analysisId={aid}
                   analysisTitle={title}
-                  plotName={displayPlotName}
-                  spec={spec}
-                  update={update}
+                  plotName={familyPlotName("chargeability")}
+                  spec={familySpec("chargeability")}
+                  update={familyUpdate("chargeability")}
                   onReadyChange={setChargeabilityReady}
                   edited={activePlotDirty && activePlot?.tab === "chargeability"}
                   {...newPlotHeaderProps}
                 />,
               )}
-              {savedPlotsPanelFor("chargeability")}
+              {activeTab === "chargeability" ? savedPlotsPanelFor("chargeability") : null}
             </Stack>
           </Group>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
 
-        <Tabs.Panel value="recap" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("recap")}>
           <Group align="start" wrap="nowrap">
-            {sidebar}
+            {familySidebar("recap")}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               {plotSurfaceFor(
                 "recap",
                 <Paper p="sm" withBorder style={{ minHeight: 590 }}>
                   <PlotHeader
-                    plotName={displayPlotName}
+                    plotName={familyPlotName("recap")}
                     subtitle="Recap table"
                     edited={activePlotDirty && activePlot?.tab === "recap"}
                     {...newPlotHeaderProps}
@@ -4268,69 +4315,67 @@ function AnalysisEditorView({
                   <MetricsTable result={displayResult} />
                 </Paper>,
               )}
-              {savedPlotsPanelFor("recap")}
+              {activeTab === "recap" ? savedPlotsPanelFor("recap") : null}
             </Stack>
           </Group>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
 
-        {(timeCapacityVisited || activeTab === "time_capacity") && (
-          /* Keep only this expensive plot alive after its first visit. The
-             parent still unmounts every other inactive analysis family. */
-          <Tabs.Panel value="time_capacity" pt="sm" keepMounted>
-            <Group align="start" wrap="nowrap">
-              {activeTab === "time_capacity" ? sidebar : null}
-              <Stack style={{ flex: 1, minWidth: 0 }}>
-                {plotSurfaceFor(
-                  "time_capacity",
-                  <TimeCapacityPlotCard
-                    analysisId={aid}
-                    analysisTitle={title}
-                    plotName={displayPlotName}
-                    subtitle={plotSubtitle("time_capacity", undefined, spec)}
-                    spec={spec}
-                    update={update}
-                    maxAvailableCycle={maxAvailableTimeCapacityCycle}
-                    isVirginNavigation={
-                      timeCapacityVirginNavigation && activeSavedPlotId === null
-                    }
-                    navigationResetKey={`${aid}:${timeCapacityNavigationSession}:${activeSavedPlotId ?? "draft"}`}
-                    active={activeTab === "time_capacity"}
-                    onReadyChange={setTimeCapacityReady}
-                    onVoltageChannelsChange={setTimeCapacityVoltageChannels}
-                    edited={activePlotDirty && activePlot?.tab === "time_capacity"}
-                    {...newPlotHeaderProps}
-                  />,
-                )}
-                {activeTab === "time_capacity" ? savedPlotsPanelFor("time_capacity") : null}
-              </Stack>
-            </Group>
-          </Tabs.Panel>
-        )}
-
-        <Tabs.Panel value="crate" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("time_capacity")}>
           <Group align="start" wrap="nowrap">
-            {sidebar}
+            {familySidebar("time_capacity")}
+            <Stack style={{ flex: 1, minWidth: 0 }}>
+              {plotSurfaceFor(
+                "time_capacity",
+                <TimeCapacityPlotCard
+                  key={familyPlotId("time_capacity") ?? "draft"}
+                  analysisId={aid}
+                  analysisTitle={title}
+                  plotName={familyPlotName("time_capacity")}
+                  subtitle={plotSubtitle("time_capacity", undefined, familySpec("time_capacity"))}
+                  spec={familySpec("time_capacity")}
+                  update={familyUpdate("time_capacity")}
+                  maxAvailableCycle={maxAvailableTimeCapacityCycle}
+                  isVirginNavigation={
+                    !preparingFamily("time_capacity") && timeCapacityVirginNavigation && activeSavedPlotId === null
+                  }
+                  navigationResetKey={`${aid}:${timeCapacityNavigationSession}:${familyPlotId("time_capacity") ?? "draft"}`}
+                  active={activeTab === "time_capacity"}
+                  onReadyChange={setTimeCapacityReady}
+                  onVoltageChannelsChange={setTimeCapacityVoltageChannels}
+                  edited={activePlotDirty && activePlot?.tab === "time_capacity"}
+                  {...newPlotHeaderProps}
+                />,
+              )}
+              {activeTab === "time_capacity" ? savedPlotsPanelFor("time_capacity") : null}
+            </Stack>
+          </Group>
+        </RetainedAnalysisPanel>
+
+        <RetainedAnalysisPanel {...retainedPanelProps("crate")}>
+          <Group align="start" wrap="nowrap">
+            {familySidebar("crate")}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               {plotSurfaceFor(
                 "crate",
                 <RateCapabilityPlotCard
+                  key={familyPlotId("crate") ?? "draft"}
                   analysisId={aid}
                   analysisTitle={title}
-                  plotName={displayPlotName}
-                  spec={spec}
-                  update={update}
-                  recognitionEnabled={rateCapabilityRecognitionEnabled}
+                  plotName={familyPlotName("crate")}
+                  spec={familySpec("crate")}
+                  update={familyUpdate("crate")}
+                  recognitionEnabled={preparingFamily("crate") || rateCapabilityRecognitionEnabled}
                   onReadyChange={setRateCapabilityReady}
                   edited={activePlotDirty && activePlot?.tab === "crate"}
                   {...newPlotHeaderProps}
                 />,
               )}
-              {savedPlotsPanelFor("crate")}
+              {activeTab === "crate" ? savedPlotsPanelFor("crate") : null}
             </Stack>
           </Group>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
 
-        <Tabs.Panel value="settings" pt="sm">
+        <RetainedAnalysisPanel {...retainedPanelProps("settings")}>
           <Stack gap="sm">
             <AnalysisSettingsPanel
               title={title}
@@ -4409,7 +4454,7 @@ function AnalysisEditorView({
               );
             })()}
           </Stack>
-        </Tabs.Panel>
+        </RetainedAnalysisPanel>
       </Tabs>
 
       {isPlotTab && (

@@ -1,3 +1,5 @@
+import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
+import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   ActionIcon,
   Alert,
@@ -320,6 +322,7 @@ export function useDcirResult(
   analysisId: number,
   spec: AnalysisSpec,
 ) {
+  const familyActivity = usePlotFamilyActivity();
   const series = seriesFor(spec);
   const signature = useMemo(
     () =>
@@ -341,7 +344,8 @@ export function useDcirResult(
       try {
         return await post<DcirResult>(`/api/analyses/${analysisId}/dcir`, {
           spec,
-          job_token: token,
+          cache_only: familyActivity.cacheOnly,
+          job_token: familyActivity.cacheOnly ? undefined : token,
         });
       } finally {
         window.setTimeout(() => {
@@ -349,10 +353,12 @@ export function useDcirResult(
         }, 300);
       }
     },
-    enabled: series.length > 0,
+    retry: familyActivity.cacheOnly ? false : undefined,
+    enabled: familyActivity.enabled && series.length > 0,
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
   });
+  usePlotFamilyQuerySettled(result);
   const computeToken = useSharedRecognitionToken(
     result.isLoading || result.isFetching ? tokenKey : null,
   );
@@ -360,10 +366,12 @@ export function useDcirResult(
 }
 
 function useDcirProtocols(analysisId: number, spec: AnalysisSpec) {
+  const familyActivity = usePlotFamilyActivity();
   const filter = dcirViewFor(spec).candidate_filter;
   const signature = JSON.stringify({ selection: spec.selection, filter });
   return useQuery({
     queryKey: ["dcir-protocols", analysisId, signature],
+    enabled: familyActivity.enabled && !familyActivity.cacheOnly,
     queryFn: () =>
       post<DcirProtocolResult>(`/api/analyses/${analysisId}/dcir-protocols`, {
         spec,
@@ -1146,11 +1154,13 @@ export function DcirPlotCard({
   const series = seriesFor(spec);
   const yTitle = view.quantity === "relative" ? "DCIR change from first (%)" : "DCIR (mΩ)";
   const defaultXTitle = dcirXTitle(view.x_axis);
+  const viewSignature = useMemo(() => familyPlotViewSignature(spec), [spec]);
+  const plotConfig = useMemo(() => ({ displaylogo: false, responsive: true }), []);
   const traces = useMemo(
     () => (result.data ? dcirTracesForResult(result.data, spec) : []),
-    [result.data, spec]
+    [result.data, viewSignature]
   );
-  const layout = useMemo(() => dcirLayoutForSpec(spec, traces), [spec, traces]);
+  const layout = useMemo(() => dcirLayoutForSpec(spec, traces), [viewSignature, traces]);
   const recognitionProgress = useDelayedRecognitionProgress(
     result.computeToken,
     result.isLoading,
@@ -1352,7 +1362,7 @@ export function DcirPlotCard({
               <Plot
                 data={traces}
                 layout={layout}
-                config={{ displaylogo: false, responsive: true }}
+                config={plotConfig}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {

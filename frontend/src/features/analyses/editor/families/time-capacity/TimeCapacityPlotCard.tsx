@@ -1,3 +1,4 @@
+import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   Accordion,
   Alert,
@@ -1565,7 +1566,7 @@ function TimeCapacityPlotCardView({
   onUpdatePlot,
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
-  active = true,
+  active: activeProp = true,
   maxAvailableCycle,
   isVirginNavigation = false,
   navigationResetKey,
@@ -1608,6 +1609,8 @@ function TimeCapacityPlotCardView({
   const refinementAbortRef = useRef<AbortController | null>(null);
   const refinementTransitionFrameRef = useRef<number | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
+  const familyActivity = usePlotFamilyActivity();
+  const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
   const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
@@ -2118,6 +2121,7 @@ function TimeCapacityPlotCardView({
         const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
           spec: scientificRequestSpec,
           ...(token ? { job_token: token } : {}),
+          cache_only: familyActivity.cacheOnly,
           viewport_width: viewportWidth,
           precision: "standard",
           // Spec 052.3 Stage 3: a moving preview is a range the user is
@@ -2171,10 +2175,12 @@ function TimeCapacityPlotCardView({
         analysisId,
         compatibilitySignature,
       ),
-    enabled: requestSpec.selection.entries.length > 0,
+    enabled: familyActivity.enabled && requestSpec.selection.entries.length > 0,
+    retry: familyActivity.cacheOnly ? false : undefined,
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,
   });
+  usePlotFamilyQuerySettled(timeResult);
   useEffect(() => {
     if (
       !previewRequest ||
@@ -2419,9 +2425,9 @@ function TimeCapacityPlotCardView({
     if (!active) {
       cancelPendingRefinement();
       cancelRefinementTransition();
-      clearDisplayedRefinement();
+      // Retain the completed viewport; only pending work pauses while hidden.
     }
-  }, [active, cancelPendingRefinement, cancelRefinementTransition, clearDisplayedRefinement]);
+  }, [active, cancelPendingRefinement, cancelRefinementTransition]);
   useEffect(() => cancelPendingRefinement, [cancelPendingRefinement]);
   const selectedVoltageUnavailable = voltageChannelsUnavailable(
     cfg.voltage_channels,

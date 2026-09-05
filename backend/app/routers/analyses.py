@@ -429,6 +429,7 @@ def delete_analysis(analysis_id: int, db: Session = Depends(get_db)):
 class ComputeRequest(BaseModel):
     spec: dict | None = None  # compute unsaved edits without persisting
     recompute: bool = False  # explicit: use current parser/calc versions
+    cache_only: bool = False  # bounded speculative UI preparation; never compute on a miss
     save_provenance: bool = False
     job_id: int | None = None
     # Client-generated id used to open a job only if the cache misses, so a
@@ -958,6 +959,23 @@ def create_analysis_compute_job(
     return background_jobs.get_job(job_id)
 
 
+# Speculative live-view preparation may read a small ready result, but must not
+# trigger scientific work or admit an arbitrarily large hidden figure.
+MAX_PRELOAD_RESULT_BYTES = 2 * 1024 * 1024
+
+
+def _load_analysis_result_body(kind: str, key: str, *, cache_only: bool):
+    stored = analysis_cache.load_result_body(kind, key)
+    if cache_only and stored is not None and len(stored[0]) > MAX_PRELOAD_RESULT_BYTES:
+        raise HTTPException(409, "Saved result is too large for automatic view preparation")
+    return stored
+
+
+def _reject_uncached_preload(req: ComputeRequest) -> None:
+    if req.cache_only:
+        raise HTTPException(409, "Saved result is not ready for automatic view preparation")
+
+
 @router.post("/analyses/{analysis_id}/compute")
 def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
     a = db.get(Analysis, analysis_id)
@@ -971,7 +989,7 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
     if not req.recompute:
         # Fast path: serve the stored bytes verbatim, splicing in only the
         # badges, so a cache hit never parses the payload.
-        stored = analysis_cache.load_result_body("cycles", key)
+        stored = _load_analysis_result_body("cycles", key, cache_only=req.cache_only)
         if stored is not None:
             body, kept = stored
             _finish_job(req.job_id, cached=True)
@@ -984,6 +1002,7 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
                 ),
                 media_type="application/json",
             )
+    _reject_uncached_preload(req)
     result = None if req.recompute else analysis_cache.load_result("cycles", key)
     cached = result is not None
     if cached:
@@ -1080,7 +1099,7 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
         request_context=request_context,
     )
     if not req.recompute:
-        stored = analysis_cache.load_result_body("steps", key)
+        stored = _load_analysis_result_body("steps", key, cache_only=req.cache_only)
         if stored is not None:
             body, kept = stored
             _finish_job(req.job_id, cached=True)
@@ -1097,6 +1116,7 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
                 ),
                 media_type="application/json",
             )
+    _reject_uncached_preload(req)
     result = None if req.recompute else analysis_cache.load_result("steps", key)
     cached = result is not None
     if cached:
@@ -1262,7 +1282,7 @@ def compute_dcir_analysis(
         request_context=request_context,
     )
     if not req.recompute:
-        stored = analysis_cache.load_result_body("dcir", key)
+        stored = _load_analysis_result_body("dcir", key, cache_only=req.cache_only)
         if stored is not None:
             body, kept = stored
             _finish_job(req.job_id, cached=True)
@@ -1279,6 +1299,7 @@ def compute_dcir_analysis(
                 ),
                 media_type="application/json",
             )
+    _reject_uncached_preload(req)
     result = None if req.recompute else analysis_cache.load_result("dcir", key)
     cached = result is not None
     if cached:
@@ -1369,7 +1390,7 @@ def compute_chargeability_analysis(
         request_context=request_context,
     )
     if not req.recompute:
-        stored = analysis_cache.load_result_body("chargeability", key)
+        stored = _load_analysis_result_body("chargeability", key, cache_only=req.cache_only)
         if stored is not None:
             body, kept = stored
             _finish_job(req.job_id, cached=True)
@@ -1386,6 +1407,7 @@ def compute_chargeability_analysis(
                 ),
                 media_type="application/json",
             )
+    _reject_uncached_preload(req)
     result = (
         None
         if req.recompute
@@ -1467,7 +1489,7 @@ def compute_rate_capability_analysis(
         request_context=request_context,
     )
     if not req.recompute:
-        stored = analysis_cache.load_result_body("rate_capability", key)
+        stored = _load_analysis_result_body("rate_capability", key, cache_only=req.cache_only)
         if stored is not None:
             body, kept = stored
             _finish_job(req.job_id, cached=True)
@@ -1484,6 +1506,7 @@ def compute_rate_capability_analysis(
                 ),
                 media_type="application/json",
             )
+    _reject_uncached_preload(req)
     result = (
         None
         if req.recompute
@@ -1606,7 +1629,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
             pass
         if not req.recompute:
             with time_capacity_profiling.profiled_stage(request_profile, "result_cache_body_lookup"):
-                stored = analysis_cache.load_result_body("time_capacity", key)
+                stored = _load_analysis_result_body("time_capacity", key, cache_only=req.cache_only)
             if stored is not None:
                 body, kept = stored
                 with time_capacity_profiling.profiled_stage(request_profile, "activity_finalize"):
@@ -1643,6 +1666,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                     ),
                     media_type="application/json",
                 )
+        _reject_uncached_preload(req)
         if req.recompute:
             result = None
         else:

@@ -237,6 +237,7 @@ Cellxplorer/
 │   │   │       ├── database/       Analysis Database collection and preview workflow
 │   │   │       ├── editor/
 │   │   │       │   ├── AnalysisEditor.tsx  Single-analysis editor controller and composition
+│   │   │       │   ├── RetainedAnalysisPanel.tsx  Frozen family views and bounded idle preparation
 │   │   │       │   ├── artifacts/  Saved previews, artifacts, draft cards, and cache warmup
 │   │   │       │   ├── families/   Analysis-family adapters and diagnostic-cycle policy
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules

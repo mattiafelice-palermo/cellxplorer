@@ -398,9 +398,21 @@ WebView.
 The tab families inside one analysis deliberately use a lightweight controlled header separate
 from the expensive panel container. The header acknowledges selection in its own render, then
 commits the panel switch after that paint. Do not recombine their state into one Mantine `Tabs`
-root: building the next Plotly/settings panel otherwise delays the selected-tab underline. Keep
-inactive panels unmounted except for the explicitly retained time/capacity view; mounting every
-hidden Plotly panel previously caused freezes and unnecessary graphics-memory use.
+root: building the next Plotly/settings panel otherwise delays the selected-tab underline.
+`RetainedAnalysisPanel` retains the last saved view visited in each of the six plot families,
+plus Recap and Settings, under the `keep-mounted` policy. Hidden panels freeze their committed
+children and spec, preserve their layout dimensions, disable scientific queries and transient
+inspector listeners, and become inert. A draft or deleted saved view is not retained. Do not pass
+the active family's changing spec into every hidden graph. Semantic view signatures and stable
+Plotly config objects avoid redraws when restoring an equivalent saved spec.
+
+Automatic preparation is separate from retention: after two seconds idle, the visible editor
+admits one saved view at a time, up to two unopened family views. It yields to foreground queries
+and requires the backend's `analysis_cache_only` health capability. All six scientific routes
+support cache-only requests; misses and stored result bodies over 2 MiB return 409 before scientific
+computation. This byte threshold bounds response size, not total browser or graphics memory.
+Opening a deferred view uses its ordinary query path. The existing `unmount` policy disables
+retention and speculative preparation. Saved-thumbnail warmup remains a separate system.
 Steps, DCIR, Chargeability, Rate Capability, and Time/Capacity own dedicated scientific queries.
 The generic cycle query must stay disabled while any of those tabs is active; otherwise a
 saved-plot change starts an unrelated cycle computation beside the visible request. Their query

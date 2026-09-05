@@ -202,6 +202,7 @@ def health():
     return {
         "status": "ok" if DATABASE_STATUS.compatible else "degraded",
         "database": DATABASE_STATUS.as_dict(),
+        "capabilities": {"analysis_cache_only": True},
     }
 
 

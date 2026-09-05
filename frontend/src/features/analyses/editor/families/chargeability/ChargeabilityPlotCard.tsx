@@ -1,3 +1,5 @@
+import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
+import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   Alert,
   Badge,
@@ -209,6 +211,7 @@ export function useChargeabilityResult(
   analysisId: number,
   spec: AnalysisSpec,
 ) {
+  const familyActivity = usePlotFamilyActivity();
   const computation = chargeabilityComputationFor(spec);
   const signature = useMemo(
     () =>
@@ -229,7 +232,7 @@ export function useChargeabilityResult(
       try {
         return await post<ChargeabilityResult>(
           `/api/analyses/${analysisId}/chargeability`,
-          { spec, job_token: token },
+          { spec, cache_only: familyActivity.cacheOnly, job_token: familyActivity.cacheOnly ? undefined : token },
         );
       } finally {
         window.setTimeout(() => {
@@ -237,10 +240,12 @@ export function useChargeabilityResult(
         }, 300);
       }
     },
-    enabled: spec.selection.entries.length > 0,
+    retry: familyActivity.cacheOnly ? false : undefined,
+    enabled: familyActivity.enabled && spec.selection.entries.length > 0,
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
   });
+  usePlotFamilyQuerySettled(result);
   const computeToken = useSharedRecognitionToken(
     result.isLoading || result.isFetching ? tokenKey : null,
   );
@@ -698,13 +703,15 @@ export function ChargeabilityPlotCard({
   const result = useChargeabilityResult(analysisId, spec);
   const view = chargeabilityViewFor(spec);
   const style = currentPlotStyle(spec, "chargeability");
+  const viewSignature = useMemo(() => familyPlotViewSignature(spec), [spec]);
+  const plotConfig = useMemo(() => ({ displaylogo: false, responsive: true }), []);
   const traces = useMemo(
     () => (result.data ? chargeabilityTracesForResult(result.data, spec) : []),
-    [result.data, spec],
+    [result.data, viewSignature],
   );
   const layout = useMemo(
     () => chargeabilityLayoutForSpec(spec, result.data, traces),
-    [spec, result.data, traces],
+    [viewSignature, result.data, traces],
   );
   const recognitionProgress = useDelayedRecognitionProgress(
     result.computeToken,
@@ -945,7 +952,7 @@ export function ChargeabilityPlotCard({
               <Plot
                 data={traces}
                 layout={layout}
-                config={{ displaylogo: false, responsive: true }}
+                config={plotConfig}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {
