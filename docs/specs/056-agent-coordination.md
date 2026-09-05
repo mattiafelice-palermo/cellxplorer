@@ -151,3 +151,17 @@ Browser review and the user-approved 2026-09-05 refinement batch are recorded as
 R6 user-approved fixes and later always-expanded/four-side-placement clarification implemented. Version and changelog advanced per AGENTS completed-work policy. Detailed browser evidence and remaining native Ctrl-drag, replicate/CE/hidden-series and full-viewport document-scroll acceptance limits recorded in the spec. Return for independent R6 review; no self-approval, merge, tag or release.
 
 ---
+### 2026-09-05T14:40:02+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+
+**Message**
+
+User requested shared-prefix compression while reviewing the implemented inspector. Reopen implementation for R7 on the same branch; R6 remains implemented and awaits independent review together with this refinement.
+
+---

@@ -47,6 +47,10 @@ original presentation rules below. Implement these together on the existing feat
   colors. Table swatches identify samples; aggregate-member curves receive an external compact
   member key. Saved Time/Capacity presentation must not leak into detail styling.
 
+- Later user refinement: when distinct selected sample names share a long prefix, show that prefix
+  in the Sample header and shorten the rows. Preserve meaningful numeric identifiers and the full
+  names on hover. A single distinct sample or names without a useful common prefix stay unchanged.
+
 The user explicitly requested implementation and browser testing after the reviewer discussion.
 Final independent review remains required; this amendment does not grant self-approval or merge.
 

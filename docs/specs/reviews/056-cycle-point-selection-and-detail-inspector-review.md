@@ -84,6 +84,14 @@ dismissal, polygon preview and detail sample/color controls. Record remaining ac
 truthfully. User explicitly switched this task from review to implementation; return to independent
 review after the fixes rather than self-approving.
 
+### R7 - User-requested shared sample prefix
+
+The user observed that long experiment-family prefixes hide the useful sample identifiers in the
+inspector table. Detect a shared prefix across distinct selected sample names, move that common
+context into the Sample header, and display the informative remaining part in each row. Preserve
+full names on hover and avoid empty/ambiguous suffixes or stripping meaningful numeric identifiers.
+Verify both policy edge cases and the live Gen2C table. This follow-up refines the same Spec 056 scope.
+
 ### R6 implementer response - 2026-09-05
 
 The approved batch is implemented, including the user's later clarification that cycle detail stays
