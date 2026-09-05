@@ -8,7 +8,7 @@
 
 ## Status
 
-The original implementation and R1-R5 are independently review-clean. The user-approved R6
+The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7
 browser refinements are implemented and awaiting independent re-review. Focused browser evidence
 is recorded below; the broader original manual matrix is not declared complete. Final workflow
 completion and merge readiness remain reviewer-owned. This is one Cycles-only frontend feature.
@@ -47,9 +47,9 @@ original presentation rules below. Implement these together on the existing feat
   colors. Table swatches identify samples; aggregate-member curves receive an external compact
   member key. Saved Time/Capacity presentation must not leak into detail styling.
 
-- Later user refinement: when distinct selected sample names share a long prefix, show that prefix
+- Later user refinement: when distinct visible Cycles sample names share a long prefix, show that prefix
   in the Sample header and shorten the rows. Preserve meaningful numeric identifiers and the full
-  names on hover. A single distinct sample or names without a useful common prefix stay unchanged.
+  names on hover. A single distinct plotted sample or names without a useful common prefix stay unchanged.
 
 The user explicitly requested implementation and browser testing after the reviewer discussion.
 Final independent review remains required; this amendment does not grant self-approval or merge.
@@ -805,3 +805,22 @@ Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`
 - Application version/changelog advance to 0.27.1-alpha.21 under the repository's completed-work
   versioning policy. This is a review checkpoint, not a release/tag or merge.
 - R6 remains open for independent review; these implementation observations do not self-close it.
+
+
+## R7 shared-prefix verification - 2026-09-05
+
+The comparison set is the visible selectable samples in the current Cycles plot, so even a single
+selected point can use the family context. Helper/hidden traces are excluded; repeated quantities
+from the same sample are deduplicated. The inspector header shows the shared prefix, rows and the
+detail sample picker show suffixes, and full names remain on hover. Common numeric digits are
+retained with the differing digits (e.g. 2436-1 and 2437-1); only redundant leading zero padding is
+removed. Short generic prefixes, a single distinct plotted sample, and empty suffixes are unchanged.
+
+Live Gen2C browser check: the Sample header showed `1012-BQV00000000000` and the selected row showed
+`2436-1`; its title retained `1012-BQV000000000002436-1`. The chart remained expanded, clear of the
+selected point, and inside the viewport. Focused policy tests pass 26/26. The application version
+and changelog advance to 0.27.1-alpha.22 for this completed user-facing refinement.
+
+Final R7 verification: `python scripts/preflight.py --no-cache` at 0.27.1-alpha.22 PASS, all 4 stages
+and all 163 backend/frontend test files/modules, 67.34 seconds total. `git diff --check` PASS.
+R6 and R7 remain pending independent review with the manual limits recorded above.

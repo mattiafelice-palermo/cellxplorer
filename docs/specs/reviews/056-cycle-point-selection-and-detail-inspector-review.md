@@ -87,7 +87,7 @@ review after the fixes rather than self-approving.
 ### R7 - User-requested shared sample prefix
 
 The user observed that long experiment-family prefixes hide the useful sample identifiers in the
-inspector table. Detect a shared prefix across distinct selected sample names, move that common
+inspector table. Detect a shared prefix across distinct visible Cycles sample names, move that common
 context into the Sample header, and display the informative remaining part in each row. Preserve
 full names on hover and avoid empty/ambiguous suffixes or stripping meaningful numeric identifiers.
 Verify both policy edge cases and the live Gen2C table. This follow-up refines the same Spec 056 scope.
@@ -100,6 +100,14 @@ and remaining manual scope are in the spec's R6 implementation section. In addit
 findings, browser verification corrected delayed Portal measurement, sticky-header overlap, and
 subpixel exclusion of polygon boundary points. Final no-cache preflight at 0.27.1-alpha.21 passed
 all 4 stages and 163 files/modules in 70.49 s. R6 awaits independent re-review.
+
+### R7 implementer response - 2026-09-05
+
+Implemented against the visible Cycles sample set, including the single-selected-point case. The
+live Gen2C row now shows `2436-1`, the Sample header retains the shared family prefix, and the full
+name remains available on hover. Numeric IDs stay intact; short/unrelated/singleton names do not
+compress. Focused policy tests pass 26/26; final no-cache preflight at 0.27.1-alpha.22 passed
+4/4 stages and all 163 files/modules in 67.34 s. R6 and R7 await independent review together.
 
 ## Final-review external gate
 

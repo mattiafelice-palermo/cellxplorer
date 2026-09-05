@@ -115,7 +115,7 @@ import {
   cycleVisibilityKey,
 } from "./cycleVisibility";
 import type { CycleSelectableTraceMeta } from "./cyclePointSelectionPolicy";
-import { withoutCyclePointSelectionMetadata } from "./cyclePointSelectionPolicy";
+import { cyclePointSharedSamplePrefix, cyclePointVisibleSampleLabels, withoutCyclePointSelectionMetadata } from "./cyclePointSelectionPolicy";
 import {
   CyclePointInspector,
   CyclePointSelectionOverlay,
@@ -1825,6 +1825,7 @@ export function CyclePlotCard({
                   key={pointSelection.records.map((record) => record.key).join("|")}
                   analysisId={analysisId}
                   records={pointSelection.records}
+                  samplePrefix={cyclePointSharedSamplePrefix(cyclePointVisibleSampleLabels(traces))}
                   anchorBounds={pointSelection.anchorBounds}
                   container={selectionContainerRef.current}
                   spec={spec}

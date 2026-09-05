@@ -14,6 +14,8 @@ import {
   CYCLE_POINT_CLICK_RADIUS_PX,
   CYCLE_POINT_DRAG_THRESHOLD_PX,
   cyclePointAdjacentCycle,
+  cyclePointSharedSamplePrefix,
+  cyclePointVisibleSampleLabels,
   cyclePointInspectorPosition,
   cyclePointCandidatesForTraces,
   cyclePointCullRecords,
@@ -481,4 +483,27 @@ test("polygon boundaries tolerate Plotly subpixel rounding without including nea
   assert.equal(cyclePointInPolygon({ x: 171 + 2 / 3, y: 378 + 1 / 3 }, vertices), true);
   assert.equal(cyclePointInPolygon({ x: 171.64, y: 378.36 }, vertices), false);
   assert.equal(cyclePointInPolygon({ x: 658.33, y: 91.67 }, [...vertices, vertices[0]]), false);
+});
+
+
+test("shared family prefixes preserve the informative numeric identifiers", () => {
+  const prefix = '1012-BQV00000000000';
+  const labels = [prefix + '2436-1', prefix + '2437-1', prefix + '2438-1'];
+  assert.equal(cyclePointSharedSamplePrefix(labels), prefix);
+  assert.deepEqual(labels.map(label => label.slice(prefix.length)), ['2436-1', '2437-1', '2438-1']);
+  assert.equal(cyclePointSharedSamplePrefix(['Long family 1234', 'Long family 1235']), 'Long family ');
+  assert.equal(cyclePointSharedSamplePrefix(['Experiment_batch_A.ndax', 'Experiment_batch_B.ndax']), 'Experiment_batch_');
+});
+
+test("sample prefixes stay intact for single, duplicate, short, unrelated or empty-suffix names", () => {
+  for (const labels of [[], ['One sample'], ['Repeated family name', 'Repeated family name'],
+    ['Cell A', 'Cell B'], ['Experiment one', 'Different two'], ['Experiment', 'Experiment extra']]) {
+    assert.equal(cyclePointSharedSamplePrefix(labels), '');
+  }
+});
+
+test("prefix context includes only visible selectable samples and deduplicates their quantities", () => {
+  const visible = trace({ sampleLabel: 'Experiment_A' });
+  const hidden = { ...trace({ sampleLabel: 'Unrelated hidden Cell' }), visible: 'legendonly' };
+  assert.deepEqual(cyclePointVisibleSampleLabels([visible, visible, hidden, { name: 'helper' } as any]), ['Experiment_A']);
 });

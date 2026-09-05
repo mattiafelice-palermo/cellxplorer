@@ -11,6 +11,34 @@ export const CYCLE_POINT_DETAIL_VIEWPORT_WIDTH = 1200;
 
 export type CyclePoint = { x: number; y: number };
 
+/** Remove redundant family context without reducing padded numeric IDs to their last digit. */
+export function cyclePointSharedSamplePrefix(labels: readonly string[]): string {
+  const distinct = [...new Set(labels)];
+  if (distinct.length < 2) return "";
+  let prefix = distinct[0];
+  for (const label of distinct.slice(1)) {
+    let length = 0;
+    while (length < prefix.length && prefix[length] === label[length]) length += 1;
+    prefix = prefix.slice(0, length);
+  }
+  const numericTail = prefix.match(/\d+$/)?.[0];
+  if (numericTail) {
+    const padding = numericTail.match(/^0*/)?.[0] ?? "";
+    prefix = prefix.slice(0, -numericTail.length) + padding;
+  }
+  // Short generic prefixes save little, and an empty suffix would hide the sample's identity.
+  if (prefix.length < 8 || distinct.some((label) => label.slice(prefix.length).trim().length === 0)) return "";
+  return prefix;
+}
+
+export function cyclePointVisibleSampleLabels(traces: readonly CycleSelectableTraceLike[]): string[] {
+  return [...new Set(traces.flatMap((trace) => {
+    if (trace.visible === false || trace.visible === "legendonly") return [];
+    const metadata = selectableMetadata(trace.meta);
+    return metadata ? [metadata.sampleLabel] : [];
+  }))];
+}
+
 /** Screen-pixel placement: use an unobstructed side before requiring scrolling. */
 export function cyclePointInspectorPosition(
   anchor: { left: number; right: number; top: number; bottom: number },

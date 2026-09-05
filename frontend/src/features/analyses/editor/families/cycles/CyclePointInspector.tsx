@@ -316,6 +316,7 @@ export function CyclePointSelectionOverlay({
 function CycleDetail({
   analysisId,
   records,
+  samplePrefix,
   activeCycle,
   setActiveCycle,
   spec,
@@ -323,6 +324,7 @@ function CycleDetail({
 }: {
   analysisId: number;
   records: CyclePointSelectionRecord[];
+  samplePrefix: string;
   activeCycle: number;
   setActiveCycle: (cycle: number) => void;
   spec: AnalysisSpec;
@@ -622,7 +624,8 @@ function CycleDetail({
       {members.length > 1 && <Select size="xs" label="Show"
         classNames={{ dropdown: "cycle-point-inspector-dropdown" }}
         data={[{ value: "all", label: "All selected samples" },
-          ...members.map((member) => ({ value: String(member.id), label: member.label }))]}
+          ...members.map((member) => ({ value: String(member.id),
+            label: member.label.startsWith(samplePrefix) ? member.label.slice(samplePrefix.length) : member.label }))]}
         value={shownCell} allowDeselect={false} onChange={(value) => value && setShownCell(value)} />}
       {activeRecords.some((record) => record.sampleKind === "replicate") && (
         <Group gap="xs" aria-label="Selected replicate members">
@@ -722,6 +725,7 @@ function CycleDetail({
 export function CyclePointInspector({
   analysisId,
   records,
+  samplePrefix = "",
   anchorBounds,
   container,
   spec,
@@ -730,6 +734,7 @@ export function CyclePointInspector({
 }: {
   analysisId: number;
   records: CyclePointSelectionRecord[];
+  samplePrefix?: string;
   anchorBounds: CyclePointOverlayBounds;
   container: HTMLElement;
   spec: AnalysisSpec;
@@ -823,7 +828,14 @@ export function CyclePointInspector({
             style={{ tableLayout: "fixed" }}>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th w="40%">Sample</Table.Th>
+                <Table.Th w="40%">
+                  Sample
+                  {samplePrefix && <Tooltip label={`Shared prefix: ${samplePrefix}`} multiline maw={360}>
+                    <Text size="xs" c="dimmed" fw={400} truncate title={samplePrefix}>
+                      ({samplePrefix}…)
+                    </Text>
+                  </Tooltip>}
+                </Table.Th>
                 <Table.Th ta="right" w="16%">Original cycle</Table.Th>
                 <Table.Th ta="right" w="16%">Plotted cycle</Table.Th>
                 <Table.Th ta="right" w="28%">{measurePresentation.yHeader}</Table.Th>
@@ -860,7 +872,8 @@ export function CyclePointInspector({
                           <Box w={18} style={{ flexShrink: 0, borderTop: `2px solid ${record.color ?? "#495057"}` }} />
                           <Box miw={0}>
                           <Text size="xs" fw={active ? 650 : 500} truncate="end" title={record.sampleLabel}>
-                            {record.sampleLabel}
+                            {record.sampleLabel.startsWith(samplePrefix)
+                              ? record.sampleLabel.slice(samplePrefix.length) : record.sampleLabel}
                           </Text>
                           {measurePresentation.showMeasurePerRow && (
                             <Text size="xs" c="dimmed" lh={1.25} mt={2}>
@@ -888,6 +901,7 @@ export function CyclePointInspector({
               <CycleDetail
                 analysisId={analysisId}
                 records={records}
+                samplePrefix={samplePrefix}
                 activeCycle={activeCycle}
                 setActiveCycle={setActiveCycle}
                 spec={spec}

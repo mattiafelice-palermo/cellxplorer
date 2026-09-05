@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.22 - 2026-09-05
+
+### Bug fixes
+
+- Shorten redundant experiment-family prefixes in cycle inspector sample names while preserving meaningful identifiers and full names on hover.
+
 ## 0.27.1-alpha.21 - 2026-09-05
 
 ### New features

@@ -165,3 +165,17 @@ R6 user-approved fixes and later always-expanded/four-side-placement clarificati
 User requested shared-prefix compression while reviewing the implemented inspector. Reopen implementation for R7 on the same branch; R6 remains implemented and awaits independent review together with this refinement.
 
 ---
+### 2026-09-05T14:46:02+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- PASS: 0.27.1-alpha.22 no-cache preflight, 4/4 stages, 163 files/modules, 67.34 s; selection policies 26/26; git diff --check.
+- Browser PASS: live Gen2C Sample header shared prefix, 2436-1 row identifier, preserved full-name title, always-expanded chart and viewport placement.
+
+**Message**
+
+R7 implemented against visible Cycles sample context so a single selected point benefits too. Prefix policy preserves whole numeric IDs, ignores hidden/helper traces and duplicate quantities, and avoids singleton/short/empty-suffix compression. R6 remains implemented with previously recorded browser evidence and manual limits. Request independent R6/R7 review together; no merge or release.
+
+---
