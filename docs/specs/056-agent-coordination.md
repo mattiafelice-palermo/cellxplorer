@@ -310,3 +310,22 @@ User requests R11: ordinary single-point clicks open the same inspector as Ctrl-
 R11 ordinary point inspection is ready. R6-R11 await independent final review; broader manual matrix remains outstanding. No merge, tag, or release.
 
 ---
+### 2026-09-05T16:36:39+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+- R9
+- R10
+- R11
+- R12
+
+**Message**
+
+User authorizes R12: retain plot-family graphs across tab switches and investigate bounded idle preloading of saved views. Preserve scientific identities, explicit-save and draft discard flows, and avoid simultaneous hidden computations.
+
+---

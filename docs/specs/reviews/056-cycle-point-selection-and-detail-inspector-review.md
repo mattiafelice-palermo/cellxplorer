@@ -192,6 +192,14 @@ The spec records the separate cache audit: all sampled saved scientific response
 repeated family switches issued no scientific requests, and battery impact remains unproven.
 R6-R11 await independent review; the broader manual matrix remains outstanding.
 
+### R12 - Retained plot-family views and bounded preparation
+
+The user authorizes keeping opened plot-family graphs mounted across tab switches, and preloading
+other saved views when the cost can be bounded. Each retained view must keep its own settings and
+scientific identity; hidden views must not consume the active family's spec or start uncontrolled
+computations. Preserve explicit saves, draft/discard behavior, source invalidation, and transient
+inspector cleanup. Verify actual Plotly instance retention in the browser, not only cache hits.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
