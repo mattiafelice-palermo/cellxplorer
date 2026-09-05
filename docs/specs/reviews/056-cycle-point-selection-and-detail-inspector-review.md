@@ -116,6 +116,13 @@ resizes its popup. Keep the last complete figure, including its original axes, w
 quantity loads; replace it atomically when the response is ready. Preserve loading/error feedback
 and never reinterpret old coordinates using the newly selected axis.
 
+### R8 additional requirement - Outside Ctrl clicks must dismiss the previous inspector
+
+The user requests dismissal on any outside click, including Ctrl, except a Ctrl-click on the same
+selected point. Dismissal must not cancel vertices already collected for the next polygon or prevent
+the incoming rectangle gesture. A rectangle started on a selected point dismisses the inspector
+once dragging begins. Verify same-point retention and replacement selection in the browser.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer

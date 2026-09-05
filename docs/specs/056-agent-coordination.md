@@ -194,3 +194,12 @@ R7 implemented against visible Cycles sample context so a single selected point 
 User requests keeping the previous detail figure visible during quantity loading to prevent popup size changes. Reopen implementation for R8; retain R6/R7 for the combined independent review.
 
 ---
+### 2026-09-05T14:55:57+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Clarification message
+
+**Message**
+
+User adds R9: outside Ctrl clicks dismiss the old inspector except the same selected point. Implement alongside R8 and preserve in-progress replacement gestures.
+
+---
