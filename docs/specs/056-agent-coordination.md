@@ -179,3 +179,18 @@ User requested shared-prefix compression while reviewing the implemented inspect
 R7 implemented against visible Cycles sample context so a single selected point benefits too. Prefix policy preserves whole numeric IDs, ignores hidden/helper traces and duplicate quantities, and avoids singleton/short/empty-suffix compression. R6 remains implemented with previously recorded browser evidence and manual limits. Request independent R6/R7 review together; no merge or release.
 
 ---
+### 2026-09-05T14:52:31+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+
+**Message**
+
+User requests keeping the previous detail figure visible during quantity loading to prevent popup size changes. Reopen implementation for R8; retain R6/R7 for the combined independent review.
+
+---

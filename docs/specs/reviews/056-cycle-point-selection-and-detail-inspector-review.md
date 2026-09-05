@@ -109,6 +109,13 @@ name remains available on hover. Numeric IDs stay intact; short/unrelated/single
 compress. Focused policy tests pass 26/26; final no-cache preflight at 0.27.1-alpha.22 passed
 4/4 stages and all 163 files/modules in 67.34 s. R6 and R7 await independent review together.
 
+### R8 - Retain the displayed figure during quantity changes
+
+The user observed that switching detail from Time to Capacity temporarily removes the plot and
+resizes its popup. Keep the last complete figure, including its original axes, while the new
+quantity loads; replace it atomically when the response is ready. Preserve loading/error feedback
+and never reinterpret old coordinates using the newly selected axis.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
