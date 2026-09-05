@@ -175,6 +175,12 @@ a sorted cycle, and 17 rows/one curve under the single-series filter. See the sp
 Final no-cache preflight at `0.27.1-alpha.25` passed 4/4 stages and all 163 files/modules in 69.66 s;
 focused policy tests passed 29/29. R6-R10 await independent review; no merge, tag, or release.
 
+### R11 - Ordinary point click
+
+The user requests that an ordinary single click on a point open the same inspector as Ctrl-click.
+Retain ordinary Plotly drag, zoom, pan, and modebar interactions; empty-space clicks must not select
+a distant point. Keep this bounded UI change separate from the requested read-only performance audit.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer

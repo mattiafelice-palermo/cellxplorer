@@ -278,3 +278,21 @@ User requests R10: scroll only the selected-points table so the cycle detail plo
 R10 includes table scrolling, the shared series filter, and the user's additional numeric sorting request. R6-R10 await independent final review. Broader manual matrix remains outstanding; no merge, tag, or release.
 
 ---
+### 2026-09-05T16:04:50+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+- R9
+- R10
+- R11
+
+**Message**
+
+User requests R11: ordinary single-point clicks open the same inspector as Ctrl-click, while ordinary drag/zoom/pan remain intact. Separately investigate saved-plot cache/warmup performance and battery effects without changing optimization policy speculatively.
+
+---
