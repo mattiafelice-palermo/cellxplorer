@@ -8,7 +8,7 @@
 
 ## Status
 
-The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7/R8/R9
+The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7/R8/R9/R10
 browser refinements are implemented and awaiting independent re-review. Focused browser evidence
 is recorded below; the broader original manual matrix is not declared complete. Final workflow
 completion and merge readiness remain reviewer-owned. This is one Cycles-only frontend feature.
@@ -876,3 +876,32 @@ expansion/contraction of rectangle and cursor polygon membership, nonmutation, a
 R9 final verification at `0.27.1-alpha.24`: no-cache preflight passed 4/4 stages and all
 163 files/modules in 71.70 s; focused selection policy tests passed 27/27. R6-R9 await
 independent review. No merge, tag, or release was performed.
+
+### R10 table, series filter, and sorting verification - 2026-09-05
+
+The inspector scrolls only its table, with sticky column headers and contained wheel scrolling.
+The heading and cycle-detail controls/chart stay outside the scroll region. Placement reserves the
+measured fixed content plus readable table rows, allows up to 85% of viewport height, and uses
+existing document-space fallback when no unobstructed viewport slot can fit the fixed content.
+The table grows naturally for short selections and caps at 240 CSS pixels for long selections.
+
+All series is the default heading dropdown; selecting a series filters table rows and detail
+requests together. Replicate member selection remains available for replicate details. Numeric
+Original cycle, Plotted cycle, and Y-value headers toggle ascending/descending order with accessible
+sort state. Sorting changes only the displayed row order: detail requests use the unsorted filtered
+records, and row activation uses scientific cycle identity to include every shown series for that
+cycle. Sorting/filtering resets the table scroll to the start.
+
+A temporary production-inspector browser fixture used 68 rows (17 cycles, four Cells). At 1280x720,
+the complete chart remained inside the viewport in a roughly 612-pixel popup. Scrolling the table
+1440 pixels left popup/page scroll at zero and the chart's top/bottom unchanged. Capacity sorting
+left detail request count at one. Clicking a sorted row highlighted all four entries for cycle 81.
+Filtering one series produced 17 rows and one colored curve; returning to All series and selecting
+cycle 96 after descending Original-cycle sorting showed all four highlighted rows and four curves.
+The temporary browser tab/files were removed; no real user data were saved. Policy tests also cover
+Plotted-cycle sorting, nonmutation, and minimum-detail-height/document-fallback placement.
+
+R10 final verification at `0.27.1-alpha.25`: no-cache preflight passed **4/4 stages and all
+163 files/modules in 69.66 s**. Focused policy tests passed 29/29; TypeScript and diff checks passed.
+R6-R10 await independent final review; the broader manual matrix remains outstanding. No merge,
+tag, or release was performed.

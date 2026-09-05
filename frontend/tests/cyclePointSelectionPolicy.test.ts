@@ -27,6 +27,7 @@ import {
   cyclePointMeasurePresentation,
   cyclePointRecordsForShape,
   cyclePointPreviewShape,
+  cyclePointTableRecords,
   cyclePointSelectedCycles,
   cyclePointSelectedMarkerSize,
   cyclePointSelectionKey,
@@ -527,4 +528,31 @@ test("live rectangle and cursor polygon previews add and remove points without m
   assert.deepEqual(committed.map((record) => record.scientificCycle), [3]);
   assert.equal(cyclePointPreviewShape(null, [], null), null);
   assert.deepEqual(cyclePointPreviewShape(null, [start], start), { kind: "polygon", vertices: [start] });
+});
+
+
+test("table sorting and series filtering preserve cycle identity and all rows for a clicked cycle", () => {
+  const records = [
+    baseRecord({key:"a", seriesKey:"c1", scientificCycle:80, displayedX:74, displayedY:148}),
+    baseRecord({key:"b", seriesKey:"c2", scientificCycle:80, displayedX:74, displayedY:146}),
+    baseRecord({key:"c", seriesKey:"c1", scientificCycle:82, displayedX:76, displayedY:147}),
+    baseRecord({key:"d", seriesKey:"c2", scientificCycle:82, displayedX:76, displayedY:149}),
+  ];
+  const sorted = cyclePointTableRecords(records, "all", {key:"displayedY",direction:"asc"});
+  assert.deepEqual(sorted.map(r=>r.key), ["b","c","a","d"]);
+  assert.deepEqual(sorted.filter(r=>r.scientificCycle===sorted[0].scientificCycle).map(r=>r.seriesKey).sort(), ["c1","c2"]);
+  assert.deepEqual(cyclePointTableRecords(records,"c1",{key:"scientificCycle",direction:"desc"}).map(r=>r.key), ["c","a"]);
+  assert.deepEqual(cyclePointTableRecords(records,"all",{key:"displayedX",direction:"desc"}).map(r=>r.scientificCycle), [82,82,80,80]);
+  assert.deepEqual(records.map(r=>r.key), ["a","b","c","d"]);
+});
+
+test("inspector placement reserves pinned detail height and uses document fallback when needed", () => {
+  const beside = cyclePointInspectorPosition({left:20,right:100,top:20,bottom:650},1100,700,650,1,530);
+  assert.equal(beside.outsideViewport,false);
+  assert.ok(beside.maxHeight>=530);
+  assert.ok(beside.top+Math.min(650,beside.maxHeight)<=700);
+  const blocked = cyclePointInspectorPosition({left:0,right:1100,top:200,bottom:600},1100,700,650,1,530);
+  assert.equal(blocked.outsideViewport,true);
+  assert.ok(blocked.top>600);
+  assert.ok(blocked.maxHeight>=530);
 });

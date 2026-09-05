@@ -3,7 +3,7 @@
 - [`056-cycle-point-selection-and-detail-inspector.md`](056-cycle-point-selection-and-detail-inspector.md)
   adds transient rectangle, polygon, and single-point selection to the Cycles plot, with a
   non-modal exact-value table and an always-expanded within-cycle Time/Capacity detail explorer.
-  Selection remains transient and excluded from plot dirty state and exports. **R6/R7/R8/R9 browser
+  Selection remains transient and excluded from plot dirty state and exports. **R6/R7/R8/R9/R10 browser
   refinements implemented; independent re-review pending. Focused browser checks are recorded in
   the spec; the full original manual matrix and final completion remain reviewer-owned.**
 - [053-alpha-application-release-channel.md](053-alpha-application-release-channel.md)

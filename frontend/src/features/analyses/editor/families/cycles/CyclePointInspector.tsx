@@ -13,6 +13,7 @@ import {
   Table,
   Text,
   Tooltip,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   IconChevronLeft,
@@ -52,6 +53,8 @@ import {
 import { TimeCapacityRefinementLifecycle } from "../time-capacity/timeCapacityRefinementLifecycle";
 import {
   cyclePointAdjacentCycle,
+  cyclePointTableRecords,
+  type CyclePointTableSort,
   cyclePointInspectorPosition,
   cyclePointDetailRequest,
   cyclePointMeasurePresentation,
@@ -646,7 +649,7 @@ function CycleDetail({
           onChange={(value) => value && setYQuantity(value as CyclePointDetailYQuantity)}
         />
       </Group>
-      {members.length > 1 && <Select size="xs" label="Show"
+      {members.length > 1 && activeRecords.some((record) => record.sampleKind === "replicate") && <Select size="xs" label="Replicate member"
         classNames={{ dropdown: "cycle-point-inspector-dropdown" }}
         data={[{ value: "all", label: "All selected samples" },
           ...members.map((member) => ({ value: String(member.id),
@@ -770,17 +773,47 @@ export function CyclePointInspector({
   onClose: () => void;
   onOutsidePointerDown?: (event: PointerEvent) => void;
 }) {
-  const cycles = useMemo(() => cyclePointSelectedCycles(records), [records]);
+  const [shownSeries, setShownSeries] = useState("all");
+  const [sort, setSort] = useState<CyclePointTableSort>({ key: "scientificCycle", direction: "asc" });
+  const seriesOptions = useMemo(() => [...new Map(records.map((record) =>
+    [record.seriesKey, { value: record.seriesKey, label: record.sampleLabel.startsWith(samplePrefix)
+      ? record.sampleLabel.slice(samplePrefix.length) : record.sampleLabel }])).values()], [records, samplePrefix]);
+  const filteredRecords = useMemo(() => records.filter((record) => shownSeries === "all" || record.seriesKey === shownSeries), [records, shownSeries]);
+  const visibleRecords = useMemo(() => cyclePointTableRecords(filteredRecords, "all", sort), [filteredRecords, sort]);
+  const cycles = useMemo(() => cyclePointSelectedCycles(filteredRecords), [filteredRecords]);
   const [activeCycle, setActiveCycle] = useState(cycles[0]);
+  const selectedCycle = cycles.includes(activeCycle) ? activeCycle : cycles[0];
+  const headerRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (tableRef.current) tableRef.current.scrollTop = 0;
+  }, [shownSeries, sort]);
+  const sortHeader = (label: string, key: CyclePointTableSort["key"]) => (
+    <UnstyledButton fz="xs" lh={1.3} fw={700} ta="right" w="100%" aria-label={`Sort by ${label}`}
+      onClick={() => setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }))}>
+      {label}{sort.key === key ? (sort.direction === "asc" ? " ↑" : " ↓") : " ↕"}
+    </UnstyledButton>
+  );
   const [paperElement, setPaperElement] = useState<HTMLDivElement | null>(null);
   const [geometry, setGeometry] = useState({ left: 0, top: 0, width: window.innerWidth,
-    height: window.innerHeight, scale: 1, paperHeight: 550 });
+    height: window.innerHeight, scale: 1, paperHeight: 550, fixedHeight: 400, tableHeight: 150 });
   useLayoutEffect(() => {
     const sync = () => {
       const rect = container.getBoundingClientRect();
       const scale = rect.width / container.clientWidth || 1;
+      const tableHeight = tableRef.current?.scrollHeight ?? 150;
+      const paperStyle = paperElement ? getComputedStyle(paperElement) : null;
+      const stack = headerRef.current?.parentElement;
+      const gap = stack ? parseFloat(getComputedStyle(stack).rowGap) || 8 : 8;
+      const chromeHeight = paperStyle
+        ? [paperStyle.paddingTop, paperStyle.paddingBottom, paperStyle.borderTopWidth, paperStyle.borderBottomWidth]
+          .reduce((sum, value) => sum + (parseFloat(value) || 0), gap * 2)
+        : 42;
+      const fixedHeight = (headerRef.current?.offsetHeight ?? 32) + (detailRef.current?.offsetHeight ?? 328) + chromeHeight;
       const next = { left: rect.left, top: rect.top, width: window.innerWidth,
-        height: window.innerHeight, scale, paperHeight: (paperElement?.scrollHeight ?? 550) * scale };
+        height: window.innerHeight, scale, fixedHeight, tableHeight,
+        paperHeight: (fixedHeight + Math.min(tableHeight, 240)) * scale };
       setGeometry((old) => Object.keys(next).every((key) =>
         old[key as keyof typeof old] === next[key as keyof typeof next]) ? old : next);
     };
@@ -788,11 +821,14 @@ export function CyclePointInspector({
     const observer = new ResizeObserver(sync);
     observer.observe(container);
     if (paperElement) observer.observe(paperElement);
+    for (const element of [headerRef.current, tableRef.current?.firstElementChild, detailRef.current]) {
+      if (element) observer.observe(element);
+    }
     window.addEventListener("resize", sync);
     window.addEventListener("scroll", sync, true);
     return () => { observer.disconnect(); window.removeEventListener("resize", sync);
       window.removeEventListener("scroll", sync, true); };
-  }, [container, paperElement]);
+  }, [container, paperElement, visibleRecords]);
   useEffect(() => {
     const outside = (event: PointerEvent) => {
       const target = event.target;
@@ -812,8 +848,9 @@ export function CyclePointInspector({
   const position = cyclePointInspectorPosition({ left: anchorBounds.left + geometry.left - markerPadding,
     right: anchorBounds.right + geometry.left + markerPadding, top: anchorBounds.top + geometry.top - markerPadding,
     bottom: anchorBounds.bottom + geometry.top + markerPadding }, geometry.width, geometry.height,
-    geometry.paperHeight, geometry.scale);
-  const measurePresentation = cyclePointMeasurePresentation(records);
+    geometry.paperHeight, geometry.scale,
+    (geometry.fixedHeight + Math.min(geometry.tableHeight, 144)) * geometry.scale);
+  const measurePresentation = cyclePointMeasurePresentation(visibleRecords);
 
   return (
     <Portal>
@@ -832,29 +869,34 @@ export function CyclePointInspector({
         transformOrigin: "top left",
         maxHeight: position.maxHeight / geometry.scale,
         overflowX: "hidden",
-        overflowY: "auto",
+        overflowY: "hidden",
         zIndex: 210,
       }}
     >
-      <Stack gap="xs">
-        <Group justify="space-between" wrap="nowrap" style={{ position: "sticky", top: -12,
-          background: "var(--mantine-color-body)", zIndex: 5, paddingBlock: 4 }}>
+      <Stack gap={8}>
+        <Group ref={headerRef} justify="space-between" wrap="nowrap" style={{ paddingBlock: 4 }}>
           <Group gap="xs" wrap="nowrap">
             <Text fw={650} size="sm">
               {records.length === 1 ? "Selected point" : "Selected points"}
             </Text>
-            {records.length > 1 && <Badge size="sm" variant="light">{records.length}</Badge>}
+            {records.length > 1 && <Badge size="sm" variant="light">{visibleRecords.length}</Badge>}
           </Group>
+          {seriesOptions.length > 1 && <Select size="xs" aria-label="Selected series"
+            data={[{ value: "all", label: "All series" }, ...seriesOptions]}
+            value={shownSeries} allowDeselect={false} onChange={(value) => value && setShownSeries(value)}
+            classNames={{ dropdown: "cycle-point-inspector-dropdown" }}
+            style={{ flex: 1, minWidth: 100, maxWidth: 220 }} /> }
           <Tooltip label="Close point inspector">
             <ActionIcon variant="subtle" size="sm" aria-label="Close point inspector" onClick={onClose}>
               <IconX size={15} />
             </ActionIcon>
           </Tooltip>
         </Group>
-        <Box>
+        <Box ref={tableRef} data-cycle-point-table-scroll role="region" aria-label="Selected cycle points" tabIndex={0}
+          style={{ overflow: "auto", overscrollBehaviorY: "contain", maxHeight: Math.min(240, position.maxHeight / geometry.scale - geometry.fixedHeight) }}>
           <Table striped={false} highlightOnHover verticalSpacing={5} horizontalSpacing={6}
             style={{ tableLayout: "fixed" }}>
-            <Table.Thead>
+            <Table.Thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--mantine-color-body)" }}>
               <Table.Tr>
                 <Table.Th w="40%">
                   Sample
@@ -864,14 +906,14 @@ export function CyclePointInspector({
                     </Text>
                   </Tooltip>}
                 </Table.Th>
-                <Table.Th ta="right" w="16%">Original cycle</Table.Th>
-                <Table.Th ta="right" w="16%">Plotted cycle</Table.Th>
-                <Table.Th ta="right" w="28%">{measurePresentation.yHeader}</Table.Th>
+                <Table.Th ta="right" w="16%" aria-sort={sort.key === "scientificCycle" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("Original cycle", "scientificCycle")}</Table.Th>
+                <Table.Th ta="right" w="16%" aria-sort={sort.key === "displayedX" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("Plotted cycle", "displayedX")}</Table.Th>
+                <Table.Th ta="right" w="28%" aria-sort={sort.key === "displayedY" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader(measurePresentation.yHeader, "displayedY")}</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {records.map((record) => {
-                const active = record.scientificCycle === activeCycle;
+              {visibleRecords.map((record) => {
+                const active = record.scientificCycle === selectedCycle;
                 const sourceContext = [
                   record.sourceFilename,
                   record.localCycle !== null ? `local cycle ${record.localCycle}` : null,
@@ -921,22 +963,24 @@ export function CyclePointInspector({
             </Table.Tbody>
           </Table>
         </Box>
+        <Box ref={detailRef}>
         <Text size="sm" fw={600} style={{ borderTop: "1px solid var(--mantine-color-default-border)", paddingTop: 8 }}>
           Cycle detail
         </Text>
           <Box id="cycle-point-detail">
-            {activeCycle !== undefined && (
+            {selectedCycle !== undefined && (
               <CycleDetail
                 analysisId={analysisId}
-                records={records}
+                records={filteredRecords}
                 samplePrefix={samplePrefix}
-                activeCycle={activeCycle}
+                activeCycle={selectedCycle}
                 setActiveCycle={setActiveCycle}
                 spec={spec}
                 cyclesResult={cyclesResult}
               />
             )}
           </Box>
+        </Box>
       </Stack>
     </Paper>
     </Portal>

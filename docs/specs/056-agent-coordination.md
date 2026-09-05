@@ -264,3 +264,17 @@ R9 live selection highlighting implemented. R6-R9 await independent final review
 User requests R10: scroll only the selected-points table so the cycle detail plot stays visible; add an All series/default or individual-series dropdown beside the heading, filtering table and detail together.
 
 ---
+### 2026-09-05T15:56:35+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 0.27.1-alpha.25 no-cache preflight PASS 4/4 stages, all 163 files/modules, 69.66 s; focused policy tests 29/29; TypeScript and diff checks pass.
+- Browser 68-row production inspector: independent table scroll, fixed visible chart, series filter, numeric sorting without refetch, and cycle-based four-series activation verified.
+
+**Message**
+
+R10 includes table scrolling, the shared series filter, and the user's additional numeric sorting request. R6-R10 await independent final review. Broader manual matrix remains outstanding; no merge, tag, or release.
+
+---

@@ -46,11 +46,13 @@ export function cyclePointInspectorPosition(
   viewportHeight: number,
   contentHeight: number,
   scale: number,
+  minimumContentHeight = 0,
 ) {
   const padding = 8;
   const gap = 12;
   const width = Math.min(520 * scale, viewportWidth - padding * 2);
-  const maxHeight = Math.min(viewportHeight * 0.7, viewportHeight - padding * 2);
+  const maxHeight = Math.max(minimumContentHeight, Math.min(
+    viewportHeight * (minimumContentHeight ? 0.85 : 0.7), viewportHeight - padding * 2));
   const height = Math.min(contentHeight, maxHeight);
   const slots = [
     { side: "right", left: anchor.right + gap, top: padding,
@@ -64,8 +66,9 @@ export function cyclePointInspectorPosition(
   ];
   const full = slots.find((slot) => slot.width >= width && slot.height >= height);
   // Prefer a readable width. Only narrow further when none of the four sides can hold it.
-  const readable = slots.filter((slot) => slot.width >= Math.min(width, 320 * scale) && slot.height >= 100 * scale);
-  const usable = readable.length ? readable : slots.filter((slot) => slot.width >= 100 * scale && slot.height >= 80 * scale);
+  const readable = slots.filter((slot) => slot.width >= Math.min(width, 320 * scale) && slot.height >= Math.max(100 * scale, minimumContentHeight));
+  const usable = readable.length ? readable : slots.filter((slot) => slot.width >= (minimumContentHeight ? Math.min(width, 320 * scale) : 100 * scale) &&
+    slot.height >= Math.max(80 * scale, minimumContentHeight));
   const slot = full ?? usable.sort((a, b) =>
     Math.min(b.width, width) * Math.min(b.height, height) -
     Math.min(a.width, width) * Math.min(a.height, height))[0];
@@ -439,6 +442,19 @@ export function cyclePointRecordsForShape(
   return cyclePointSortRecords(cyclePointDeduplicate(selected)).map(
     ({ screenX: _screenX, screenY: _screenY, ...record }) => record,
   );
+}
+
+export type CyclePointTableSort = { key: "scientificCycle" | "displayedX" | "displayedY"; direction: "asc" | "desc" };
+
+export function cyclePointTableRecords(
+  records: readonly CyclePointSelectionRecord[],
+  series: string,
+  sort: CyclePointTableSort,
+): CyclePointSelectionRecord[] {
+  return records.filter((record) => series === "all" || record.seriesKey === series)
+    .sort((a, b) => (a[sort.key] - b[sort.key]) * (sort.direction === "asc" ? 1 : -1) ||
+      a.scientificCycle - b.scientificCycle || a.renderedSeriesOrder - b.renderedSeriesOrder ||
+      a.key.localeCompare(b.key));
 }
 
 export function cyclePointSortRecords<T extends CyclePointSelectionRecord>(records: T[]): T[] {

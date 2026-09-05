@@ -155,12 +155,25 @@ manual checks; policy tests cover both shapes expanding and contracting. See the
 No-cache preflight at `0.27.1-alpha.24` passed 4/4 stages and all 163 files/modules in 71.70 s;
 focused policy tests passed 27/27. R6-R9 await independent review; no merge, tag, or release.
 
-### R10 - Independent table scrolling and inspector series filter
+### R10 - Independent table scrolling, series filter, and sorting
 
 The user requests scrolling only the selected-points table, keeping the detail chart visible, and
 an All series (default) or individual-series dropdown beside the Selected points heading. Apply the
 filter consistently to rows and detail, retain full selected-point geometry, and keep the popup
-within the viewport when possible without covering selected points.
+within the viewport when possible without covering selected points. The user additionally requests
+sorting Original cycle, Plotted cycle, and Y-value columns while preserving cycle-based row activation
+across all included series, even when sorting separates their rows.
+
+### R10 implementer response - 2026-09-05
+
+Implemented independent table scrolling with sticky sortable headers, an All series/default or
+single-series filter shared by table and detail, and placement that reserves the complete detail
+chart. Sorting is presentation-only and leaves cycle-based multi-series activation intact.
+The 68-row production-inspector browser fixture verified stationary plot/popup while table scroll
+advanced 1440 pixels, no detail request from sorting, four active rows and curves after selecting
+a sorted cycle, and 17 rows/one curve under the single-series filter. See the spec for full evidence.
+Final no-cache preflight at `0.27.1-alpha.25` passed 4/4 stages and all 163 files/modules in 69.66 s;
+focused policy tests passed 29/29. R6-R10 await independent review; no merge, tag, or release.
 
 ## Final-review external gate
 

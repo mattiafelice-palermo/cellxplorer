@@ -973,6 +973,11 @@ Live Cycles gesture highlights use provisional shape membership over cached scre
 Keep those highlights separate from committed records and inspector anchors: cursor movement must
 not issue detail queries or move an existing inspector. Cancellation clears provisional geometry.
 
+The Cycles inspector reserves fixed space for its heading and detail chart; only the bounded table
+scrolls. Measure that fixed content when choosing an unobstructed viewport slot, and use document
+placement if none can hold it. Table sorting is presentation-only: derive detail requests from the
+unsorted series-filtered records and activate rows by scientific cycle identity, not row position.
+
 ## Measuring before optimizing
 
 Separate these costs when profiling:
