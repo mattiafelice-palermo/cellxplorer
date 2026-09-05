@@ -4,6 +4,17 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.21 - 2026-09-05
+
+### New features
+
+- Inspect selected Cycles points with always-visible cycle curves, per-sample filtering, and matching sample colours.
+
+### Bug fixes
+
+- Keep cycle inspectors within the visible window and clear of selected points, with compact hover labels and readable selection markers.
+- Preserve detail quantity choices while loading and correct polygon selection and UI zoom alignment.
+
 ## 0.27.1-alpha.20 - 2026-09-04
 
 ### New features

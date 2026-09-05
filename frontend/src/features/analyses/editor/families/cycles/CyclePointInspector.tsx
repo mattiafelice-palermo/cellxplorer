@@ -4,23 +4,19 @@ import {
   Badge,
   Box,
   Button,
-  Collapse,
   Group,
   Loader,
   Paper,
-  ScrollArea,
+  Portal,
   Select,
   Stack,
   Table,
   Text,
   Tooltip,
-  UnstyledButton,
 } from "@mantine/core";
 import {
-  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
-  IconChevronUp,
   IconRefresh,
   IconX,
 } from "@tabler/icons-react";
@@ -28,6 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -42,7 +39,7 @@ import {
 } from "../../../../../api";
 import Plot from "../../../../../components/Plot";
 import { simpleCartesianLayout } from "../../plotting/plotLayout";
-import { currentPlotStyle } from "../../plotting/plotStyle";
+import { DEFAULT_PLOT_STYLE } from "../../plotting/plotStyle";
 import { useDelayedFlag } from "../../plotting/plotRuntime";
 import { timeCapacityPlaceholderData } from "../../policies/timeCapacityQueryPolicy";
 import {
@@ -55,9 +52,11 @@ import {
 import { TimeCapacityRefinementLifecycle } from "../time-capacity/timeCapacityRefinementLifecycle";
 import {
   cyclePointAdjacentCycle,
+  cyclePointInspectorPosition,
   cyclePointDetailRequest,
   cyclePointMeasurePresentation,
   cyclePointSelectedCycles,
+  cyclePointSelectedMarkerSize,
   type CyclePoint,
   type CyclePointDetailRequest,
   type CyclePointDetailXQuantity,
@@ -67,8 +66,6 @@ import {
 } from "./cyclePointSelectionPolicy";
 import type { CyclePointOverlayBounds } from "./useCyclePointSelection";
 
-const INSPECTOR_WIDTH = 460;
-const INSPECTOR_GAP = 12;
 const DETAIL_REFINEMENT_DELAY_MS = 150;
 
 const X_OPTIONS: { value: CyclePointDetailXQuantity; label: string }[] = [
@@ -182,29 +179,9 @@ function detailTraces(
       xaxis: undefined,
       yaxis: undefined,
       mode: "lines",
+      line: { ...(trace as Partial<Plotly.PlotData>).line, width: 1.8, dash: "solid" },
+      opacity: 1,
     })) as Plotly.Data[];
-}
-
-function inspectorPosition(
-  anchor: CyclePointOverlayBounds,
-  containerWidth: number,
-  containerHeight: number,
-): { left: number; top: number; width: number } {
-  const width = Math.min(INSPECTOR_WIDTH, Math.max(320, containerWidth - 16));
-  const rightSide = anchor.right + INSPECTOR_GAP;
-  const leftSide = anchor.left - width - INSPECTOR_GAP;
-  const left =
-    rightSide + width <= containerWidth - 8
-      ? rightSide
-      : leftSide >= 8
-        ? leftSide
-        : Math.max(8, Math.min(containerWidth - width - 8, rightSide));
-  const expectedHeight = Math.min(520, Math.max(180, containerHeight - 16));
-  return {
-    left,
-    top: Math.max(8, Math.min(containerHeight - expectedHeight - 8, anchor.top - 12)),
-    width,
-  };
 }
 
 function shapePoints(shape: CyclePointSelectionShape): CyclePoint[] {
@@ -223,12 +200,28 @@ export function CyclePointSelectionOverlay({
   constructionVertices,
   dragPreview,
   halos,
+  cursorPoint,
 }: {
   completedShape: CyclePointSelectionShape | null;
   constructionVertices: CyclePoint[];
   dragPreview: { start: CyclePoint; end: CyclePoint } | null;
-  halos: { key: string; screenX: number; screenY: number }[];
+  halos: (CyclePointSelectionRecord & { screenX: number; screenY: number })[];
+  cursorPoint: CyclePoint | null;
 }) {
+  const overlayRef = useRef<SVGSVGElement>(null);
+  const [surface, setSurface] = useState({ width: 1, height: 1, scale: 1 });
+  // Plotly's onUpdate need not fire for CSS zoom. Measure our actual surface,
+  // not its last Plotly layout, before painting screen-space geometry.
+  useLayoutEffect(() => {
+    const svg = overlayRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const next = { width: rect.width, height: rect.height,
+      scale: rect.height / (svg.clientHeight || rect.height) };
+    setSurface((old) => old.width === next.width && old.height === next.height && old.scale === next.scale ? old : next);
+  });
+  const { width, height, scale } = surface;
   const completedPoints = completedShape ? shapePoints(completedShape) : [];
   const completedPolygon = completedPoints.map((point) => `${point.x},${point.y}`).join(" ");
   const constructionPolyline = constructionVertices
@@ -236,8 +229,11 @@ export function CyclePointSelectionOverlay({
     .join(" ");
   return (
     <svg
+      ref={overlayRef}
       aria-hidden="true"
       data-cycle-point-selection-overlay
+      viewBox={`0 0 ${width || 1} ${height || 1}`}
+      preserveAspectRatio="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 3 }}
     >
       {completedPoints.length > 0 && (
@@ -258,6 +254,16 @@ export function CyclePointSelectionOverlay({
           stroke="var(--mantine-primary-color-6)"
           strokeWidth={1.5}
           strokeLinejoin="round"
+        />
+      )}
+      {cursorPoint && constructionVertices.length > 0 && (
+        <polyline
+          data-cycle-polygon-preview
+          points={[constructionVertices[constructionVertices.length - 1], cursorPoint,
+            ...(constructionVertices.length > 1 ? [constructionVertices[0]] : [])]
+            .map((point) => `${point.x},${point.y}`).join(" ")}
+          fill="none" stroke="var(--mantine-primary-color-6)" strokeWidth={1.5}
+          strokeDasharray="5 4" pointerEvents="none"
         />
       )}
       {constructionVertices.map((point, index) => (
@@ -283,17 +289,26 @@ export function CyclePointSelectionOverlay({
           strokeWidth={1.5}
         />
       )}
-      {halos.map((point) => (
-        <circle
-          key={point.key}
-          cx={point.screenX}
-          cy={point.screenY}
-          r={7}
-          fill="none"
-          stroke="var(--mantine-primary-color-6)"
-          strokeWidth={2.5}
-        />
-      ))}
+      {halos.map((point) => {
+        const radius = cyclePointSelectedMarkerSize(point.markerSize ?? 0) * scale / 2;
+        const symbol = point.markerSymbol ?? "circle";
+        const base = symbol.replace("-open", "");
+        const r = radius;
+        const paths: Record<string, string> = {
+          square: `M ${-r},${-r} H ${r} V ${r} H ${-r} Z`,
+          diamond: `M 0,${-r * 1.3} L ${r * 1.3},0 0,${r * 1.3} ${-r * 1.3},0 Z`,
+          "triangle-up": `M 0,${-r * 1.3} L ${r * 1.15},${r} ${-r * 1.15},${r} Z`,
+          cross: `M ${-r},${-r / 3} H ${-r / 3} V ${-r} H ${r / 3} V ${-r / 3} H ${r} V ${r / 3} H ${r / 3} V ${r} H ${-r / 3} V ${r / 3} H ${-r} Z`,
+        };
+        return <g key={point.key} data-cycle-selected-marker
+          transform={`translate(${point.screenX} ${point.screenY})`}
+          fill={symbol.endsWith("-open") ? "none" : point.color ?? "#495057"}
+          stroke="#495057" strokeWidth={1.2 * scale} strokeLinejoin="round">
+          {base === "circle" ? <circle r={r} /> :
+            <path d={paths[base === "x" ? "cross" : base] ?? paths.square}
+              transform={base === "x" ? "rotate(45)" : undefined} />}
+        </g>;
+      })}
     </svg>
   );
 }
@@ -315,6 +330,8 @@ function CycleDetail({
 }) {
   const [xQuantity, setXQuantity] = useState<CyclePointDetailXQuantity>("time");
   const [yQuantity, setYQuantity] = useState<CyclePointDetailYQuantity>("voltage");
+  const [shownCell, setShownCell] = useState("all");
+  const capabilitiesRef = useRef<{ context: string; result: TimeCapacityResult } | null>(null);
   const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
   const refinementTimerRef = useRef<number | null>(null);
   const refinementAbortRef = useRef<AbortController | null>(null);
@@ -373,6 +390,14 @@ function CycleDetail({
   });
   const delayedLoading = useDelayedFlag(detailQuery.isFetching);
   const overview = detailQuery.data;
+  // Capability metadata survives coordinate changes, even when the old curve cannot
+  // safely be reused under the new axis. A missing in-flight payload is not a denial.
+  const capabilityContext = JSON.stringify(request.spec.selection.entries);
+  if (overview && !detailQuery.isPlaceholderData) {
+    capabilitiesRef.current = { context: capabilityContext, result: overview };
+  }
+  const capabilityResult = capabilitiesRef.current?.context === capabilityContext
+    ? capabilitiesRef.current.result : undefined;
 
   const cancelRefinement = useCallback(() => {
     refinementLifecycle.cancelPending();
@@ -475,6 +500,26 @@ function CycleDetail({
   );
 
   const shownResult = refinedResult ?? overview;
+  const cellColors = useMemo(() => {
+    const colors = new Map<number, string>();
+    // Direct Cell identities take precedence over a group's shared color.
+    for (const row of [...activeRecords].sort((a, b) =>
+      Number(a.sampleKind === "cell") - Number(b.sampleKind === "cell"))) {
+      for (const id of row.detailCellIds) colors.set(id, row.color ?? "#495057");
+    }
+    return colors;
+  }, [activeRecords]);
+  const detailStyle = useMemo(() => ({
+    ...DEFAULT_PLOT_STYLE,
+    custom_colors: Object.fromEntries([...cellColors].map(([id, color]) => [`c${id}`, color])),
+    line_width: 1.8,
+    individual_opacity: 1,
+    show_grid: false,
+    show_frame: true,
+    frame_color: "#555555",
+    tick_font_size: 11,
+    axis_title_size: 13,
+  }), [cellColors]);
   const renderSpec = useMemo(
     () => ({
       ...request.spec,
@@ -491,39 +536,41 @@ function CycleDetail({
         // A saved Time/Capacity series toggle must not silently suppress those
         // member curves inside this independent Cycles inspector.
         hidden_series_ids: [],
+        legend: false,
+        plot_style: detailStyle,
+        plot_styles: { time_capacity: detailStyle },
       },
     }),
-    [request.spec, spec.selection.exclusions, spec.selection.hidden_replicate_group_ids],
+    [request.spec, spec.selection.exclusions, spec.selection.hidden_replicate_group_ids, detailStyle],
   );
   const traces = useMemo(
-    () => detailTraces(shownResult, request, renderSpec, yQuantity),
-    [renderSpec, request, shownResult, yQuantity],
+    () => detailTraces(shownResult, request, renderSpec, yQuantity).filter((trace) => {
+      const sample = (trace as unknown as { cellxplorer_analysis_sample?: { cell_id: number } }).cellxplorer_analysis_sample;
+      return shownCell === "all" || sample?.cell_id === Number(shownCell);
+    }),
+    [renderSpec, request, shownResult, yQuantity, shownCell],
   );
-  const xOptions = useMemo(() => availableXOptions(overview, spec), [overview, spec]);
-  const yOptions = useMemo(() => availableYOptions(overview, spec), [overview, spec]);
+  const members = useMemo(() => [...new Map((capabilityResult?.cell_traces ?? [])
+    .map((trace) => [trace.cell_id, { id: trace.cell_id, label: trace.label }])).values()], [capabilityResult]);
   useEffect(() => {
+    if (shownCell !== "all" && capabilityResult && !members.some((member) => String(member.id) === shownCell)) {
+      setShownCell("all");
+    }
+  }, [capabilityResult, members, shownCell]);
+  const xOptions = useMemo(() => availableXOptions(capabilityResult, spec), [capabilityResult, spec]);
+  const yOptions = useMemo(() => availableYOptions(capabilityResult, spec), [capabilityResult, spec]);
+  useEffect(() => {
+    if (!overview || detailQuery.isFetching || detailQuery.isPlaceholderData) return;
     if (!xOptions.some((option) => option.value === xQuantity)) setXQuantity("time");
-  }, [xOptions, xQuantity]);
+  }, [xOptions, xQuantity, overview, detailQuery.isFetching, detailQuery.isPlaceholderData]);
   useEffect(() => {
+    if (!overview || detailQuery.isFetching || detailQuery.isPlaceholderData) return;
     if (!yOptions.some((option) => option.value === yQuantity)) setYQuantity("voltage");
-  }, [yOptions, yQuantity]);
-
-  const detailStyle = useMemo(() => {
-    const base = currentPlotStyle(spec, "time_capacity");
-    return {
-      ...base,
-      x_title: null,
-      y_title: null,
-      x_axis: { ...base.x_axis, mode: "auto" as const },
-      y_axis: { ...base.y_axis, mode: "auto" as const },
-      legend_mode: "inside" as const,
-      legend_inside_position: "top_right" as const,
-    };
-  }, [spec]);
+  }, [yOptions, yQuantity, overview, detailQuery.isFetching, detailQuery.isPlaceholderData]);
   const layoutSpec = useMemo(
     () => ({
       ...request.spec,
-      presentation: { ...request.spec.presentation, legend: traces.length > 1 },
+      presentation: { ...request.spec.presentation, legend: false },
     }),
     [request.spec, traces.length],
   );
@@ -555,6 +602,7 @@ function CycleDetail({
       <Group gap="xs" grow align="end">
         <Select
           size="xs"
+          classNames={{ dropdown: "cycle-point-inspector-dropdown" }}
           label="X quantity"
           data={xOptions}
           value={xQuantity}
@@ -563,6 +611,7 @@ function CycleDetail({
         />
         <Select
           size="xs"
+          classNames={{ dropdown: "cycle-point-inspector-dropdown" }}
           label="Y quantity"
           data={yOptions}
           value={yQuantity}
@@ -570,6 +619,20 @@ function CycleDetail({
           onChange={(value) => value && setYQuantity(value as CyclePointDetailYQuantity)}
         />
       </Group>
+      {members.length > 1 && <Select size="xs" label="Show"
+        classNames={{ dropdown: "cycle-point-inspector-dropdown" }}
+        data={[{ value: "all", label: "All selected samples" },
+          ...members.map((member) => ({ value: String(member.id), label: member.label }))]}
+        value={shownCell} allowDeselect={false} onChange={(value) => value && setShownCell(value)} />}
+      {activeRecords.some((record) => record.sampleKind === "replicate") && (
+        <Group gap="xs" aria-label="Selected replicate members">
+          {members.filter((member) => shownCell === "all" || String(member.id) === shownCell).map((member) =>
+            <Group key={member.id} gap={5} wrap="nowrap" miw={0} maw="100%">
+              <Box w={18} style={{ flexShrink: 0, borderTop: `2px solid ${cellColors.get(member.id) ?? "#495057"}` }} />
+              <Text size="xs" truncate title={member.label}>{member.label}</Text>
+            </Group>)}
+        </Group>
+      )}
       <Group justify="center" gap={6}>
         <Tooltip label="Previous selected cycle">
           <ActionIcon
@@ -642,16 +705,16 @@ function CycleDetail({
             </Group>
           )}
         </Box>
-      ) : delayedLoading ? (
+      ) : detailQuery.isFetching ? (
         <Group justify="center" py="xl" gap="xs">
-          <Loader size="sm" />
+          {delayedLoading && <Loader size="sm" />}
           <Text size="xs" c="dimmed">Loading cycle {activeCycle}…</Text>
         </Group>
-      ) : (
+      ) : !detailQuery.isError ? (
         <Text size="xs" c="dimmed" ta="center" py="md">
           No detail data are available for this cycle and quantity.
         </Text>
-      )}
+      ) : null}
     </Stack>
   );
 }
@@ -660,8 +723,7 @@ export function CyclePointInspector({
   analysisId,
   records,
   anchorBounds,
-  containerWidth,
-  containerHeight,
+  container,
   spec,
   cyclesResult,
   onClose,
@@ -669,41 +731,81 @@ export function CyclePointInspector({
   analysisId: number;
   records: CyclePointSelectionRecord[];
   anchorBounds: CyclePointOverlayBounds;
-  containerWidth: number;
-  containerHeight: number;
+  container: HTMLElement;
   spec: AnalysisSpec;
   cyclesResult: ComputeResult | undefined;
   onClose: () => void;
 }) {
   const cycles = useMemo(() => cyclePointSelectedCycles(records), [records]);
-  const [expanded, setExpanded] = useState(false);
   const [activeCycle, setActiveCycle] = useState(cycles[0]);
+  const [paperElement, setPaperElement] = useState<HTMLDivElement | null>(null);
+  const [geometry, setGeometry] = useState({ left: 0, top: 0, width: window.innerWidth,
+    height: window.innerHeight, scale: 1, paperHeight: 550 });
+  useLayoutEffect(() => {
+    const sync = () => {
+      const rect = container.getBoundingClientRect();
+      const scale = rect.width / container.clientWidth || 1;
+      const next = { left: rect.left, top: rect.top, width: window.innerWidth,
+        height: window.innerHeight, scale, paperHeight: (paperElement?.scrollHeight ?? 550) * scale };
+      setGeometry((old) => Object.keys(next).every((key) =>
+        old[key as keyof typeof old] === next[key as keyof typeof next]) ? old : next);
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(container);
+    if (paperElement) observer.observe(paperElement);
+    window.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync, true); };
+  }, [container, paperElement]);
+  useEffect(() => {
+    const outside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (paperElement?.contains(target) || target.closest(".cycle-point-inspector-dropdown")) return;
+      // The plot controller owns replacement gestures and Escape cancellation.
+      if (event.ctrlKey && container.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [container, onClose, paperElement]);
   useEffect(() => {
     if (!cycles.includes(activeCycle)) setActiveCycle(cycles[0]);
   }, [activeCycle, cycles]);
-  const position = inspectorPosition(anchorBounds, containerWidth, containerHeight);
-  const xLabel = "Cycle";
+  const markerPadding = records.reduce((largest, record) => Math.max(largest,
+    cyclePointSelectedMarkerSize(record.markerSize ?? 0) * 0.65 + 0.6), 0) * geometry.scale;
+  const position = cyclePointInspectorPosition({ left: anchorBounds.left + geometry.left - markerPadding,
+    right: anchorBounds.right + geometry.left + markerPadding, top: anchorBounds.top + geometry.top - markerPadding,
+    bottom: anchorBounds.bottom + geometry.top + markerPadding }, geometry.width, geometry.height,
+    geometry.paperHeight, geometry.scale);
   const measurePresentation = cyclePointMeasurePresentation(records);
 
   return (
+    <Portal>
     <Paper
+      ref={setPaperElement}
       data-cycle-point-inspector
       withBorder
       shadow="md"
       p="sm"
       style={{
-        position: "absolute",
+        position: position.outsideViewport ? "absolute" : "fixed",
         left: position.left,
-        top: position.top,
-        width: position.width,
-        maxHeight: Math.max(180, containerHeight - position.top - 8),
+        top: position.top + (position.outsideViewport ? window.scrollY : 0),
+        width: position.width / geometry.scale,
+        transform: `scale(${geometry.scale})`,
+        transformOrigin: "top left",
+        maxHeight: position.maxHeight / geometry.scale,
         overflowX: "hidden",
         overflowY: "auto",
-        zIndex: 5,
+        zIndex: 210,
       }}
     >
       <Stack gap="xs">
-        <Group justify="space-between" wrap="nowrap">
+        <Group justify="space-between" wrap="nowrap" style={{ position: "sticky", top: -12,
+          background: "var(--mantine-color-body)", zIndex: 5, paddingBlock: 4 }}>
           <Group gap="xs" wrap="nowrap">
             <Text fw={650} size="sm">
               {records.length === 1 ? "Selected point" : "Selected points"}
@@ -716,19 +818,20 @@ export function CyclePointInspector({
             </ActionIcon>
           </Tooltip>
         </Group>
-        <ScrollArea.Autosize mah={expanded ? 120 : 210} type="auto" offsetScrollbars>
-          <Table striped={false} highlightOnHover stickyHeader verticalSpacing={5} horizontalSpacing="xs">
+        <Box>
+          <Table striped={false} highlightOnHover verticalSpacing={5} horizontalSpacing={6}
+            style={{ tableLayout: "fixed" }}>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Sample</Table.Th>
-                <Table.Th ta="right">Cycle</Table.Th>
-                <Table.Th ta="right">{xLabel}</Table.Th>
-                <Table.Th ta="right">{measurePresentation.yHeader}</Table.Th>
+                <Table.Th w="40%">Sample</Table.Th>
+                <Table.Th ta="right" w="16%">Original cycle</Table.Th>
+                <Table.Th ta="right" w="16%">Plotted cycle</Table.Th>
+                <Table.Th ta="right" w="28%">{measurePresentation.yHeader}</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {records.map((record) => {
-                const active = expanded && record.scientificCycle === activeCycle;
+                const active = record.scientificCycle === activeCycle;
                 const sourceContext = [
                   record.sourceFilename,
                   record.localCycle !== null ? `local cycle ${record.localCycle}` : null,
@@ -737,32 +840,35 @@ export function CyclePointInspector({
                 return (
                   <Table.Tr
                     key={record.key}
-                    tabIndex={expanded ? 0 : undefined}
-                    onClick={() => expanded && setActiveCycle(record.scientificCycle)}
+                    tabIndex={0}
+                    onClick={() => setActiveCycle(record.scientificCycle)}
                     onKeyDown={(event) => {
-                      if (expanded && (event.key === "Enter" || event.key === " ")) {
+                      if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         setActiveCycle(record.scientificCycle);
                       }
                     }}
                     style={{
-                      cursor: expanded ? "pointer" : "default",
+                      cursor: "pointer",
                       background: active ? "var(--mantine-primary-color-light)" : undefined,
                       fontWeight: active ? 650 : undefined,
                     }}
                   >
                     <Table.Td maw={170}>
                       <Tooltip label={sourceContext || record.sampleLabel} multiline maw={360}>
-                        <Box>
+                        <Group gap={5} wrap="nowrap">
+                          <Box w={18} style={{ flexShrink: 0, borderTop: `2px solid ${record.color ?? "#495057"}` }} />
+                          <Box miw={0}>
                           <Text size="xs" fw={active ? 650 : 500} truncate="end" title={record.sampleLabel}>
                             {record.sampleLabel}
                           </Text>
                           {measurePresentation.showMeasurePerRow && (
-                            <Text size="10px" c="dimmed" lh={1.25} mt={2}>
+                            <Text size="xs" c="dimmed" lh={1.25} mt={2}>
                               {record.quantityLabel}
                             </Text>
                           )}
-                        </Box>
+                          </Box>
+                        </Group>
                       </Tooltip>
                     </Table.Td>
                     <Table.Td ta="right"><Text size="xs" fw={active ? 650 : undefined}>{record.scientificCycle}</Text></Table.Td>
@@ -773,21 +879,12 @@ export function CyclePointInspector({
               })}
             </Table.Tbody>
           </Table>
-        </ScrollArea.Autosize>
-        <UnstyledButton
-          aria-expanded={expanded}
-          aria-controls="cycle-point-detail"
-          onClick={() => setExpanded((open) => !open)}
-          style={{ borderTop: "1px solid var(--mantine-color-default-border)", paddingTop: 8 }}
-        >
-          <Group justify="space-between">
-            <Text size="sm" fw={600}>Cycle detail</Text>
-            {expanded ? <IconChevronUp size={15} /> : <IconChevronDown size={15} />}
-          </Group>
-        </UnstyledButton>
-        <Collapse in={expanded}>
+        </Box>
+        <Text size="sm" fw={600} style={{ borderTop: "1px solid var(--mantine-color-default-border)", paddingTop: 8 }}>
+          Cycle detail
+        </Text>
           <Box id="cycle-point-detail">
-            {expanded && activeCycle !== undefined && (
+            {activeCycle !== undefined && (
               <CycleDetail
                 analysisId={analysisId}
                 records={records}
@@ -798,8 +895,8 @@ export function CyclePointInspector({
               />
             )}
           </Box>
-        </Collapse>
       </Stack>
     </Paper>
+    </Portal>
   );
 }

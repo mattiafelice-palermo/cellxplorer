@@ -84,15 +84,28 @@ dismissal, polygon preview and detail sample/color controls. Record remaining ac
 truthfully. User explicitly switched this task from review to implementation; return to independent
 review after the fixes rather than self-approving.
 
+### R6 implementer response - 2026-09-05
+
+The approved batch is implemented, including the user's later clarification that cycle detail stays
+expanded and placement checks all four sides before reducing height. The detailed browser evidence
+and remaining manual scope are in the spec's R6 implementation section. In addition to the original
+findings, browser verification corrected delayed Portal measurement, sticky-header overlap, and
+subpixel exclusion of polygon boundary points. Final no-cache preflight at 0.27.1-alpha.21 passed
+all 4 stages and 163 files/modules in 70.49 s. R6 awaits independent re-review.
+
 ## Final-review external gate
 
-The manual browser acceptance matrix is still **NOT RUN**. This is the only remaining blocker and is not an implementation finding.
+The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
+response records focused live-app and isolated component browser checks; native Ctrl-drag,
+replicate/CE/hidden-series scenarios, and the full-viewport document-scroll fallback still need
+manual evidence. R6 also awaits independent re-review. Historical NOT RUN reports above describe
+those earlier review sessions.
 
 The required evidence is the Spec 056 manual browser matrix covering, in a suitable local application/browser environment:
 
 - rectangle, polygon, single-click, cancellation, Escape, tab/result lifecycle, and CSS/Windows scaling behavior;
 - the inspector table, mixed primary/CE labeling, scrolling, positioning, and Light/Dark/narrow geometry;
-- lazy Time/Capacity detail loading, quantity availability, selected-cycle navigation, deduplication, error/retry, and rapid-navigation stale-response behavior;
+- always-expanded Time/Capacity detail loading (user amendment), quantity availability, selected-cycle navigation, deduplication, error/retry, and rapid-navigation stale-response behavior;
 - no Cycles recompute, dirty/autosave mutation, or persistence from inspection actions;
 - diagnostic reindex/original-cycle provenance and hidden/non-rendered selection boundaries;
 - Plotly hover, zoom, pan, autoscale/reset, modebar, legend drag/application visibility, Style panel, saved previews, portable reports, and PNG/SVG/PDF/CSV/XLSX/Parquet export regressions.

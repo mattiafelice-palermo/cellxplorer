@@ -2,10 +2,10 @@
 
 - [`056-cycle-point-selection-and-detail-inspector.md`](056-cycle-point-selection-and-detail-inspector.md)
   adds transient rectangle, polygon, and single-point selection to the Cycles plot, with a
-  non-modal exact-value table and a lazy within-cycle Time/Capacity detail explorer. Selection
-  remains request-free, unsaved, and excluded from plot dirty state and exports. **Implementation
-  complete and R1-R4 review-clean. Manual browser acceptance remains NOT RUN/pending; final
-  completion and merge readiness are not yet declared.**
+  non-modal exact-value table and an always-expanded within-cycle Time/Capacity detail explorer.
+  Selection remains transient and excluded from plot dirty state and exports. **R6 browser
+  refinements implemented; independent re-review pending. Focused browser checks are recorded in
+  the spec; the full original manual matrix and final completion remain reviewer-owned.**
 - [053-alpha-application-release-channel.md](053-alpha-application-release-channel.md)
   adds CellXplorer Alpha as a fully isolated third Windows product from the shared source tree:
   separate installation identity, profile root, deep link, updater feed, release tag family, purple

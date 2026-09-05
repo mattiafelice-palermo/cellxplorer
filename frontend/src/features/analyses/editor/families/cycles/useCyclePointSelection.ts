@@ -54,6 +54,8 @@ export type CyclePointSelectionController = {
   records: CyclePointSelectionRecord[];
   completedShape: CyclePointSelectionShape | null;
   constructionVertices: CyclePoint[];
+  cursorPoint: CyclePoint | null;
+  suppressHover: boolean;
   dragPreview: { start: CyclePoint; end: CyclePoint } | null;
   halos: CyclePointScreenCandidate[];
   anchorBounds: CyclePointOverlayBounds | null;
@@ -132,6 +134,8 @@ export function useCyclePointSelection({
   const [records, setRecords] = useState<CyclePointSelectionRecord[]>([]);
   const [completedShape, setCompletedShape] = useState<CyclePointSelectionShape | null>(null);
   const [constructionVertices, setConstructionVertices] = useState<CyclePoint[]>([]);
+  const [cursorPoint, setCursorPoint] = useState<CyclePoint | null>(null);
+  const [suppressHover, setSuppressHover] = useState(false);
   const [dragPreview, setDragPreview] = useState<{ start: CyclePoint; end: CyclePoint } | null>(null);
   const [overlayRevision, setOverlayRevision] = useState(0);
   const activePointerRef = useRef<ActivePointer | null>(null);
@@ -154,6 +158,7 @@ export function useCyclePointSelection({
     }
     activePointerRef.current = null;
     setDragPreview(null);
+    setCursorPoint(null);
     writeConstructionVertices([]);
   }, [writeConstructionVertices]);
 
@@ -237,6 +242,7 @@ export function useCyclePointSelection({
       if (!container) return;
       event.preventDefault();
       event.stopPropagation();
+      setSuppressHover(true);
       const point = localPoint(event, container);
       activePointerRef.current = {
         pointerId: event.pointerId,
@@ -259,6 +265,10 @@ export function useCyclePointSelection({
     (event: ReactPointerEvent<HTMLElement>) => {
       const active = activePointerRef.current;
       const container = containerRef.current;
+      if (!active && container && event.ctrlKey && constructionVerticesRef.current.length > 0) {
+        setCursorPoint(localPoint(event, container));
+        return;
+      }
       if (!active || active.pointerId !== event.pointerId || !container) return;
       event.preventDefault();
       event.stopPropagation();
@@ -303,6 +313,7 @@ export function useCyclePointSelection({
         return;
       }
       writeConstructionVertices([...constructionVerticesRef.current, end]);
+      setCursorPoint(end);
     },
     [commit, containerRef, writeConstructionVertices],
   );
@@ -318,6 +329,7 @@ export function useCyclePointSelection({
   useEffect(() => {
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== "Control") return;
+      setSuppressHover(false);
       if (activePointerRef.current) {
         cancelConstruction();
         return;
@@ -326,6 +338,7 @@ export function useCyclePointSelection({
       if (vertices.length > 0) commit({ kind: "polygon", vertices });
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Control") setSuppressHover(true);
       if (event.key !== "Escape") return;
       if (activePointerRef.current || constructionVerticesRef.current.length > 0) {
         cancelConstruction();
@@ -333,7 +346,7 @@ export function useCyclePointSelection({
         clear();
       }
     };
-    const onBlur = () => cancelConstruction();
+    const onBlur = () => { cancelConstruction(); setSuppressHover(false); };
     const onVisibilityChange = () => {
       if (document.visibilityState !== "visible") cancelConstruction();
     };
@@ -385,6 +398,8 @@ export function useCyclePointSelection({
     records,
     completedShape,
     constructionVertices,
+    cursorPoint,
+    suppressHover,
     dragPreview,
     halos,
     anchorBounds,

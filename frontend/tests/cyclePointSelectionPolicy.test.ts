@@ -14,6 +14,7 @@ import {
   CYCLE_POINT_CLICK_RADIUS_PX,
   CYCLE_POINT_DRAG_THRESHOLD_PX,
   cyclePointAdjacentCycle,
+  cyclePointInspectorPosition,
   cyclePointCandidatesForTraces,
   cyclePointCullRecords,
   cyclePointDetailRequest,
@@ -24,6 +25,7 @@ import {
   cyclePointMeasurePresentation,
   cyclePointRecordsForShape,
   cyclePointSelectedCycles,
+  cyclePointSelectedMarkerSize,
   cyclePointSelectionKey,
   cyclePointSortRecords,
   withoutCyclePointSelectionMetadata,
@@ -96,6 +98,28 @@ test("the complete displacement classifies clicks and rectangle drags", () => {
     cyclePointGestureIsRectangle({ x: 0, y: 0 }, { x: 3.6, y: 4.8 }),
     true,
   );
+});
+
+test("repeated polygon vertices never turn outside points into boundary points", () => {
+  const polygon = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+  for (const vertices of [polygon, [...polygon, polygon[0]],
+    [polygon[0], polygon[0], ...polygon.slice(1)]]) {
+    assert.equal(cyclePointInPolygon({ x: 100, y: 100 }, vertices), false);
+    assert.equal(cyclePointInPolygon({ x: 5, y: 5 }, vertices), true);
+    assert.equal(cyclePointInPolygon({ x: 10, y: 5 }, vertices), true);
+  }
+  assert.equal(cyclePointInPolygon({ x: 5, y: 5 }, [polygon[0], polygon[0], polygon[0]]), false);
+});
+
+test("selection preserves trace appearance and caps small-marker emphasis", () => {
+  const candidates = cyclePointCandidatesForTraces([{ ...trace(), mode: "markers",
+    marker: { color: "#f03e3e", size: 12, symbol: "diamond-open" } }], project);
+  assert.equal(candidates[0].color, "#f03e3e");
+  assert.equal(candidates[0].markerSymbol, "diamond-open");
+  assert.equal(cyclePointSelectedMarkerSize(candidates[0].markerSize!), 12);
+  assert.equal(cyclePointSelectedMarkerSize(0), 5);
+  assert.equal(cyclePointSelectedMarkerSize(5), 7);
+  assert.equal(cyclePointSelectedMarkerSize(7), 8);
 });
 
 test("rectangle containment includes every boundary", () => {
@@ -411,4 +435,50 @@ test("inspector wiring invalidates refinement generations and relayout clears th
   assert.match(inspectorSource, /refinementLifecycle\.cancelPending\(\)/);
   assert.match(inspectorSource, /refinementLifecycle\.acceptResponse\(/);
   assert.match(selectionSource, /const invalidateGeometry = useCallback\(\(\) => \{[\s\S]*?clear\(\);[\s\S]*?\}, \[clear\]\);/);
+});
+
+
+test("inspector placement avoids selected bounds and stays inside the viewport at each UI scale", () => {
+  for (const scale of [0.9, 1, 1.1]) {
+    for (const viewport of [{ width: 1100, height: 620 }, { width: 1350, height: 900 }]) {
+      for (const anchor of [
+        { left: 600, right: 610, top: 300, bottom: 310 },
+        { left: 400, right: 800, top: 480, bottom: 510 },
+        { left: 10, right: 1000, top: 100, bottom: 180 },
+        { left: 10, right: 1000, top: 410, bottom: 600 },
+      ]) {
+        const position = cyclePointInspectorPosition(anchor, viewport.width, viewport.height, 600 * scale, scale);
+        const height = Math.min(600 * scale, position.maxHeight);
+        assert.equal(position.outsideViewport, false);
+        assert.ok(position.left >= 8 && position.top >= 8);
+        assert.ok(position.left + position.width <= viewport.width - 8);
+        assert.ok(position.top + height <= viewport.height - 8);
+        assert.ok(position.maxHeight <= viewport.height * 0.7);
+        assert.ok(position.left + position.width <= anchor.left || position.left >= anchor.right ||
+          position.top + height <= anchor.top || position.top >= anchor.bottom);
+      }
+    }
+  }
+});
+
+test("inspector uses above or below space before reducing its height", () => {
+  const position = cyclePointInspectorPosition({ left: 400, right: 650, top: 550, bottom: 600 }, 1100, 900, 500, 1);
+  assert.equal(position.top, 38);
+  assert.equal(position.width, 520);
+  assert.equal(position.maxHeight, 530);
+  assert.equal(position.outsideViewport, false);
+});
+
+test("inspector permits document scrolling only when the selection leaves no usable viewport space", () => {
+  const position = cyclePointInspectorPosition({ left: 0, right: 1100, top: 0, bottom: 620 }, 1100, 620, 600, 1);
+  assert.equal(position.outsideViewport, true);
+  assert.equal(position.top, 632);
+});
+
+
+test("polygon boundaries tolerate Plotly subpixel rounding without including nearby outside points", () => {
+  const vertices = [{ x: 171.67, y: 378.33 }, { x: 658.33, y: 378.33 }, { x: 415, y: 91.67 }];
+  assert.equal(cyclePointInPolygon({ x: 171 + 2 / 3, y: 378 + 1 / 3 }, vertices), true);
+  assert.equal(cyclePointInPolygon({ x: 171.64, y: 378.36 }, vertices), false);
+  assert.equal(cyclePointInPolygon({ x: 658.33, y: 91.67 }, [...vertices, vertices[0]]), false);
 });

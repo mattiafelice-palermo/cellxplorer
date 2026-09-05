@@ -15,6 +15,7 @@
  * tested in `frontend/tests/seriesStyling.test.ts`.
  */
 import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "../../../../api";
+import { plotlySafeText } from "../policies/voltageChannelPolicy.ts";
 
 export type SeriesKind = "cell" | "group";
 
@@ -824,6 +825,15 @@ export function shortSourceName(name: string, max = 34): string {
   const head = Math.ceil((max - 1) / 2);
   const tail = Math.floor((max - 1) / 2);
   return `${name.slice(0, head)}…${name.slice(name.length - tail)}`;
+}
+
+/** A bounded, escaped name inside the hover card rather than Plotly's extra lane. */
+export function compactHoverName(name: string): string {
+  const compact = shortSourceName(name, 28);
+  if (compact.length <= 18) return plotlySafeText(compact);
+  const separator = compact.lastIndexOf("_", 18);
+  const splitAt = separator > 0 ? separator + 1 : 18;
+  return `${plotlySafeText(compact.slice(0, splitAt))}<br>${plotlySafeText(compact.slice(splitAt))}`;
 }
 
 /** Points kept per preview trace. The preview is ~620 px wide; more is invisible. */

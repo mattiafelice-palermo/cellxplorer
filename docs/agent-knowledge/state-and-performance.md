@@ -945,6 +945,24 @@ Two rules follow:
   just how it looks — must be added there, or the plot will silently not update while the rest of
   the UI reacts normally.
 
+## Transient Cycles inspection
+
+The Cycles inspector owns its selected points and detail view independently of saved plot state.
+Its always-visible detail uses the shared Time/Capacity scientific request and refinement lifecycle,
+but an independent default presentation; retain the selected Cycles series colors explicitly.
+Changing the detail's visible Cell is a trace filter and must not change scientific request membership.
+
+Compact Time/Capacity responses materialize only requested coordinates. Keep capability metadata
+across coordinate-query transitions for the same selected Cell set; an absent in-flight response is
+not evidence that mass, area, or voltage channels became unavailable. Reset unsupported quantities
+only after the matching response has settled.
+
+Cycle hit-testing and selection geometry use screen pixels. CSS UI zoom changes the rendered
+rectangle without necessarily firing Plotly `onUpdate`; measure the overlay's rendered dimensions
+for its SVG viewBox to avoid scaling coordinates twice. Ignore zero-size hidden surfaces. Portalled
+Paper content can mount after its parent layout effect: observe the actual mounted element through
+a callback ref, including its natural size changes, before relying on viewport placement.
+
 ## Measuring before optimizing
 
 Separate these costs when profiling:

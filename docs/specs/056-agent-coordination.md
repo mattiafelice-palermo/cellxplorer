@@ -137,3 +137,17 @@ User authorized browser acceptance; browser review found quantity resets and zoo
 Browser review and the user-approved 2026-09-05 refinement batch are recorded as R6. User explicitly requests this task implement and browser-test the batch.
 
 ---
+### 2026-09-05T14:37:07+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- PASS: final no-cache preflight at 0.27.1-alpha.21, 4/4 stages and 163 files/modules, 70.49 s; focused selection suite 23/23; git diff --check.
+- Browser PASS: live Gen2C selection, always-expanded detail, stable specific-capacity/current choices, outside dismissal, 90/110 percent alignment, viewport cap and sticky header; production component fixture sample/color isolation and repeated-vertex polygon including boundaries.
+
+**Message**
+
+R6 user-approved fixes and later always-expanded/four-side-placement clarification implemented. Version and changelog advanced per AGENTS completed-work policy. Detailed browser evidence and remaining native Ctrl-drag, replicate/CE/hidden-series and full-viewport document-scroll acceptance limits recorded in the spec. Return for independent R6 review; no self-approval, merge, tag or release.
+
+---

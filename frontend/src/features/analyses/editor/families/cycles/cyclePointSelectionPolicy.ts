@@ -11,6 +11,58 @@ export const CYCLE_POINT_DETAIL_VIEWPORT_WIDTH = 1200;
 
 export type CyclePoint = { x: number; y: number };
 
+/** Screen-pixel placement: use an unobstructed side before requiring scrolling. */
+export function cyclePointInspectorPosition(
+  anchor: { left: number; right: number; top: number; bottom: number },
+  viewportWidth: number,
+  viewportHeight: number,
+  contentHeight: number,
+  scale: number,
+) {
+  const padding = 8;
+  const gap = 12;
+  const width = Math.min(520 * scale, viewportWidth - padding * 2);
+  const maxHeight = Math.min(viewportHeight * 0.7, viewportHeight - padding * 2);
+  const height = Math.min(contentHeight, maxHeight);
+  const slots = [
+    { side: "right", left: anchor.right + gap, top: padding,
+      width: viewportWidth - padding - anchor.right - gap, height: viewportHeight - padding * 2 },
+    { side: "left", left: padding, top: padding,
+      width: anchor.left - gap - padding, height: viewportHeight - padding * 2 },
+    { side: "below", left: padding, top: anchor.bottom + gap,
+      width: viewportWidth - padding * 2, height: viewportHeight - padding - anchor.bottom - gap },
+    { side: "above", left: padding, top: padding,
+      width: viewportWidth - padding * 2, height: anchor.top - gap - padding },
+  ];
+  const full = slots.find((slot) => slot.width >= width && slot.height >= height);
+  // Prefer a readable width. Only narrow further when none of the four sides can hold it.
+  const readable = slots.filter((slot) => slot.width >= Math.min(width, 320 * scale) && slot.height >= 100 * scale);
+  const usable = readable.length ? readable : slots.filter((slot) => slot.width >= 100 * scale && slot.height >= 80 * scale);
+  const slot = full ?? usable.sort((a, b) =>
+    Math.min(b.width, width) * Math.min(b.height, height) -
+    Math.min(a.width, width) * Math.min(a.height, height))[0];
+  if (!slot) {
+    // A selection occupying the whole viewport cannot coexist with the inspector there.
+    // Place it after the selection in document space, so it remains reachable by scrolling.
+    return { left: padding, top: Math.max(padding, anchor.bottom + gap), width,
+      maxHeight, outsideViewport: true };
+  }
+  const actualWidth = Math.min(width, slot.width);
+  const actualHeight = Math.min(height, slot.height);
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  return {
+    left: slot.side === "right" ? slot.left : slot.side === "left"
+      ? anchor.left - gap - actualWidth
+      : clamp(anchor.left, padding, viewportWidth - padding - actualWidth),
+    top: slot.side === "below" ? slot.top : slot.side === "above"
+      ? anchor.top - gap - actualHeight
+      : clamp(anchor.top - gap, padding, viewportHeight - padding - actualHeight),
+    width: actualWidth,
+    maxHeight: Math.min(maxHeight, slot.height),
+    outsideViewport: false,
+  };
+}
+
 export type CyclePointSelectionRecord = {
   key: string;
   seriesKey: string;
@@ -29,6 +81,9 @@ export type CyclePointSelectionRecord = {
   displayedX: number;
   displayedY: number;
   renderedSeriesOrder: number;
+  color?: string;
+  markerSize?: number;
+  markerSymbol?: string;
 };
 
 export type CyclePointScreenCandidate = CyclePointSelectionRecord & {
@@ -62,6 +117,9 @@ export type CycleSelectableTraceLike = {
   y?: unknown;
   meta?: unknown;
   visible?: unknown;
+  mode?: unknown;
+  line?: unknown;
+  marker?: unknown;
 };
 
 export type CyclePointSelectionShape =
@@ -161,17 +219,19 @@ function cyclePointOnSegment(
   start: CyclePoint,
   end: CyclePoint,
 ): boolean {
-  const cross =
-    (point.y - start.y) * (end.x - start.x) -
-    (point.x - start.x) * (end.y - start.y);
-  const scale = Math.max(1, Math.abs(end.x - start.x), Math.abs(end.y - start.y));
-  if (Math.abs(cross) > 1e-7 * scale) return false;
-  const dot =
-    (point.x - start.x) * (end.x - start.x) +
-    (point.y - start.y) * (end.y - start.y);
-  if (dot < -1e-7) return false;
-  const squaredLength = (end.x - start.x) ** 2 + (end.y - start.y) ** 2;
-  return dot <= squaredLength + 1e-7;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const squaredLength = dx * dx + dy * dy;
+  // Plotly rounds SVG coordinates to hundredths of a pixel. Match that visual
+  // boundary without turning repeated (zero-length) edges into universal hits.
+  const fraction = squaredLength === 0 ? 0 : Math.max(0, Math.min(1,
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / squaredLength));
+  return Math.hypot(point.x - start.x - fraction * dx, point.y - start.y - fraction * dy) <= 0.01;
+}
+
+/** Modest emphasis, including markers for line-only traces. Never enlarge large markers. */
+export function cyclePointSelectedMarkerSize(size: number): number {
+  return size >= 8 ? size : Math.min(8, Math.max(5, size + 2));
 }
 
 /** Even/odd containment with an explicit inclusive boundary check. */
@@ -219,6 +279,8 @@ export function cyclePointCandidatesForTraces(
 ): CyclePointScreenCandidate[] {
   const candidates: CyclePointScreenCandidate[] = [];
   traces.forEach((trace, renderedSeriesOrder) => {
+    const line = trace.line as { color?: unknown } | undefined;
+    const marker = trace.marker as { color?: unknown; size?: unknown; symbol?: unknown } | undefined;
     if (trace.visible === false || trace.visible === "legendonly") return;
     const metadata = selectableMetadata(trace.meta);
     if (!metadata || !Array.isArray(trace.x) || !Array.isArray(trace.y)) return;
@@ -263,6 +325,10 @@ export function cyclePointCandidatesForTraces(
         displayedX,
         displayedY,
         renderedSeriesOrder,
+        color: String(marker?.color ?? line?.color ?? "#495057"),
+        markerSize: String(trace.mode ?? "").includes("markers")
+          ? Number(marker?.size ?? 5) : 0,
+        markerSymbol: String(marker?.symbol ?? "circle"),
         screenX: screen.x,
         screenY: screen.y,
       });

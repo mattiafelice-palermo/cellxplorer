@@ -115,7 +115,7 @@ import {
   seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
-  shortSourceName,
+  compactHoverName,
   timeCapacitySeriesDescriptors,
   timeCapacitySeriesDescriptor,
   timeCapacityVoltageSeriesDescriptor,
@@ -520,17 +520,6 @@ function currentAxisValues(
 
 function hasFinitePoint(values: (number | null)[]): boolean {
   return values.some((value) => value !== null && Number.isFinite(value));
-}
-
-function compactHoverName(name: string): string {
-  const compact = shortSourceName(name, 28);
-  if (compact.length <= 18) return plotlySafeText(compact);
-
-  // Plotly cannot wrap hover text itself. Keep the cell/source label inside a
-  // predictable width while the surrounding <b> tag keeps both lines bold.
-  const separator = compact.lastIndexOf("_", 18);
-  const splitAt = separator > 0 ? separator + 1 : 18;
-  return `${plotlySafeText(compact.slice(0, splitAt))}<br>${plotlySafeText(compact.slice(splitAt))}`;
 }
 
 const VOLTAGE_CHANNEL_PALETTE_INDEX: Record<VoltageChannel, number> = {

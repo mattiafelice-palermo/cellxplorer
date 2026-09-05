@@ -98,6 +98,7 @@ import {
   seriesPlotlyMode,
   seriesPlotlySymbol,
   shortSourceName,
+  compactHoverName,
   type BaseSeriesStyle,
   type SeriesDescriptor,
 } from "../../plotting/seriesStyling";
@@ -703,7 +704,7 @@ export function cycleTracesForResult(
         customdata: q.n,
         hovertemplate: compact
           ? undefined
-          : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
+          : `<b>${compactHoverName(aggResolved.name)}</b><br>cycle %{x}: %{y:.4f}<br>n=%{customdata}<extra></extra>`,
       } as Plotly.Data);
       if (!compact) {
         const lowCountX: number[] = [];
@@ -739,7 +740,7 @@ export function cycleTracesForResult(
             showlegend: false,
             hovertemplate:
               `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
-              `<extra>${agg.group_name}</extra>`,
+              `<extra></extra>`,
           } as Plotly.Data);
         }
       }
@@ -783,6 +784,7 @@ export function cycleTracesForResult(
         showlegend: ceResolved.showInLegend,
         legendrank: legendRanks.get(ceKey),
         ...(includePointSelectionMetadata ? { meta: ceSelectionMeta } : {}),
+        hovertemplate: `<b>${compactHoverName(ceResolved.name)}</b><br>cycle %{x}<br>CE: %{y:.4f}%<extra></extra>`,
       } as Plotly.Data);
     }
   }
@@ -870,8 +872,8 @@ export function cycleTracesForResult(
         customdata,
         cellxplorer_export_columns: sourceColumns,
         hovertemplate:
-          `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
-          `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
+          `<b>${compactHoverName(resolved.name)}</b><br>` +
+          `cycle %{customdata[0]}: %{y:.4f}<br>local %{customdata[1]} · source %{customdata[2]}<extra></extra>`,
       } as Plotly.Data);
       const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
       if (boundaryIndices.length) {
@@ -922,6 +924,7 @@ export function cycleTracesForResult(
       out.push({
         x: s.x,
         y: s.quantities["coulombic_efficiency_pct"],
+        hovertemplate: `<b>${compactHoverName(ceResolved.name)}</b><br>cycle %{x}<br>CE: %{y:.4f}%<extra></extra>`,
         name: ceResolved.name,
         yaxis: "y2",
         line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
@@ -987,7 +990,7 @@ export function cyclePlotLayout(
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
-    hoverlabel: hoverLabelLayout(style),
+    hoverlabel: hoverLabelLayout({ ...style, tick_font_size: Math.min(style.tick_font_size, 14) }),
     // Keep the user's zoom/pan across style edits, but reset the view when
     // the data or the plotted quantity changes.
     uirevision: `${result?.computed_at ?? "no-data"}|${quantity}|${
@@ -1752,6 +1755,8 @@ export function CyclePlotCard({
         ) : (
           <Box
             ref={attachSelectionContainer}
+            className="cycle-selection-surface"
+            data-cycle-selecting={pointSelection.suppressHover || undefined}
             onPointerDownCapture={(event) => {
               pointSelection.onPointerDownCapture(event);
               if (!event.defaultPrevented) zoom.armOnPointerDown();
@@ -1767,6 +1772,8 @@ export function CyclePlotCard({
               transition: "opacity 160ms ease",
             }}
           >
+            <style>{`.cycle-selection-surface .hoverlayer { pointer-events: none !important; }
+              .cycle-selection-surface[data-cycle-selecting] .hoverlayer { visibility: hidden; }`}</style>
             <Plot
               data={traces}
               layout={layout}
@@ -1809,17 +1816,17 @@ export function CyclePlotCard({
               constructionVertices={pointSelection.constructionVertices}
               dragPreview={pointSelection.dragPreview}
               halos={pointSelection.halos}
+              cursorPoint={pointSelection.cursorPoint}
             />
             {pointSelection.records.length > 0 &&
               pointSelection.anchorBounds &&
-              plotSize && (
+              plotSize && selectionContainerRef.current && (
                 <CyclePointInspector
                   key={pointSelection.records.map((record) => record.key).join("|")}
                   analysisId={analysisId}
                   records={pointSelection.records}
                   anchorBounds={pointSelection.anchorBounds}
-                  containerWidth={plotSize.width}
-                  containerHeight={plotSize.height}
+                  container={selectionContainerRef.current}
                   spec={spec}
                   cyclesResult={result}
                   onClose={pointSelection.clear}

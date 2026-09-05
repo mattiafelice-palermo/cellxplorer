@@ -8,10 +8,10 @@
 
 ## Status
 
-Implementation is complete on the feature branch and R1-R4 are independently review-clean. The
-manual browser acceptance matrix remains NOT RUN/pending, so final workflow completion and merge
-readiness are not yet declared. This is one implementable, Cycles-only frontend feature; no child
-specs are expected.
+The original implementation and R1-R5 are independently review-clean. The user-approved R6
+browser refinements are implemented and awaiting independent re-review. Focused browser evidence
+is recorded below; the broader original manual matrix is not declared complete. Final workflow
+completion and merge readiness remain reviewer-owned. This is one Cycles-only frontend feature.
 
 Review document:
 [`reviews/056-cycle-point-selection-and-detail-inspector-review.md`](reviews/056-cycle-point-selection-and-detail-inspector-review.md)
@@ -28,9 +28,13 @@ original presentation rules below. Implement these together on the existing feat
 - Label the cycle columns **Original cycle** and **Plotted cycle**.
 - An outside click dismisses the inspector; its own portalled dropdowns count as inside, and a
   new Ctrl gesture must not be cancelled by dismissal.
-- Expansion grows the inspector naturally, repositions it inside the visible viewport, and only
-  scrolls beyond 70% of viewport height. Keep its header accessible. It may extend beyond the
-  plot card vertically without resizing the plot.
+- Cycle detail is always expanded (user clarification on 2026-09-05); remove the collapse toggle.
+  Selection therefore starts its detail query immediately, superseding the original lazy-fetch rule.
+- The inspector grows naturally up to 70% of viewport height, keeping its header accessible.
+  Check right, left, below, and above the selected marker bounds before reducing its size. Keep
+  it inside the current viewport without covering selected markers whenever geometry permits.
+  Use document scrolling only if no usable surrounding viewport area exists. It may extend beyond
+  the plot card without resizing the plot.
 - Use compact wrapped Cycles hover labels, suppress the separate Plotly name box, and keep
   hover clear of the point and hidden during Ctrl selection.
 - Replace halos with temporary markers retaining the Cycles color and symbol, a dark-grey
@@ -762,3 +766,38 @@ Implemented on `feature/cycle-point-selection-inspector` for `ACTIVE_CHILD: 056`
 - Review: initial review returned R1-R4; all four are independently closed. R5 updates only the
   durable status documentation. The pending manual browser matrix and final completion decision
   remain reviewer-owned.
+
+
+## R6 implementation and browser evidence — 2026-09-05
+
+- Always-expanded detail, stable capability choices during axis requests, original/plotted cycle
+  labels, outside dismissal including portalled-select containment, and natural popup sizing.
+- Independent detail defaults retain Cycles colors, remove the legend, and provide per-Cell/all
+  filtering without changing request membership. Table/member swatches identify curve colors.
+- Small selected markers grow modestly with a grey border; symbols and colors are preserved.
+  Screen-space overlays measure their rendered viewport directly, including CSS UI zoom.
+- Polygon construction previews dashed closure edges. Repeated vertices no longer admit outside
+  points; a 0.01-screen-pixel segment-distance tolerance handles Plotly SVG coordinate rounding.
+- Live Gen2C analysis, Cycles: Ctrl-click selected original/plotted cycle 85; detail opened
+  automatically; specific capacity persisted through response loading and switching Y to current;
+  portalled dropdowns stayed open inside the inspector; outside clicks dismissed selection.
+- Browser geometry: marker centers aligned at 90% and 110% UI zoom; a 620 px viewport constrained
+  the popup to 434 px (70%), kept it inside the window and clear of the selected point, and left
+  its close control accessible after scrolling. UI zoom restored to 100%; viewport override reset.
+- Isolated browser component fixture using the production inspector/controller and synthetic cached
+  curves: two colored curves ignored deliberately conflicting saved Time/Capacity styling;
+  All -> Cell 2 -> All worked with the selection table retained and no legend. Repeating the first
+  triangle vertex selected cycles 1,2,3,4, including the interior and all boundary points, while
+  excluding outside cycle 5. Dashed preview updated with construction vertices; Escape cleared it.
+  Temporary fixture files and their browser tab were removed after verification.
+- Browser scope limits: this session did not execute a native Ctrl-drag rectangle (the available
+  browser API cannot hold a modifier across its drag action), the full replicate/CE/hidden-series
+  manual matrix, or the document-scroll fallback for a selection filling the entire viewport.
+  Rectangle/identity/artifact rules and placement fallbacks remain covered by focused policy tests.
+- Final automated verification at 0.27.1-alpha.21: `python scripts/preflight.py --no-cache`
+  PASS, 4/4 stages and all 163 backend/frontend files/modules, 70.49 seconds total. The focused
+  selection policy suite passes 23/23, including marker size, repeated vertices, subpixel boundaries,
+  placement at 90/100/110% scaling, and the unavoidable document-scroll fallback.
+- Application version/changelog advance to 0.27.1-alpha.21 under the repository's completed-work
+  versioning policy. This is a review checkpoint, not a release/tag or merge.
+- R6 remains open for independent review; these implementation observations do not self-close it.
