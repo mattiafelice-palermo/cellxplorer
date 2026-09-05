@@ -1796,7 +1796,7 @@ export function CyclePlotCard({
               style={{ position: "absolute", left: 6, top: 6, zIndex: 4 }}
             >
               <Tooltip
-                label="Ctrl+drag: rectangle · Ctrl+click: polygon; release Ctrl to select"
+                label="Click a point to inspect · Ctrl+drag: rectangle · Ctrl+click: polygon; release Ctrl to select"
                 multiline
                 maw={300}
                 withArrow

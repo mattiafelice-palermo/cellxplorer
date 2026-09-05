@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.26 - 2026-09-05
+
+- Open cycle point details with an ordinary click while preserving drag zoom and double-click reset.
+
 ## 0.27.1-alpha.25 - 2026-09-05
 
 ### Bug fixes

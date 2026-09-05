@@ -991,3 +991,9 @@ Separate these costs when profiling:
 
 A small exported CSV does not imply a cheap interactive plot: browser objects, multiple traces,
 hover data, layout calculation, and GPU/DOM work can dominate the compact textual payload.
+
+
+Ordinary Cycles point clicks observe pointer release at window capture: Plotly can add a drag
+cover outside the React selection subtree after mouse-down. Do not take pointer ownership or
+prevent default for this path. Track maximum movement across the gesture so an out-and-back zoom
+or pan drag cannot become a point click. Continue using the shared nearest-point hit policy.

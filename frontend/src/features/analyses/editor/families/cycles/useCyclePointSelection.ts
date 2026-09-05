@@ -141,6 +141,7 @@ export function useCyclePointSelection({
   const [dragPreview, setDragPreview] = useState<{ start: CyclePoint; end: CyclePoint } | null>(null);
   const [overlayRevision, setOverlayRevision] = useState(0);
   const activePointerRef = useRef<ActivePointer | null>(null);
+  const plainPointerRef = useRef<{ pointerId: number; start: CyclePoint; dragged: boolean } | null>(null);
   const constructionVerticesRef = useRef<CyclePoint[]>([]);
   const lastAnchorBoundsRef = useRef<CyclePointOverlayBounds | null>(null);
 
@@ -150,6 +151,7 @@ export function useCyclePointSelection({
   }, []);
 
   const cancelConstruction = useCallback(() => {
+    plainPointerRef.current = null;
     const active = activePointerRef.current;
     if (active) {
       try {
@@ -243,9 +245,9 @@ export function useCyclePointSelection({
     [cancelConstruction, candidates, refresh],
   );
 
-  const modifiedGestureTarget = useCallback(
+  const pointGestureTarget = useCallback(
     (event: ReactPointerEvent<HTMLElement>): boolean => {
-      if (!event.ctrlKey || event.button !== 0) return false;
+      if (event.button !== 0) return false;
       if ((event.target as HTMLElement).closest("[data-cycle-point-inspector]")) return false;
       const graphDiv = graphDivRef.current;
       const plotArea = graphDiv ? plotAreaElement(graphDiv) : null;
@@ -258,9 +260,17 @@ export function useCyclePointSelection({
 
   const onPointerDownCapture = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
-      if (!modifiedGestureTarget(event)) return;
+      plainPointerRef.current = null;
+      if (!pointGestureTarget(event)) return;
       const container = containerRef.current;
       if (!container) return;
+      if (!event.ctrlKey) {
+        if (!event.shiftKey && !event.altKey && !event.metaKey) {
+          plainPointerRef.current = { pointerId: event.pointerId, start: localPoint(event, container), dragged: false };
+        }
+        // Let Plotly own ordinary drags, double-click reset, and pointer capture.
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       setSuppressHover(true);
@@ -280,7 +290,7 @@ export function useCyclePointSelection({
         // The window-level cancellation handlers still keep state coherent.
       }
     },
-    [containerRef, modifiedGestureTarget],
+    [containerRef, pointGestureTarget],
   );
 
   const onPointerMoveCapture = useCallback(
@@ -346,11 +356,44 @@ export function useCyclePointSelection({
 
   const onPointerCancelCapture = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      if (plainPointerRef.current?.pointerId === event.pointerId) plainPointerRef.current = null;
       if (activePointerRef.current?.pointerId !== event.pointerId) return;
       cancelConstruction();
     },
     [cancelConstruction],
   );
+
+  useEffect(() => {
+    // Plotly places its drag cover outside this React subtree after mouse-down.
+    // Observe the release at window capture without taking ownership of the drag.
+    const onMove = (event: PointerEvent) => {
+      const plain = plainPointerRef.current;
+      const container = containerRef.current;
+      if (plain && plain.pointerId === event.pointerId && container) {
+        plain.dragged ||= cyclePointGestureIsRectangle(plain.start, localPoint(event, container));
+      }
+    };
+    const onUp = (event: PointerEvent) => {
+      const plain = plainPointerRef.current;
+      if (!plain || plain.pointerId !== event.pointerId) return;
+      plainPointerRef.current = null;
+      const container = containerRef.current;
+      if (!container || event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || plain.dragged) return;
+      const end = localPoint(event, container);
+      if (cyclePointGestureIsRectangle(plain.start, end)) return;
+      const shape: CyclePointSelectionShape = { kind: "polygon", vertices: [end] };
+      if (cyclePointRecordsForShape(candidates(), shape).length > 0) commit(shape);
+    };
+    const onCancel = () => { plainPointerRef.current = null; };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onCancel, true);
+    return () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onCancel, true);
+    };
+  }, [candidates, commit, containerRef]);
 
   useEffect(() => {
     const onKeyUp = (event: KeyboardEvent) => {

@@ -905,3 +905,47 @@ R10 final verification at `0.27.1-alpha.25`: no-cache preflight passed **4/4 sta
 163 files/modules in 69.66 s**. Focused policy tests passed 29/29; TypeScript and diff checks passed.
 R6-R10 await independent final review; the broader manual matrix remains outstanding. No merge,
 tag, or release was performed.
+
+
+### R11 ordinary-click verification and performance audit - 2026-09-05
+
+An ordinary unmodified point click now commits the same nearest-point shape as a single-vertex
+Ctrl selection. Movement beyond the existing gesture threshold cancels ordinary-click eligibility,
+including out-and-back drags. Window capture observes releases because Plotly's drag cover can
+receive them outside the React selection subtree; the handlers do not prevent Plotly interaction.
+The help tooltip includes ordinary point inspection.
+
+Live Gen2C browser acceptance: ordinary click selected Cell 2437-1, original/plotted cycle 85,
+149.775 mAh/g, and loaded its cycle detail. Ordinary rectangle drag zoomed without selection;
+empty-space double-click reset zoom without opening an inspector; another ordinary point click
+worked after reset. No analysis or saved plot was saved during these checks. Temporary diagnostic
+files and browser tabs were removed. The broader manual matrix and independent R6-R11 review remain
+outstanding.
+
+Final no-cache preflight at 0.27.1-alpha.26 passed 4/4 stages and all 163 backend/frontend test
+files/modules in 61.36 s. Version consistency, frontend type check, production bundle, and diff
+checks passed. No merge, tag, or release was performed.
+
+Read-only performance investigation, measured on battery with Windows battery saver off:
+
+- Warmup remains enabled, with a 15-second idle threshold and no battery-specific application gate.
+  Warmup coordinator history and family keep-mounted policy show no recent removal of those paths.
+- Analysis-result cache inventory held 3420 files / 197.7 MB against a 1 GiB budget; scientific
+  cache held 3058 files / 2.62 GB against 10 GiB. No cache-limit pressure was observed.
+- Three requests for Gen2C's saved Cycles view all reported cache hits in 18.32-25.59 ms.
+  Three saved Time/Capacity requests also hit in 23.82-40.31 ms, including 6.03-9.21 ms backend
+  processing and no raw access. These requests used the saved scientific settings and ordinary
+  1200-pixel/standard/compact Time/Capacity options; profiling was opt-in for those requests.
+- Browser Resource Timing measured initial analysis metadata at 61.5 ms, Time/Capacity at 58.0 ms,
+  and the first Cycles compute request at 78.2 ms. Repeated switches between those families produced
+  no additional scientific requests. These are request durations, not end-to-end plot-draw timings.
+- Most family panels still unmount on switching, while Time/Capacity stays mounted after first
+  visit; git blame dates this policy to August 9. Cached responses can therefore coexist with
+  frontend reconstruction on other families. This is a possible cost, not a newly proven regression.
+- Saved artifact/warmup fingerprints include the result schema, so the inspected schema-version
+  bump does not leave old artifacts falsely matching the new result identity.
+
+This bounded check confirms cache reuse for Gen2C. It does not establish an historical timing
+regression, isolate rendering duration, cover every analysis, or compare plugged-in versus battery
+performance. No optimization or power policy was changed. The running backend reports alpha.23
+while the inspected frontend was alpha.25/26; no backend algorithm changed in this tranche.

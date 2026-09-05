@@ -181,6 +181,17 @@ The user requests that an ordinary single click on a point open the same inspect
 Retain ordinary Plotly drag, zoom, pan, and modebar interactions; empty-space clicks must not select
 a distant point. Keep this bounded UI change separate from the requested read-only performance audit.
 
+### R11 implementer response - 2026-09-05
+
+Ordinary point clicks use existing nearest-point selection and open the same detail inspector.
+Window capture handles Plotly's external drag cover; movement cancels click eligibility without
+intercepting native drag behavior. Live Gen2C checks verified cycle 85 selection/detail, ordinary
+drag zoom, empty-space double-click reset, and point selection after reset. The help tooltip was
+updated. No-cache preflight at 0.27.1-alpha.26 passed 4/4 stages and all 163 files/modules in 61.36 s.
+The spec records the separate cache audit: all sampled saved scientific responses were cache hits,
+repeated family switches issued no scientific requests, and battery impact remains unproven.
+R6-R11 await independent review; the broader manual matrix remains outstanding.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer

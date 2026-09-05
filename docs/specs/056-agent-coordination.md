@@ -296,3 +296,17 @@ R10 includes table scrolling, the shared series filter, and the user's additiona
 User requests R11: ordinary single-point clicks open the same inspector as Ctrl-click, while ordinary drag/zoom/pan remain intact. Separately investigate saved-plot cache/warmup performance and battery effects without changing optimization policy speculatively.
 
 ---
+### 2026-09-05T16:25:11+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 0.27.1-alpha.26 no-cache preflight PASS 4/4 stages, all 163 files/modules, 61.36 s; live ordinary click/detail, native drag zoom, empty-space double-click reset verified.
+- Cache audit: saved Cycles and Time/Capacity requests all hit; repeated family switches made no additional scientific requests. No performance policy changed.
+
+**Message**
+
+R11 ordinary point inspection is ready. R6-R11 await independent final review; broader manual matrix remains outstanding. No merge, tag, or release.
+
+---
