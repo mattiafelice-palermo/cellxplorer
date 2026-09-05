@@ -18,6 +18,34 @@ Review document:
 
 ## Goal
 
+### User-approved amendment — 2026-09-05
+
+The user approved the browser review and the following refinements, superseding conflicting
+original presentation rules below. Implement these together on the existing feature branch:
+
+- Fix capability choices resetting while detail queries load, double-scaled overlay coordinates,
+  and repeated polygon vertices admitting outside points.
+- Label the cycle columns **Original cycle** and **Plotted cycle**.
+- An outside click dismisses the inspector; its own portalled dropdowns count as inside, and a
+  new Ctrl gesture must not be cancelled by dismissal.
+- Expansion grows the inspector naturally, repositions it inside the visible viewport, and only
+  scrolls beyond 70% of viewport height. Keep its header accessible. It may extend beyond the
+  plot card vertically without resizing the plot.
+- Use compact wrapped Cycles hover labels, suppress the separate Plotly name box, and keep
+  hover clear of the point and hidden during Ctrl selection.
+- Replace halos with temporary markers retaining the Cycles color and symbol, a dark-grey
+  border, and a modest size increase (small markers +2 px capped at 8 px; large markers unchanged).
+  Line-only traces receive small selected markers. Selection remains absent from artifacts.
+- Preview polygon closure with dashed last-vertex/cursor/first-vertex edges.
+- Detail offers all selected samples or one physical member Cell at a time, without changing
+  the point selection, main analysis, or scientific request membership.
+- Detail uses an independent compact white default plot, no legend, and the current Cycles
+  colors. Table swatches identify samples; aggregate-member curves receive an external compact
+  member key. Saved Time/Capacity presentation must not leak into detail styling.
+
+The user explicitly requested implementation and browser testing after the reviewer discussion.
+Final independent review remains required; this amendment does not grant self-approval or merge.
+
 Let a user inspect one or many plotted points directly in the **Cycles** analysis tab without
 changing the scientific analysis or leaving the plot:
 

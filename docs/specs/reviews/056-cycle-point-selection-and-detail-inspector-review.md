@@ -66,7 +66,23 @@ Relayout now clears construction, committed outline, records, halos, anchor, and
 
 ## Open findings
 
-None.
+### R6 — P2: browser-confirmed selection and detail defects; approved refinement batch
+
+Affected files: Cycles selection policy/hook/card/inspector and focused tests.
+
+**Current:** Specific capacity resets to Time during loading; overlays drift at 90% UI zoom;
+zero-length polygon edges admit every point. Expanded detail clips unnecessarily, cycle headings
+are ambiguous, hover labels obstruct selection, and detail inherits unrelated saved styling.
+
+**Target:** Implement the user-approved 2026-09-05 amendment in Spec 056, including outside-click
+dismissal, viewport-bounded growing inspector, compact hover, selected marker emphasis, dashed
+polygon preview, individual/all detail samples, and Cycles color identity without a plot legend.
+
+**Acceptance criteria:** Focused regression tests for the confirmed defects and presentation
+policies; full no-cache preflight; browser evidence for selection, quantities, layout, UI scaling,
+dismissal, polygon preview and detail sample/color controls. Record remaining acceptance limits
+truthfully. User explicitly switched this task from review to implementation; return to independent
+review after the fixes rather than self-approving.
 
 ## Final-review external gate
 
