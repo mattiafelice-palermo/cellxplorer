@@ -26,6 +26,7 @@ import {
   cyclePointInRectangle,
   cyclePointMeasurePresentation,
   cyclePointRecordsForShape,
+  cyclePointPreviewShape,
   cyclePointSelectedCycles,
   cyclePointSelectedMarkerSize,
   cyclePointSelectionKey,
@@ -506,4 +507,24 @@ test("prefix context includes only visible selectable samples and deduplicates t
   const visible = trace({ sampleLabel: 'Experiment_A' });
   const hidden = { ...trace({ sampleLabel: 'Unrelated hidden Cell' }), visible: 'legendonly' };
   assert.deepEqual(cyclePointVisibleSampleLabels([visible, visible, hidden, { name: 'helper' } as any]), ['Experiment_A']);
+});
+
+
+test("live rectangle and cursor polygon previews add and remove points without mutating committed records", () => {
+  const candidates = cyclePointCandidatesForTraces([{
+    ...trace({ scientificCycles: [1, 2, 3] }), x: [2, 8, 20], y: [2, 8, 20],
+  }], (x, y) => ({ x, y }));
+  const committed = cyclePointRecordsForShape(candidates, { kind: "polygon", vertices: [{ x: 20, y: 20 }] }, 1);
+  const start = { x: 0, y: 0 };
+  const selected = (shape: ReturnType<typeof cyclePointPreviewShape>) => shape
+    ? cyclePointRecordsForShape(candidates, shape, 1).map((record) => record.scientificCycle) : [];
+  assert.deepEqual(selected(cyclePointPreviewShape({ start, end: { x: 10, y: 10 } }, [], null)), [1, 2]);
+  assert.deepEqual(selected(cyclePointPreviewShape({ start, end: { x: 4, y: 4 } }, [], null)), [1]);
+  const vertices = [start, { x: 10, y: 0 }];
+  assert.deepEqual(selected(cyclePointPreviewShape(null, vertices, { x: 10, y: 10 })), [1, 2]);
+  assert.deepEqual(selected(cyclePointPreviewShape(null, vertices, { x: 0, y: 5 })), [1]);
+  assert.deepEqual(vertices, [start, { x: 10, y: 0 }]);
+  assert.deepEqual(committed.map((record) => record.scientificCycle), [3]);
+  assert.equal(cyclePointPreviewShape(null, [], null), null);
+  assert.deepEqual(cyclePointPreviewShape(null, [start], start), { kind: "polygon", vertices: [start] });
 });

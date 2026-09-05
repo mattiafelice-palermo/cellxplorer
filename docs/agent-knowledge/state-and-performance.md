@@ -969,6 +969,10 @@ for its SVG viewBox to avoid scaling coordinates twice. Ignore zero-size hidden 
 Paper content can mount after its parent layout effect: observe the actual mounted element through
 a callback ref, including its natural size changes, before relying on viewport placement.
 
+Live Cycles gesture highlights use provisional shape membership over cached screen candidates.
+Keep those highlights separate from committed records and inspector anchors: cursor movement must
+not issue detail queries or move an existing inspector. Cancellation clears provisional geometry.
+
 ## Measuring before optimizing
 
 Separate these costs when profiling:

@@ -397,6 +397,19 @@ function nearestCyclePoint(
   return best;
 }
 
+/** The provisional polygon includes the cursor at the end of its dashed edge. */
+export function cyclePointPreviewShape(
+  drag: { start: CyclePoint; end: CyclePoint } | null,
+  vertices: readonly CyclePoint[],
+  cursor: CyclePoint | null,
+): CyclePointSelectionShape | null {
+  if (drag) return { kind: "rectangle", ...drag };
+  const points = [...vertices];
+  const last = points[points.length - 1];
+  if (cursor && (!last || cursor.x !== last.x || cursor.y !== last.y)) points.push(cursor);
+  return points.length > 0 ? { kind: "polygon", vertices: points } : null;
+}
+
 export function cyclePointRecordsForShape(
   candidates: readonly CyclePointScreenCandidate[],
   shape: CyclePointSelectionShape,

@@ -144,6 +144,17 @@ including the dashed cursor preview. Moving the boundary must also remove highli
 that leave. Preview highlights must not open the inspector or issue detail requests before commit.
 Keep the same selected-marker styling and clear previews on cancellation.
 
+### R9 implementer response - 2026-09-05
+
+Implemented provisional membership for rectangles and the polygon cursor edge using existing
+selection styling. Screen projections are cached between pointer moves, and preview membership is
+separate from committed records and inspector anchors. Browser checks on the production hook and
+overlay verified pre-release highlights, points entering/leaving as polygon vertices changed,
+Escape cleanup, and correct finalization. Native modifier-held drag and cursor-only movement remain
+manual checks; policy tests cover both shapes expanding and contracting. See the spec for evidence.
+No-cache preflight at `0.27.1-alpha.24` passed 4/4 stages and all 163 files/modules in 71.70 s;
+focused policy tests passed 27/27. R6-R9 await independent review; no merge, tag, or release.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer

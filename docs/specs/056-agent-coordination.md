@@ -233,3 +233,17 @@ R8 includes figure retention and the additional outside-Ctrl replacement require
 User requests R9: highlight points live as they enter or leave the rectangle or cursor-preview polygon before selection is finalized. Reopen this bounded follow-up and retain R6/R7/R8 for independent review.
 
 ---
+### 2026-09-05T15:21:20+02:00 — IMPLEMENTER → REVIEWER — 056
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 0.27.1-alpha.24 no-cache preflight PASS 4/4 stages, 163 files/modules, 71.70 s; focused policy tests 27/27.
+- Browser production hook/overlay: provisional highlights, polygon entry/exit, Escape cleanup and finalization passed. Native held-Ctrl drag and cursor-only move remain manual.
+
+**Message**
+
+R9 live selection highlighting implemented. R6-R9 await independent final review, with the broader manual matrix still outstanding. No merge, tag, or release.
+
+---

@@ -8,7 +8,7 @@
 
 ## Status
 
-The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7/R8
+The original implementation and R1-R5 are independently review-clean. The user-approved R6/R7/R8/R9
 browser refinements are implemented and awaiting independent re-review. Focused browser evidence
 is recorded below; the broader original manual matrix is not declared complete. Final workflow
 completion and merge readiness remain reviewer-owned. This is one Cycles-only frontend feature.
@@ -855,3 +855,24 @@ Final R8 verification at `0.27.1-alpha.23`: `python scripts/preflight.py --no-ca
 passed **4/4 stages and all 163 backend/frontend files/modules**, in **72.86 s**.
 R6/R7/R8 are handed back for independent final review; the previously documented broader
 manual matrix remains outstanding. No merge, tag, or release was performed.
+
+### R9 live highlight verification - 2026-09-05
+
+Ongoing rectangle and polygon gestures now project provisional membership into the existing
+selected-marker overlay, including the polygon's dashed cursor edge. Membership uses the same
+boundary/hit rules as commit. Screen candidates are cached between pointer moves; provisional
+membership never changes committed records, inspector anchors, or detail queries. Cancellation
+clears the provisional state, including a pointer-up after Control is no longer held.
+
+Browser verification used the production hook and overlay in a temporary three-point plot:
+Ctrl-click highlighted point 1 while committed records remained empty; Escape removed the
+highlight. Three polygon vertices highlighted points 1 and 2 before Control release. A fourth
+vertex excluded both and immediately removed both highlights. Finalizing a fresh direct point
+retained its highlight and committed point 1. The temporary files/tab were removed. Native held-Ctrl
+rectangle movement and cursor-only movement are still manual browser checks because the available
+browser input API has no modifier-held drag or pointer-move operation. Policy coverage verifies
+expansion/contraction of rectangle and cursor polygon membership, nonmutation, and cancellation.
+
+R9 final verification at `0.27.1-alpha.24`: no-cache preflight passed 4/4 stages and all
+163 files/modules in 71.70 s; focused selection policy tests passed 27/27. R6-R9 await
+independent review. No merge, tag, or release was performed.

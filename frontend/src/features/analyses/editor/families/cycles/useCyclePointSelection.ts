@@ -13,6 +13,7 @@ import {
   cyclePointCullRecords,
   cyclePointGestureIsRectangle,
   cyclePointRecordsForShape,
+  cyclePointPreviewShape,
   type CyclePoint,
   type CyclePointScreenCandidate,
   type CyclePointSelectionRecord,
@@ -264,6 +265,7 @@ export function useCyclePointSelection({
       event.stopPropagation();
       setSuppressHover(true);
       const point = localPoint(event, container);
+      setCursorPoint(point);
       activePointerRef.current = {
         pointerId: event.pointerId,
         captureTarget: event.currentTarget,
@@ -329,7 +331,7 @@ export function useCyclePointSelection({
         // A browser may already have released capture after leaving the window.
       }
       if (!event.ctrlKey) {
-        writeConstructionVertices([]);
+        cancelConstruction();
         return;
       }
       if (active.dragging || cyclePointGestureIsRectangle(active.start, end)) {
@@ -339,7 +341,7 @@ export function useCyclePointSelection({
       writeConstructionVertices([...constructionVerticesRef.current, end]);
       setCursorPoint(end);
     },
-    [commit, containerRef, writeConstructionVertices],
+    [cancelConstruction, commit, containerRef, writeConstructionVertices],
   );
 
   const onPointerCancelCapture = useCallback(
@@ -408,12 +410,24 @@ export function useCyclePointSelection({
     if (records.length === 0) setCompletedShape(null);
   }, [records.length]);
 
-  const halos = useMemo(() => {
+  const screenCandidates = useMemo(() => {
     void overlayRevision;
+    return candidates();
+  }, [candidates, overlayRevision]);
+  const committedHalos = useMemo(() => {
     const selectedKeys = new Set(records.map((record) => record.key));
-    return candidates().filter((candidate) => selectedKeys.has(candidate.key));
-  }, [candidates, overlayRevision, records]);
-  const liveAnchorBounds = candidateBounds(halos) ?? shapeBounds(completedShape);
+    return screenCandidates.filter((candidate) => selectedKeys.has(candidate.key));
+  }, [screenCandidates, records]);
+  const halos = useMemo(() => {
+    const previewShape = cyclePointPreviewShape(dragPreview, constructionVertices, cursorPoint);
+    if (!previewShape) return committedHalos;
+    const previewKeys = new Set(
+      cyclePointRecordsForShape(screenCandidates, previewShape).map((record) => record.key),
+    );
+    return screenCandidates.filter((candidate) => previewKeys.has(candidate.key));
+  }, [committedHalos, constructionVertices, cursorPoint, dragPreview, screenCandidates]);
+  // A provisional highlight must not move an existing inspector or load detail.
+  const liveAnchorBounds = candidateBounds(committedHalos) ?? shapeBounds(completedShape);
   if (liveAnchorBounds) lastAnchorBoundsRef.current = liveAnchorBounds;
   const anchorBounds =
     liveAnchorBounds ?? (records.length > 0 ? lastAnchorBoundsRef.current : null);
