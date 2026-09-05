@@ -211,6 +211,20 @@ switching to low-memory Settings. The spec records the fixture limits and rough 
 No-cache preflight at 0.27.1-alpha.27 passed 4/4 stages, all 164 files/modules, in 45.90 s.
 R6-R12 await independent review; the broader manual matrix remains open. No merge, tag, or release.
 
+### R13 - Estimated automatic preparation memory budget
+
+Replace the fixed two-unopened-view limit with a 100 MiB estimated memory budget for automatic
+preparation. Browser memory is not exactly attributable per plot; document the estimation and keep
+foreground/visited views outside this speculative budget. Preserve serial idle cache-only admission.
+
+### R14 - Repeated cycle navigation latency
+
+The user requests a case-specific profile of repeated Next cycle clicks with all eight Cells in
+Bump study reduced set and authorizes implementing promising measured improvements. Separate
+navigation admission, backend/HTTP, frontend transformation, and Plotly drawing costs. Preserve
+exact scientific outputs, cache identities, full-resolution export, stale-response protection,
+and explicit saves. Do not present a frontend-only or cached benchmark as cold backend speedup.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer

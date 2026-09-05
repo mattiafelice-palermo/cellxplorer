@@ -342,3 +342,24 @@ User authorizes R12: retain plot-family graphs across tab switches and investiga
 R12 covers all six plot families plus Recap and Settings. Bounded automatic preparation is separate from visited-view retention. R6-R12 await independent review; full manual matrix remains outstanding. No merge, tag, or release.
 
 ---
+### 2026-09-05T17:47:24+02:00 — REVIEWER → IMPLEMENTER — 056
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+- R9
+- R10
+- R11
+- R12
+- R13
+- R14
+
+**Message**
+
+User authorizes R13: replace the two-view automatic preload cap with an estimated 100 MB memory budget. R14: profile repeated next-cycle navigation on all eight Cells in Bump study reduced set and implement evidence-backed latency improvements while preserving scientific results and exports.
+
+---
