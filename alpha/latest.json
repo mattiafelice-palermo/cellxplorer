@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.20",
-  "notes": "### New features\n\n- Add native backend streaming for full-resolution Time/Capacity CSV and Parquet exports.\n- Show progress feedback while preparing, creating, and saving large data exports.\n\n### Bug fixes\n\n- Reduce full-resolution export payloads and avoid unnecessary Plotly trace, marker, and browser-side JSON work for large datasets.\n- Preserve selected voltage channels, visible series, stacked current channels, source provenance, precision, delimiters, and plot-range behavior in optimized exports.\n- Keep voltage-channel identity stable across cycle and range changes to prevent unnecessary invalidation and refetching.",
-  "pub_date": "2026-09-03T22:43:13.365Z",
+  "version": "0.27.1-alpha.28",
+  "notes": "- Cycle point selection and detail previews; bounded analysis-view retention and idle cache preparation.",
+  "pub_date": "2026-09-07T21:30:25.517Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVFYQ2o3QXByb09sUDNMM2o1UzVGTmYxMU96YUZLcHMxTnJSdUcwNXBvdkVsb1Y3Y0pRNCtQMGhjMC94M1E2eU1jcTArNHhWNDVpSHEzSGpiSklydXdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDc1Mzg4CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjIwX3g2NC1zZXR1cC5leGUKLzdFL1BHOFlnVm55Y1VVWVFtOXlQYkFIOTMyUy9VSWg5ZWJEczJqY2gyMm1CdENyVDhkdXo1UnRObUhNK1NZMHoyWmZvY2gvdEN4VmtqMUJoUnJtQWc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.20/CellXplorer.Alpha_0.27.1-alpha.20_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWRuMzZHaUZwdE11Ylg4MVQ5Mm0vMThORmFnakNGREtWY3JNaE1pcVpYeDZsdWQrTkZGRE4vbHZnbkozM0NYVFRWcnJTZ010NVR2L1NBVFUyZGtWamd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4ODE2NjIwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjI4X3g2NC1zZXR1cC5leGUKeFB0eSthazRMTU5rdjRlZjM1TzIyWlJ3RnJ4WkJNbkI4RGNTajdkNERBNTk1SVZWVi9heUtoYzRMKzlYYkFoU1JOS2hSdm5sajFKNWtEdHBncEFXQ3c9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.28/CellXplorer.Alpha_0.27.1-alpha.28_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVFYQ2o3QXByb09sUDNMM2o1UzVGTmYxMU96YUZLcHMxTnJSdUcwNXBvdkVsb1Y3Y0pRNCtQMGhjMC94M1E2eU1jcTArNHhWNDVpSHEzSGpiSklydXdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDc1Mzg4CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjIwX3g2NC1zZXR1cC5leGUKLzdFL1BHOFlnVm55Y1VVWVFtOXlQYkFIOTMyUy9VSWg5ZWJEczJqY2gyMm1CdENyVDhkdXo1UnRObUhNK1NZMHoyWmZvY2gvdEN4VmtqMUJoUnJtQWc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.20/CellXplorer.Alpha_0.27.1-alpha.20_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWRuMzZHaUZwdE11Ylg4MVQ5Mm0vMThORmFnakNGREtWY3JNaE1pcVpYeDZsdWQrTkZGRE4vbHZnbkozM0NYVFRWcnJTZ010NVR2L1NBVFUyZGtWamd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4ODE2NjIwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjI4X3g2NC1zZXR1cC5leGUKeFB0eSthazRMTU5rdjRlZjM1TzIyWlJ3RnJ4WkJNbkI4RGNTajdkNERBNTk1SVZWVi9heUtoYzRMKzlYYkFoU1JOS2hSdm5sajFKNWtEdHBncEFXQ3c9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.28/CellXplorer.Alpha_0.27.1-alpha.28_x64-setup.exe"
     }
   }
 }
