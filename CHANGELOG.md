@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.29 - 2026-09-08
+
+- Improve plot downloads, SoH reference-cycle handling, and per-plot style-panel state.
+
 ## 0.27.1-alpha.28 - 2026-09-07
 
 - Cycle point selection and detail previews; bounded analysis-view retention and idle cache preparation.
