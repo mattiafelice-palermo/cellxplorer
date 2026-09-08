@@ -4,6 +4,22 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.30 - 2026-09-09
+
+### New features
+
+- Add Continuous test-time and Cycle-aligned Time/Capacity display modes.
+- Preserve full-test timeline coordinates across cycle windows, sparse selections, refinements, and full-resolution exports.
+- Prepare saved analysis views during idle time within an estimated memory budget.
+
+### Bug fixes
+
+- Keep manual Time/Capacity x-axis limits stable when navigating Cycle-aligned windows.
+- Preserve elapsed-time coordinates across cache-backed worker results and skipped cycles.
+- Avoid transient redraws and stale voltage-channel availability while Time/Capacity data loads.
+- Keep retained analysis views and sample visibility stable when switching analysis families.
+- Invalidate older Time/Capacity cached results after the coordinate semantics update.
+
 ## 0.27.1-alpha.29 - 2026-09-08
 
 - Improve plot downloads, SoH reference-cycle handling, and per-plot style-panel state.
