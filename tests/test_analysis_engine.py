@@ -2092,6 +2092,139 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertNotIn("source_hash", trace)
         self.assertTrue(all(index < len(trace["cycle"]) for index in trace["source_boundary_indices"]))
 
+    def test_cycle_aligned_time_preserves_durations_for_later_and_sparse_windows(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1, "cycle_end": 10, "x_axis": "time",
+            "display_mode": "consecutive", "max_points_per_cell": 4000,
+        }
+        for unit in ("s", "min", "h"):
+            spec["computation"]["time_capacity"]["time_unit"] = unit
+            overview = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+            for sparse in (False, True):
+                candidate = deepcopy(spec)
+                candidate["computation"]["time_capacity"].update(
+                    cycle_start=4, cycle_end=6, cycles=[4, 6] if sparse else [],
+                )
+                wanted = {4, 6} if sparse else {4, 5, 6}
+                expected = [x for x, cycle in zip(overview["display_x"], overview["cycle"]) if cycle in wanted]
+                self.assertGreater(expected[0], 0)
+                origin = expected[0]
+                expected = [value - origin for value in expected]
+                for path in ("worker", "serial_indexed", "legacy"):
+                    with self.subTest(unit=unit, sparse=sparse, path=path), ExitStack() as stack:
+                        if path != "worker":
+                            stack.enter_context(patch.object(time_capacity_workers, "try_compute_time_capacity", return_value=None))
+                        if path == "legacy":
+                            stack.enter_context(patch.object(cache, "try_load_raw_layout_index", return_value=None))
+                        trace = engine.compute_time_capacity(self.db, candidate, None, precision="full", compact=True)["cell_traces"][0]
+                        self.assertEqual(trace["display_x"], expected)
+
+    def test_consecutive_time_preserves_source_restart_and_sparse_cycle_gaps(self):
+        cell = self.cells["c1"]
+        test = self.db.query(Test).filter_by(cell_id=cell.id).one()
+        later_source = self.db.query(SourceFile).filter_by(hash=self.HASHES["c2"]).one()
+        link = self.db.query(TestFile).filter_by(file_id=later_source.id).one()
+        link.test_id, link.position = test.id, 1
+        self.db.commit()
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1, "cycle_end": 60, "x_axis": "time",
+            "time_unit": "min", "display_mode": "consecutive", "max_points_per_cell": 4000,
+        }
+        overview = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+        boundary = max(cycle for cycle, index in zip(overview["cycle"], overview["source_index"]) if index == 0)
+        wanted = {boundary, boundary + 2}
+        spec["computation"]["time_capacity"].update(cycles=sorted(wanted))
+        expected = [x for x, cycle in zip(overview["display_x"], overview["cycle"]) if cycle in wanted]
+        self.assertTrue(expected)
+        origin = expected[0]
+        expected = [value - origin for value in expected]
+        with patch.object(cache, "try_load_raw_layout_index", return_value=None):
+            legacy = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+        indexed = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+        self.assertEqual(indexed["display_x"], expected)
+        self.assertEqual(legacy["display_x"], expected)
+
+    def test_continuous_time_ignores_saved_cycle_limits_without_mutating_spec(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": None, "cycle_end": None, "x_axis": "time",
+            "display_mode": "consecutive", "time_unit": "s",
+        }
+        expected = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+        spec["computation"]["time_capacity"].update(
+            time_reference="test_start", cycle_start=28, cycle_end=30, cycles=[29],
+        )
+        original = deepcopy(spec)
+        for path in ("worker", "serial_indexed", "legacy"):
+            with self.subTest(path=path), ExitStack() as stack:
+                if path != "worker":
+                    stack.enter_context(patch.object(time_capacity_workers, "try_compute_time_capacity", return_value=None))
+                if path == "legacy":
+                    stack.enter_context(patch.object(cache, "try_load_raw_layout_index", return_value=None))
+                result = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)
+                trace = result["cell_traces"][0]
+                self.assertEqual(trace["cycle"], expected["cycle"])
+                self.assertEqual(trace["display_x"], expected["display_x"])
+                self.assertEqual(trace["voltage_v"], expected["voltage_v"])
+                self.assertEqual(result["settings"]["cycles"], [])
+                self.assertIsNone(result["settings"]["cycle_end"])
+        self.assertEqual(spec, original)
+
+    def test_cycle_aligned_and_continuous_time_for_unequal_cell_durations(self):
+        slow_hash = hashlib.sha256(b"time-reference-slow-cell").hexdigest()
+        slow_raw = synth_raw(5, 100, 0)
+        slow_raw["time_s"] *= 2
+        slow = self._add_cached_cell("slow", slow_hash, slow_raw)
+        self.addCleanup(shutil.rmtree, cache.raw_path(slow_hash).parent, True)
+        self.addCleanup(self.FRAMES.pop, slow_hash, None)
+        spec = self.spec_with([
+            {"kind": "cell", "ref_id": self.cells["c1"].id},
+            {"kind": "cell", "ref_id": slow.id},
+        ])
+        spec["computation"]["time_capacity"] = {
+            "x_axis": "time", "time_unit": "s", "display_mode": "consecutive",
+            "cycle_start": 2, "cycle_end": 3,
+        }
+        aligned = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"]
+        for trace in aligned:
+            self.assertEqual(trace["display_x"][0], 0)
+            self.assertEqual(set(trace["cycle"]), {2, 3})
+        # The later cycle accumulates duration differences inside the window.
+        cycle3 = [next(x for x, cycle in zip(t["display_x"], t["cycle"]) if cycle == 3) for t in aligned]
+        self.assertEqual(cycle3[1], 2 * cycle3[0])
+        spec["computation"]["time_capacity"]["time_reference"] = "test_start"
+        continuous = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"]
+        cycle2 = [next(x for x, cycle in zip(t["display_x"], t["cycle"]) if cycle == 2) for t in continuous]
+        self.assertGreater(cycle2[0], 0)
+        self.assertEqual(cycle2[1], 2 * cycle2[0])
+        for full, selected in zip(continuous, aligned):
+            values = [x for x, cycle in zip(full["display_x"], full["cycle"]) if cycle in {2, 3}]
+            np.testing.assert_allclose(selected["display_x"], np.asarray(values) - values[0], rtol=0, atol=1e-10)
+
+    def test_time_reference_refinement_preserves_overview_origin_and_bounded_cycles(self):
+        for reference in ("selected_range", "test_start"):
+            with self.subTest(reference=reference):
+                spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+                spec["computation"]["time_capacity"] = {
+                    "x_axis": "time", "time_unit": "s", "display_mode": "consecutive",
+                    "time_reference": reference, "cycle_start": 4, "cycle_end": 10,
+                }
+                overview = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+                expected = [x for x, cycle in zip(overview["display_x"], overview["cycle"]) if cycle == 6]
+                analysis = Analysis(title="Time reference refinement", spec=spec)
+                self.db.add(analysis)
+                self.db.commit()
+                response = analyses_router.refine_time_capacity_analysis(analysis.id,
+                    analyses_router.TimeCapacityRefinementRequest(
+                        spec=spec, viewport_x_min=min(expected), viewport_x_max=max(expected),
+                        cycle_start=6, cycle_end=6, request_generation=reference,
+                    ), self.db)
+                refined = json.loads(response.body)["cell_traces"][0]
+                self.assertEqual(set(refined["cycle"]), {6})
+                np.testing.assert_allclose(refined["display_x"], expected, rtol=0, atol=1e-6)
+
     def test_time_capacity_refinement_keeps_canonical_consecutive_origin(self):
         overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         overview_spec["computation"]["time_capacity"] = {

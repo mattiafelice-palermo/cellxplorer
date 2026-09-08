@@ -1616,7 +1616,7 @@ def apply_filters(frame: pd.DataFrame, computation: dict) -> pd.DataFrame:
     return frame
 
 
-def time_capacity_settings(computation: dict) -> dict:
+def time_capacity_settings(computation: dict, *, preserve_cycle_window: bool = False) -> dict:
     cfg = computation.get("time_capacity") or {}
     current_options = {"current_ma", "current_density", "c_rate"}
     current_left = cfg.get("current_left") if cfg.get("current_left") in current_options else "current_ma"
@@ -1639,13 +1639,24 @@ def time_capacity_settings(computation: dict) -> dict:
     else:
         voltage_channels = [legacy_voltage_channel]
     voltage_channel = voltage_channels[0] if voltage_channels else legacy_voltage_channel
+    time_reference = "test_start" if cfg.get("time_reference") == "test_start" else "selected_range"
+    continuous_test_time = (
+        (cfg.get("x_axis") or "time") == "time"
+        and (cfg.get("display_mode") or "consecutive") == "consecutive"
+        and (cfg.get("view") or "voltage_current") == "voltage_current"
+        and time_reference == "test_start"
+        and not preserve_cycle_window
+    )
     return {
-        "cycle_start": cfg.get("cycle_start", computation.get("cycle_range", {}).get("start", 1)),
-        "cycle_end": cfg.get("cycle_end", computation.get("cycle_range", {}).get("end")),
-        "cycles": [int(c) for c in cfg.get("cycles", []) if c is not None],
+        "cycle_start": None if continuous_test_time else cfg.get("cycle_start", computation.get("cycle_range", {}).get("start", 1)),
+        "cycle_end": None if continuous_test_time else cfg.get("cycle_end", computation.get("cycle_range", {}).get("end")),
+        "cycles": [] if continuous_test_time else [int(c) for c in cfg.get("cycles", []) if c is not None],
         "x_axis": cfg.get("x_axis") or "time",
         "time_unit": cfg.get("time_unit") or "min",
         "display_mode": cfg.get("display_mode") or "consecutive",
+        # Keep older saved-spec response shapes intact; an omitted reference
+        # means selected_range throughout the calculation path.
+        **({"time_reference": time_reference} if "time_reference" in cfg else {}),
         "stacked": bool(cfg.get("stacked", False)),
         "current_left": current_left,
         "current_right": current_right,
@@ -1664,6 +1675,13 @@ def time_capacity_settings(computation: dict) -> dict:
         "voltage_channel": voltage_channel,
         "voltage_channels": voltage_channels,
     }
+
+
+def time_capacity_origin_cycle(settings: dict) -> int:
+    """Resolve the overview origin; refinements retain this same anchor."""
+    if settings.get("time_reference") == "test_start":
+        return 1
+    return min(settings["cycles"]) if settings["cycles"] else int(settings["cycle_start"] or 1)
 
 
 def _jsonsafe(arr) -> list:
@@ -1728,6 +1746,22 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     offsets = np.zeros(len(t))
     offsets[resets + 1] = t[resets]
     return frame.assign(time_s=t + np.cumsum(offsets))
+
+
+def _restore_time_capacity_cycle_times(
+    frame: pd.DataFrame, cycle_starts: dict[int, float],
+) -> pd.DataFrame:
+    """Place selected cycle rows on the canonical timeline, preserving skipped gaps.
+
+    The frame already has continuous time within each selected cycle. Indexed
+    first-row coordinates restore its prefix without reading preceding raw rows.
+    """
+    if frame.empty or "time_s" not in frame.columns:
+        return frame
+    values = frame["time_s"].to_numpy(dtype="float64")
+    first = frame.groupby("cycle", sort=False)["time_s"].transform("first").to_numpy(dtype="float64")
+    expected = frame["cycle"].map(cycle_starts).to_numpy(dtype="float64")
+    return frame.assign(time_s=values + expected - first)
 
 
 def _time_capacity_display_cycle_origins(
@@ -3765,7 +3799,13 @@ def compute_time_capacity(
     # requested cycle window.  The exact per-cycle origin is supplied by the
     # owner-resolved overview response; replaying a large raw prefix here
     # would defeat the indexed refinement contract.
-    refinement_settings = time_capacity_settings(spec.get("computation", {}))
+    refinement_settings = time_capacity_settings(spec.get("computation", {}), preserve_cycle_window=refinement)
+    if (
+        display_origin_cycle_start is None
+        and refinement_settings["x_axis"] == "time"
+        and refinement_settings["display_mode"] == "consecutive"
+    ):
+        display_origin_cycle_start = time_capacity_origin_cycle(refinement_settings)
     if (
         refinement
         and refinement_settings["view"] == "voltage_current"
@@ -3827,7 +3867,7 @@ def compute_time_capacity(
     all_current_versions: list[str] = []
 
     computation = spec.get("computation", {})
-    settings = time_capacity_settings(computation)
+    settings = time_capacity_settings(computation, preserve_cycle_window=refinement)
     compact_ordinary_time = (
         compact
         and settings["view"] == "voltage_current"
@@ -3937,8 +3977,17 @@ def compute_time_capacity(
                 diagnostics=cell_diagnostics,
             )
 
+        canonical_time = settings["x_axis"] == "time" and settings["display_mode"] == "consecutive"
+        time_facts = time_capacity_path.consecutive_time_cycle_facts(plan) if canonical_time else {}
+        time_cycle_starts = {cycle: fact[0] for cycle, fact in time_facts.items()}
+        display_origin_time_s = time_cycle_starts.get(display_origin_cycle_start)
+        time_prepared_before_filter = False
         source_facts: dict[str, dict] | None = None
         indexed_path = plan.path in {"indexed", "missing"}
+        # A legacy index without time prefixes must use the complete timeline;
+        # silently zeroing the selected range would produce false coordinates.
+        if canonical_time and plan.complete and display_origin_time_s is None:
+            indexed_path = False
         requested_cycles: tuple[int, ...] = ()
         if indexed_path:
             requested_cycles = time_capacity_path.requested_global_cycles(
@@ -4128,6 +4177,17 @@ def compute_time_capacity(
                 )
             continue
 
+        if canonical_time and not indexed_path:
+            raw = raw.sort_values(
+                ["cycle", "segment", "record_index"] if "record_index" in raw.columns
+                else ["cycle", "segment"]
+            )
+            raw = _continuous_time(raw)
+            time_prepared_before_filter = True
+            origin_rows = raw.loc[raw["cycle"] >= int(display_origin_cycle_start or 1), "time_s"]
+            finite_origin = origin_rows[np.isfinite(origin_rows)]
+            display_origin_time_s = float(finite_origin.iloc[0]) if len(finite_origin) else None
+
         transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
             settings,
             precision=precision,
@@ -4181,7 +4241,10 @@ def compute_time_capacity(
                 with time_capacity_path.timed_stage(
                     profile_diagnostics, "transform_continuous_time"
                 ):
-                    raw = _continuous_time(raw)
+                    if not time_prepared_before_filter:
+                        raw = _continuous_time(raw)
+                    if canonical_time and indexed_path:
+                        raw = _restore_time_capacity_cycle_times(raw, time_cycle_starts)
             _record_transform_profile(
                 profile_diagnostics,
                 "continuous_time",
@@ -4457,6 +4520,7 @@ def compute_time_capacity(
                 capacity_area,
                 settings,
                 origin_cycle_start=display_origin_cycle_start,
+                origin_time_s=display_origin_time_s,
                 origin_capacity=(display_origin_capacity_by_cell or {}).get(cell.id),
             )
         display_x_cycle_origins = (

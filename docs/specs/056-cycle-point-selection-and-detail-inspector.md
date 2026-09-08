@@ -989,3 +989,123 @@ race; the icon test passed alone and the complete rerun passed. Backend cache-on
 all six routes, including misses, oversized responses, and ordinary cache hits. Full six-family
 manual interaction coverage and independent R6-R12 review remain outstanding. No merge, tag,
 or release was performed.
+
+
+### R13-R14 memory budget and cycle navigation - 2026-09-05
+
+The user replaces the original R12 two-view preparation cap with an estimated 100 MiB budget per
+analysis. Preparation remains serial, idle, and cache-only. Each pending view reserves 40 MiB, then
+settles to 8 MiB plus 16 times its UTF-8 result JSON bytes, with the existing 2 MiB response ceiling.
+This is conservative admission accounting, not exact browser/GPU memory measurement. Five small
+unopened family views can fit; two maximum-size views prevent another reservation. A visited view
+leaves this speculative budget. Hidden workspaces retain their charges along with their graphs.
+
+R14 profiles Bump study reduced set with all eight Cells, the saved Time/Capacity view, consecutive
+time in minutes, a three-cycle window, and a 4,000-point-per-Cell adaptive budget. Three measured
+frontend costs were removed: synchronous axis reset of the old plot before request admission, an
+old-result redraw caused by the newly requested signature, and whole-editor updates caused by
+equivalent voltage-channel maps. The sample panel now memoizes its selection-only inputs and uses
+stable delegates that call the latest committed actions. Scientific computation, response/cache
+identities, sampling policy, and full-resolution exports are unchanged.
+
+The matched local comparison used the development frontend without React Profiler wrappers and
+the same warmed backend for both versions. After the user's original backend stopped, its database
+and the eight source-cache directories were copied into ignored test storage; validation used that
+copy with background startup services disabled. It made no saves to the real study. Warm HTTP
+requests for windows 2-4 through 7-9 gave the following pointer-down-to-final-Plotly-completion times:
+
+| Cycle window | Original (ms) | Updated (ms) |
+| --- | ---: | ---: |
+| 2-4 | 205.1 | 142.7 |
+| 3-5 | 164.6 | 125.9 |
+| 4-6 | 153.2 | 114.9 |
+| 5-7 | 134.6 | 101.6 |
+| 6-8 | 129.1 | 115.8 |
+| 7-9 | 145.4 | 114.3 |
+
+Median latency decreased from 149.3 to 115.4 ms (22.7%). The original sequence made 12 Plotly
+react calls plus six relayouts; the updated sequence made six react calls and zero relayouts.
+This is a six-window development-browser sample, not a production guarantee. Backend cache-hit
+timing also varied (original 17.9-25.6 ms, updated 12.4-20.1 ms), so the full timing difference
+cannot be attributed to frontend changes alone. No cold-backend speedup is claimed. Earlier React
+Profiler probes reduced sidebar render cost from roughly 29 ms to 9-14 ms; those diagnostic
+wrappers were removed before this comparison and are not part of the implementation.
+
+Focused browser checks: six sequential Next clicks reached 7-9; rapid native triple-clicks reached
+10-12 and the final result reported that range; hiding/showing a Cell after navigation preserved
+10-12 and restored all eight Cells; box zoom followed by Next fitted the new cycle's complete
+axes; entering explicit cycles 10,12 fitted both selected curves. The broader Spec 056 manual
+acceptance matrix remains open. Focused retention, navigation, query/refinement, export, visibility,
+and workspace policy tests passed 120/120. Independent R6-R14 review remains required.
+
+
+#### R14 user correction: stable Consecutive time axis
+
+The user clarified that Consecutive mode must show elapsed time from the Cell's data origin,
+not re-zero each selected window. This supersedes the previous per-window origin used by the
+slider implementation. The speed comparison above predates this coordinate correction.
+
+Ordinary requests and full-resolution exports now default to cycle 1 as the time origin.
+Owner-resolved indexed cycle-start facts restore each selected cycle independently, preserving
+both step/source timer resets and the elapsed gaps across sparse selections. Healthy indexed
+reads remain bounded to selected cycles; a legacy index without prefix facts uses full raw
+continuity before filtering. Refinement uses the same Cell origin. Overlap modes and consecutive
+capacity retain their existing semantics. The disabled experimental panning gate remains closed.
+
+Time/Capacity result schema 10 and the frontend coordinate revision exclude old window-relative
+cache entries; no raw parser or per-cycle calculation version changes. Focused tests compare
+later and sparse windows against the exact full-timeline slice in seconds/minutes/hours through
+worker, indexed serial, and legacy paths, plus a source restart. Browser verification with all
+eight study Cells showed windows 2-4 spanning 2409.460026-5626.808307 min and 4-6 spanning
+4964.555026-6101.908299 min, with corresponding elapsed-time ticks instead of starting at zero.
+The existing R14 redraw optimizations remain in place.
+
+The user requested a stop before the proposed implementation push. All implementation and the
+local alpha.28 version checkpoint remain uncommitted; no release/tag/main push is authorized.
+
+
+#### R14 final user amendment: Continuous and Cycle-aligned time
+
+The user supersedes the implicit cycle-1-only correction above with two explicit time references.
+For time-axis voltage/current plots, **Continuous** shows accumulated recorded test time across
+all cycles, ignores stored cycle selections, and disables the cycle navigation surface. Its x-axis
+range editor selects test time. **Cycle-aligned** selects cycles and subtracts each Cell's selected
+range origin. Duration differences within that range remain visible. Manual x-axis limits are
+retained when changing cycles and stay relative to the new selection, even if they show no data.
+
+The internal consecutive transform persists `time_reference: test_start` or `selected_range`.
+Older plots without that field default to Cycle-aligned, preserving the original navigation
+contract. Switching to Continuous keeps the saved cycle limits available for switching back.
+Overlap, capacity, and derivative modes keep their existing selection and coordinate behavior.
+Refinement uses the overview origin with bounded cycle reads; Continuous refinement must not
+expand back to the full test. Result schema 11 and coordinate revision 3 separate prior cached
+results/previews. The original R13/R14 performance changes remain in place.
+
+Implementation and verification remain local under the user's no-push instruction. The user
+will perform browser acceptance; do not run additional browser checks for this amendment.
+
+
+R14 mode verification: focused backend suite passed 131 tests; frontend mode/query/manual-axis
+policies passed 19 tests and type checking passed. The real-data copy checks covered all five
+Performance analysis Cells and all eight Bump study reduced set Cells: Cycle-aligned selected
+28-54 and began each Cell at zero; Continuous included every Cell's complete cycle extent despite
+stored 28-54 limits. Unequal-duration synthetic Cells, sparse/source-restart selections, both
+refinement origins, preserved manual bounds, and export request scope are covered by regressions.
+
+The first no-cache preflight failed only because legacy golden response settings gained the optional
+time_reference field. Legacy responses now omit it when the source spec omitted it; all original
+scientific golden expectations and comparisons remain intact. Isolated golden tests passed.
+Final `python scripts/preflight.py --no-cache`: PASS, 4/4 stages, all 164 backend/frontend test
+files/modules, 91.49 seconds. Browser verification remains with the user as requested. No commit,
+push, merge, tag, release, real-database write, or additional version bump was performed.
+
+### Recovery of retained R13/R14 work — 2026-09-09
+
+The user authorized restoring the three unreleased improvements: explicit Continuous and
+Cycle-aligned Time/Capacity modes, the remaining cycle-navigation redraw/publication fixes,
+and the estimated 100 MiB automatic-preparation budget. This recovery is based on Alpha 29
+(`f9b03f5b`), preserving its export, SoH/reference-cycle, and per-plot style-session fixes.
+The original dirty checkout is untouched. The abandoned Luna route-isolation and synchronous
+family-header experiments are excluded, as are the standalone Neware converter and backlog.
+Recovery branch: `codex/recover-time-capacity-followups`. No version bump or release.
+The existing independent review and manual acceptance gate is not self-approved by this recovery.

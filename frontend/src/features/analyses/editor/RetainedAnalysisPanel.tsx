@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { get, type AnalysisTabKey, type SavedAnalysisPlot } from "../../../api";
 import { ANALYSIS_WORKSPACE_POLICY_EVENT, loadAnalysisWorkspaceMemoryPolicy } from "../workspace/analysisWorkspace";
-import { familyPreloadAdmissionAllowed, familyPreloadCandidates, familyPreloadIdentity } from "./policies/analysisFamilyRetention";
+import { estimatedPreloadedViewMemoryBytes, familyPreloadAdmissionAllowed, familyPreloadCandidates, familyPreloadIdentity, FAMILY_PRELOAD_RESERVATION_BYTES } from "./policies/analysisFamilyRetention";
 import { PlotFamilyActivityContext } from "./plotting/plotFamilyActivity";
 
 /** Freeze the committed subtree as well as its spec while a different family is active. */
@@ -19,7 +19,7 @@ export function RetainedAnalysisPanel({
   retainable: boolean;
   validPlotIds: ReadonlySet<string>;
   plotId: string | null;
-  onSettled: () => void;
+  onSettled: (estimatedBytes?: number) => void;
   children: ReactNode;
 }) {
   const previous = useRef<{ children: ReactNode; plotId: string | null } | null>(null);
@@ -56,7 +56,7 @@ export function RetainedAnalysisPanel({
 
 const SCIENTIFIC_QUERY_ROOTS = new Set(["compute", "time-capacity", "steps", "dcir", "chargeability", "rate-capability"]);
 
-/** Speculation is cache-only, serial, idle, and limited to two unopened family views. */
+/** Speculation is cache-only, serial, idle, and charged to an estimated memory budget. */
 export function useAnalysisFamilyRetention({
   activeTab, workspaceVisible, plots, preferred, enabled,
 }: {
@@ -79,7 +79,7 @@ export function useAnalysisFamilyRetention({
   const [visited, setVisited] = useState<ReadonlySet<AnalysisTabKey>>(() => new Set());
   const [preload, setPreload] = useState<SavedAnalysisPlot | null>(null);
   const attempted = useRef(new Set<string>());
-  const speculative = useRef(new Set<AnalysisTabKey>());
+  const speculative = useRef(new Map<AnalysisTabKey, number>());
   const lastActivity = useRef(Date.now());
   useEffect(() => {
     if (!enabled) return;
@@ -99,11 +99,19 @@ export function useAnalysisFamilyRetention({
       events.forEach((event) => window.removeEventListener(event, onActivity));
     };
   }, []);
-  const settled = useCallback(() => setPreload(null), []);
+  const settled = useCallback((estimatedBytes = estimatedPreloadedViewMemoryBytes(undefined)) => {
+    setPreload((current) => {
+      if (current && speculative.current.has(current.tab)) {
+        speculative.current.set(current.tab, estimatedBytes);
+      }
+      return null;
+    });
+  }, []);
   useEffect(() => {
     if (!workspaceVisible || !retain || !enabled || !canPreload) {
       setPreload(null);
-      speculative.current.clear();
+      // Hidden workspaces retain their views, so keep charging their estimates.
+      if (!retain || !enabled) speculative.current.clear();
       return;
     }
     if (preload) {
@@ -114,7 +122,7 @@ export function useAnalysisFamilyRetention({
     let idle: number | null = null;
     const admissionAllowed = () => familyPreloadAdmissionAllowed({
       idleMs: Date.now() - lastActivity.current,
-      speculativeCount: speculative.current.size,
+      speculativeBytes: [...speculative.current.values()].reduce((sum, bytes) => sum + bytes, 0),
       foregroundFetching: qc.isFetching({ predicate: (query) => SCIENTIFIC_QUERY_ROOTS.has(String(query.queryKey[0])) }),
       documentVisible: document.visibilityState === "visible",
     });
@@ -126,7 +134,7 @@ export function useAnalysisFamilyRetention({
         idle = null;
         if (!admissionAllowed()) return;
         attempted.current.add(familyPreloadIdentity(next));
-        speculative.current.add(next.tab);
+        speculative.current.set(next.tab, FAMILY_PRELOAD_RESERVATION_BYTES);
         setPreload(next);
       };
       if ("requestIdleCallback" in window) idle = window.requestIdleCallback(admit);

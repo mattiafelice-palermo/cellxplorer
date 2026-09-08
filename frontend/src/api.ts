@@ -1257,6 +1257,8 @@ export interface AnalysisSpec {
       x_axis: "time" | "capacity_mah" | "capacity_mah_g" | "capacity_mah_cm2";
       time_unit: "s" | "min" | "h";
       display_mode: "consecutive" | "overlap_reset" | "overlap_mirror";
+      /** Missing on older saved plots: align each Cell at the selected range start. */
+      time_reference?: "selected_range" | "test_start";
       stacked: boolean;
       current_left: "current_ma" | "current_density" | "c_rate";
       current_right: "none" | "current_ma" | "current_density" | "c_rate";

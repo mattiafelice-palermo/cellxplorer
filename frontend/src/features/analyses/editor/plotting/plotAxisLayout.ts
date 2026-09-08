@@ -64,9 +64,10 @@ export function numericTraceExtent(
 export function axisLayout(
   axis: PlotAxisStyle,
   observedRange?: [number, number],
+  options: { preserveManualRange?: boolean } = {},
 ): AxisOverrides {
   const axisForLayout =
-    axis.mode === "manual" && !axisManualRangeShowsData(axis, observedRange)
+    !options.preserveManualRange && axis.mode === "manual" && !axisManualRangeShowsData(axis, observedRange)
       ? {
           ...axis,
           mode: "auto" as const,

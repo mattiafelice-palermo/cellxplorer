@@ -294,10 +294,21 @@ export function voltageChannelAvailabilityPublication(
   previousSignature: string,
   nextSignature: string,
   channels: VoltageChannelAvailability | undefined,
+  previousChannels?: VoltageChannelAvailability,
 ): { reset: boolean; channels: VoltageChannelAvailability | undefined } {
+  const reset = shouldResetVoltageChannelAvailability(previousSignature, nextSignature);
+  const unchanged = channels === previousChannels || Boolean(channels && previousChannels &&
+    VOLTAGE_CHANNEL_ORDER.every((channel) => {
+      const before = previousChannels[channel];
+      const after = channels[channel];
+      return before?.available === after?.available && before?.label === after?.label &&
+        before?.role === after?.role && before?.reference_electrode === after?.reference_electrode;
+    }));
   return {
-    reset: shouldResetVoltageChannelAvailability(previousSignature, nextSignature),
-    channels,
+    reset,
+    // A new range often delivers an equivalent fresh map. Publishing it again
+    // rerenders the entire editor even though no channel control has changed.
+    channels: reset || !unchanged ? channels : undefined,
   };
 }
 

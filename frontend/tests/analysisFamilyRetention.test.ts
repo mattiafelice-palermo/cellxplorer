@@ -1,20 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AnalysisSpec, AnalysisTabKey, SavedAnalysisPlot } from "../src/api.ts";
-import { familyPlotViewSignature, familyPreloadAdmissionAllowed, familyPreloadCandidates, familyPreloadIdentity } from "../src/features/analyses/editor/policies/analysisFamilyRetention.ts";
+import { estimatedPreloadedViewMemoryBytes, FAMILY_PRELOAD_MEMORY_BUDGET_BYTES, FAMILY_PRELOAD_RESERVATION_BYTES, familyPlotViewSignature, familyPreloadAdmissionAllowed, familyPreloadCandidates, familyPreloadIdentity } from "../src/features/analyses/editor/policies/analysisFamilyRetention.ts";
 
 function plot(id: string, tab: AnalysisTabKey, modified_at = "2026-09-05") {
   return { id, tab, modified_at } as SavedAnalysisPlot;
 }
 
-test("speculative work waits for idle, yields to foreground queries, and stops at two views", () => {
-  const ready = { idleMs: 2000, speculativeCount: 0, foregroundFetching: 0, documentVisible: true };
+test("speculative work waits for idle, yields to foreground queries, and reserves memory before loading", () => {
+  const ready = { idleMs: 2000, speculativeBytes: 0, foregroundFetching: 0, documentVisible: true };
   assert.equal(familyPreloadAdmissionAllowed(ready), true);
-  assert.equal(familyPreloadAdmissionAllowed({ ...ready, speculativeCount: 1 }), true);
-  assert.equal(familyPreloadAdmissionAllowed({ ...ready, speculativeCount: 2 }), false);
+  const remainingBoundary = FAMILY_PRELOAD_MEMORY_BUDGET_BYTES - FAMILY_PRELOAD_RESERVATION_BYTES;
+  assert.equal(familyPreloadAdmissionAllowed({ ...ready, speculativeBytes: remainingBoundary }), true);
+  assert.equal(familyPreloadAdmissionAllowed({ ...ready, speculativeBytes: remainingBoundary + 1 }), false);
   assert.equal(familyPreloadAdmissionAllowed({ ...ready, idleMs: 1999 }), false);
   assert.equal(familyPreloadAdmissionAllowed({ ...ready, foregroundFetching: 1 }), false);
   assert.equal(familyPreloadAdmissionAllowed({ ...ready, documentVisible: false }), false);
+});
+
+test("small views can prepare every remaining family while large views exhaust the budget", () => {
+  const small = estimatedPreloadedViewMemoryBytes({ traces: [{ x: [1, 2], y: [3, 4] }] });
+  let admittedBytes = 0;
+  for (let index = 0; index < 5; index += 1) {
+    assert.equal(familyPreloadAdmissionAllowed({ idleMs: 2000, speculativeBytes: admittedBytes, foregroundFetching: 0, documentVisible: true }), true);
+    admittedBytes += small;
+  }
+  assert.ok(admittedBytes < FAMILY_PRELOAD_MEMORY_BUDGET_BYTES);
+  assert.equal(familyPreloadAdmissionAllowed({ idleMs: 2000, speculativeBytes: 2 * FAMILY_PRELOAD_RESERVATION_BYTES, foregroundFetching: 0, documentVisible: true }), false);
+  assert.equal(estimatedPreloadedViewMemoryBytes("x".repeat(3 * 1024 * 1024)), FAMILY_PRELOAD_RESERVATION_BYTES);
+  assert.ok(estimatedPreloadedViewMemoryBytes(undefined) > 0);
 });
 
 test("idle preparation chooses one saved view per unopened family in priority order", () => {

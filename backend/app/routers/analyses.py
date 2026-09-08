@@ -449,11 +449,9 @@ class ComputeRequest(BaseModel):
     # reusable entries through the LRU budget. Transient requests still *read*
     # the cache; they only decline to populate it.
     persist: bool = True
-    # Spec 052.7: place ordinary time-axis results on one continuous timeline
-    # anchored at this cycle instead of re-zeroing each response at its own
-    # first point. This is what lets consecutive cycle windows be panned
-    # through as views onto a single axis. It changes the returned coordinates,
-    # so it is part of the render cache identity below.
+    # Optional explicit origin override. The default follows time_reference:
+    # test start or the first selected cycle. An override changes
+    # coordinates and therefore participates in the render cache identity.
     absolute_time_origin_cycle: int | None = Field(default=None, ge=1)
 
 
@@ -1893,9 +1891,8 @@ def refine_time_capacity_analysis(
                 "exact capacity refinement origins are unavailable; recompute the overview",
             )
     origin_cycle_start = (
-        int(settings["cycle_start"])
-        if settings["cycle_start"] is not None
-        else None
+        engine.time_capacity_origin_cycle(settings) if settings["x_axis"] == "time" else
+        int(settings["cycle_start"]) if settings["cycle_start"] is not None else None
     )
     candidate_time_capacity = dict(settings)
     candidate_time_capacity["cycles"] = []

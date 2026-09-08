@@ -13,6 +13,10 @@ import {
   timeCapacityPlaceholderData,
   timeCapacityRetainedPanResult,
   timeCapacityScientificRequestSpec,
+  timeCapacityUsesContinuousTime,
+  timeCapacityEffectiveConfig,
+  timeCapacityWithDisplayChoice,
+  timeCapacityDisplayChoice,
   type TimeCapacityQueryConfig,
 } from "../src/features/analyses/editor/policies/timeCapacityQueryPolicy.ts";
 
@@ -320,7 +324,7 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /panSettlingWindowRef\.current = \{ \.\.\.range \}/);
   assert.match(liveSource, /interpolatedXRangeForCycleIndex\(/);
   assert.match(liveSource, /queryClient\.prefetchQuery\(/);
-  assert.match(liveSource, /absolute_time_origin_cycle: panRequest\.window\.start/);
+  assert.match(liveSource, /absolute_time_origin_cycle: panRequest.window.start/);
   assert.match(liveSource, /const panRelayoutInFlightRef = useRef\(false\)/);
   assert.match(liveSource, /if \(panPendingRef\.current\) queuePanFrameRef\.current\(\)/);
   assert.match(liveSource, /timeCapacityCommittedNavigationOnRange/);
@@ -346,7 +350,7 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /const refinementViewport =/);
   assert.match(liveSource, /next\.xaxis2 = \{ \.\.\.\(base\.xaxis2 \?\? \{\}\)/);
   assert.match(liveSource, /if \(panPresentationActive \|\| cfg\.stacked \|\| !refinementTransition\) return null;/);
-  assert.match(liveSource, /timeCapacityRefinementCanSchedule\(active, spec\)/);
+  assert.match(liveSource, /timeCapacityRefinementCanSchedule\(active, scientificRenderSpec\)/);
   assert.match(liveSource, /refinementLifecycle\.acceptResponse\(/);
   assert.match(headerSource, /const plotExportEnabled = canPlotExport \?\? canExport/);
   assert.match(headerSource, /getExportPreview && plotExportEnabled/);
@@ -369,4 +373,48 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(updateSource, /setSpec\(next\)/);
   assert.match(updateSource, /persistAnalysisSpec\(persistSpec, persistTitle\)/);
   assert.match(editorSource, /dirty \? "Unsaved" : "Saved"/);
+});
+
+
+test("cycle-aligned windows carry their selected origin and exclude earlier coordinate semantics", () => {
+  const spec = makeSpec();
+  const config = makeConfig();
+  const ordinary = JSON.parse(timeCapacityDataSignature(spec, config, 1200));
+  assert.equal(ordinary.coordinateOriginCycle, 1);
+  assert.equal(ordinary.timeCoordinateRevision, 3);
+  assert.equal(timeCapacityDataSignature(spec, config, 1200), timeCapacityDataSignature(spec, config, 1200, 1));
+  const later = { ...config, cycle_start: 10, cycle_end: 12 };
+  assert.equal(JSON.parse(timeCapacityDataSignature(spec, later, 1200)).coordinateOriginCycle, 10);
+  assert.notEqual(timeCapacityDataSignature(spec, config, 1200), timeCapacityDataSignature(spec, later, 1200));
+  assert.equal(timeCapacityCompatibilitySignature(spec, config, 1200), timeCapacityCompatibilitySignature(spec, later, 1200));
+  const overlap = JSON.parse(timeCapacityDataSignature(spec, { ...config, display_mode: "overlap_reset" }, 1200));
+  assert.equal(overlap.coordinateOriginCycle, null);
+});
+
+test("Continuous ignores saved cycle limits for queries and plot-range exports, preserving the saved range", () => {
+  const saved = { ...makeConfig(), cycle_start: 28, cycle_end: 54, cycles: [30] };
+  const config = timeCapacityWithDisplayChoice(saved, "continuous_time");
+  assert.equal(timeCapacityUsesContinuousTime(config), true);
+  assert.equal(timeCapacityDisplayChoice(config), "continuous_time");
+  assert.equal(config.cycle_start, 28);
+  assert.deepEqual(config.cycles, [30]);
+  const spec = { ...makeSpec(), computation: { ...makeSpec().computation, time_capacity: config } };
+  const request = timeCapacityScientificRequestSpec(spec);
+  assert.deepEqual(request.computation.time_capacity, timeCapacityEffectiveConfig(config));
+  assert.equal(request.computation.time_capacity.cycle_start, null);
+  assert.equal(request.computation.time_capacity.cycle_end, null);
+  assert.deepEqual(request.computation.time_capacity.cycles, []);
+  assert.deepEqual(spec.computation.time_capacity.cycles, [30]);
+  assert.equal(timeCapacityDataSignature(spec, config, 1200),
+    timeCapacityDataSignature(spec, { ...config, cycle_start: 1, cycle_end: 3, cycles: [] }, 1200));
+  assert.equal(JSON.parse(timeCapacityDataSignature(spec, config, 1200)).coordinateOriginCycle, 1);
+  const exported = timeCapacityDataExportSpec(spec as AnalysisSpec, config, "plot_range");
+  assert.deepEqual(exported.computation.time_capacity?.cycles, []);
+  assert.equal(exported.computation.time_capacity?.cycle_end, null);
+  const restored = timeCapacityWithDisplayChoice(config, "consecutive");
+  assert.equal(timeCapacityDisplayChoice(restored), "consecutive");
+  assert.deepEqual(restored, { ...saved, time_reference: "selected_range" });
+  assert.notEqual(timeCapacityCompatibilitySignature(spec, config, 1200), timeCapacityCompatibilitySignature(spec, restored, 1200));
+  assert.equal(timeCapacityUsesContinuousTime({ ...config, view: "dqdv" }), false);
+  assert.equal(timeCapacityUsesContinuousTime({ ...config, x_axis: "capacity_mah" }), false);
 });

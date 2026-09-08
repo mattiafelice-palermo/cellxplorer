@@ -39,3 +39,14 @@ test("axisLayout keeps one-sided manual clamps when data is visible", () => {
   assert.equal(layout.autorange, true);
   assert.deepEqual(layout.autorangeoptions, { minallowed: 0 });
 });
+
+test("cycle-aligned manual X ranges stay fixed when the new cycle window is shorter or empty", () => {
+  for (const extent of [[20, 80], [200, 300], undefined] as const) {
+    const layout = axisLayout(manualAxis, extent ? [...extent] : undefined, { preserveManualRange: true });
+    assert.deepEqual(layout.range, [0, 100]);
+    assert.equal(layout.autorange, false);
+    assert.equal(layout.dtick, 10);
+  }
+  assert.deepEqual(axisLayout({ ...manualAxis, max: null }, [0, 10], { preserveManualRange: true }).autorangeoptions,
+    { minallowed: 0 });
+});

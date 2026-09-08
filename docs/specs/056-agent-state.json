@@ -1,7 +1,7 @@
 {
   "version": 1,
   "spec": "056",
-  "branch": "feature/cycle-point-selection-inspector",
+  "branch": "codex/recover-time-capacity-followups",
   "active_child": "056",
   "children": [
     "056"
@@ -20,5 +20,5 @@
     "R14"
   ],
   "resume_review": "FINAL_REVIEW",
-  "updated_at": "2026-09-05T17:47:24+02:00"
+  "updated_at": "2026-09-08T23:14:35.494508+00:00"
 }

@@ -316,15 +316,29 @@ cancellation guarantee. A retained placeholder is display-only: plot/image/vecto
 disabled until the current query resolves, while the separate data-export path requests and validates
 full-resolution data for the current identity.
 
-Buffered Time/Capacity viewport panning is retained only as disabled experimental code. It is not a
-valid production path: one shared absolute X axis accumulates different cycle-duration offsets for
-different Cells, so curves diverge during the drag and snap back when the independently re-zeroed
-committed window arrives. Per-Cell overlaid Plotly axes preserve those origins but create multiple
-WebGL subplots and make interaction unacceptably slow. `timeCapacityPanningEnabled()` therefore
-fails closed with no local-storage override. Production slider movement publishes integer cycle
-windows only; every response is independently re-zeroed, moving requests use latest-wins
-backpressure and a mildly reduced point budget, and placeholder data keeps the previous plot visible
-until the newest admitted window is ready.
+Time/Capacity separates two time references under the internal `consecutive` transform.
+`time_reference: selected_range` (the default for older saved plots) is labelled **Cycle-aligned**:
+each Cell starts its selected range at zero, and duration differences accumulate inside the range.
+Explicit x-axis bounds remain relative to each new range, including when they show no data.
+`time_reference: test_start` is labelled **Continuous**: all cycles remain on the accumulated
+recorded-test-time axis, cycle navigation is unavailable, and the x-axis range selects time.
+Continuous requests ignore saved cycle bounds/explicit cycle selections without mutating them;
+switching back therefore restores the previous cycle selection. These references apply to the
+time axis of voltage/current plots; derivative, overlap, and capacity navigation keep their contracts.
+
+Indexed cycle-start metadata restores canonical coordinates without preceding raw reads, then
+subtracts the selected origin. Per-cycle restoration preserves elapsed gaps across sparse cycles
+whose step timers reset. The serial legacy fallback computes continuity before selection.
+Refinement retains the overview's origin while reading its narrower cycle window; it must bypass
+Continuous mode's ordinary full-range normalization. Live plots, thumbnails, and full-resolution
+exports use the same coordinates. Time/Capacity result schema 11 and the frontend coordinate
+revision invalidate results and previews carrying the earlier implicit-origin semantics.
+
+Buffered viewport panning remains disabled experimental code: `timeCapacityPanningEnabled()` still
+fails closed. Production slider movement publishes integer cycle windows, with latest-wins
+backpressure and a mildly reduced point budget in Cycle-aligned mode. Placeholder data keeps the
+previous complete figure until the matching window arrives. Each newly selected window starts
+at its own zero; no old figure is relabelled while the replacement request is pending.
 
 Ordinary committed cycle navigation has a separate request-admission boundary: the first selected
 range remains the only in-flight query and subsequent button/jump/history selections replace one
@@ -407,8 +421,12 @@ the active family's changing spec into every hidden graph. Semantic view signatu
 Plotly config objects avoid redraws when restoring an equivalent saved spec.
 
 Automatic preparation is separate from retention: after two seconds idle, the visible editor
-admits one saved view at a time, up to two unopened family views. It yields to foreground queries
-and requires the backend's `analysis_cache_only` health capability. All six scientific routes
+admits one saved view at a time against a 100 MiB estimated memory budget per analysis for
+unopened family views. Reserve 40 MiB before admission, then charge 8 MiB of view overhead plus
+16 times the response JSON byte size (at most 2 MiB). This conservatively allows more small views
+without treating response bytes as browser/GPU RAM. Visiting a view removes its speculative charge;
+hiding a workspace preserves the charge because its graphs remain mounted. It yields to foreground
+queries and requires the backend's `analysis_cache_only` health capability. All six scientific routes
 support cache-only requests; misses and stored result bodies over 2 MiB return 409 before scientific
 computation. This byte threshold bounds response size, not total browser or graphics memory.
 Opening a deferred view uses its ordinary query path. The existing `unmount` policy disables
@@ -1009,3 +1027,18 @@ Ordinary Cycles point clicks observe pointer release at window capture: Plotly c
 cover outside the React selection subtree after mouse-down. Do not take pointer ownership or
 prevent default for this path. Track maximum movement across the gesture so an out-and-back zoom
 or pan drag cannot become a point click. Continue using the shared nearest-point hit policy.
+
+
+Time/Capacity cycle navigation must retain the displayed trace/layout identity until the matching
+replacement result arrives. Memoizing the scientific render spec on the requested data signature
+redraws the old figure at query admission. A changed range gets its viewport from the next
+declarative layout; avoid synchronous `Plotly.relayout` of the old figure before starting that
+request. Keep the explicit same-range fit path. Publish voltage-channel availability only when
+its semantic fields or source/selection identity change; an equivalent fresh response map otherwise
+rerenders the entire editor after every cycle response. The sample list reads only selection,
+stable source facts, and current committed action delegates so navigation does not rebuild rows.
+
+The Time/Capacity interaction profiler starts at request admission, after the parent React render.
+For perceived latency, also measure native pointer-down to the matching Plotly completion.
+Distinguish React Query memory, backend result-cache hits, and cache misses; warm frontend timing
+is not evidence of faster cold scientific computation.

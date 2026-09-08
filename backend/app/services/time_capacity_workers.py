@@ -137,7 +137,7 @@ class ReadJob:
     plan_diagnostics: dict[str, Any]
     descriptor: ResolvedCellDescriptor
     estimated_rows: int
-    time_origin_prefix_s: float | None = None
+    time_cycle_starts: tuple[tuple[int, float], ...] = ()
     display_origin_time_s: float | None = None
 
 
@@ -710,15 +710,9 @@ def _cell_result(
         if needs.continuous_time:
             with time_capacity_path.timed_stage(diagnostics, "transform_continuous_time"):
                 raw = analysis_engine._continuous_time(raw)
-        # Spec 052.7: the prefix is set only when an origin was resolved, for a
-        # refinement or an explicitly requested absolute origin, so the guard
-        # is the prefix itself rather than the refinement flag.
-        if job.time_origin_prefix_s is not None and "time_s" in raw.columns:
+        if job.time_cycle_starts:
             with time_capacity_path.timed_stage(diagnostics, "transform_refinement_time_origin"):
-                raw = raw.assign(
-                    time_s=raw["time_s"].to_numpy(dtype="float64")
-                    + float(job.time_origin_prefix_s)
-                )
+                raw = analysis_engine._restore_time_capacity_cycle_times(raw, dict(job.time_cycle_starts))
         analysis_engine._record_transform_profile(
             diagnostics,
             "continuous_time",
@@ -1209,7 +1203,7 @@ def _build_jobs(
     from . import analysis_engine, canonical_cycling, time_capacity_derived, time_capacity_path
     from .stitch import CachedSourceRef
 
-    settings = analysis_engine.time_capacity_settings(spec.get("computation", {}))
+    settings = analysis_engine.time_capacity_settings(spec.get("computation", {}), preserve_cycle_window=refinement)
     protocol_context, protocol_badges = analysis_engine._protocol_filter_context(spec)
     if protocol_context["active"]:
         return None
@@ -1258,29 +1252,21 @@ def _build_jobs(
             cycle_start=settings["cycle_start"],
             cycle_end=settings["cycle_end"],
         )
-        time_origin_prefix_s: float | None = None
         display_origin_time_s: float | None = None
-        # Spec 052.7: ordinary requests may also ask for absolute positioning.
-        # Without an origin, `_time_capacity_display_x` zeroes each response at
-        # its own first finite point, so every cycle window comes back starting
-        # at x=0 and cannot be panned through -- consecutive windows are
-        # separate coordinate systems rather than views onto one timeline.
-        # Supplying `display_origin_cycle_start` reuses the refinement origin
-        # machinery to place the window at its true coordinate. Opt-in: when no
-        # origin is requested this is unreachable and the per-window behaviour
-        # is byte-identical.
-        wants_absolute_origin = (
-            refinement or display_origin_cycle_start is not None
-        )
+        time_cycle_starts: tuple[tuple[int, float], ...] = ()
+        canonical_time = settings["x_axis"] == "time" and settings["display_mode"] == "consecutive"
+        wants_absolute_origin = refinement or display_origin_cycle_start is not None or canonical_time
         if wants_absolute_origin and requested_cycles and settings["x_axis"] == "time":
-            time_facts = time_capacity_path.consecutive_time_request_facts(
-                plan,
-                requested_cycles,
-                display_origin_cycle_start,
+            origin_cycle = (
+                display_origin_cycle_start if display_origin_cycle_start is not None
+                else analysis_engine.time_capacity_origin_cycle(settings)
             )
-            if time_facts is None:
+            facts = time_capacity_path.consecutive_time_cycle_facts(plan)
+            if origin_cycle not in facts or any(cycle not in facts for cycle in requested_cycles):
                 return None
-            time_origin_prefix_s, display_origin_time_s = time_facts
+            display_origin_time_s = facts[origin_cycle][0]
+            # Per-cycle prefixes also preserve elapsed gaps in sparse selections.
+            time_cycle_starts = tuple((cycle, facts[cycle][0]) for cycle in requested_cycles)
         available = {
             column
             for source in plan.sources
@@ -1370,7 +1356,7 @@ def _build_jobs(
                 plan_diagnostics=plan_diagnostics,
                 descriptor=descriptor,
                 estimated_rows=_estimated_rows(plan, tuple(requested_cycles)),
-                time_origin_prefix_s=time_origin_prefix_s,
+                time_cycle_starts=time_cycle_starts,
                 display_origin_time_s=display_origin_time_s,
             )
         )
@@ -1472,7 +1458,7 @@ def try_compute_time_capacity(
 
     from . import analysis_engine
 
-    settings = analysis_engine.time_capacity_settings(spec.get("computation", {}))
+    settings = analysis_engine.time_capacity_settings(spec.get("computation", {}), preserve_cycle_window=refinement)
     ordinary_compact = precision == "standard" and compact
     full_export = precision == "full" and not refinement
     if not (ordinary_compact or full_export) or settings.get("view") != "voltage_current":

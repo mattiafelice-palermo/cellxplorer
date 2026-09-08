@@ -8,7 +8,9 @@
  * Giving every Cell a private overlaid axis fixes the coordinates but creates
  * multiple Plotly WebGL subplots and makes interaction unacceptably slow. Keep
  * this policy as an isolated experiment; production navigation uses the
- * independently re-zeroed per-window preview path instead.
+ * per-window preview path in Cycle-aligned mode. Continuous mode shows the
+ * full test timeline with cycle navigation disabled. Neither mode enables
+ * this buffered panning experiment.
  *
  * The per-window model fetches exactly the cycles the slider selects, and the
  * backend re-zeroes every response at its own first point. Consecutive windows

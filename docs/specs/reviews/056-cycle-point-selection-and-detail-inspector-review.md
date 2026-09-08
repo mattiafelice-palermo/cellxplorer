@@ -225,6 +225,37 @@ navigation admission, backend/HTTP, frontend transformation, and Plotly drawing 
 exact scientific outputs, cache identities, full-resolution export, stale-response protection,
 and explicit saves. Do not present a frontend-only or cached benchmark as cold backend speedup.
 
+### R13-R14 implementer response - 2026-09-05
+
+Implemented estimated 100 MiB preparation admission, including conservative pending reservations
+and retained accounting for hidden workspaces. Removed two redundant old-figure navigation
+updates, duplicate voltage-channel publication, and unchanged sample-row rendering. The spec
+records the matched eight-Cell timing comparison: median 149.3 ms to 115.4 ms, with cache-state
+and backend-variation limitations. Sequential/rapid navigation, current sample callbacks, zoom
+reset, and explicit-cycle rendering were checked in the browser against an isolated data copy.
+Focused regression suite passed 120/120. R6-R14 remain pending independent review.
+
+### R14 elapsed-time correction
+
+The user requires Consecutive time to retain the Cell origin across navigation. The local fix
+uses indexed per-cycle time prefixes for ordinary, sparse, export, and refinement coordinates,
+with a legacy continuity fallback and cache invalidation. The spec records regression evidence.
+The earlier timing comparison precedes this coordinate correction. Implementation remains local
+and uncommitted after the user's stop; no release or further push is authorized.
+
+### R14 final user amendment: explicit time references
+
+The user authorizes Continuous (full test time, cycle navigation disabled) and Cycle-aligned
+(selected range starts at zero per Cell, cycle navigation enabled). X-axis manual limits stay
+relative to the selected range after navigation, including empty manual windows. Legacy saved
+plots default to Cycle-aligned; mode switching preserves stored cycle limits. The spec records
+backend, refinement, export, cache, and preview requirements. Work remains local; browser
+acceptance belongs to the user and independent R6-R14 review is still pending.
+
+R14 mode implementation validation: no-cache preflight passed 4/4 stages, all 164 files/modules,
+in 91.49 seconds. Legacy golden numerical expectations are unchanged. Both studies passed
+read-only copied-data checks; browser acceptance remains with the user. No commit or push.
+
 ## Final-review external gate
 
 The original full manual browser acceptance matrix remains incomplete. The 2026-09-05 implementer
@@ -249,3 +280,16 @@ Because that acceptance input is external to this reviewer session and the user 
 **REVIEW CLEAN — R1-R5 are closed. FINAL REVIEW BLOCKED only on the required manual browser acceptance matrix.**
 
 Required next action: run and record the Spec 056 manual browser matrix in an appropriate local CellXplorer environment. When that evidence is available, resume the workflow with `resume-final-review`, re-read the results, and mark COMPLETE only if the matrix is clean. Any observed regression should instead be converted into a new stable review finding before completion.
+
+### Recovery of retained R13/R14 work — 2026-09-09
+
+The user authorized restoring the three unreleased improvements: explicit Continuous and
+Cycle-aligned Time/Capacity modes, the remaining cycle-navigation redraw/publication fixes,
+and the estimated 100 MiB automatic-preparation budget. This recovery is based on Alpha 29
+(`f9b03f5b`), preserving its export, SoH/reference-cycle, and per-plot style-session fixes.
+The original dirty checkout is untouched. The abandoned Luna route-isolation and synchronous
+family-header experiments are excluded, as are the standalone Neware converter and backlog.
+Recovery branch: `codex/recover-time-capacity-followups`. No version bump or release.
+The existing independent review and manual acceptance gate is not self-approved by this recovery.
+
+Recovery verification: `python scripts/preflight.py --no-cache` passed all 4/4 stages and all 164 backend/frontend test modules (83.84 s wall time). Version declarations remain `0.27.1-alpha.29`. Browser acceptance and independent review remain pending. This is a local commit checkpoint under the existing no-push instruction.

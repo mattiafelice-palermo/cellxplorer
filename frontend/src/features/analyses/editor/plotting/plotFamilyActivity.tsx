@@ -1,9 +1,10 @@
 import { createContext, useContext, useEffect } from "react";
+import { estimatedPreloadedViewMemoryBytes } from "../policies/analysisFamilyRetention";
 
 export type PlotFamilyActivity = {
   enabled: boolean;
   cacheOnly: boolean;
-  onSettled?: () => void;
+  onSettled?: (estimatedBytes?: number) => void;
 };
 
 export const PlotFamilyActivityContext = createContext<PlotFamilyActivity>({
@@ -20,11 +21,12 @@ export function usePlotFamilyQuerySettled(query: {
   isSuccess: boolean;
   isError: boolean;
   isFetching: boolean;
+  data?: unknown;
 }) {
   const activity = usePlotFamilyActivity();
   useEffect(() => {
     if (activity.cacheOnly && !query.isFetching && (query.isSuccess || query.isError)) {
-      activity.onSettled?.();
+      activity.onSettled?.(estimatedPreloadedViewMemoryBytes(query.isSuccess ? query.data : undefined));
     }
-  }, [activity, query.isError, query.isFetching, query.isSuccess]);
+  }, [activity, query.data, query.isError, query.isFetching, query.isSuccess]);
 }

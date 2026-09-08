@@ -404,3 +404,18 @@ test("availability is retained across plot-only refetches but reset for selectio
   assert.equal(shouldResetVoltageChannelAvailability(first, same), false);
   assert.equal(shouldResetVoltageChannelAvailability(first, changed), true);
 });
+
+
+test("equivalent channel metadata does not republish on every cycle response", () => {
+  const before = availability({ working_potential: true });
+  const same = structuredClone(before);
+  assert.equal(voltageChannelAvailabilityPublication("same", "same", same, before).channels, undefined);
+  assert.strictEqual(voltageChannelAvailabilityPublication("old-source", "new-source", same, before).channels, same);
+  assert.strictEqual(voltageChannelAvailabilityPublication("same", "same", same, undefined).channels, same);
+  for (const field of ["available", "label", "role", "reference_electrode"] as const) {
+    const changed = structuredClone(before);
+    if (field === "available") changed.voltage.available = !changed.voltage.available;
+    else changed.voltage[field] = "changed";
+    assert.strictEqual(voltageChannelAvailabilityPublication("same", "same", changed, before).channels, changed);
+  }
+});

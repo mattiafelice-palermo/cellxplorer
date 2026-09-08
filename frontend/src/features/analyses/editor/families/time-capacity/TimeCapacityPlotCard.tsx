@@ -65,6 +65,9 @@ import {
   timeCapacityPlaceholderData,
   timeCapacityRetainedPanResult,
   timeCapacityScientificRequestSpec,
+  timeCapacityDisplayChoice,
+  timeCapacityUsesContinuousTime,
+  timeCapacityWithDisplayChoice,
 } from "../../policies/timeCapacityQueryPolicy";
 import {
   hiddenSeriesIdsAfterShowAll,
@@ -289,6 +292,7 @@ export const DEFAULT_TIME_CAPACITY: TimeCapacityConfig = {
   x_axis: "time",
   time_unit: "min",
   display_mode: "consecutive",
+  time_reference: "selected_range",
   stacked: false,
   current_left: "current_ma",
   current_right: "none",
@@ -372,7 +376,9 @@ function timeCapacityXAxisTitle(cfg: TimeCapacityConfig): string {
     ? "Areal capacity (mAh/cm²)"
     : cfg.x_axis === "capacity_mah"
     ? "Capacity (mAh)"
-    : `Time (${cfg.time_unit})`;
+    : cfg.display_mode !== "consecutive" ? `Time (${cfg.time_unit})`
+    : timeCapacityUsesContinuousTime(cfg) ? `Test time (${cfg.time_unit})`
+    : `Time from cycle range start (${cfg.time_unit})`;
 }
 
 function timeCapacityX(trace: TimeCapacityTrace, spec: AnalysisSpec): { x: number[]; title: string } {
@@ -1014,6 +1020,10 @@ export function timeCapacityLayout(
   });
   const titleFont = { size: style.axis_title_size };
   const xRange = numericTraceExtent(traces, "x", ["x", "x2"]);
+  const xAxisOptions = {
+    preserveManualRange: cfg.view === "voltage_current" && cfg.x_axis === "time" &&
+      cfg.display_mode === "consecutive" && !timeCapacityUsesContinuousTime(cfg),
+  };
   const yRange = numericTraceExtent(traces, "y", ["y"]);
   const y2Range = numericTraceExtent(traces, "y", ["y2", "y3"]);
   if (cfg.view !== "voltage_current") {
@@ -1045,7 +1055,7 @@ export function timeCapacityLayout(
       xaxis: {
         ...baseAxis(style.x_axis),
         title: { text: style.x_title ?? xTitle, font: titleFont, standoff: style.x_axis.title_standoff },
-        ...axisLayout(style.x_axis, xRange),
+        ...axisLayout(style.x_axis, xRange, xAxisOptions),
       },
       yaxis: {
         ...baseAxis(style.y_axis),
@@ -1081,7 +1091,7 @@ export function timeCapacityLayout(
           // A refreshed/cached result must not reset a user's local zoom.
           // X semantics or an explicit cycle-navigation commit do start a new
           // automatic viewport.
-          uirevision: `${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.cycle_start ?? ""}|${
+          uirevision: `${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${cfg.cycle_start ?? ""}|${
             cfg.cycle_end ?? ""
           }|${(cfg.cycles ?? []).join(",")}`,
         }),
@@ -1109,7 +1119,7 @@ export function timeCapacityLayout(
       showline: cfg.stacked ? false : style.show_frame,
       mirror: cfg.stacked ? false : style.show_frame,
       ...(cfg.stacked ? { matches: "x2" as const } : {}),
-      ...(cfg.stacked ? {} : axisLayout(style.x_axis, xRange)),
+      ...(cfg.stacked ? {} : axisLayout(style.x_axis, xRange, xAxisOptions)),
     },
     yaxis: {
       ...baseAxis(style.y_axis),
@@ -1138,7 +1148,7 @@ export function timeCapacityLayout(
             anchor: "y2",
             showline: false,
             mirror: false,
-            ...axisLayout(style.x_axis, xRange),
+            ...axisLayout(style.x_axis, xRange, xAxisOptions),
           },
           yaxis2: {
             ...baseAxis(style.y2_axis),
@@ -1416,17 +1426,23 @@ export function TimeCapacitySettings({
               <Select
                 label="Display"
                 data={[
-                  { value: "consecutive", label: "Consecutive" },
+                  ...(cfg.x_axis === "time" ? [
+                    { value: "continuous_time", label: "Continuous" },
+                    { value: "consecutive", label: "Cycle-aligned" },
+                  ] : [{ value: "consecutive", label: "Consecutive" }]),
                   { value: "overlap_reset", label: "Overlap, reset each half-cycle" },
                   { value: "overlap_mirror", label: "Overlap, mirrored discharge" },
                 ]}
-                value={cfg.display_mode}
+                value={timeCapacityDisplayChoice(cfg)}
+                description={cfg.x_axis !== "time" || cfg.display_mode !== "consecutive" ? undefined
+                  : timeCapacityUsesContinuousTime(cfg)
+                    ? "Full test timeline. Use the x-axis range to choose a time window."
+                    : "Each Cell starts the selected cycle range at zero. X-axis limits apply to each new range."}
                 onChange={(value) =>
                   value &&
                   update((s) => {
                     const next = timeCapacityConfig(s);
-                    next.display_mode = value as TimeCapacityConfig["display_mode"];
-                    s.computation.time_capacity = next;
+                    s.computation.time_capacity = timeCapacityWithDisplayChoice(next, value);
                     resetAxis(s, "x_axis");
                   })
                 }
@@ -2134,13 +2150,10 @@ function TimeCapacityPlotCardView({
           // committed ranges persist exactly as before. Reads are unaffected:
           // a moving preview that happens to hit an entry still serves it.
           ...(transientPreviewRequest ? { persist: false } : {}),
-          // Anchor each resident chunk at the viewport that requested it. A
-          // cycle-1 origin accumulates hundreds of cycles of per-Cell duration
-          // drift; a local viewport origin matches the exact comparison at
-          // admission and limits drift to the buffer's refill distance.
+          // The disabled experimental buffer uses the selected window's
+          // origin, matching Cycle-aligned navigation if it is re-enabled.
           ...(panBufferRequestActive && panRequest
-            ? { absolute_time_origin_cycle: panRequest.window.start }
-            : {}),
+            ? { absolute_time_origin_cycle: panRequest.window.start } : {}),
           ...(profileRequest
             ? {
                 profile: true,
@@ -2445,20 +2458,24 @@ function TimeCapacityPlotCardView({
     [effectiveVoltageDataIdentity, scientificRequestSpec]
   );
   const voltageCapabilitySignatureRef = useRef(voltageCapabilitySignature);
+  const publishedVoltageChannelsRef = useRef<TimeCapacityResult["voltage_channels"]>(undefined);
   useEffect(() => {
     const publication = voltageChannelAvailabilityPublication(
       voltageCapabilitySignatureRef.current,
       voltageCapabilitySignature,
       currentResult?.voltage_channels,
+      publishedVoltageChannelsRef.current,
     );
     if (voltageDataIdentity !== undefined) {
       lastVoltageDataIdentityRef.current = voltageDataIdentity;
     }
     if (publication.reset) {
       voltageCapabilitySignatureRef.current = voltageCapabilitySignature;
+      publishedVoltageChannelsRef.current = undefined;
       onVoltageChannelsChange?.(undefined);
     }
     if (publication.channels !== undefined) {
+      publishedVoltageChannelsRef.current = publication.channels;
       onVoltageChannelsChange?.(publication.channels);
     }
   }, [
@@ -2510,7 +2527,9 @@ function TimeCapacityPlotCardView({
   // lightweight Plotly restyle operation.
   const scientificRenderSpec = useMemo(
     () => timeCapacityScientificRequestSpec(renderSpec),
-    [dataSignature, viewSignature],
+    // A newly requested range is not a new displayed figure. Keep the old
+    // trace/layout identity until its replacement result actually arrives.
+    [currentResult, viewSignature],
   );
   const activeRefinedResult =
     !panActive &&
@@ -2552,9 +2571,8 @@ function TimeCapacityPlotCardView({
     [currentResult, plotResult, renderSpec, selectedVoltageUnavailable, viewSignature, visiblePlotTraces]
   );
   // One shared WebGL subplot is the performance boundary. Each resident
-  // buffer is re-zeroed near its own start, which avoids the large per-Cell
-  // phase drift of a cycle-1 origin without creating one expensive subplot per
-  // Cell. Pointer pixels interpolate between adjacent cycle windows below.
+  // buffer stays on the Cell's canonical elapsed-time axis. Different Cell
+  // durations remain visible; pointer pixels interpolate adjacent windows.
   const panCycleXIndex = useMemo(
     () => buildTimeCapacityCycleXIndex(plotResult?.cell_traces),
     [plotResult],
@@ -2629,7 +2647,7 @@ function TimeCapacityPlotCardView({
     () => interactivePlotTraces(exportTraces),
     [exportTraces],
   );
-  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
+  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
@@ -2660,10 +2678,14 @@ function TimeCapacityPlotCardView({
   }, [cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.voltage_channels.join("|"), cfg.stacked, cfg.display_mode]);
   const fitYAxis = useCallback(() => setFrozenY(null), []);
 
-  const resetPlotViewportForNavigation = useCallback(() => {
+  const resetPlotViewportForNavigation = useCallback((redrawCurrent = true) => {
     setPlotViewportCycleRange(null);
     zoomResetRef.current();
     invalidateRefinement();
+    // A different range carries its own viewport in the next declarative
+    // figure. Relayout here would synchronously redraw the old range before
+    // its request can start. A same-range reset still needs an immediate fit.
+    if (!redrawCurrent) return;
     const graphDiv = plotDivRef.current;
     if (!graphDiv) return;
     const relayout = {
@@ -2964,7 +2986,7 @@ function TimeCapacityPlotCardView({
   ]);
   const commitCycleRange = useCallback(
     (range: TimeCapacityCycleRange) => {
-      resetPlotViewportForNavigation();
+      resetPlotViewportForNavigation(false);
       if (panActiveRef.current) {
         panSettlingWindowRef.current = { ...range };
         panLiveWindowRef.current = { ...range };
@@ -2986,7 +3008,11 @@ function TimeCapacityPlotCardView({
   );
   const commitSpecificCycles = useCallback(
     (cycles: number[]) => {
-      resetPlotViewportForNavigation();
+      // Re-entering the displayed selection is an explicit fit action and
+      // will not produce a replacement result/layout to reset its axes.
+      const sameCycles = cycles.length === cfg.cycles.length &&
+        cycles.every((cycle, index) => cycle === cfg.cycles[index]);
+      resetPlotViewportForNavigation(sameCycles);
       update((s) => {
         const next = timeCapacityConfig(s);
         next.cycles = cycles;
@@ -2997,7 +3023,7 @@ function TimeCapacityPlotCardView({
         s.computation.time_capacity = next;
       });
     },
-    [resetPlotViewportForNavigation, update],
+    [cfg.cycles, resetPlotViewportForNavigation, update],
   );
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     const pointerDriven = zoom.onRelayout(event);
@@ -3036,7 +3062,7 @@ function TimeCapacityPlotCardView({
       if (
         !cyclePreviewRange &&
         !previewQueryRange &&
-        timeCapacityRefinementCanSchedule(active, spec)
+        timeCapacityRefinementCanSchedule(active, scientificRenderSpec)
       ) {
         const previousViewport = refinementLifecycle.requestedViewport;
       const sameViewport =
@@ -3494,7 +3520,11 @@ function TimeCapacityPlotCardView({
           updatePlotEnabled={updatePlotEnabled}
           updatePlotLabel={updatePlotLabel}
         />
-        <TimeCapacityCycleNavigation
+        {timeCapacityUsesContinuousTime(cfg) ? (
+          <Text size="xs" c="dimmed">
+            Cycle navigation is disabled in Continuous mode. Use the x-axis range to select test time.
+          </Text>
+        ) : <TimeCapacityCycleNavigation
           config={cfg}
           maxAvailableCycle={maxAvailableCycle}
           viewportCycleRange={plotViewportCycleRange}
@@ -3507,7 +3537,7 @@ function TimeCapacityPlotCardView({
           onPreviewRangeChange={handleCyclePreviewRange}
           onWarmRange={panningEnabled ? setPanWarmRange : undefined}
           spec={spec}
-        />
+        />}
         {timeResult.isError && (
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
         )}

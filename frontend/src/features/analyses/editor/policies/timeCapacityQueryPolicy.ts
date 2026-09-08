@@ -6,6 +6,41 @@ export type TimeCapacityQueryConfig = NonNullable<
 
 export type TimeCapacityDataExportScope = "full_series" | "plot_range";
 
+export function timeCapacityUsesContinuousTime(config: Partial<TimeCapacityQueryConfig>): boolean {
+  return (config.x_axis ?? "time") === "time" &&
+    (config.view ?? "voltage_current") === "voltage_current" &&
+    (config.display_mode ?? "consecutive") === "consecutive" &&
+    config.time_reference === "test_start";
+}
+
+/** Continuous time uses all cycles without overwriting the saved navigation range. */
+export function timeCapacityEffectiveConfig(config: TimeCapacityQueryConfig): TimeCapacityQueryConfig {
+  return timeCapacityUsesContinuousTime(config)
+    ? { ...config, cycle_start: null, cycle_end: null, cycles: [] }
+    : config;
+}
+
+export function timeCapacityDisplayChoice(config: TimeCapacityQueryConfig): string {
+  return timeCapacityUsesContinuousTime(config) ? "continuous_time" : config.display_mode;
+}
+
+export function timeCapacityWithDisplayChoice(
+  config: TimeCapacityQueryConfig,
+  choice: string,
+): TimeCapacityQueryConfig {
+  return {
+    ...config,
+    display_mode: choice === "continuous_time" ? "consecutive" : choice as TimeCapacityQueryConfig["display_mode"],
+    time_reference: choice === "continuous_time" ? "test_start" : "selected_range",
+  };
+}
+
+function timeCapacityOriginCycle(config: TimeCapacityQueryConfig): number | null {
+  if (config.x_axis !== "time" || config.display_mode !== "consecutive") return null;
+  return config.time_reference === "test_start" ? 1
+    : config.cycles.length > 0 ? Math.min(...config.cycles) : config.cycle_start ?? 1;
+}
+
 type TimeCapacityCompatibilitySpec = Pick<
   AnalysisSpec,
   "selection" | "protocol_segments" | "computation" | "presentation"
@@ -19,8 +54,13 @@ type TimeCapacityCompatibilitySpec = Pick<
 export function timeCapacityScientificRequestSpec<T extends Pick<AnalysisSpec, "selection">>(
   spec: T,
 ): T {
+  const computation = (spec as Partial<AnalysisSpec>).computation;
+  const config = computation?.time_capacity;
   return {
     ...spec,
+    ...(config && timeCapacityUsesContinuousTime(config)
+      ? { computation: { ...computation, time_capacity: timeCapacityEffectiveConfig(config) } }
+      : {}),
     selection: {
       ...spec.selection,
       exclusions: [],
@@ -53,7 +93,7 @@ export function timeCapacityDataExportSpec(
       ...spec.computation,
       time_capacity: {
         ...config,
-        ...(scope === "full_series"
+        ...(scope === "full_series" || timeCapacityUsesContinuousTime(config)
           ? { cycles: [], cycle_start: null, cycle_end: null }
           : {}),
       },
@@ -73,8 +113,12 @@ export function timeCapacityCompatibilitySignature(
   config: TimeCapacityQueryConfig,
   _viewportWidth: number,
 ): string {
+  config = timeCapacityEffectiveConfig(config);
   const scientificSpec = timeCapacityScientificRequestSpec(spec);
   return JSON.stringify({
+    // Explicit time references supersede the earlier implicit origin.
+    timeCoordinateRevision: config.x_axis === "time" && config.display_mode === "consecutive" ? 3 : null,
+    timeReference: config.time_reference ?? "selected_range",
     selection: scientificSpec.selection,
     protocol_segments: scientificSpec.protocol_segments ?? [],
     protocol_filter: scientificSpec.computation.protocol_filter ?? {},
@@ -104,8 +148,12 @@ export function timeCapacityDataSignature(
   viewportWidth: number,
   coordinateOriginCycle: number | null = null,
 ): string {
+  config = timeCapacityEffectiveConfig(config);
   const scientificSpec = timeCapacityScientificRequestSpec(spec);
   return JSON.stringify({
+    // Explicit time references supersede the earlier implicit origin.
+    timeCoordinateRevision: config.x_axis === "time" && config.display_mode === "consecutive" ? 3 : null,
+    timeReference: config.time_reference ?? "selected_range",
     selection: scientificSpec.selection,
     protocol_segments: scientificSpec.protocol_segments ?? [],
     protocol_filter: scientificSpec.computation.protocol_filter,
@@ -121,7 +169,7 @@ export function timeCapacityDataSignature(
     voltageChannel: config.voltage_channel,
     voltageChannels: config.voltage_channels,
     viewportWidth,
-    coordinateOriginCycle,
+    coordinateOriginCycle: coordinateOriginCycle ?? timeCapacityOriginCycle(config),
     derivative: config.view === "voltage_current" ? null : {
       view: config.view,
       phase: config.derivative_phase,

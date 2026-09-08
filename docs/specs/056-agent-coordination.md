@@ -363,3 +363,16 @@ R12 covers all six plot families plus Recap and Settings. Bounded automatic prep
 User authorizes R13: replace the two-view automatic preload cap with an estimated 100 MB memory budget. R14: profile repeated next-cycle navigation on all eight Cells in Bump study reduced set and implement evidence-backed latency improvements while preserving scientific results and exports.
 
 ---
+
+### Recovery of retained R13/R14 work — 2026-09-09
+
+The user authorized restoring the three unreleased improvements: explicit Continuous and
+Cycle-aligned Time/Capacity modes, the remaining cycle-navigation redraw/publication fixes,
+and the estimated 100 MiB automatic-preparation budget. This recovery is based on Alpha 29
+(`f9b03f5b`), preserving its export, SoH/reference-cycle, and per-plot style-session fixes.
+The original dirty checkout is untouched. The abandoned Luna route-isolation and synchronous
+family-header experiments are excluded, as are the standalone Neware converter and backlog.
+Recovery branch: `codex/recover-time-capacity-followups`. No version bump or release.
+The existing independent review and manual acceptance gate is not self-approved by this recovery.
+
+Recovery verification: `python scripts/preflight.py --no-cache` passed all 4/4 stages and all 164 backend/frontend test modules (83.84 s wall time). Version declarations remain `0.27.1-alpha.29`. Browser acceptance and independent review remain pending. This is a local commit checkpoint under the existing no-push instruction.

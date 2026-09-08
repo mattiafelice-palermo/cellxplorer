@@ -326,6 +326,8 @@ test("saved plot preview signature includes the thumbnail renderer version", () 
     savedPlotPreviewSignature(base, savedPlot),
     /"thumbnail_renderer_version":\d+/
   );
+  assert.equal(JSON.parse(savedPlotPreviewSignature(base, savedPlot)).time_coordinate_revision, undefined);
+  assert.equal(JSON.parse(savedPlotPreviewSignature(base, { ...savedPlot, tab: "time_capacity" })).time_coordinate_revision, 3);
 });
 
 test("saved auxiliary voltage plots restore their selected channel on cold open", () => {

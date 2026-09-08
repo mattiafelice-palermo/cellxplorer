@@ -57,7 +57,8 @@ RESULT_SCHEMA_VERSIONS = {
     # Spec 052 follow-up: compact worker responses now include the selected
     # multi-voltage arrays just like the serial path. Invalidate compact
     # entries produced before that worker parity fix.
-    "time_capacity": 9,
+    # Consecutive time uses the Cell timeline, including skipped-cycle gaps.
+    "time_capacity": 11,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

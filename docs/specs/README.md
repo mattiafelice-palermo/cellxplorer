@@ -6,6 +6,8 @@
   Selection remains transient and excluded from plot dirty state and exports. **R6/R7/R8/R9/R10 browser
   refinements implemented; independent re-review pending. Focused browser checks are recorded in
   the spec; the full original manual matrix and final completion remain reviewer-owned.**
+  R13/R14 recovery on `codex/recover-time-capacity-followups` restores the time modes, remaining
+  cycle-navigation fixes, and memory-budget preparation on Alpha 29; independent review remains pending.
 - [053-alpha-application-release-channel.md](053-alpha-application-release-channel.md)
   adds CellXplorer Alpha as a fully isolated third Windows product from the shared source tree:
   separate installation identity, profile root, deep link, updater feed, release tag family, purple
