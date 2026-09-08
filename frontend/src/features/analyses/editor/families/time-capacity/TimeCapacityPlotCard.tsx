@@ -1555,6 +1555,7 @@ function TimeCapacityPlotCardView({
   analysisId,
   analysisTitle,
   plotName,
+  plotKey,
   subtitle,
   spec,
   update,
@@ -1574,6 +1575,8 @@ function TimeCapacityPlotCardView({
   analysisId: number;
   analysisTitle: string;
   plotName: string;
+  /** Stable identity for per-plot style-panel UI state. */
+  plotKey?: string;
   subtitle: string;
   spec: AnalysisSpec;
   update: (fn: (s: AnalysisSpec) => void) => void;
@@ -3595,6 +3598,7 @@ function TimeCapacityPlotCardView({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="time_capacity"
+        plotKey={plotKey ?? `analysis:${analysisId}:time_capacity`}
         buildSeriesPreview={buildSeriesPreview}
         timeCapacityStacked={cfg.stacked}
          yTitlePlaceholder={voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}

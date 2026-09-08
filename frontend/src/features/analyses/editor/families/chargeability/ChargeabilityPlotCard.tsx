@@ -673,6 +673,7 @@ export function ChargeabilityPlotCard({
   analysisId,
   analysisTitle,
   plotName,
+  plotKey,
   spec,
   update,
   onReadyChange,
@@ -686,6 +687,8 @@ export function ChargeabilityPlotCard({
   analysisId: number;
   analysisTitle: string;
   plotName: string;
+  /** Stable identity for per-plot style-panel UI state. */
+  plotKey?: string;
   spec: AnalysisSpec;
   update: (fn: (draft: AnalysisSpec) => void) => void;
   onReadyChange?: (ready: boolean) => void;
@@ -975,6 +978,7 @@ export function ChargeabilityPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="chargeability"
+        plotKey={plotKey ?? `analysis:${analysisId}:chargeability`}
         seriesDescriptors={seriesDescriptors}
         buildSeriesPreview={buildSeriesPreview}
       />

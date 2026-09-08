@@ -825,6 +825,7 @@ export function StepsPlotCard({
   analysisId,
   analysisTitle,
   plotName,
+  plotKey,
   spec,
   cells,
   update,
@@ -838,6 +839,8 @@ export function StepsPlotCard({
   analysisId: number;
   analysisTitle: string;
   plotName: string;
+  /** Stable identity for per-plot style-panel UI state. */
+  plotKey?: string;
   spec: AnalysisSpec;
   cells: Pick<CellSummary, "id" | "name">[];
   update: (fn: (s: AnalysisSpec) => void) => void;
@@ -1079,6 +1082,7 @@ export function StepsPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="steps"
+        plotKey={plotKey ?? `analysis:${analysisId}:steps`}
         seriesDescriptors={seriesDescriptors}
         buildSeriesPreview={buildSeriesPreview}
       />

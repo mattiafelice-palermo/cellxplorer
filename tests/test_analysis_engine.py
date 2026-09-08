@@ -877,6 +877,35 @@ class AnalysisEngineTests(unittest.TestCase):
             )
         )
 
+    def test_retention_reference_uses_specific_cycle_and_fails_closed(self):
+        frame = pd.DataFrame(
+            {
+                "cycle": [1, 2, 3],
+                "discharge_capacity_mah": [6.0, 5.0, 4.0],
+            }
+        )
+        self.assertEqual(
+            engine._retention_reference(
+                frame, {"retention_reference": {"mode": "cycle", "cycle": 2}}
+            ),
+            5.0,
+        )
+        for configured_cycle in (None, 0, -1, 2.5, "2", True, float("nan"), 4):
+            with self.subTest(configured_cycle=configured_cycle):
+                self.assertTrue(
+                    np.isnan(
+                        engine._retention_reference(
+                            frame,
+                            {
+                                "retention_reference": {
+                                    "mode": "cycle",
+                                    "cycle": configured_cycle,
+                                }
+                            },
+                        )
+                    )
+                )
+
     def test_polarization_quantity_uses_absolute_mean_voltage_delta_by_default(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         res = engine.compute(self.db, spec, None)

@@ -78,7 +78,6 @@ import {
   currentPlotStyle,
   cePalette,
   hexToRgba,
-  plotMode,
   plotPalette,
   writeScopedStyle,
 } from "../../plotting/plotStyle";
@@ -101,6 +100,7 @@ import {
   shortSourceName,
   compactHoverName,
   type BaseSeriesStyle,
+  type ResolvedSeriesStyle,
   type SeriesDescriptor,
 } from "../../plotting/seriesStyling";
 import {
@@ -489,6 +489,75 @@ function aggregateContributorCellIds(
   ]);
 }
 
+const RETENTION_REFERENCE_MARKER_SYMBOL = "diamond-open";
+
+function retentionReferenceCycle(spec: AnalysisSpec): number | null {
+  const reference = spec.computation.retention_reference;
+  const cycle = reference?.cycle;
+  if (reference?.mode !== "cycle") return null;
+  return typeof cycle === "number" && Number.isFinite(cycle) && Number.isInteger(cycle) && cycle >= 1
+    ? cycle
+    : null;
+}
+
+/** Return the displayed point index for the configured scientific cycle. */
+function retentionReferencePointIndex(
+  originalCycles: readonly number[],
+  hiddenDiagnosticCycles: ReadonlySet<number>,
+  referenceCycle: number | null,
+): number | null {
+  if (referenceCycle === null) return null;
+  let displayedIndex = 0;
+  for (const cycle of originalCycles) {
+    if (hiddenDiagnosticCycles.has(cycle)) continue;
+    if (cycle === referenceCycle) return displayedIndex;
+    displayedIndex += 1;
+  }
+  return null;
+}
+
+function primaryCycleTraceAppearance(
+  originalCycles: readonly number[],
+  displayedCycles: readonly number[],
+  hiddenDiagnosticCycles: ReadonlySet<number>,
+  spec: AnalysisSpec,
+  resolved: ResolvedSeriesStyle,
+  compact: boolean,
+): {
+  mode: "lines" | "markers" | "lines+markers";
+  marker: { color: string; size: number | number[]; symbol: string | string[] };
+} {
+  const mode = compact ? "lines" : seriesPlotlyMode(resolved);
+  const normalMarker = {
+    color: resolved.color,
+    size: resolved.markerSize,
+    symbol: seriesPlotlySymbol(resolved),
+  };
+  const referenceIndex = retentionReferencePointIndex(
+    originalCycles,
+    hiddenDiagnosticCycles,
+    retentionReferenceCycle(spec),
+  );
+  if (referenceIndex === null || referenceIndex >= displayedCycles.length) {
+    return { mode, marker: normalMarker };
+  }
+
+  // `marker_mode: none` normally uses a line-only trace. Keep that setting for
+  // every ordinary point while opting into markers for the one highlighted
+  // baseline point. Compact previews likewise stay line-only except for the
+  // reference marker.
+  const normalSize = compact || resolved.markerMode === "none" ? 0 : resolved.markerSize;
+  const referenceSize = Math.max(8, resolved.markerSize + 3);
+  const sizes = displayedCycles.map((_, index) => (index === referenceIndex ? referenceSize : normalSize));
+  const symbols = displayedCycles.map((_, index) =>
+    index === referenceIndex ? RETENTION_REFERENCE_MARKER_SYMBOL : normalMarker.symbol,
+  );
+  return {
+    mode: mode === "lines" ? "lines+markers" : mode,
+    marker: { color: resolved.color, size: sizes, symbol: symbols },
+  };
+}
+
 export function cycleTracesForResult(
   original: ComputeResult,
   spec: AnalysisSpec,
@@ -511,7 +580,6 @@ export function cycleTracesForResult(
   const style = currentPlotStyle(spec, "cycles");
   const palette = plotPalette(style);
   const secondaryPalette = cePalette(style);
-  const mode = compact ? "lines" : plotMode(style);
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
@@ -685,6 +753,14 @@ export function cycleTracesForResult(
           ),
         );
       }
+      const primaryAppearance = primaryCycleTraceAppearance(
+        original.aggregates[aggregateIndex]?.x ?? agg.x,
+        agg.x,
+        hiddenDiagnosticCycles,
+        spec,
+        aggResolved,
+        compact,
+      );
       out.push({
         x: agg.x,
         y: q.mean,
@@ -695,16 +771,12 @@ export function cycleTracesForResult(
           dash: aggResolved.lineDash,
           shape: aggResolved.lineShape,
         },
-        marker: {
-          color: aggResolved.color,
-          size: aggResolved.markerSize,
-          symbol: seriesPlotlySymbol(aggResolved),
-        },
+        marker: primaryAppearance.marker,
         opacity: aggResolved.opacity,
         showlegend: aggResolved.showInLegend,
         legendrank: legendRanks.get(aggKey),
         type: "scatter",
-        mode: compact ? mode : seriesPlotlyMode(aggResolved),
+        mode: primaryAppearance.mode,
         ...(includePointSelectionMetadata ? { meta: primarySelectionMeta } : {}),
         customdata: q.n,
         hovertemplate: compact
@@ -853,6 +925,14 @@ export function cycleTracesForResult(
           axis: "y",
         },
       };
+      const primaryAppearance = primaryCycleTraceAppearance(
+        original.cell_series[seriesIndex]?.x ?? s.x,
+        s.x,
+        hiddenDiagnosticCycles,
+        spec,
+        resolved,
+        compact,
+      );
       out.push({
         x: s.x,
         y: values,
@@ -863,14 +943,10 @@ export function cycleTracesForResult(
           dash: resolved.lineDash,
           shape: resolved.lineShape,
         },
-        marker: {
-          color: resolved.color,
-          size: resolved.markerSize,
-          symbol: seriesPlotlySymbol(resolved),
-        },
+        marker: primaryAppearance.marker,
         opacity: resolved.opacity,
         type: "scatter",
-        mode: compact ? mode : seriesPlotlyMode(resolved),
+        mode: primaryAppearance.mode,
         showlegend: !compact && !grouped && resolved.showInLegend,
         legendrank: legendRanks.get(cellKey),
         ...(includePointSelectionMetadata ? { meta: primarySelectionMeta } : {}),
@@ -1294,6 +1370,7 @@ export function CycleSettings({
               />
               <Select
                 label="Retention reference"
+                description="Sets the 100% baseline for capacity retention / SoH, not the measured capacity."
                 data={[
                   { value: "max_first_n", label: "Max in first N cycles" },
                   { value: "cycle", label: "Specific cycle" },
@@ -1302,16 +1379,22 @@ export function CycleSettings({
                 onChange={(v) =>
                   v &&
                   update(
-                    (s) =>
-                      void (s.computation.retention_reference.mode =
-                        v as "max_first_n" | "cycle"),
+                    (s) => {
+                      const reference = s.computation.retention_reference;
+                      reference.mode = v as "max_first_n" | "cycle";
+                      if (reference.mode === "cycle" && reference.cycle == null) {
+                        reference.cycle = 3;
+                      }
+                    },
                   )
                 }
               />
               {spec.computation.retention_reference.mode === "max_first_n" ? (
                 <DebouncedNumberInput
+                  key="retention-first-n"
                   label="First N"
                   min={1}
+                  allowDecimal={false}
                   value={spec.computation.retention_reference.n}
                   onCommit={(v) =>
                     update((s) => void (s.computation.retention_reference.n = v ?? 5))
@@ -1319,20 +1402,16 @@ export function CycleSettings({
                 />
               ) : (
                 <DebouncedNumberInput
+                  key="retention-specific-cycle"
                   label="Reference cycle"
                   min={1}
+                  allowDecimal={false}
                   value={spec.computation.retention_reference.cycle ?? 3}
                   onCommit={(v) =>
                     update((s) => void (s.computation.retention_reference.cycle = v ?? 3))
                   }
                 />
               )}
-              <DebouncedNumberInput
-                label="Formation cycles"
-                min={0}
-                value={spec.computation.formation_cycles}
-                onCommit={(v) => update((s) => void (s.computation.formation_cycles = v ?? 0))}
-              />
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
@@ -1345,6 +1424,7 @@ export function CyclePlotCard({
   analysisId,
   analysisTitle,
   plotName,
+  plotKey,
   subtitle,
   result,
   spec,
@@ -1362,6 +1442,8 @@ export function CyclePlotCard({
   analysisId: number;
   analysisTitle: string;
   plotName: string;
+  /** Stable identity for per-plot style-panel UI state. */
+  plotKey?: string;
   subtitle: string;
   result: ComputeResult | undefined;
   spec: AnalysisSpec;
@@ -1384,6 +1466,16 @@ export function CyclePlotCard({
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const plotSizeContainerRef = useRef(containerRef);
   plotSizeContainerRef.current = containerRef;
+  const toggleStylePanel = useCallback(() => {
+    setStylePanelOpen((open) => !open);
+    // The Cycles plot uses a selection-aware wrapper ref. Request an explicit
+    // post-layout resize as well as the observer path so the Plotly graph
+    // follows the flex width immediately when the sibling panel toggles.
+    window.requestAnimationFrame(() => {
+      syncPlotSize();
+      window.requestAnimationFrame(() => syncPlotSize());
+    });
+  }, [syncPlotSize]);
   const attachSelectionContainer = useCallback((node: HTMLDivElement | null) => {
     selectionContainerRef.current = node;
     plotSizeContainerRef.current(node);
@@ -1408,6 +1500,7 @@ export function CyclePlotCard({
         reindexDiagnostics: spec.presentation.reindex_diagnostic_cycles ?? false,
         diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
         formationCycles: spec.computation.formation_cycles,
+        retentionReference: spec.computation.retention_reference,
         visibility: {
           exclusions: spec.selection.exclusions,
           hiddenReplicateGroups: spec.selection.hidden_replicate_group_ids ?? [],
@@ -1489,6 +1582,7 @@ export function CyclePlotCard({
   const plotConfig = useMemo(
     () => ({
       displaylogo: false,
+      responsive: true,
       edits: { legendPosition: style.legend_mode !== "outside" },
     }),
     [style.legend_mode],
@@ -1785,7 +1879,8 @@ export function CyclePlotCard({
               data={traces}
               layout={layout}
               config={plotConfig}
-              style={{ width: "100%" }}
+              style={{ width: "100%", height: 500 }}
+              useResizeHandler
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
@@ -1849,8 +1944,9 @@ export function CyclePlotCard({
         spec={spec}
         result={result}
         update={update}
-        onToggle={() => setStylePanelOpen((open) => !open)}
+        onToggle={toggleStylePanel}
         axisScope="cycles"
+        plotKey={plotKey ?? `analysis:${analysisId}:cycles`}
         buildSeriesPreview={buildSeriesPreview}
         ceOverlayActive={ceOverlayActive}
         yTitlePlaceholder={yTitlePlaceholder}

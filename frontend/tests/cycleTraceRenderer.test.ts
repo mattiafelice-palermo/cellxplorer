@@ -125,6 +125,16 @@ function cycleSpec(hiddenSeriesIds: string[] = []): AnalysisSpec {
   } as unknown as AnalysisSpec;
 }
 
+function cycleReferenceSpec(cycle: number): AnalysisSpec {
+  return {
+    ...cycleSpec(),
+    computation: {
+      ...cycleSpec().computation,
+      retention_reference: { mode: "cycle", n: 5, cycle },
+    },
+  } as AnalysisSpec;
+}
+
 function aggregateResult(): ComputeResult {
   return {
     quantities: [{ key: "discharge_capacity", column: "capacity", label: "Capacity" }],
@@ -205,6 +215,61 @@ test("Cycles renderer preserves primary helpers and CE when both targets are vis
   assert.equal(traces.some((trace) => trace.name === "LFP mean"), true);
   assert.equal(traces.some((trace) => trace.name === "LFP band"), true);
   assert.equal(traces.some((trace) => trace.name === "LFP CE"), true);
+});
+
+test("Cycles renderer highlights the selected retention cycle on primary traces", async () => {
+  const render = await loadCycleTraceRenderer();
+
+  const aggregateTraces = render(aggregateResult(), cycleReferenceSpec(2));
+  const aggregate = aggregateTraces.find((trace) => trace.name === "LFP mean") as unknown as
+    | { mode?: string; marker?: { size?: unknown; symbol?: unknown } }
+    | undefined;
+  assert.ok(aggregate);
+  assert.equal(aggregate.mode, "lines+markers");
+  assert.deepEqual((aggregate.marker?.size as number[]).slice(0, 2), [0, 8]);
+  assert.deepEqual((aggregate.marker?.symbol as string[]).slice(0, 2), ["circle", "diamond-open"]);
+
+  const cellTraces = render(cellResult(), {
+    ...cycleReferenceSpec(2),
+    selection: { entries: [{ kind: "cell", ref_id: 1 }], exclusions: [] },
+  } as AnalysisSpec);
+  const cell = cellTraces.find((trace) => trace.name === "Cell A") as unknown as
+    | { mode?: string; marker?: { size?: unknown; symbol?: unknown } }
+    | undefined;
+  assert.ok(cell);
+  assert.equal(cell.mode, "lines+markers");
+  assert.deepEqual((cell.marker?.size as number[]).slice(0, 3), [0, 8, 0]);
+  assert.deepEqual((cell.marker?.symbol as string[]).slice(0, 3), ["circle", "diamond-open", "circle"]);
+
+  const ce = aggregateTraces.find((trace) => trace.name === "LFP CE");
+  assert.equal(Array.isArray((ce?.marker as { size?: unknown } | undefined)?.size), false);
+});
+
+test("Cycles renderer maps the selected scientific cycle after diagnostic reindexing", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = cellResult();
+  const cycles = Array.from({ length: 12 }, (_, index) => index + 1);
+  const capacities = cycles.map((cycle) => (cycle === 6 ? 0.2 : 1));
+  result.cell_series[0].x = cycles;
+  result.cell_series[0].quantities = {
+    capacity: capacities,
+    charge_capacity_mah: capacities,
+    discharge_capacity_mah: capacities,
+    coulombic_efficiency_pct: cycles.map(() => 100),
+  };
+  const reference = cycleReferenceSpec(12);
+  reference.selection = { entries: [{ kind: "cell", ref_id: 1 }], exclusions: [] };
+  reference.presentation.hide_diagnostic_cycles = true;
+  reference.presentation.reindex_diagnostic_cycles = true;
+  const traces = render(result, reference);
+  const cell = traces.find((trace) => trace.name === "Cell A") as unknown as
+    | { x?: unknown; marker?: { size?: unknown; symbol?: unknown } }
+    | undefined;
+  assert.ok(cell);
+  assert.deepEqual(cell.x, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual((cell.marker?.size as number[]).slice(0, 10), [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.equal((cell.marker?.size as number[])[10], 8);
+  assert.equal((cell.marker?.symbol as string[])[10], "diamond-open");
 });
 
 test("aggregate selection metadata identifies the exact contributing Cells per point", async () => {

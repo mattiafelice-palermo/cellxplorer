@@ -843,7 +843,7 @@ function everyNth<T>(values: T[], step: number): T[] {
   const out: T[] = [];
   for (let index = 0; index < values.length; index += step) out.push(values[index]);
   // Always keep the last point so the curve does not appear to stop early.
-  if (values.length && out[out.length - 1] !== values[values.length - 1]) {
+  if (values.length && (values.length - 1) % step !== 0) {
     out.push(values[values.length - 1]);
   }
   return out;
@@ -874,6 +874,17 @@ export function decimatePreviewTraces<T extends Record<string, unknown>>(
       if (Array.isArray(value) && value.length === x.length) {
         next[key] = everyNth(value, step);
       }
+    }
+    const marker = trace.marker;
+    if (marker && typeof marker === "object" && !Array.isArray(marker)) {
+      const nextMarker: Record<string, unknown> = { ...(marker as Record<string, unknown>) };
+      for (const key of ["size", "symbol"]) {
+        const value = nextMarker[key];
+        if (Array.isArray(value) && value.length === x.length) {
+          nextMarker[key] = everyNth(value, step);
+        }
+      }
+      next.marker = nextMarker;
     }
     return next as T;
   });

@@ -436,22 +436,28 @@ export function resolveExportPlan(
   const viewInnerWidth = Math.max(120, viewWidth - margin.l - margin.r);
   const viewInnerHeight = Math.max(120, viewHeight - margin.t - margin.b);
   const viewRatio = viewInnerWidth / viewInnerHeight;
-  const layoutWidth = viewWidth;
   const pixelWidth = Math.max(320, Math.round(style.export_width || viewWidth));
-  const scale = pixelWidth / layoutWidth;
-  let layoutHeight: number;
+  // The live plots have a fixed logical height. Keep that styling reference
+  // for every aspect: changing height at a fixed width shrinks text, strokes
+  // and markers relative to portrait/square figures. Resolution belongs only
+  // in the raster scale, never in the font sizes or authored trace styles.
+  let layoutHeight = viewInnerHeight + margin.t + margin.b;
+  let layoutWidth: number;
   let pixelHeight: number;
   let innerRatio: number;
   if (aspect === "custom") {
-    pixelHeight = Math.max(240, Math.round(style.export_height || viewHeight * scale));
-    layoutHeight = Math.max(margin.t + margin.b + 120, pixelHeight / scale);
-    pixelHeight = Math.round(layoutHeight * scale);
-    innerRatio = viewInnerWidth / Math.max(120, layoutHeight - margin.t - margin.b);
+    pixelHeight = Math.max(240, Math.round(style.export_height || viewHeight * pixelWidth / viewWidth));
+    const outerRatio = pixelWidth / pixelHeight;
+    // Extremely narrow custom canvases still need room for the axis margins.
+    layoutHeight = Math.max(layoutHeight, (margin.l + margin.r + 120) / outerRatio);
+    layoutWidth = layoutHeight * outerRatio;
+    innerRatio = (layoutWidth - margin.l - margin.r) / (layoutHeight - margin.t - margin.b);
   } else {
     innerRatio = aspectRatioValue(aspect, viewRatio);
-    layoutHeight = viewInnerWidth / innerRatio + margin.t + margin.b;
-    pixelHeight = Math.max(240, Math.round(layoutHeight * scale));
+    layoutWidth = viewInnerHeight * innerRatio + margin.l + margin.r;
+    pixelHeight = Math.max(240, Math.round(layoutHeight * pixelWidth / layoutWidth));
   }
+  const scale = pixelWidth / layoutWidth;
   return {
     layoutWidth: Math.round(layoutWidth),
     layoutHeight: Math.round(layoutHeight),

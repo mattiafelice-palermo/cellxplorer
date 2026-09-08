@@ -68,6 +68,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -143,6 +144,10 @@ import {
   DebouncedTextInput,
 } from "../../../components/DebouncedInputs";
 import { PlotStylePanel } from "./plotting/PlotStylePanel";
+import {
+  copyRememberedPlotStyleSections,
+  plotStyleKeyFor,
+} from "./plotting/plotStyleSession";
 import { SavedPlotsPanel } from "./artifacts/SavedPlotsPanel";
 import { PortableReportFlow } from "./portable/PortableReportFlow";
 import {
@@ -1641,8 +1646,8 @@ function setCellVisibilityInDraft(
   }
 }
 
-function SamplePanel({
-  spec,
+function SamplePanelView({
+  selection,
   groups,
   cells,
   analysisId,
@@ -1656,7 +1661,7 @@ function SamplePanel({
   onSetEntriesVisibility,
   onRemoveEntries,
 }: {
-  spec: AnalysisSpec;
+  selection: AnalysisSpec["selection"];
   groups: {
     id: number;
     name: string;
@@ -1675,7 +1680,7 @@ function SamplePanel({
   onSetEntriesVisibility?: (entries: SelectionEntry[], visible: boolean) => void;
   onRemoveEntries?: (entries: SelectionEntry[]) => void;
 }) {
-  const hiddenGroups = new Set(spec.selection.hidden_replicate_group_ids ?? []);
+  const hiddenGroups = new Set(selection.hidden_replicate_group_ids ?? []);
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const cellById = new Map(cells.map((c) => [c.id, c]));
   // Read the startup-persisted caches directly: the popovers must open without
@@ -1718,8 +1723,8 @@ function SamplePanel({
   );
   const presentRefs = useMemo(
     () =>
-      (spec.selection.entries ?? []).map((e) => ({ kind: String(e.kind), ref_id: e.ref_id })),
-    [spec.selection.entries]
+      (selection.entries ?? []).map((e) => ({ kind: String(e.kind), ref_id: e.ref_id })),
+    [selection.entries]
   );
   const relatedFor = (cellId: number) =>
     relatedAnalysesForCell(
@@ -1739,7 +1744,7 @@ function SamplePanel({
   const [selectionAnchorKey, setSelectionAnchorKey] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
 
-  const dcirSampleItems = spec.selection.entries.map((entry) => {
+  const dcirSampleItems = selection.entries.map((entry) => {
     if (entry.kind === "replicate_group") {
       const group = groupById.get(entry.ref_id);
       return {
@@ -1754,7 +1759,7 @@ function SamplePanel({
     return {
       key: dcirSampleEntryKey(entry),
       label: cellById.get(entry.ref_id)?.name ?? `cell #${entry.ref_id}`,
-      visible: !spec.selection.exclusions.some((exclusion) =>
+      visible: !selection.exclusions.some((exclusion) =>
         exclusionAppliesToContext(exclusion, entry.ref_id, context),
       ),
       entry,
@@ -1775,18 +1780,18 @@ function SamplePanel({
     { value: "visible_first_asc", label: "\u{1F441} \u2191" },
     { value: "visible_first_desc", label: "\u{1F441} \u2193" },
   ];
-  const selectedDcirEntries = spec.selection.entries.filter((entry) =>
+  const selectedDcirEntries = selection.entries.filter((entry) =>
     selectedKeys.has(dcirSampleEntryKey(entry)),
   );
   const entryIndexByKey = new Map(
-    spec.selection.entries.map((entry, index) => [dcirSampleEntryKey(entry), index]),
+    selection.entries.map((entry, index) => [dcirSampleEntryKey(entry), index]),
   );
   const entriesForRender = bulkActionsEnabled
     ? filteredDcirSampleItems.map((item) => ({
         entry: item.entry,
         index: entryIndexByKey.get(item.key) ?? -1,
       }))
-    : spec.selection.entries.map((entry, index) => ({ entry, index }));
+    : selection.entries.map((entry, index) => ({ entry, index }));
 
   useEffect(() => {
     if (bulkActionsEnabled) return;
@@ -1799,13 +1804,13 @@ function SamplePanel({
   }, [bulkActionsEnabled]);
 
   useEffect(() => {
-    const liveKeys = new Set(spec.selection.entries.map(dcirSampleEntryKey));
+    const liveKeys = new Set(selection.entries.map(dcirSampleEntryKey));
     setSelectedKeys((current) => {
       const next = new Set([...current].filter((key) => liveKeys.has(key)));
       return next.size === current.size ? current : next;
     });
     setSelectionAnchorKey((current) => (current && liveKeys.has(current) ? current : null));
-  }, [spec.selection.entries]);
+  }, [selection.entries]);
 
   useEffect(() => {
     if (selectedKeys.size === 0 && pendingDelete) setPendingDelete(false);
@@ -1910,14 +1915,14 @@ function SamplePanel({
           <Text fw={700} size="sm" truncate style={{ minWidth: 0, flex: "0 1 auto" }}>
             Analysis samples
           </Text>
-          {spec.selection.entries.length > 0 && (
+          {selection.entries.length > 0 && (
             <Badge size="xs" variant="light" color="gray" style={{ flex: "0 0 auto" }}>
-              {spec.selection.entries.length}
+              {selection.entries.length}
             </Badge>
           )}
         </Group>
         <Group gap="xs" wrap="nowrap" style={{ flex: "0 0 auto" }}>
-          {bulkActionsEnabled && spec.selection.entries.length > 0 && (
+          {bulkActionsEnabled && selection.entries.length > 0 && (
             <Tooltip label={selectionMode ? "Exit sample selection mode" : "Select samples"}>
               <ActionIcon
                 size="sm"
@@ -1937,7 +1942,7 @@ function SamplePanel({
         </Group>
       </Group>
       <Collapse in={!collapsed}>
-      {spec.selection.entries.length === 0 ? (
+      {selection.entries.length === 0 ? (
         <Text size="xs" c="dimmed">
           No cells or replicates selected.
         </Text>
@@ -2134,7 +2139,7 @@ function SamplePanel({
                   <Stack gap={2} mt={4} pl="md">
                     {(group?.cells ?? []).map((cell) => {
                       const context = { kind: "replicate_group" as const, ref_id: entry.ref_id };
-                      const isHidden = spec.selection.exclusions.some((exclusion) =>
+                      const isHidden = selection.exclusions.some((exclusion) =>
                         exclusionAppliesToContext(exclusion, cell.id, context)
                       );
                       return (
@@ -2191,7 +2196,7 @@ function SamplePanel({
             }
             const cell = cellById.get(entry.ref_id);
             const context = { kind: "cell" as const, ref_id: entry.ref_id };
-            const isHidden = spec.selection.exclusions.some((exclusion) =>
+            const isHidden = selection.exclusions.some((exclusion) =>
               exclusionAppliesToContext(exclusion, entry.ref_id, context)
             );
             const selected = selectedKeys.has(dcirSampleEntryKey(entry));
@@ -2292,7 +2297,7 @@ function SamplePanel({
           })}
           {bulkActionsEnabled && searchTerm.trim() && (
             <Text size="xs" c="dimmed">
-              {`${filteredDcirSampleItems.length} of ${spec.selection.entries.length} samples match`}
+              {`${filteredDcirSampleItems.length} of ${selection.entries.length} samples match`}
             </Text>
           )}
         </Stack>
@@ -2300,6 +2305,32 @@ function SamplePanel({
       </Collapse>
     </Paper>
   );
+}
+
+const MemoSamplePanel = memo(SamplePanelView);
+
+/** Cycle navigation changes no sample row; keep their data and actions stable. */
+function SamplePanel(props: ComponentProps<typeof SamplePanelView>) {
+  const selectionSignature = JSON.stringify(props.selection);
+  const selection = useMemo(() => props.selection, [selectionSignature]);
+  const committedProps = useRef(props);
+  useLayoutEffect(() => { committedProps.current = props; });
+  const actions = useMemo(() => ({
+    onAdd: () => committedProps.current.onAdd(),
+    onRemoveEntry: (index: number) => committedProps.current.onRemoveEntry(index),
+    onToggleCell: (cellId: number, context: VisibilityContext) => committedProps.current.onToggleCell(cellId, context),
+    onToggleReplicate: (groupId: number) => committedProps.current.onToggleReplicate(groupId),
+    onImportEntries: (entries: SelectionEntry[]) => committedProps.current.onImportEntries(entries),
+    onSetEntriesVisibility: (entries: SelectionEntry[], visible: boolean) => committedProps.current.onSetEntriesVisibility?.(entries, visible),
+    onRemoveEntries: (entries: SelectionEntry[]) => committedProps.current.onRemoveEntries?.(entries),
+  }), []);
+  return <MemoSamplePanel
+    {...props}
+    selection={selection}
+    {...actions}
+    onSetEntriesVisibility={props.onSetEntriesVisibility ? actions.onSetEntriesVisibility : undefined}
+    onRemoveEntries={props.onRemoveEntries ? actions.onRemoveEntries : undefined}
+  />;
 }
 
 function PlotWorkspaceEmpty({
@@ -2492,6 +2523,9 @@ function AnalysisEditorView({
   const [activeSavedPlotId, setActiveSavedPlotId] = useState<string | null>(
     workspaceState?.activeSavedPlotId ?? null,
   );
+  // Drafts are not persisted as plot identities. A unique session key keeps a
+  // newly started draft from inheriting the previous draft's UI-only state.
+  const [draftPlotSessionId, setDraftPlotSessionId] = useState(() => newComputeToken());
   const [activePlotBaselineSignature, setActivePlotBaselineSignature] = useState<string | null>(
     workspaceState?.activePlotBaselineSignature ?? null,
   );
@@ -3635,6 +3669,10 @@ function AnalysisEditorView({
             modifiedAt: now,
           })
         : savedPlotFromSpec(spec, activeTab, draftName, subtitle, draftDescription);
+    copyRememberedPlotStyleSections(
+      plotStyleKeyFor(aid, activeTab, activeSavedPlotId, draftPlotSessionId),
+      plotStyleKeyFor(aid, plot.tab, plot.id, draftPlotSessionId),
+    );
     setSaveDraft(null);
     const next = buildCommitSavedPlotSpec({
       current: spec,
@@ -3692,6 +3730,7 @@ function AnalysisEditorView({
         (item) => item.is_default && item.plot_family === "all",
       );
     const initialStyle = defaultPlotStyleForTab(activeTab, preset?.style);
+    setDraftPlotSessionId(newComputeToken());
     if (activeTab === "time_capacity") {
       setTimeCapacityNavigationSession((value) => value + 1);
       setTimeCapacityVirginNavigation(true);
@@ -3848,6 +3887,10 @@ function AnalysisEditorView({
             subtitle,
             leavePrompt.description || null,
           );
+    copyRememberedPlotStyleSections(
+      plotStyleKeyFor(aid, activeTab, activeSavedPlotId, draftPlotSessionId),
+      plotStyleKeyFor(aid, plot.tab, plot.id, draftPlotSessionId),
+    );
     if (mode === "update" && activePlot) {
       next.saved_plots = (next.saved_plots ?? []).map((item) =>
         item.id === activePlot.id ? plot : item,
@@ -3892,7 +3935,7 @@ function AnalysisEditorView({
   const sidebar = (
     <Stack w={330} gap="xs" style={{ flexShrink: 0 }}>
       <SamplePanel
-        spec={spec}
+        selection={spec.selection}
         groups={sampleGroups}
         cells={currentAnalysis.selection_cells}
         analysisId={aid}
@@ -4010,6 +4053,8 @@ function AnalysisEditorView({
     ? preloadedSpec! : spec;
   const familyPlotId = (tab: AnalysisTabKey) => preparingFamily(tab)
     ? familyRetention.preload!.id : activePlot?.tab === tab ? activeSavedPlotId : null;
+  const familyPlotKey = (tab: AnalysisTabKey) =>
+    plotStyleKeyFor(aid, tab, familyPlotId(tab), draftPlotSessionId);
   const familyPlotName = (tab: AnalysisTabKey) => preparingFamily(tab)
     ? familyRetention.preload!.name : displayPlotName;
   const validPlotIds = new Set((spec.saved_plots ?? []).map((plot) => plot.id));
@@ -4112,6 +4157,9 @@ function AnalysisEditorView({
         draft={null}
         liveUnsaved={liveUnsavedDraft && tab === activeTab}
         onOpenDraft={() => {
+          const alreadyActive =
+            activeSavedPlotId === null && plotSessionActive && plotWorkspaceTouched;
+          if (!alreadyActive) setDraftPlotSessionId(newComputeToken());
           setActiveSavedPlotId(null);
           setActivePlotBaselineSignature(null);
           setPlotWorkspaceTouched(true);
@@ -4214,10 +4262,11 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "cycles",
                 <RetainedCyclesPlotCard
-                  key={familyPlotId("cycles") ?? "draft"}
+                  key={familyPlotKey("cycles")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("cycles")}
+                  plotKey={familyPlotKey("cycles")}
                   subtitle={preparingFamily("cycles") ? plotSubtitle("cycles", undefined, familySpec("cycles")) : displaySubtitle}
                   spec={familySpec("cycles")}
                   update={familyUpdate("cycles")}
@@ -4237,10 +4286,11 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "steps",
                 <StepsPlotCard
-                  key={familyPlotId("steps") ?? "draft"}
+                  key={familyPlotKey("steps")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("steps")}
+                  plotKey={familyPlotKey("steps")}
                   spec={familySpec("steps")}
                   cells={currentAnalysis.selection_cells}
                   update={familyUpdate("steps")}
@@ -4260,10 +4310,11 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "dcir",
                 <DcirPlotCard
-                  key={familyPlotId("dcir") ?? "draft"}
+                  key={familyPlotKey("dcir")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("dcir")}
+                  plotKey={familyPlotKey("dcir")}
                   spec={familySpec("dcir")}
                   update={familyUpdate("dcir")}
                   edited={activePlotDirty && activePlot?.tab === "dcir"}
@@ -4282,10 +4333,11 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "chargeability",
                 <ChargeabilityPlotCard
-                  key={familyPlotId("chargeability") ?? "draft"}
+                  key={familyPlotKey("chargeability")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("chargeability")}
+                  plotKey={familyPlotKey("chargeability")}
                   spec={familySpec("chargeability")}
                   update={familyUpdate("chargeability")}
                   onReadyChange={setChargeabilityReady}
@@ -4327,10 +4379,11 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "time_capacity",
                 <TimeCapacityPlotCard
-                  key={familyPlotId("time_capacity") ?? "draft"}
+                  key={familyPlotKey("time_capacity")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("time_capacity")}
+                  plotKey={familyPlotKey("time_capacity")}
                   subtitle={plotSubtitle("time_capacity", undefined, familySpec("time_capacity"))}
                   spec={familySpec("time_capacity")}
                   update={familyUpdate("time_capacity")}
@@ -4338,7 +4391,7 @@ function AnalysisEditorView({
                   isVirginNavigation={
                     !preparingFamily("time_capacity") && timeCapacityVirginNavigation && activeSavedPlotId === null
                   }
-                  navigationResetKey={`${aid}:${timeCapacityNavigationSession}:${familyPlotId("time_capacity") ?? "draft"}`}
+                  navigationResetKey={`${aid}:${timeCapacityNavigationSession}:${familyPlotKey("time_capacity")}`}
                   active={activeTab === "time_capacity"}
                   onReadyChange={setTimeCapacityReady}
                   onVoltageChannelsChange={setTimeCapacityVoltageChannels}
@@ -4358,10 +4411,11 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "crate",
                 <RateCapabilityPlotCard
-                  key={familyPlotId("crate") ?? "draft"}
+                  key={familyPlotKey("crate")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("crate")}
+                  plotKey={familyPlotKey("crate")}
                   spec={familySpec("crate")}
                   update={familyUpdate("crate")}
                   recognitionEnabled={preparingFamily("crate") || rateCapabilityRecognitionEnabled}

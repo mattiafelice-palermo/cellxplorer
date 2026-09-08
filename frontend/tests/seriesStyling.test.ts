@@ -574,6 +574,18 @@ test("customdata is thinned in lockstep with the points", () => {
   nextX.forEach((value, index) => assert.equal(nextCustom[index][0], value));
 });
 
+test("per-point marker styling is thinned in lockstep with preview points", () => {
+  const x = Array.from({ length: 1000 }, (_, i) => i);
+  const [trace] = decimatePreviewTraces(
+    [{ x, y: x, marker: { size: x.map((i) => (i === 500 ? 9 : 0)), symbol: x.map(() => "circle") } }],
+    100,
+  );
+  const marker = trace.marker as { size: number[]; symbol: string[] };
+  assert.equal((trace.x as number[]).length, marker.size.length);
+  assert.equal((trace.x as number[]).length, marker.symbol.length);
+  assert.deepEqual(marker.size, (trace.x as number[]).map((value) => (value === 500 ? 9 : 0)));
+});
+
 test("undefined rules and overrides are treated as none", () => {
   const resolved = resolveSeriesStyle(base, cell(), undefined, undefined);
   assert.equal(resolved.color, "#111111");

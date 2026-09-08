@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Box,
   Button,
   Checkbox,
   Divider,
@@ -65,6 +66,10 @@ import {
   plotStylePresetFamilyForTab,
 } from "./plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "./paletteDraft";
+import {
+  readRememberedPlotStyleSections,
+  rememberPlotStyleSections,
+} from "./plotStyleSession";
 
 const LEGEND_INSIDE_POSITION_OPTIONS: {
   value: PlotStyle["legend_inside_position"];
@@ -93,6 +98,7 @@ export function PlotStylePanel({
   update,
   onToggle,
   axisScope = "cycles",
+  plotKey,
   buildSeriesPreview,
   ceOverlayActive = false,
   timeCapacityStacked = false,
@@ -106,6 +112,8 @@ export function PlotStylePanel({
   update: (fn: (s: AnalysisSpec) => void) => void;
   onToggle: () => void;
   axisScope?: AnalysisTabKey;
+  /** Stable session identity used to remember accordion state per plot. */
+  plotKey?: string;
   /**
    * Builds the live series-style preview using the trace/layout engine that
    * lives alongside the plot cards. The per-series editor only works with a
@@ -150,9 +158,23 @@ export function PlotStylePanel({
   );
   const [presetDefault, setPresetDefault] = useState(false);
   const [seriesStyleOpen, setSeriesStyleOpen] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<string[]>(() =>
+    readRememberedPlotStyleSections(plotKey),
+  );
   const style = currentPlotStyle(spec, axisScope);
   const computeResult = result && "cell_traces" in result ? undefined : result;
   const showRightAxisControls = ceOverlayActive || timeCapacityStacked;
+  useEffect(() => {
+    setExpandedSections(readRememberedPlotStyleSections(plotKey));
+  }, [plotKey]);
+  const handleAccordionChange = useCallback(
+    (value: string[]) => {
+      const next = [...value];
+      setExpandedSections(next);
+      rememberPlotStyleSections(plotKey, next);
+    },
+    [plotKey],
+  );
   useEffect(() => {
     setPresetFamily(plotStylePresetFamilyForTab(axisScope));
   }, [axisScope]);
@@ -409,9 +431,16 @@ export function PlotStylePanel({
     <Paper
       withBorder
       p="sm"
-      style={{ width: 310, flexShrink: 0, maxHeight: 590, overflowY: "auto" }}
+      style={{ width: 310, flexShrink: 0, minHeight: 0, maxHeight: 590, display: "flex", flexDirection: "column", overflow: "hidden" }}
     >
-      <Group justify="space-between" mb="xs">
+      <Group
+        data-plot-style-header
+        justify="space-between"
+        mb="xs"
+        style={{
+          flexShrink: 0,
+        }}
+      >
         <Text fw={700} size="sm">
           Plot style
         </Text>
@@ -421,6 +450,7 @@ export function PlotStylePanel({
           </ActionIcon>
         </Tooltip>
       </Group>
+      <Box data-plot-style-scroll style={{ minHeight: 0, overflowY: "auto" }}>
       <Stack gap={6} mb="sm">
         <Select
           label="Style preset"
@@ -469,7 +499,7 @@ export function PlotStylePanel({
           </Button>
         </Group>
       </Stack>
-      <Accordion multiple defaultValue={["axes"]}>
+      <Accordion multiple value={expandedSections} onChange={handleAccordionChange}>
         <Accordion.Item value="lines">
           <Accordion.Control>
             <Text fw={700} size="sm">
@@ -1159,6 +1189,7 @@ export function PlotStylePanel({
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
+      </Box>
       {buildSeriesPreview && (
         <SeriesStyleModal
           opened={seriesStyleOpen}

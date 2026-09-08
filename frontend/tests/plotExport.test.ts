@@ -15,6 +15,41 @@ import { DEFAULT_PLOT_STYLE } from "../src/features/analyses/editor/plotting/plo
 import { plotViewSignature } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
 import type { AnalysisSpec } from "../src/api.ts";
 
+test("all export aspects preserve authored fonts and styling relative to plot height", () => {
+  const layout: Partial<Plotly.Layout> = {
+    height: 500,
+    margin: { l: 80, r: 40, t: 30, b: 70 },
+    font: { size: 22, family: "Arial", color: "#123456" },
+    xaxis: { title: { text: "Cycle", font: { size: 32 }, standoff: 18 }, tickfont: { size: 22 } },
+    yaxis2: { title: { text: "CE", font: { size: 28 } }, tickfont: { size: 20 } },
+    legend: { font: { size: 26 } },
+    annotations: [{ text: "Annotation", font: { size: 24 } }],
+  };
+  const traces: Plotly.Data[] = [{ x: [1, 2], y: [3, 4], line: { width: 4 }, marker: { size: [8, 12] } }];
+  const before = structuredClone({ layout, traces });
+  const aspects = ["view", "square", "four_three", "sixteen_nine", "a4_landscape", "a4_portrait", "custom"] as const;
+  for (const export_aspect_ratio of aspects) {
+    for (const export_width of [1200, 2400]) {
+      const style = { ...DEFAULT_PLOT_STYLE, export_aspect_ratio, export_width, export_height: export_width * 1.25 };
+      const plan = resolveExportPlan(style, { width: 1000, height: 500 }, layout);
+      const figure = exportFigure(traces, layout, style, "Test", plan);
+      assert.equal(plan.layoutHeight, 500, export_aspect_ratio);
+      assert.deepEqual(figure.layout.font, layout.font);
+      assert.deepEqual(figure.layout.xaxis, layout.xaxis);
+      assert.deepEqual(figure.layout.yaxis2, layout.yaxis2);
+      assert.deepEqual(figure.layout.legend, layout.legend);
+      assert.deepEqual(figure.layout.annotations, layout.annotations);
+      assert.deepEqual(figure.data, traces);
+      // Rasterization scales the font and canvas together, independent of DPI.
+      assert.ok(Math.abs(22 * plan.scale / plan.pixelHeight - 22 / 500) < 0.0001);
+      if (export_aspect_ratio === "custom") assert.equal(plan.pixelHeight, style.export_height);
+      if (export_aspect_ratio === "view") assert.equal(plan.layoutWidth, 1000);
+      if (export_aspect_ratio === "square") assert.equal(plan.layoutWidth - 120, plan.layoutHeight - 100);
+    }
+  }
+  assert.deepEqual({ layout, traces }, before);
+});
+
 test("CSV text starts with a UTF-8 BOM, not visible mojibake", () => {
   const text = buildDelimitedText(
     [{ header: "Voltage (V)", values: [3.1415926] }],

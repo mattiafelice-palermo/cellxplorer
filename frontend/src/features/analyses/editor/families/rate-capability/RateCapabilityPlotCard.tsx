@@ -1300,6 +1300,7 @@ export function RateCapabilityPlotCard({
   analysisId,
   analysisTitle,
   plotName,
+  plotKey,
   spec,
   update,
   recognitionEnabled = true,
@@ -1314,6 +1315,8 @@ export function RateCapabilityPlotCard({
   analysisId: number;
   analysisTitle: string;
   plotName: string;
+  /** Stable identity for per-plot style-panel UI state. */
+  plotKey?: string;
   spec: AnalysisSpec;
   update: (fn: (draft: AnalysisSpec) => void) => void;
   recognitionEnabled?: boolean;
@@ -1625,6 +1628,7 @@ export function RateCapabilityPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="crate"
+        plotKey={plotKey ?? `analysis:${analysisId}:crate`}
         xAxisNumeric={view.x_spacing !== "equal"}
         seriesDescriptors={seriesDescriptors}
         buildSeriesPreview={buildSeriesPreview}

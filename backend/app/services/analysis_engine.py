@@ -1289,8 +1289,18 @@ def _retention_reference(frame: pd.DataFrame, computation: dict) -> float:
         return float("nan")
     cycle_values = frame["cycle"].to_numpy(dtype="float64", copy=False)
     discharge_values = dchg.to_numpy(dtype="float64", copy=False)
-    if ref_cfg.get("mode") == "cycle" and ref_cfg.get("cycle"):
-        matching = np.flatnonzero(cycle_values == int(ref_cfg["cycle"]))
+    if ref_cfg.get("mode") == "cycle":
+        configured_cycle = ref_cfg.get("cycle")
+        # A specific baseline must never silently fall back to the historical
+        # first-N rule: that would make an invalid saved setting look valid.
+        if isinstance(configured_cycle, bool) or not isinstance(
+            configured_cycle, (int, float, np.integer, np.floating)
+        ):
+            return float("nan")
+        cycle_number = float(configured_cycle)
+        if not np.isfinite(cycle_number) or cycle_number < 1 or not cycle_number.is_integer():
+            return float("nan")
+        matching = np.flatnonzero(cycle_values == cycle_number)
         return float(discharge_values[matching[0]]) if len(matching) else float("nan")
     n = int(ref_cfg.get("n") or 5)
     order = np.argsort(cycle_values, kind="stable")[:n]

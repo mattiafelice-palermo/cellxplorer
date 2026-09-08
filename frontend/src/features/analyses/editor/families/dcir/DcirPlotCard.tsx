@@ -1123,6 +1123,7 @@ export function DcirPlotCard({
   analysisId,
   analysisTitle,
   plotName,
+  plotKey,
   spec,
   update,
   edited = false,
@@ -1135,6 +1136,8 @@ export function DcirPlotCard({
   analysisId: number;
   analysisTitle: string;
   plotName: string;
+  /** Stable identity for per-plot style-panel UI state. */
+  plotKey?: string;
   spec: AnalysisSpec;
   update: (fn: (draft: AnalysisSpec) => void) => void;
   edited?: boolean;
@@ -1385,6 +1388,7 @@ export function DcirPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="dcir"
+        plotKey={plotKey ?? `analysis:${analysisId}:dcir`}
         seriesDescriptors={seriesDescriptors}
         buildSeriesPreview={buildSeriesPreview}
       />
