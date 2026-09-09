@@ -1,6 +1,6 @@
 # 057 — Progressive Time/Capacity navigation warmup
 
-Status: Spec registered; implementation pending.
+Status: Implemented; automated verification and bounded browser acceptance passed.
 Base: `main` at `4a69ed51` (`v0.27.1-beta.1`).
 Implementation branch: `feature/time-capacity-progressive-warmup`.
 
@@ -60,3 +60,30 @@ retaining explicit interaction gates. Do not expand this feature to other analys
 
 Implement and verify on the feature branch, commit and push the completed change, then merge
 to main after acceptance. No version bump, tag, or release is authorized by this spec.
+
+## Implementation and verification — 2026-09-09
+
+- Added a finite constant-space sweep for the active Time/Capacity window width. It walks
+  every valid start, producing the shared production moving/full range specifications at
+  viewport width 1200, standard precision, compact responses, and background priority.
+- Successful results persist in the existing budgeted disk cache, without speculative
+  React Query arrays, analysis mutations, or job-token churn. A module-wide admission lock
+  prevents overlapping progressive requests across card lifetimes. Failures end the sweep.
+- Explicit input and foreground loading pause admissions; movement alone does not. Disabled,
+  hidden/inactive, Continuous, explicit-cycle-list, and empty views do not admit work.
+- Browser verification used a disposable synthetic 50-cycle Cell, not the user's database:
+  idle requests began without opening the slider; moving/full requests progressed at each
+  range; clicks introduced idle gaps; slider/key navigation rendered updated ranges and
+  warming resumed. Changing width started a new sweep. Leaving Time/Capacity stopped it.
+- The browser check exposed a range-dependent `source_data_signature` reset. Replaced it
+  with the existing source-descriptor identity, added a regression, and verified subsequent
+  navigation did not restart a completed sweep. A separate foreground API request returned
+  `cache_status: hit` for the prepared saved configuration.
+- Six focused frontend tests pass, covering finite coverage, invalid/large extents,
+  explicit event selection, idle/serial admission, range-stable source identity, and exact
+  request density/persistence. Backend coverage confirms background-persisted results are
+  reused by transient foreground requests.
+- Final `python scripts/preflight.py`: **PREFLIGHT PASSED**, **4/4 stages**, all **166**
+  backend/frontend files/modules passed, **89.55 s**. No scientific/version changes.
+- Browser checks were bounded functional checks, not a large-real-dataset latency benchmark
+  or an installed-desktop restart/eviction endurance test. Cache residency remains budgeted.

@@ -155,10 +155,12 @@ import {
 } from "./timeCapacityRefinementPolicy";
 import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
 import { TimeCapacityCycleNavigation } from "./TimeCapacityCycleNavigation";
+import { useTimeCapacityProgressiveWarmup } from "./useTimeCapacityProgressiveWarmup";
+import { timeCapacityRangeSpec, TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH } from "./timeCapacityWarmupPolicy";
 import {
   timeCapacityPreviewCancel,
-  timeCapacityPreviewFlushMoving,
   timeCapacityPreviewMaxPoints,
+  timeCapacityPreviewFlushMoving,
   timeCapacityPreviewOnMove,
   timeCapacityPreviewOnMovingRequestComplete,
   timeCapacityPreviewPromoteOnIdle,
@@ -234,29 +236,13 @@ const TIME_CAPACITY_GRID_MODEBAR_ICON = {
   path: "M64 64h144v144H64zM304 64h144v144H304zM64 304h144v144H64zM304 304h144v144H304z",
 };
 
-const TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH = 1200;
-
 function timeCapacitySpecWithPreview(
   spec: AnalysisSpec,
   range: TimeCapacityCycleRange,
   resolution: TimeCapacityPreviewRequest["resolution"],
   maxPointsOverride?: number,
 ): AnalysisSpec {
-  const config = timeCapacityConfig(spec);
-  return {
-    ...spec,
-    computation: {
-      ...spec.computation,
-      time_capacity: {
-        ...config,
-        cycle_start: range.start,
-        cycle_end: range.end,
-        max_points_per_cell:
-          maxPointsOverride ??
-          timeCapacityPreviewMaxPoints(config.max_points_per_cell, resolution),
-      },
-    },
-  };
+  return timeCapacityRangeSpec(spec, timeCapacityConfig(spec), range, resolution, maxPointsOverride);
 }
 
 function timeCapacitySpecWithCycleRange(
@@ -2197,6 +2183,15 @@ function TimeCapacityPlotCardView({
     gcTime: 30 * 60_000,
   });
   usePlotFamilyQuerySettled(timeResult);
+  useTimeCapacityProgressiveWarmup({
+    analysisId, spec, config: cfg, maximum: maxAvailableCycle,
+    enabled: active && timeResult.isSuccess && !timeResult.isPlaceholderData,
+    blocked: timeResult.isFetching || cyclePreviewRange !== null ||
+      committedNavigationRequest !== null || dataExportStage !== null,
+    foregroundBusy: () => refinementAbortRef.current !== null || refinementTimerRef.current !== null,
+    sourceIdentity: voltageChannelDataIdentity(timeResult.data),
+    plotIdentity: navigationResetKey,
+  });
   useEffect(() => {
     if (
       !previewRequest ||
@@ -3143,6 +3138,8 @@ function TimeCapacityPlotCardView({
               .catch(() => {
                 // Refinement is opportunistic; the stable overview remains
                 // visible when a request is aborted or unavailable.
+              }).finally(() => {
+                if (refinementAbortRef.current === controller) refinementAbortRef.current = null;
               });
           }, 150);
         }

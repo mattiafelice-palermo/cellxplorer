@@ -76,20 +76,20 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
         .finally(() => queryClient.invalidateQueries({ queryKey: ["background-jobs"] }));
     };
     const events: (keyof WindowEventMap)[] = [
-      "pointermove",
       "pointerdown",
+      "click",
       "keydown",
       "wheel",
       "touchstart",
       "focus",
     ];
-    events.forEach((event) => window.addEventListener(event, markActive, { passive: true }));
+    events.forEach((event) => window.addEventListener(event, markActive, { capture: true, passive: true }));
     const visibilityChanged = () => {
       if (document.visibilityState === "visible") markActive();
     };
     document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
-      events.forEach((event) => window.removeEventListener(event, markActive));
+      events.forEach((event) => window.removeEventListener(event, markActive, true));
       document.removeEventListener("visibilitychange", visibilityChanged);
     };
   }, [queryClient]);

@@ -783,6 +783,21 @@ mark a paused queue as completed.
 
 ## Serving a cached analysis result
 
+The active Time/Capacity card runs a finite, constant-space cycle-window sweep through
+`useTimeCapacityProgressiveWarmup.ts` and `timeCapacityWarmupPolicy.ts`. It prepares production
+moving and settled requests serially with `background: true` and `persist: true`, discarding
+responses instead of inserting speculative arrays into React Query. Navigation reads the same
+bounded disk cache. Explicit input, foreground queries, hidden/inactive views, and active gestures
+defer new admissions; ordinary pointer movement does not. In-flight work finishes before another
+request starts, including across card unmounts. Completed/failed sweeps do not retry continuously.
+Explicit-cycle lists and Continuous time do not use this sweep.
+
+Do not use `source_data_signature` alone as a range-independent sweep identity: despite its name,
+it includes the requested cycle window. Use `voltageChannelDataIdentity` source descriptors
+alongside the normalized plot/settings/window-width identity, or navigation restarts preparation.
+The disabled buffered absolute-time experiment is unrelated and must remain disabled. Prepared
+requests retain each Cell's selected-range alignment.
+
 A cache hit must not pay for the payload twice. Results are stored as an immutable body plus a tiny
 badge sidecar (`<key>.meta.json` beside `<key>.json.gz`), and `analysis_cache.splice_result_body`
 prepends `cache_status` and `badges` onto the stored bytes without parsing them. `badges` is the

@@ -1409,7 +1409,11 @@ class AnalysisEngineTests(unittest.TestCase):
             # The same request persists normally when it is not transient, and
             # the transient request then serves that entry rather than ignoring
             # the cache: declining to write must not mean declining to read.
-            durable = analyses_router.ComputeRequest(precision="standard", compact=True)
+            # Spec 057: low-priority progressive preparation has the same key
+            # as foreground navigation; persistence/priority are not science.
+            durable = analyses_router.ComputeRequest(
+                precision="standard", compact=True, background=True, persist=True
+            )
             analyses_router.compute_time_capacity_analysis(analysis.id, durable, self.db)
             self.assertEqual(store.call_count, 1)
             self.assertEqual(len(stored_bodies), 1)

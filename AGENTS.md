@@ -240,6 +240,9 @@ Cellxplorer/
 │   │   │       │   ├── RetainedAnalysisPanel.tsx  Frozen family views and bounded idle preparation
 │   │   │       │   ├── artifacts/  Saved previews, artifacts, draft cards, and cache warmup
 │   │   │       │   ├── families/   Analysis-family adapters and diagnostic-cycle policy
+│   │   │       │   │   └── time-capacity/ Time/Capacity navigation includes
+│   │   │       │   │                       timeCapacityWarmupPolicy.ts and
+│   │   │       │   │                       useTimeCapacityProgressiveWarmup.ts (Spec 057)
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
 │   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views
