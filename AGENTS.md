@@ -203,6 +203,7 @@ Cellxplorer/
 │           ├── time_capacity_derived.py Shared exact Time/Capacity transforms/prepared-row contract (Spec 050.6)
 │           ├── analysis_family_workers.py Compact cross-family worker boundary and merge (Spec 050.23)
 │           ├── time_capacity_workers.py Owner-resolved ordinary Time/Capacity execution and bounded pool (Spec 050.14)
+│           ├── time_capacity_reusable.py Bounded immutable per-Cell navigation arrays (Spec 058)
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR container/data reader (Spec 041.1)
 │           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)
@@ -223,7 +224,7 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
-│   │   │   ├── NavigationWarmupDebugButton.tsx Temporary Spec 057 warmup progress/debug panel
+│   │   │   ├── NavigationWarmupDebugButton.tsx Temporary Cell-preparation progress/debug panel
 │   │   │   ├── DestructiveImpactModal.tsx
 │   │   │   ├── FolderTree.tsx
 │   │   │   ├── PlaceInFoldersModal.tsx
@@ -243,7 +244,7 @@ Cellxplorer/
 │   │   │       │   ├── families/   Analysis-family adapters and diagnostic-cycle policy
 │   │   │       │   │   └── time-capacity/ Time/Capacity navigation includes
 │   │   │       │   │                       timeCapacityWarmupPolicy.ts and
-│   │   │       │   │                       useTimeCapacityProgressiveWarmup.ts (Spec 057)
+│   │   │       │   │                       useTimeCapacityProgressiveWarmup.ts (Spec 058)
 │   │   │       │   │                       timeCapacityWarmupDebug.ts (temporary diagnostics)
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
@@ -314,6 +315,7 @@ Cellxplorer/
 │   ├── test_profile_analysis_families.py Cross-family route profiler contract tests (Spec 050.17)
 │   ├── test_time_capacity_profiling.py Opt-in Time/Capacity diagnostics tests (Spec 050.4)
 │   ├── test_time_capacity_workers.py Ordinary Time/Capacity worker-boundary and gate tests (Spec 050.14)
+│   ├── test_time_capacity_reusable.py Reusable-array parity, identity, safety, and bounds (Spec 058)
 │   ├── test_time_capacity_ablation.py  Spec 050.13 ablation/parity contract tests
 │   └── test_benchmark_test_runners.py Persistent-runner isolation tests (Spec 048.2)
 ├── docs/

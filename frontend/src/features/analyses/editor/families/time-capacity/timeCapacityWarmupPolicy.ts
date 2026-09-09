@@ -1,6 +1,7 @@
 import type { AnalysisSpec } from "../../../../../api";
 import { timeCapacityPreviewMaxPoints, type TimeCapacityCycleRange } from "./timeCapacityCycleNavigationPolicy.ts";
 import { timeCapacityScientificRequestSpec } from "../../policies/timeCapacityQueryPolicy.ts";
+import { timeCapacityUsesContinuousTime } from "../../policies/timeCapacityQueryPolicy.ts";
 
 export const TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH = 1200;
 export const NAVIGATION_WARMUP_IDLE_MS = 1500;
@@ -13,10 +14,10 @@ export function navigationWarmupCanAdmit(now: number, lastActivity: number, runn
   return !running && now - lastActivity >= NAVIGATION_WARMUP_IDLE_MS;
 }
 
-/** Shared across mounted cards and sweep generations; HTTP cancellation is not CPU cancellation. */
+/** Shared across mounted cards and preparation generations; HTTP cancellation is not CPU cancellation. */
 export class NavigationWarmupSlots {
   running = 0;
-  readonly limit = 4;
+  readonly limit = 1;
   acquire(): (() => void) | null {
     if (this.running >= this.limit) return null;
     this.running++;
@@ -47,34 +48,27 @@ export function timeCapacityRangeSpec(
   };
 }
 
-export function timeCapacityWarmupBody(spec: AnalysisSpec) {
+export function timeCapacityPreparationBody(
+  spec: AnalysisSpec, config: NonNullable<AnalysisSpec["computation"]["time_capacity"]>,
+) {
   return {
-    spec: timeCapacityScientificRequestSpec(spec),
-    viewport_width: TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH,
-    precision: "standard" as const,
-    compact: true,
-    background: true,
-    persist: true,
+    spec: timeCapacityScientificRequestSpec(timeCapacityRangeSpec(
+      spec, config, { start: 1, end: 1 }, "full", 4000,
+    )),
   };
 }
 
-/** Constant-space, finite sweep. Navigation does not reset its cursor. */
-export class TimeCapacityWarmupSweep {
-  private cursor = 0;
-  readonly count: number;
-  readonly width: number;
-  readonly first: number;
-  constructor(width: number, maximum: number, first: number) {
-    this.width = width;
-    this.first = first;
-    this.count = Number.isSafeInteger(width) && Number.isSafeInteger(maximum) &&
-      width > 0 && maximum >= width ? maximum - width + 1 : 0;
+export function timeCapacityPreparationUnsupportedReason(
+  spec: AnalysisSpec, config: NonNullable<AnalysisSpec["computation"]["time_capacity"]>,
+): string {
+  const filter = spec.computation.protocol_filter;
+  const channels = config.voltage_channels ?? [config.voltage_channel ?? "voltage"];
+  if (timeCapacityUsesContinuousTime(config)) return "Continuous mode uses ordinary reads.";
+  if (config.cycles.length) return "Explicit cycle lists use ordinary reads.";
+  if (config.x_axis !== "time" || config.view !== "voltage_current" || config.display_mode !== "consecutive" ||
+      channels.length !== 1 || channels[0] !== "voltage" ||
+      filter?.excluded_segment_ids.length || filter?.only_segment_ids.length) {
+    return "This plot configuration uses ordinary reads; no window sweep is generated.";
   }
-  next(): { range: TimeCapacityCycleRange; resolution: "moving" | "full" } | null {
-    if (this.cursor >= this.count * 2) return null;
-    const start = ((Math.max(1, Math.min(this.count, this.first)) - 1 +
-      Math.floor(this.cursor / 2)) % this.count) + 1;
-    const resolution = this.cursor++ % 2 === 0 ? "moving" : "full";
-    return { range: { start, end: start + this.width - 1 }, resolution };
-  }
+  return "";
 }

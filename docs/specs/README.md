@@ -1,8 +1,12 @@
 # Feature specs
 
+- [058-reusable-time-capacity-data.md](058-reusable-time-capacity-data.md)
+  replaces exhaustive overlapping-window warmup with bounded reusable per-Cell arrays and
+  vectorized numeric conversion. **Implemented; preflight and bounded browser acceptance passed.**
+
 - [057-time-capacity-progressive-warmup.md](057-time-capacity-progressive-warmup.md)
   prepares active Time/Capacity navigation progressively during idle time, ignores mouse movement,
-  yields to explicit interaction, and reuses bounded persistent results. **Spec registered.**
+  yields to explicit interaction, and reuses bounded persistent results. **Implemented; overlapping-window sweep superseded by 058.**
 
 - [`056-cycle-point-selection-and-detail-inspector.md`](056-cycle-point-selection-and-detail-inspector.md)
   adds transient rectangle, polygon, and single-point selection to the Cycles plot, with a

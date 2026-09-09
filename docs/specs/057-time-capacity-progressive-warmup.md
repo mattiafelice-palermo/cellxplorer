@@ -1,6 +1,7 @@
 # 057 — Progressive Time/Capacity navigation warmup
 
 Status: Implemented; automated verification and bounded browser acceptance passed.
+Superseded: [Spec 058](058-reusable-time-capacity-data.md) replaces the overlapping-window sweep with reusable per-Cell arrays.
 Base: `main` at `4a69ed51` (`v0.27.1-beta.1`).
 Implementation branch: `feature/time-capacity-progressive-warmup`.
 

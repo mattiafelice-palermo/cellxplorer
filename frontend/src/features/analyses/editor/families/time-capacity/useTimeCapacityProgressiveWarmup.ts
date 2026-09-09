@@ -3,14 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { post, type AnalysisSpec } from "../../../../../api";
 import {
   navigationWarmupCanAdmit, WARMUP_INTERACTION_EVENTS, NavigationWarmupSlots,
-  TimeCapacityWarmupSweep, timeCapacityRangeSpec, timeCapacityWarmupBody,
+  timeCapacityPreparationBody, timeCapacityPreparationUnsupportedReason,
 } from "./timeCapacityWarmupPolicy";
-import { normalizeCycleRangeForNavigation } from "./timeCapacityCycleNavigationPolicy";
-import { timeCapacityUsesContinuousTime } from "../../policies/timeCapacityQueryPolicy";
 import { EMPTY_WARMUP_DEBUG, publishWarmupDebug, removeWarmupDebug, type WarmupDebug } from "./timeCapacityWarmupDebug";
 
-// Survives card unmounts: abandoning an HTTP observer does not cancel backend CPU.
-const speculativeSlots = new NavigationWarmupSlots();
+// A single admitted batch survives unmounts until backend work actually finishes.
+const preparationSlot = new NavigationWarmupSlots();
 
 export function useTimeCapacityProgressiveWarmup(options: {
   analysisId: number;
@@ -27,25 +25,23 @@ export function useTimeCapacityProgressiveWarmup(options: {
   const queryClient = useQueryClient();
   const latest = useRef(options);
   latest.current = options;
-  const progress = useRef<{ identity: string; sweep: TimeCapacityWarmupSweep } | null>(null);
   const lastActivity = useRef(Date.now());
 
   useEffect(() => {
     let pointerHeld = false;
     let disposed = false;
-    const owner = Symbol("navigation-warmup");
-    let details = { ...EMPTY_WARMUP_DEBUG };
-    let localRunning = 0;
-    const requests = new Map<symbol, string>();
+    let running = false;
+    let progress: { identity: string; done: boolean } | null = null;
     let failure = "";
+    const owner = Symbol("navigation-preparation");
+    let details = { ...EMPTY_WARMUP_DEBUG };
     const report = (state: WarmupDebug["state"], reason: string) => {
       if (disposed) return;
       const current = latest.current;
       publishWarmupDebug(owner, {
         ...details, state, reason, active: current.active,
         analysisId: current.analysisId, plot: String(current.plotIdentity ?? "draft"),
-        inFlight: localRunning > 0, running: localRunning,
-        request: requests.size ? [...requests.values()].join("; ") : details.request,
+        inFlight: running, running: running ? 1 : 0,
       });
     };
     const markActive = () => { lastActivity.current = Date.now(); };
@@ -61,90 +57,74 @@ export function useTimeCapacityProgressiveWarmup(options: {
     const pump = () => {
       if (disposed) return;
       const current = latest.current;
-      const { config, maximum } = current;
-      const blockedReason = !current.active ? "Time/Capacity plot is not active." :
+      const blocked = !current.active ? "Time/Capacity plot is not active." :
         document.visibilityState !== "visible" ? "Window is hidden." :
         !current.spec.selection.entries.length ? "No samples selected." :
-        timeCapacityUsesContinuousTime(config) ? "Continuous mode does not warm cycle windows." :
-        config.cycles.length > 0 ? "An explicit cycle list is selected; window warming is disabled." :
-        !maximum ? "Waiting for the available cycle extent." :
+        timeCapacityPreparationUnsupportedReason(current.spec, current.config) ||
+        (!current.maximum ? "Waiting for the available cycle extent." :
         !current.enabled ? "Waiting for a successful, current plot result." :
         !current.sourceIdentity ? "Waiting for source identity." :
         pointerHeld ? "Pointer or slider gesture is still held." :
-        current.blocked || current.foregroundBusy() ? "Foreground plot request, navigation, refinement, or export is active." : "";
-      if (blockedReason) {
-        report("Paused", blockedReason);
-        return;
-      }
-      // Polling activity/status queries do not starve scientific preparation.
-      if (queryClient.isFetching({ predicate: query =>
-        query.meta?.cacheOnly !== true &&
+        current.blocked || current.foregroundBusy() ? "Foreground plot work is active." : "");
+      if (blocked) { report("Paused", blocked); return; }
+      if (queryClient.isFetching({ predicate: query => query.meta?.cacheOnly !== true &&
         /^(time-capacity|compute|dcir|chargeability|rate-capability|steps)$/.test(String(query.queryKey[0]))
       })) { report("Paused", "A foreground scientific query is running."); return; }
-      const range = normalizeCycleRangeForNavigation(config.cycle_start, config.cycle_end, maximum);
-      const width = range.end - range.start + 1;
+      const body = timeCapacityPreparationBody(current.spec, current.config);
       const identity = JSON.stringify({
         analysis: current.analysisId, plot: current.plotIdentity,
-        source: current.sourceIdentity, maximum,
-        spec: timeCapacityWarmupBody(timeCapacityRangeSpec(current.spec, config, { start: 1, end: width })).spec,
+        source: current.sourceIdentity, maximum: current.maximum, spec: body.spec,
       });
-      if (progress.current?.identity !== identity) {
-        progress.current = { identity, sweep: new TimeCapacityWarmupSweep(width, maximum!, range.start) };
-        details = { ...EMPTY_WARMUP_DEBUG, total: progress.current.sweep.count * 2 };
+      if (progress?.identity !== identity) {
+        progress = { identity, done: false };
+        details = { ...EMPTY_WARMUP_DEBUG };
         failure = "";
         markActive();
       }
       if (failure) { report("Error", failure); return; }
-      if (!navigationWarmupCanAdmit(Date.now(), lastActivity.current, speculativeSlots.running >= speculativeSlots.limit)) {
-        report(localRunning ? "Running" : "Waiting", speculativeSlots.running >= speculativeSlots.limit
-          ? "All four background request slots are occupied."
+      if (progress.done) {
+        report("Complete", details.skipped
+          ? "Preparation checked all Cells; unsupported or budget-limited Cells use ordinary reads."
+          : "Reusable Cell data is ready. Navigation assembles windows on demand.");
+        return;
+      }
+      if (!navigationWarmupCanAdmit(Date.now(), lastActivity.current, preparationSlot.running > 0)) {
+        report(running ? "Running" : "Waiting", preparationSlot.running
+          ? "Finishing the admitted Cell-preparation batch."
           : "Waiting for 1.5 seconds without explicit interaction.");
         return;
       }
-      while (speculativeSlots.running < speculativeSlots.limit) {
-        const task = progress.current.sweep.next();
-        if (!task) {
-          report(localRunning ? "Running" : "Complete", localRunning
-            ? "Finishing the remaining admitted requests."
-            : "This sweep is finished. Cache eviction may remove older prepared results.");
-          return;
-        }
-        const release = speculativeSlots.acquire()!;
-        localRunning++;
-        const requestId = Symbol("request");
-        const admittedProgress = progress.current;
-        details.request = `Cycles ${task.range.start}–${task.range.end} · ${task.resolution === "moving" ? "moving preview" : "settled plot"}`;
-        requests.set(requestId, details.request);
-        const started = performance.now();
-        report("Running", "Preparing cycle windows in the background.");
-        void (async () => {
-          try {
-            // No React Query insertion, job token, recipe mutation, or cancellation.
-            const result = await post<{ cache_status?: string }>(`/api/analyses/${current.analysisId}/time-capacity`, timeCapacityWarmupBody(
-              timeCapacityRangeSpec(current.spec, config, task.range, task.resolution),
-            ));
-            if (!disposed && progress.current === admittedProgress) {
-              details.completed++;
-              details.lastMs = performance.now() - started;
-              if (result.cache_status === "hit") details.hits++;
-              if (result.cache_status === "miss") details.misses++;
-            }
-          } catch (error) {
-            // An unavailable source/server stops this sweep; no automatic retry loop.
-            if (!disposed && progress.current === admittedProgress) {
-              failure = `Preparation stopped: ${error instanceof Error ? error.message : String(error)}`;
-            }
-          } finally {
-            release();
-            localRunning--;
-            requests.delete(requestId);
-            if (disposed) removeWarmupDebug(owner);
-            else pump();
+      const release = preparationSlot.acquire()!;
+      const admitted = progress;
+      running = true;
+      details.request = "Reusable full-resolution Cell arrays";
+      const started = performance.now();
+      report("Running", "Preparing Cell data once; no overlapping window results are generated.");
+      void (async () => {
+        try {
+          const result = await post<{ status: string; total: number; prepared: number; reused: number; skipped: number }>(
+            `/api/analyses/${current.analysisId}/time-capacity/prepare`, body);
+          if (!disposed && progress === admitted) {
+            admitted.done = true;
+            details.total = result.total;
+            details.completed = result.total;
+            details.hits = result.reused;
+            details.misses = result.prepared;
+            details.skipped = result.skipped || (result.status === "unsupported" ? 1 : 0);
+            details.lastMs = performance.now() - started;
           }
-        })();
-      }
+        } catch (error) {
+          if (!disposed && progress === admitted) {
+            failure = `Preparation stopped: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        } finally {
+          release();
+          running = false;
+          if (disposed) removeWarmupDebug(owner);
+          else pump();
+        }
+      })();
     };
-    // Timer only discovers idle/gate changes. Every completion refills immediately.
     const timer = window.setInterval(pump, 100);
     return () => {
       disposed = true;

@@ -1566,6 +1566,21 @@ def compute_rate_capability_analysis(
         raise
 
 
+@router.post("/analyses/{analysis_id}/time-capacity/prepare")
+def prepare_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
+    """Prepare reusable arrays only; never save recipes or generate window results."""
+    from ..services import time_capacity_reusable
+    from ..services.process_priority import background_thread_priority
+
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
+    with background_thread_priority(True):
+        return time_capacity_reusable.prepare(db, spec, analysis.provenance)
+
+
 @router.post("/analyses/{analysis_id}/time-capacity")
 def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
     request_started = perf_counter()

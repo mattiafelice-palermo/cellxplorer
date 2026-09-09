@@ -1705,12 +1705,22 @@ def _jsonsafe_plot(arr, digits: int | None) -> list:
     values = np.asarray(arr, dtype="float64")
     if digits is not None:
         values = np.round(values, digits)
+    # Bulk conversion avoids a Python/NumPy scalar call for every display point.
+    # Preserve infinities (the response encoder handles them) and signed zero.
+    if values.ndim == 1:
+        missing = np.isnan(values)
+        return np.where(missing, None, values).tolist() if missing.any() else values.tolist()
     return [None if np.isnan(value) else float(value) for value in values]
 
 
 def _jsonsafe_int(arr) -> list:
+    values = np.asarray(arr, dtype="float64")
+    # int(float) supports integers beyond int64; keep that compatibility path.
+    if (values.ndim == 1 and np.isfinite(values).all()
+            and (values >= -(2.0 ** 63)).all() and (values < 2.0 ** 63).all()):
+        return values.astype("int64").tolist()
     out = []
-    for v in np.asarray(arr, dtype="float64"):
+    for v in values:
         out.append(None if np.isnan(v) else int(v))
     return out
 

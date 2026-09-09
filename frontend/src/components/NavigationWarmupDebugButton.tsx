@@ -13,7 +13,7 @@ export function NavigationWarmupDebugButton() {
   return <>
     <Button variant="subtle" size="compact-sm" color={color}
       leftSection={<IconActivity size={14} />} onClick={() => setOpened(true)}
-      aria-label={`Navigation warmup: ${status.state}, ${status.completed} of ${status.total} requests`}
+      aria-label={`Navigation warmup: ${status.state}, ${status.completed} of ${status.total} Cells checked`}
       title={status.reason}>
       <Stack gap={2} style={{ minWidth: 160 }}>
         <Text size="xs">Warmup · {status.state} {status.total ? `${Math.floor(percent)}%` : ""}</Text>
@@ -26,15 +26,15 @@ export function NavigationWarmupDebugButton() {
         <Text size="sm" fw={700}>{status.state}</Text>
         <Text size="sm">{status.reason}</Text>
         <Progress value={percent} color={color} animated={status.inFlight}
-          aria-label="Completed warmup requests" />
-        <Text size="sm">{status.completed} / {status.total} requests completed ({percent.toFixed(1)}%)</Text>
-        <Text size="xs" c="dimmed">Each cycle window has two requests: moving preview and settled plot. Progress measures completed requests, not retained cache residency.</Text>
+          aria-label="Cell preparation progress" />
+        <Text size="sm">{status.completed} / {status.total} Cells checked {status.total ? `(${percent.toFixed(1)}%)` : ""}</Text>
+        <Text size="xs" c="dimmed">Full-resolution data is prepared once per eligible Cell. Navigation assembles windows on demand instead of storing every overlapping window.</Text>
         <Text size="sm">Analysis: {status.analysisId ?? "—"}</Text>
         <Text size="xs" style={{ overflowWrap: "anywhere" }}>Plot: {status.plot || "—"}</Text>
-        <Text size="sm">Background requests running: {status.running} / 4</Text>
+        <Text size="sm">Preparation batch: {status.inFlight ? "Running" : "Idle"}</Text>
         <Text size="sm">{status.inFlight ? "In flight" : "Last request"}: {status.request}</Text>
         <Text size="sm">Last response: {status.lastMs === null ? "—" : `${Math.round(status.lastMs)} ms`}</Text>
-        <Text size="sm">Already cached: {status.hits} · Newly computed: {status.misses}</Text>
+        <Text size="sm">Reused: {status.hits} · Newly prepared: {status.misses} · Skipped: {status.skipped}</Text>
         <Text size="xs" c="dimmed">Clicks pause new admissions, including opening this panel. It resumes after idle; mouse movement does not pause it. An in-flight request is allowed to finish.</Text>
       </Stack>
     </Modal>

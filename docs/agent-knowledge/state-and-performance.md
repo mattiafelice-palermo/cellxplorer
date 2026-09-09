@@ -783,15 +783,28 @@ mark a paused queue as completed.
 
 ## Serving a cached analysis result
 
-The active Time/Capacity card runs a finite, constant-space cycle-window sweep through
-`useTimeCapacityProgressiveWarmup.ts` and `timeCapacityWarmupPolicy.ts`. It prepares production
-moving and settled requests with four shared HTTP slots, `background: true` and `persist: true`, discarding
-responses instead of inserting speculative arrays into React Query. Navigation reads the same
-bounded disk cache. Explicit input, foreground queries, hidden/inactive views, and active gestures
-defer new admissions; ordinary pointer movement and programmatic element focus do not. Actual
-completions immediately refill slots without a per-request polling delay. Slots remain occupied
-across card unmounts until the HTTP request finishes. Completed/failed sweeps do not retry continuously.
-Explicit-cycle lists and Continuous time do not use this sweep.
+The active Time/Capacity card admits one idle per-Cell preparation batch through
+`useTimeCapacityProgressiveWarmup.ts` and `timeCapacityWarmupPolicy.ts` (Spec 058, superseding
+the Spec 057 overlapping-window sweep). The `/time-capacity/prepare` endpoint builds exact sorted
+cycle/time/voltage/current/source-cycle arrays through `time_capacity_reusable.py`. It does not
+persist a recipe, provenance, or speculative window results. Only single-source, unfiltered,
+compact standard consecutive selected-range Time plots using cell voltage are eligible; all
+other configurations retain ordinary reads. Foreground workers only consume existing artifacts.
+They select the requested rows, rebase the selected-range origin, and apply the unchanged
+production downsampler. Labels, source metadata, visibility and provenance remain request-owned.
+
+Artifacts include source/parser/layout/calculation identity and participate in the existing disk
+budget as `.npz.gz` files under analysis results. Each artifact and each process's immutable LRU
+is capped at 32 MiB, with at most eight retained entries. Admission checks full row count before
+materialization; loads bound compressed/uncompressed payload sizes and never unpickle. Missing,
+changed, corrupt, removed, unsupported and oversized artifacts fall back to indexed reads.
+Atomic publication uses the existing cache writer. The shared pool is reused with at most four
+preparation jobs in flight; no additional pool is created.
+
+Explicit input, foreground queries, hidden/inactive views, and active gestures defer admission;
+ordinary pointer movement and programmatic element focus do not. One shared HTTP slot remains
+occupied across card unmounts until the admitted batch actually finishes. Completed/failed batches
+do not retry continuously. No speculative result arrays enter React Query.
 
 The HTTP lane cap does not resize the shared host-dependent process pool. Concurrent background
 index probes use `cache.background_layout_reads` to wait at the existing raw/index consistency
@@ -800,11 +813,11 @@ This policy is context-local and leaves foreground probes nonblocking. Compatibi
 must preserve omitted compact phase arrays as empty, not index them with selected row indices.
 Retained-family `cacheOnly` query metadata excludes cache probes from foreground admission gates.
 
-Do not use `source_data_signature` alone as a range-independent sweep identity: despite its name,
+Do not use `source_data_signature` alone as a range-independent preparation identity: despite its name,
 it includes the requested cycle window. Use `voltageChannelDataIdentity` source descriptors
-alongside the normalized plot/settings/window-width identity, or navigation restarts preparation.
+alongside normalized plot/settings identity excluding range, width and density, or navigation restarts preparation.
 The disabled buffered absolute-time experiment is unrelated and must remain disabled. Prepared
-requests retain each Cell's selected-range alignment.
+arrays retain each Cell's canonical time; requests apply their own selected-range alignment.
 
 A cache hit must not pay for the payload twice. Results are stored as an immutable body plus a tiny
 badge sidecar (`<key>.meta.json` beside `<key>.json.gz`), and `analysis_cache.splice_result_body`

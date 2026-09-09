@@ -1076,6 +1076,18 @@ def _run_job(job: ReadJob, request: ResolvedRequest, submitted_at: float | None 
     started = perf_counter()
     submitted = started if submitted_at is None else submitted_at
     rss_before = process_rss_bytes()
+    from . import time_capacity_reusable
+
+    reusable = time_capacity_reusable.try_cell_result(job, request)
+    if reusable is not None:
+        result, diagnostics = reusable
+        return CellResult(
+            index=job.index, cell_id=job.cell_id, result=result, diagnostics=diagnostics,
+            queue_ms=max(0.0, (started - submitted) * 1000.0),
+            worker_wall_ms=(perf_counter() - started) * 1000.0,
+            worker_pid=os.getpid(), worker_rss_before_bytes=rss_before,
+            worker_rss_after_bytes=process_rss_bytes(),
+        )
     payload = _materialize_read(job, submitted)
     result, diagnostics = _cell_result(job, payload, request)
     payload.worker_wall_ms = (perf_counter() - started) * 1000.0
