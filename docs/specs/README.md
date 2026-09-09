@@ -1,5 +1,9 @@
 # Feature specs
 
+- [057-time-capacity-progressive-warmup.md](057-time-capacity-progressive-warmup.md)
+  prepares active Time/Capacity navigation progressively during idle time, ignores mouse movement,
+  yields to explicit interaction, and reuses bounded persistent results. **Spec registered.**
+
 - [`056-cycle-point-selection-and-detail-inspector.md`](056-cycle-point-selection-and-detail-inspector.md)
   adds transient rectangle, polygon, and single-point selection to the Cycles plot, with a
   non-modal exact-value table and an always-expanded within-cycle Time/Capacity detail explorer.
