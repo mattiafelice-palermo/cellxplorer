@@ -1078,3 +1078,18 @@ The Time/Capacity interaction profiler starts at request admission, after the pa
 For perceived latency, also measure native pointer-down to the matching Plotly completion.
 Distinguish React Query memory, backend result-cache hits, and cache misses; warm frontend timing
 is not evidence of faster cold scientific computation.
+
+The moving-preview idle timer must not promote to full resolution while a moving request or
+newer pending range exists. Sparse pointer events can exceed the 50 ms idle threshold even
+during a continuous drag; promotion would cancel useful previews and overlap server work.
+Keep held previews transient, preserve request backpressure, and keep the card's preview state
+as a session sentinel: the scheduler owns the latest range. Interactive traces retain hover
+identity but omit export-only columns; data exports rebuild them from full-resolution data.
+Do not build the experimental panning cycle/X index when panning is disabled.
+
+Single-source indexed planning facts are bounded (64 entries / 8 MiB) and reusable only after
+the current nonblocking raw/index probe returns the identical retained validated object.
+Raw shape alone is insufficient: same-shape replacement may change time offsets or voltage
+capabilities. Share frozen source facts, not mutable request envelopes or ORM metadata;
+missing/busy probes must still fall back. Source-plan reuse does not imply a complete-result
+cache hit: selected-window downsampling, serialization, transport and Plotly remain necessary.

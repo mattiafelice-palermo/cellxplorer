@@ -425,6 +425,7 @@ function timeCapacitySegments(
   trace: TimeCapacityTrace,
   spec: AnalysisSpec,
   xOverride?: number[],
+  includeExportColumns = true,
 ): TimeCapacitySegment[] {
   const cfg = timeCapacityConfig(spec);
   const selectedChannels = cfg.voltage_channels;
@@ -473,7 +474,7 @@ function timeCapacitySegments(
     current.x.push(x[index]);
     current.cycle.push(trace.cycle[index] ?? null);
     current.sourceCycle.push(trace.source_cycle?.[index] ?? null);
-    current.sources.push(timeCapacitySourceAt(trace, index));
+    if (includeExportColumns) current.sources.push(timeCapacitySourceAt(trace, index));
     const firstChannel = selectedChannels[0];
     current.voltage.push(
       firstChannel ? voltageValues.get(firstChannel)?.[index] ?? null : null,
@@ -573,6 +574,7 @@ export function timeCapacityTracesForResult(
   spec: AnalysisSpec,
   interactiveWebGl = false,
   preserveAnalysisSampleVisibility = false,
+  includeExportColumns = true,
 ): Plotly.Data[] {
   const style = currentPlotStyle(spec, "time_capacity");
   const palette = plotPalette(style);
@@ -646,10 +648,10 @@ export function timeCapacityTracesForResult(
         const y = trace.derivative_y.slice(start, end);
         if (hasFinitePoint(x) && hasFinitePoint(y)) {
           const cycles = trace.cycle.slice(start, end);
-          const sourceCycle = trace.source_cycle?.slice(start, end);
-          const sourcePosition = trace.source_position?.slice(start, end);
-          const sourceFilename = trace.source_filename?.slice(start, end);
-          const sourceHash = trace.source_hash?.slice(start, end);
+          const sourceCycle = includeExportColumns ? trace.source_cycle?.slice(start, end) : undefined;
+          const sourcePosition = includeExportColumns ? trace.source_position?.slice(start, end) : undefined;
+          const sourceFilename = includeExportColumns ? trace.source_filename?.slice(start, end) : undefined;
+          const sourceHash = includeExportColumns ? trace.source_hash?.slice(start, end) : undefined;
           let resolved = resolvedByPhase.get(phase);
           if (!resolved) {
             resolved = resolveTrace(
@@ -689,14 +691,14 @@ export function timeCapacityTracesForResult(
             connectgaps: false,
             cellxplorer_analysis_sample: analysisSample,
             meta: `${phase}, cycle ${cycle ?? "?"}`,
-            cellxplorer_export_columns: sourceExportColumns(
+            cellxplorer_export_columns: includeExportColumns ? sourceExportColumns(
               baseName,
               cycles,
               sourceCycle,
               sourcePosition,
               sourceFilename,
               sourceHash,
-            ),
+            ) : undefined,
             hovertemplate:
               `<b>${compactHoverName(resolved.name)}</b><br>` +
               "value %{y:.5g}<br>x %{x:.5g}<br>%{meta}<extra></extra>",
@@ -762,7 +764,7 @@ export function timeCapacityTracesForResult(
         multipleVoltageChannels,
       ),
     );
-    for (const segment of timeCapacitySegments(trace, spec, fullX)) {
+    for (const segment of timeCapacitySegments(trace, spec, fullX, includeExportColumns)) {
       const visibleChannelStyles = channelStyles.filter(
         (channelStyle) =>
           visibleVoltageChannels.has(channelStyle.channel) &&
@@ -804,12 +806,12 @@ export function timeCapacityTracesForResult(
           connectgaps: false,
           cellxplorer_analysis_sample: analysisSample,
           customdata: segmentCustomdata,
-          cellxplorer_export_columns: sourceExportColumnsFromPoints(
+          cellxplorer_export_columns: includeExportColumns ? sourceExportColumnsFromPoints(
             channelName,
             segment.cycle,
             segment.sourceCycle,
             segment.sources,
-          ),
+          ) : undefined,
           meta: channelLabel.replace(/\s*\(V\)$/, ""),
           cellxplorer_export_axis_labels: {
             y: style.y_title ?? channelLabel,
@@ -1953,7 +1955,9 @@ function TimeCapacityPlotCardView({
       schedulePanIdlePromotion(range);
       return;
     }
-    setCyclePreviewRange(range);
+    // Only session presence is consumed here; the scheduler owns the latest
+    // range. Avoid rerendering the whole card for a queued pointer position.
+    setCyclePreviewRange((current) => current ?? range);
     clearPreviewMovingTimer();
     clearPreviewIdleTimer();
     const decision = timeCapacityPreviewOnMove(
@@ -2026,7 +2030,7 @@ function TimeCapacityPlotCardView({
   // Read alongside `requestSpec` so the value the query body sends always
   // describes the same request the query key was built from.
   const previewResolution = previewRequest?.resolution ?? null;
-  const transientPreviewRequest = panBufferRequestActive || previewResolution === "moving";
+  const transientPreviewRequest = panBufferRequestActive || previewResolution !== null;
   const requestCfg = timeCapacityConfig(scientificRequestSpec);
   const refinementLifecycleRef = useRef<TimeCapacityRefinementLifecycle | null>(null);
   if (refinementLifecycleRef.current === null) {
@@ -2130,12 +2134,10 @@ function TimeCapacityPlotCardView({
           cache_only: familyActivity.cacheOnly,
           viewport_width: viewportWidth,
           precision: "standard",
-          // Spec 052.3 Stage 3: a moving preview is a range the user is
-          // dragging past, so it must not populate the analysis result cache —
-          // persisting each one cost a write under the global cache lock and
-          // evicted genuinely reusable entries. Idle-promoted full previews and
-          // committed ranges persist exactly as before. Reads are unaffected:
-          // a moving preview that happens to hit an entry still serves it.
+          // Spec 059: both moving and still-held full previews are transient.
+          // Do not populate persistent caches or activity for a range the pointer can
+          // leave again. Only the final committed range persists; reads of
+          // existing results remain available at either preview resolution.
           ...(transientPreviewRequest ? { persist: false } : {}),
           // The disabled experimental buffer uses the selected window's
           // origin, matching Cycle-aligned navigation if it is re-enabled.
@@ -2539,10 +2541,12 @@ function TimeCapacityPlotCardView({
     ? refinedResult
     : null;
   const plotResult = activeRefinedResult ?? currentResult;
+  // Hover retains its cycle/source-cycle data. Export-only columns are built
+  // from the full-resolution result in handleDataExport, not on every preview.
   const plotTraces = useMemo(
     () =>
       plotResult && !selectedVoltageUnavailable
-        ? timeCapacityTracesForResult(plotResult, scientificRenderSpec, false, true)
+        ? timeCapacityTracesForResult(plotResult, scientificRenderSpec, false, true, false)
         : [],
     [plotResult, scientificRenderSpec, selectedVoltageUnavailable]
   );
@@ -2571,8 +2575,8 @@ function TimeCapacityPlotCardView({
   // buffer stays on the Cell's canonical elapsed-time axis. Different Cell
   // durations remain visible; pointer pixels interpolate adjacent windows.
   const panCycleXIndex = useMemo(
-    () => buildTimeCapacityCycleXIndex(plotResult?.cell_traces),
-    [plotResult],
+    () => buildTimeCapacityCycleXIndex(panningEnabled ? plotResult?.cell_traces : undefined),
+    [panningEnabled, plotResult],
   );
   const panLiveXRef = useRef<[number, number] | null>(null);
   const livePanWindow = panLiveWindowRef.current;

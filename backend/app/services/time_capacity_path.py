@@ -11,10 +11,14 @@ as a legacy fallback, while an absent raw cache produces a fail-closed plan.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 import math
+import sys
+import threading
 from time import perf_counter
 from typing import Any
 
@@ -70,10 +74,144 @@ class TimeCapacityStitchPlan:
     missing_positions: list[int]
     skipped_segments: list[int]
     fallback_reason: str | None = None
+    _planning_facts: _SourcePlanningFacts | None = None
 
     @property
     def complete(self) -> bool:
         return not self.missing_positions
+
+
+class _FrozenDict(dict):
+    """Read-only JSON mapping that still supports dict consumers and pickle.
+
+    A deliberate deepcopy produces an independent editable snapshot, as existing
+    diagnostic/test callers expect. Ordinary plans share only frozen contents.
+    """
+
+    def _immutable(self, *args, **kwargs):
+        raise TypeError("source planning facts are immutable")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = __ior__ = _immutable
+
+    def __reduce__(self):
+        return (_FrozenDict, (dict(self),))
+
+    def __deepcopy__(self, memo):
+        return deepcopy(dict(self), memo)
+
+
+def _freeze(value):
+    if isinstance(value, dict):
+        return _FrozenDict((key, _freeze(item)) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+@dataclass(frozen=True)
+class _SourcePlanningFacts:
+    source: IndexedSourcePlan
+    time_facts: _FrozenDict
+    bounds: tuple[int, int] | None
+
+
+@dataclass(frozen=True)
+class _PlanningMemoEntry:
+    # Retain the validated object, not just id(index): object IDs can be reused.
+    validated_index: dict[str, Any]
+    facts: _SourcePlanningFacts
+    size: int
+
+
+_SOURCE_PLAN_MEMO_MAX_ENTRIES = 64
+_SOURCE_PLAN_MEMO_MAX_BYTES = 8 * 1024 * 1024
+_source_plan_memo: OrderedDict[tuple, _PlanningMemoEntry] = OrderedDict()
+_source_plan_memo_lock = threading.RLock()
+
+
+def clear_source_plan_memo() -> None:
+    with _source_plan_memo_lock:
+        _source_plan_memo.clear()
+
+
+def source_plan_memo_stats() -> dict[str, int]:
+    with _source_plan_memo_lock:
+        return {"entries": len(_source_plan_memo),
+                "bytes": sum(entry.size for entry in _source_plan_memo.values())}
+
+
+def _retained_size(value, limit: int) -> int:
+    """Bound retained Python containers, including the original index snapshot."""
+    pending = [value]
+    seen = set()
+    size = 0
+    while pending:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        size += sys.getsizeof(item)
+        if size > limit:
+            return size
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (tuple, list)):
+            pending.extend(item)
+        elif isinstance(item, (_SourcePlanningFacts, IndexedSourcePlan, stitch.CachedSourceRef)):
+            pending.append(vars(item))
+    return size
+
+
+def _memo_facts(plan: TimeCapacityStitchPlan) -> _SourcePlanningFacts | None:
+    facts = plan._planning_facts
+    if (facts is not None and plan.path == "indexed" and plan.complete
+            and len(plan.sources) == 1 and plan.sources[0] is facts.source
+            and plan.refs == (facts.source.ref,)
+            and isinstance(facts.source.index, _FrozenDict)
+            and isinstance(facts.source.cycle_map, _FrozenDict)):
+        return facts
+    return None
+
+
+def _source_plan_from_facts(facts: _SourcePlanningFacts) -> TimeCapacityStitchPlan:
+    source = facts.source
+    # The envelope and user-facing metadata containers remain request-owned.
+    return TimeCapacityStitchPlan(
+        refs=(source.ref,), path="indexed", sources=(source,),
+        segments=[deepcopy(source.segment_metadata)],
+        source_facts={source.ref.file_hash: {
+            **source.timestamp_bounds,
+            "voltage_data_availability": dict(source.voltage_data_availability),
+        }}, missing=[], missing_positions=[], skipped_segments=[],
+        _planning_facts=facts,
+    )
+
+
+def _remember_source_plan(key: tuple, index: dict, plan: TimeCapacityStitchPlan) -> TimeCapacityStitchPlan:
+    if (_SOURCE_PLAN_MEMO_MAX_ENTRIES < 1
+            or _retained_size(index, _SOURCE_PLAN_MEMO_MAX_BYTES) > _SOURCE_PLAN_MEMO_MAX_BYTES):
+        return plan
+    original = plan.sources[0]
+    source = IndexedSourcePlan(
+        ref=original.ref, segment=0, index=_freeze(index),
+        observed_source_cycles=original.observed_source_cycles,
+        cycle_map=_freeze(original.cycle_map), segment_metadata=_freeze(original.segment_metadata),
+    )
+    bounds = (1, len(source.cycle_map)) if source.cycle_map else None
+    facts = _SourcePlanningFacts(source, _freeze(consecutive_time_cycle_facts(plan)), bounds)
+    size = _retained_size((key, index, facts), _SOURCE_PLAN_MEMO_MAX_BYTES)
+    if size > _SOURCE_PLAN_MEMO_MAX_BYTES:
+        return plan
+    with _source_plan_memo_lock:
+        _source_plan_memo.pop(key, None)
+        while _source_plan_memo and (
+            len(_source_plan_memo) >= _SOURCE_PLAN_MEMO_MAX_ENTRIES
+            or sum(entry.size for entry in _source_plan_memo.values()) + size > _SOURCE_PLAN_MEMO_MAX_BYTES
+        ):
+            _source_plan_memo.popitem(last=False)
+        _source_plan_memo[key] = _PlanningMemoEntry(index, facts, size)
+    return _source_plan_from_facts(facts)
 
 
 def time_capacity_raw_columns(available_columns: Iterable[str]) -> list[str]:
@@ -209,6 +347,10 @@ def build_time_capacity_stitch_plan(
     """
 
     ordered_refs = tuple(refs)
+    memo_key = (
+        str(cache.CACHE_DIR), ordered_refs[0].file_hash, ordered_refs[0].parser_version,
+        cache.RAW_CACHE_LAYOUT_VERSION, cache.CALC_VERSION,
+    ) if len(ordered_refs) == 1 else None
     _set_diagnostic(
         diagnostics,
         source_count=len(ordered_refs),
@@ -238,6 +380,21 @@ def build_time_capacity_stitch_plan(
         # is immediately available; a busy boundary takes the legacy path.
         with timed_stage(diagnostics, "raw_index_plan_validation"):
             index = cache.try_load_raw_layout_index(ref.file_hash, ref.parser_version)
+        if memo_key is not None:
+            # Never bypass the current nonblocking consistency probe, even on a
+            # hit. The cache loader returns the same object only for a validated
+            # unchanged raw/index pair; replacement/clear produces a new object.
+            with _source_plan_memo_lock:
+                entry = _source_plan_memo.get(memo_key)
+                if entry is not None and index is entry.validated_index:
+                    _source_plan_memo.move_to_end(memo_key)
+                    _set_diagnostic(
+                        diagnostics, missing_positions=[], skipped_segments=[],
+                        indexed_source_count=1,
+                        row_groups_total=int(index.get("raw_row_group_count", 0)),
+                    )
+                    return _source_plan_from_facts(entry.facts)
+                _source_plan_memo.pop(memo_key, None)
         if index is None:
             if not cache.raw_path(ref.file_hash, ref.parser_version).is_file():
                 missing.append(ref.file_hash)
@@ -296,7 +453,7 @@ def build_time_capacity_stitch_plan(
             int(source.index.get("raw_row_group_count", 0)) for source in sources
         ),
     )
-    return TimeCapacityStitchPlan(
+    plan = TimeCapacityStitchPlan(
         refs=ordered_refs,
         path=path,
         sources=tuple(sources),
@@ -306,6 +463,9 @@ def build_time_capacity_stitch_plan(
         missing_positions=missing_positions,
         skipped_segments=skipped_segments,
     )
+    if memo_key is not None and path == "indexed" and plan.complete:
+        return _remember_source_plan(memo_key, sources[0].index, plan)
+    return plan
 
 
 def requested_global_cycles(
@@ -326,15 +486,21 @@ def requested_global_cycles(
                 continue
         return tuple(sorted(values))
 
-    known = tuple(
-        int(global_cycle)
-        for source in plan.sources
-        for global_cycle in source.cycle_map.values()
-    )
-    if not known:
-        return ()
-    known_lower = min(known)
-    known_upper = max(known)
+    facts = _memo_facts(plan)
+    if facts is not None:
+        if facts.bounds is None:
+            return ()
+        known_lower, known_upper = facts.bounds
+    else:
+        known = tuple(
+            int(global_cycle)
+            for source in plan.sources
+            for global_cycle in source.cycle_map.values()
+        )
+        if not known:
+            return ()
+        known_lower = min(known)
+        known_upper = max(known)
     lower = known_lower if cycle_start is None else int(cycle_start)
     upper = known_upper if cycle_end is None else int(cycle_end)
     # Clamp before materializing the range.  Saved/direct requests can carry
@@ -360,6 +526,10 @@ def consecutive_time_cycle_facts(
 
     if plan.path != "indexed" or not plan.complete:
         return {}
+
+    memo = _memo_facts(plan)
+    if memo is not None:
+        return dict(memo.time_facts)
 
     facts: dict[int, tuple[float, float]] = {}
     running_reset_offset = 0.0

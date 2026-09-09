@@ -236,6 +236,13 @@ export function timeCapacityPreviewPromoteOnIdle(
     return { state, request: null, waitMs: Math.max(0, idle - elapsed) };
   }
 
+  // Idle between sparse pointer events is not permission to cancel useful
+  // work. With reusable-array misses a preview can outlast this short timer;
+  // promoting here used to abandon it and submit a competing full request.
+  if (state.inFlight || state.pendingRange !== null) {
+    return { state, request: null, waitMs: idle };
+  }
+
   const next = {
     ...state,
     phase: "full" as const,

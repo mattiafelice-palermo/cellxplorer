@@ -296,6 +296,8 @@ Cellxplorer/
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_raw_cache_layout.py    Versioned raw row-group/index and selective-read tests (Spec 050.2)
 │   ├── test_time_capacity_path.py  Indexed Time/Capacity planning and selective-read tests (Spec 050.3)
+│   ├── test_time_capacity_plan_memo.py Bounded source-plan reuse and live invalidation (Spec 059)
+│   ├── test_downsample_indices.py Exact extrema/index parity for batched downsampling (Spec 059)
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)

@@ -478,7 +478,7 @@ test("committed navigation admits a new request when the plot context changes", 
   );
 });
 
-test("idle promotion sharpens the same range and renewed movement obsoletes it immediately", () => {
+test("idle promotion waits for moving work before sharpening and renewed movement obsoletes it", () => {
   const first = { start: 10, end: 29 };
   const second = { start: 11, end: 30 };
   const third = { start: 12, end: 31 };
@@ -489,7 +489,14 @@ test("idle promotion sharpens the same range and renewed movement obsoletes it i
     40,
   );
   const pending = timeCapacityPreviewOnMove(moving.state, second, 10, 40);
-  const idle = timeCapacityPreviewPromoteOnIdle(pending.state, pending.state.generation, 60, 50);
+  const blocked = timeCapacityPreviewPromoteOnIdle(pending.state, pending.state.generation, 60, 50);
+  assert.equal(blocked.request, null);
+  assert.equal(blocked.waitMs, 50);
+  assert.equal(timeCapacityPreviewRequestIsCurrent(blocked.state, moving.request!), true);
+  const next = timeCapacityPreviewOnMovingRequestComplete(blocked.state, moving.request!, 100, 40);
+  assert.deepEqual(next.request?.range, second);
+  const settled = timeCapacityPreviewOnMovingRequestComplete(next.state, next.request!, 200, 40);
+  const idle = timeCapacityPreviewPromoteOnIdle(settled.state, settled.state.generation, 210, 50);
   assert.deepEqual(idle.request, {
     range: second,
     resolution: "full",
@@ -502,7 +509,7 @@ test("idle promotion sharpens the same range and renewed movement obsoletes it i
     null,
   );
 
-  const resumed = timeCapacityPreviewOnMove(idle.state, third, 61, 40);
+  const resumed = timeCapacityPreviewOnMove(idle.state, third, 211, 40);
   assert.deepEqual(resumed.request, {
     range: third,
     resolution: "moving",

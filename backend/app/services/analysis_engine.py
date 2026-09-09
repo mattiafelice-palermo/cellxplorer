@@ -1190,29 +1190,48 @@ def _downsample_indices(
     points_per_bucket = max(2, len(usable_series) * 2) * 3
     bucket_count = max(1, remaining // points_per_bucket)
     edges = np.linspace(0, length, bucket_count + 1).astype("int64")
-    selected: set[int] = set(int(value) for value in mandatory)
-    for start, end in zip(edges[:-1], edges[1:]):
-        if end <= start:
+    extrema_indices = [mandatory]
+    widths = np.diff(edges)
+    # Linspace buckets have at most two widths. Batch each width so NumPy
+    # selects first-occurrence extrema without a Python loop per bucket.
+    # The sliding windows are views. Copy only bounded batches of bucket
+    # rows to avoid large temporary arrays and poor cache locality.
+    for width in np.unique(widths):
+        if width <= 0:
             continue
+        starts = edges[:-1][widths == width]
         for values in usable_series:
-            local = values[start:end]
-            finite = np.flatnonzero(np.isfinite(local))
-            if len(finite) == 0:
-                continue
-            finite_values = local[finite]
-            extrema = (
-                int(start + finite[int(np.argmin(finite_values))]),
-                int(start + finite[int(np.argmax(finite_values))]),
-            )
-            for point in extrema:
-                selected.update(
-                    range(max(0, point - 1), min(length, point + 2))
-                )
+            batch_size = max(1, 65_536 // int(width))
+            for offset in range(0, len(starts), batch_size):
+                batch_starts = starts[offset:offset + batch_size]
+                if len(batch_starts) == 1:
+                    buckets = values[batch_starts[0]:batch_starts[0] + width][None, :]
+                elif np.all(np.diff(batch_starts) == width):
+                    buckets = values[batch_starts[0]:batch_starts[-1] + width].reshape(-1, width)
+                else:
+                    buckets = np.lib.stride_tricks.sliding_window_view(values, width)[batch_starts]
+                finite = np.isfinite(buckets)
+                if finite.all():
+                    minima = np.argmin(buckets, axis=1)
+                    maxima = np.argmax(buckets, axis=1)
+                    valid = slice(None)
+                else:
+                    # Both infinities, like NaNs, are excluded by the original
+                    # sampler. Sentinel infinities cannot tie a finite extremum.
+                    valid = finite.any(axis=1)
+                    minima = np.argmin(np.where(finite, buckets, np.inf), axis=1)
+                    maxima = np.argmax(np.where(finite, buckets, -np.inf), axis=1)
+                points = np.concatenate(((batch_starts + minima)[valid],
+                                         (batch_starts + maxima)[valid]))
+                extrema_indices.extend((np.maximum(0, points - 1), points,
+                                        np.minimum(length - 1, points + 1)))
+
+    selected = np.unique(np.concatenate(extrema_indices))
 
     if len(selected) < max_points:
         fill = np.linspace(0, length - 1, max_points - len(selected) + 2).astype("int64")
-        selected.update(int(value) for value in fill)
-    return np.asarray(sorted(selected), dtype="int64")
+        selected = np.union1d(selected, fill)
+    return selected
 
 
 def resolve_selection(db: Session, spec: dict) -> tuple[list[dict], list[dict]]:

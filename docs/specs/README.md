@@ -1,5 +1,10 @@
 # Feature specs
 
+- [059-time-capacity-slider-latency.md](059-time-capacity-slider-latency.md)
+  investigates the post-preparation slider regression and optimizes request planning,
+  envelope downsampling and browser trace construction with exact parity. **Implemented;
+  exact-parity tests, bounded browser acceptance and preflight passed.**
+
 - [058-reusable-time-capacity-data.md](058-reusable-time-capacity-data.md)
   replaces exhaustive overlapping-window warmup with bounded reusable per-Cell arrays and
   vectorized numeric conversion. **Implemented; preflight and bounded browser acceptance passed.**

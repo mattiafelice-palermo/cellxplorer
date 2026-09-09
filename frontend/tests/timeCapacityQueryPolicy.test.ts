@@ -320,6 +320,11 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
     /timeResult\.isPlaceholderData \|\| resultIsCompatibleFallback \|\| resultIsRetainedPanFallback/,
   );
   assert.match(liveSource, /const token = transientPreviewRequest \? null : newComputeToken\(\)/);
+  assert.match(liveSource, /panBufferRequestActive \|\| previewResolution !== null/);
+  assert.match(liveSource, /setCyclePreviewRange\(\(current\) => current \?\? range\)/);
+  assert.match(liveSource, /buildTimeCapacityCycleXIndex\(panningEnabled \? plotResult\?\.cell_traces : undefined\)/);
+  assert.match(liveSource, /timeCapacityTracesForResult\(plotResult, scientificRenderSpec, false, true, false\)/);
+  assert.match(liveSource, /const fullTraces = timeCapacityTracesForResult\(fullResult, exportSpec\)/);
   assert.match(liveSource, /onReadyChange\?\.\(readyForParent\)/);
   assert.match(liveSource, /panSettlingWindowRef\.current = \{ \.\.\.range \}/);
   assert.match(liveSource, /interpolatedXRangeForCycleIndex\(/);
