@@ -45,6 +45,7 @@ import {
 import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
+import { NavigationWarmupDebugButton } from "./components/NavigationWarmupDebugButton";
 import { CacheWarmupCoordinator } from "./features/analyses/editor/artifacts/CacheWarmupCoordinator";
 import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator";
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
@@ -626,6 +627,7 @@ export default function App({
                 "Activity"
               )}
             </Button>
+            <NavigationWarmupDebugButton />
             <DownloadsButton />
             <QuickSettingsMenu onOpenDebug={() => setDebugOpen(true)} />
           </Group>

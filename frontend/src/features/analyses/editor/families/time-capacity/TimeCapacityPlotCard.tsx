@@ -2185,6 +2185,7 @@ function TimeCapacityPlotCardView({
   usePlotFamilyQuerySettled(timeResult);
   useTimeCapacityProgressiveWarmup({
     analysisId, spec, config: cfg, maximum: maxAvailableCycle,
+    active,
     enabled: active && timeResult.isSuccess && !timeResult.isPlaceholderData,
     blocked: timeResult.isFetching || cyclePreviewRange !== null ||
       committedNavigationRequest !== null || dataExportStage !== null,

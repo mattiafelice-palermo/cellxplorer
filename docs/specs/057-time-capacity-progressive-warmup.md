@@ -63,6 +63,25 @@ to main after acceptance. No version bump, tag, or release is authorized by this
 
 ## Implementation and verification — 2026-09-09
 
+### Temporary diagnostics follow-up
+
+User requested a separate Activity-like warmup button because progress was invisible. The
+temporary `NavigationWarmupDebugButton` subscribes to a memory-only diagnostic store; the
+existing sweep publishes admission reasons, completed/total request counts, in-flight range,
+cache hits/misses, last response duration, and errors. No extra compute requests or database
+writes are added. Percentages count completed requests (two per window), not cache residency.
+Remove the button/store and diagnostic publication when debugging is finished. No release or
+version bump is part of this temporary instrumentation.
+
+Verification: browser displayed 37/62 requests, a click-induced idle wait at 51/62,
+and completion at 62/62 (one cache hit, 61 misses), with readable header and modal progress.
+The final preflight rerun passed 4/4 stages and all 167 modules/files in 85.86 s. An earlier
+preflight run failed; that failure did not recur on the full unchanged-code rerun. The new
+store test covers active-owner selection, duplicate-notification suppression, truthful error
+counts, and cleanup. Synthetic browser data was isolated from the real library.
+
+### Original implementation
+
 - Added a finite constant-space sweep for the active Time/Capacity window width. It walks
   every valid start, producing the shared production moving/full range specifications at
   viewport width 1200, standard precision, compact responses, and background priority.

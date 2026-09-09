@@ -223,6 +223,7 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
+│   │   │   ├── NavigationWarmupDebugButton.tsx Temporary Spec 057 warmup progress/debug panel
 │   │   │   ├── DestructiveImpactModal.tsx
 │   │   │   ├── FolderTree.tsx
 │   │   │   ├── PlaceInFoldersModal.tsx
@@ -243,6 +244,7 @@ Cellxplorer/
 │   │   │       │   │   └── time-capacity/ Time/Capacity navigation includes
 │   │   │       │   │                       timeCapacityWarmupPolicy.ts and
 │   │   │       │   │                       useTimeCapacityProgressiveWarmup.ts (Spec 057)
+│   │   │       │   │                       timeCapacityWarmupDebug.ts (temporary diagnostics)
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
 │   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views
