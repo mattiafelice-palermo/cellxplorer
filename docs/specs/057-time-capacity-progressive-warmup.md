@@ -23,7 +23,7 @@ window start through the available extent. Prepare the exact production moving-p
 settled-request identities so ordinary navigation consumes the prepared cache; do not revive
 the disabled absolute-time buffered-panning experiment or change per-Cell alignment.
 
-Use one speculative request at a time, low-priority backend execution, compact responses,
+Use at most four speculative requests at a time, low-priority backend execution, compact responses,
 and existing source/settings-sensitive cache keys. Persist successful prepared results via
 the existing bounded disk result cache, without saving or modifying the analysis recipe.
 Keep speculative frontend retention bounded. A saved plot can reuse valid prepared results
@@ -48,7 +48,7 @@ retaining explicit interaction gates. Do not expand this feature to other analys
 2. Clicks anywhere, slider activity, keyboard/wheel input, and plot changes pause admission;
    foreground navigation remains authoritative and warming later resumes.
 3. Deterministic coverage reaches all valid starts for the current window size, without
-   duplicate sweeps, unbounded memory retention, or concurrent speculative requests.
+   duplicate sweeps, unbounded memory retention, or more than four concurrent speculative requests.
 4. Prepared preview and committed ranges use identical request/cache keys to navigation.
    Reopened saved plots reuse disk results when valid; changed source/spec identities do not.
 5. Continuous mode, hidden/inactive views, empty samples, and ongoing foreground loading
@@ -62,6 +62,37 @@ Implement and verify on the feature branch, commit and push the completed change
 to main after acceptance. No version bump, tag, or release is authorized by this spec.
 
 ## Implementation and verification — 2026-09-09
+
+### Parallel throughput follow-up
+
+The user amended the serial requirement to parallel preparation using four workers.
+Four completion-driven HTTP slots feed the existing shared backend pool, without changing
+its host-dependent 2/4/6-process sizing or creating another pool. The cap survives card
+unmounts and sweep changes. Completions refill immediately; a 100 ms timer only discovers
+idle/gate changes. Only explicit user input and identity changes reset the 1.5 s idle clock.
+Cache-only retained-family reads are identified separately from foreground queries.
+
+Parallel route testing exposed raw-index probe contention selecting the compatibility
+fallback, and an empty optional phase-array downsampling failure there. Background-only,
+context-local index reads may wait at the existing consistency lock; foreground probes
+remain nonblocking. The fallback preserves its deliberately omitted phase array.
+
+A bounded golden-source benchmark used four Cells (three cloned source caches), 16 distinct
+moving/settled requests, a warmed four-process pool with four distinct PID acknowledgements,
+fresh result-cache directories per pass, and independent database sessions. ABBA lane order
+was 1/4/4/1. Miss times: serial 2.606/3.345 s; parallel 1.613/1.735 s (median throughput
+about 1.78x). Hit times: serial 1.228/1.271 s; parallel 1.118/1.034 s. Every response had
+the expected hit/miss status and exact scientific digest parity. These are bounded fixture
+route timings, not a real-library or installed-desktop latency guarantee.
+
+Browser: the isolated 50-cycle Cell completed 62/62 requests; initial four admissions
+arrived within 9 ms, followed by completion-driven refills (no 500 ms pacing). Changing
+window width and opening diagnostics showed an explicit idle wait before the new sweep.
+That sweep then completed 82/82 requests (one hit, 81 misses). Final
+`python scripts/preflight.py`: **PREFLIGHT PASSED**, **4/4 stages**, all **167**
+backend/frontend files/modules passed, **79.19 s**. Focused regressions cover the
+shared four-slot cap, context-local background lock policy/restoration, and compact
+fallback downsampling. No version, release, schema, or scientific calculation changes.
 
 ### Temporary diagnostics follow-up
 

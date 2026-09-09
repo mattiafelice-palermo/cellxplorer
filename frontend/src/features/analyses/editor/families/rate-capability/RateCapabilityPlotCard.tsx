@@ -436,6 +436,7 @@ export function useRateCapabilityResult(
   const tokenKey = `rate-capability:${analysisId}:${signature}`;
   const result = useQuery({
     queryKey: ["rate-capability", analysisId, signature],
+    meta: { cacheOnly: familyActivity.cacheOnly },
     queryFn: async () => {
       const token = newRecognitionToken();
       setRecognitionToken(tokenKey, token);

@@ -6,11 +6,23 @@ export const TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH = 1200;
 export const NAVIGATION_WARMUP_IDLE_MS = 1500;
 // Capture explicit input even when a control stops propagation. Hover is not input.
 export const WARMUP_INTERACTION_EVENTS = [
-  "pointerdown", "click", "keydown", "wheel", "touchstart", "focus",
+  "pointerdown", "click", "keydown", "wheel", "touchstart",
 ] as const;
 
 export function navigationWarmupCanAdmit(now: number, lastActivity: number, running: boolean): boolean {
   return !running && now - lastActivity >= NAVIGATION_WARMUP_IDLE_MS;
+}
+
+/** Shared across mounted cards and sweep generations; HTTP cancellation is not CPU cancellation. */
+export class NavigationWarmupSlots {
+  running = 0;
+  readonly limit = 4;
+  acquire(): (() => void) | null {
+    if (this.running >= this.limit) return null;
+    this.running++;
+    let released = false;
+    return () => { if (!released) { released = true; this.running--; } };
+  }
 }
 
 export function timeCapacityRangeSpec(

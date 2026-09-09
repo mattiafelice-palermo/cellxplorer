@@ -224,6 +224,7 @@ export function useStepsResult(
   );
   const result = useQuery({
     queryKey: ["steps", analysisId, signature],
+    meta: { cacheOnly: familyActivity.cacheOnly },
     queryFn: () => post<StepsResult>(`/api/analyses/${analysisId}/steps`, { spec, cache_only: familyActivity.cacheOnly }),
     enabled: familyActivity.enabled && series.length > 0,
     retry: familyActivity.cacheOnly ? false : undefined,

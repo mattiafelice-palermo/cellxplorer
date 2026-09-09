@@ -45,6 +45,32 @@ class RawCacheLayoutTests(unittest.TestCase):
     FILE_HASH = "a" * 64
     PARSER = "nx:test:r1"
 
+    def test_background_layout_wait_policy_is_context_local_and_restored(self):
+        from contextlib import contextmanager
+        observed = []
+
+        @contextmanager
+        def access(*, wait):
+            observed.append(wait)
+            yield False
+
+        with patch.object(cache, "_raw_layout_access", access), patch.object(cache, "_wait_for_pending"):
+            cache.try_load_raw_layout_index(self.FILE_HASH, self.PARSER)
+            with cache.background_layout_reads(True):
+                cache.try_load_raw_layout_index(self.FILE_HASH, self.PARSER)
+                thread = threading.Thread(target=cache.try_load_raw_layout_index,
+                                          args=(self.FILE_HASH, self.PARSER))
+                thread.start()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                with self.assertRaises(RuntimeError):
+                    with cache.background_layout_reads(False):
+                        cache.try_load_raw_layout_index(self.FILE_HASH, self.PARSER)
+                        raise RuntimeError("test restoration")
+                cache.try_load_raw_layout_index(self.FILE_HASH, self.PARSER)
+            cache.try_load_raw_layout_index(self.FILE_HASH, self.PARSER)
+        self.assertEqual(observed, [False, True, False, False, True, False])
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.cache_root = Path(self.temp.name)

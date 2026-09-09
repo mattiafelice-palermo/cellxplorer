@@ -31,6 +31,7 @@ export function NavigationWarmupDebugButton() {
         <Text size="xs" c="dimmed">Each cycle window has two requests: moving preview and settled plot. Progress measures completed requests, not retained cache residency.</Text>
         <Text size="sm">Analysis: {status.analysisId ?? "—"}</Text>
         <Text size="xs" style={{ overflowWrap: "anywhere" }}>Plot: {status.plot || "—"}</Text>
+        <Text size="sm">Background requests running: {status.running} / 4</Text>
         <Text size="sm">{status.inFlight ? "In flight" : "Last request"}: {status.request}</Text>
         <Text size="sm">Last response: {status.lastMs === null ? "—" : `${Math.round(status.lastMs)} ms`}</Text>
         <Text size="sm">Already cached: {status.hits} · Newly computed: {status.misses}</Text>

@@ -785,12 +785,20 @@ mark a paused queue as completed.
 
 The active Time/Capacity card runs a finite, constant-space cycle-window sweep through
 `useTimeCapacityProgressiveWarmup.ts` and `timeCapacityWarmupPolicy.ts`. It prepares production
-moving and settled requests serially with `background: true` and `persist: true`, discarding
+moving and settled requests with four shared HTTP slots, `background: true` and `persist: true`, discarding
 responses instead of inserting speculative arrays into React Query. Navigation reads the same
 bounded disk cache. Explicit input, foreground queries, hidden/inactive views, and active gestures
-defer new admissions; ordinary pointer movement does not. In-flight work finishes before another
-request starts, including across card unmounts. Completed/failed sweeps do not retry continuously.
+defer new admissions; ordinary pointer movement and programmatic element focus do not. Actual
+completions immediately refill slots without a per-request polling delay. Slots remain occupied
+across card unmounts until the HTTP request finishes. Completed/failed sweeps do not retry continuously.
 Explicit-cycle lists and Continuous time do not use this sweep.
+
+The HTTP lane cap does not resize the shared host-dependent process pool. Concurrent background
+index probes use `cache.background_layout_reads` to wait at the existing raw/index consistency
+boundary; otherwise reader-reader contention can unnecessarily select the full-read fallback.
+This policy is context-local and leaves foreground probes nonblocking. Compatibility downsampling
+must preserve omitted compact phase arrays as empty, not index them with selected row indices.
+Retained-family `cacheOnly` query metadata excludes cache probes from foreground admission gates.
 
 Do not use `source_data_signature` alone as a range-independent sweep identity: despite its name,
 it includes the requested cycle window. Use `voltageChannelDataIdentity` source descriptors

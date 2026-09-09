@@ -278,6 +278,7 @@ export function useCyclesResult({
   const [computeToken, setComputeToken] = useState<string | null>(null);
   const result = useQuery<ComputeResult, Error>({
     queryKey: ["compute", analysisId, computeSignature(spec)],
+    meta: { cacheOnly: familyActivity.cacheOnly },
     queryFn: async () => {
       if (!spec) throw new Error("Cycles compute requires an analysis spec");
       const token = newComputeToken();

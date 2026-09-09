@@ -12,11 +12,12 @@ export interface WarmupDebug {
   request: string;
   lastMs: number | null;
   inFlight: boolean;
+  running: number;
 }
 export const EMPTY_WARMUP_DEBUG: WarmupDebug = {
   active: false, state: "Waiting", reason: "Open a Time/Capacity plot to start warming.",
   analysisId: null, plot: "", completed: 0, total: 0, hits: 0, misses: 0,
-  request: "—", lastMs: null, inFlight: false,
+  request: "—", lastMs: null, inFlight: false, running: 0,
 };
 const owners = new Map<symbol, WarmupDebug>();
 const listeners = new Set<() => void>();

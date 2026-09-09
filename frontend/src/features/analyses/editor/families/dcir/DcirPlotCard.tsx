@@ -338,6 +338,7 @@ export function useDcirResult(
   const tokenKey = `dcir:${analysisId}:${signature}`;
   const result = useQuery({
     queryKey: ["dcir", analysisId, signature],
+    meta: { cacheOnly: familyActivity.cacheOnly },
     queryFn: async () => {
       const token = newRecognitionToken();
       setRecognitionToken(tokenKey, token);

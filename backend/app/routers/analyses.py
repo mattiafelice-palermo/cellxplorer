@@ -1711,7 +1711,9 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                     compute_options["access_diagnostics"] = access_diagnostics
             compute_started = perf_counter()
             with time_capacity_profiling.profiled_stage(request_profile, "engine_compute"):
-                with background_thread_priority(req.background):
+                from ..services import cache
+
+                with background_thread_priority(req.background), cache.background_layout_reads(req.background):
                     result = engine.compute_time_capacity(
                         db,
                         spec,

@@ -23,6 +23,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,22 @@ from ..config import CACHE_DIR, CALC_VERSION
 from . import calc, canonical_cycling, parsing, time_capacity_derived
 
 logger = logging.getLogger(__name__)
+
+_wait_for_background_layout = ContextVar("wait_for_background_layout", default=False)
+
+
+@contextmanager
+def background_layout_reads(enabled: bool):
+    """Background readers may queue at the short raw/index consistency boundary.
+
+    Foreground probes remain nonblocking. Context-local policy cannot leak to
+    concurrent foreground requests or change cache identities.
+    """
+    token = _wait_for_background_layout.set(enabled)
+    try:
+        yield
+    finally:
+        _wait_for_background_layout.reset(token)
 
 
 # This is a physical access-layout generation, not a scientific meaning or
@@ -1213,15 +1230,17 @@ def try_load_raw_layout_index(
     file_hash: str,
     parser_version: str,
 ) -> dict[str, Any] | None:
-    """Load a stable raw-layout pair without waiting for layout preparation.
+    """Load a stable raw-layout pair without making foreground probes wait.
 
     A ``None`` result means the pair is missing, invalid, or currently behind
     the raw-layout I/O boundary.  The last case is deliberately useful to
     request paths that can render the canonical raw cache through their
     compatibility reader while a background conversion is in progress.
+    An explicit ``background_layout_reads`` scope waits instead so concurrent
+    speculative readers do not force one another onto the compatibility path.
     """
     _wait_for_pending(file_hash)
-    with _raw_layout_access(wait=False) as acquired:
+    with _raw_layout_access(wait=_wait_for_background_layout.get()) as acquired:
         if not acquired:
             return None
         try:

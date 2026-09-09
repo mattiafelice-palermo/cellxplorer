@@ -5,7 +5,7 @@ import { voltageChannelDataIdentity } from "../src/features/analyses/editor/poli
 import {
   TimeCapacityWarmupSweep, timeCapacityRangeSpec, timeCapacityWarmupBody,
   WARMUP_INTERACTION_EVENTS,
-  navigationWarmupCanAdmit,
+  navigationWarmupCanAdmit, NavigationWarmupSlots,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityWarmupPolicy.ts";
 
 test("finite sweep covers both production resolutions at every valid start", () => {
@@ -34,6 +34,24 @@ test("explicit activity pauses warming but pointer movement does not", () => {
   assert.ok(WARMUP_INTERACTION_EVENTS.includes("pointerdown"));
   assert.ok(WARMUP_INTERACTION_EVENTS.includes("wheel"));
   assert.ok(!WARMUP_INTERACTION_EVENTS.some(e => /move/.test(e)));
+  assert.ok(!WARMUP_INTERACTION_EVENTS.some(e => e === ("focus" as string)));
+});
+
+test("four shared slots remain occupied across generations until actual completion", () => {
+  const slots = new NavigationWarmupSlots();
+  const releases = Array.from({ length: 4 }, () => slots.acquire()!);
+  assert.equal(slots.running, 4);
+  assert.equal(slots.acquire(), null);
+  releases[2]();
+  assert.equal(slots.running, 3);
+  const replacement = slots.acquire()!;
+  assert.equal(slots.running, 4);
+  releases[2](); // A duplicate cleanup cannot release the replacement's slot.
+  assert.equal(slots.acquire(), null);
+  releases.forEach(release => release());
+  assert.equal(slots.running, 1);
+  replacement();
+  assert.equal(slots.running, 0);
 });
 
 test("admission waits for idle and the existing request to finish, then resumes", () => {

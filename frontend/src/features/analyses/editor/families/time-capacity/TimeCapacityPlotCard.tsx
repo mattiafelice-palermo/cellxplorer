@@ -2109,6 +2109,7 @@ function TimeCapacityPlotCardView({
   );
   const timeResult = useQuery({
     queryKey: ["time-capacity", analysisId, compatibilitySignature, dataSignature],
+    meta: { cacheOnly: familyActivity.cacheOnly },
     queryFn: async ({ signal }) => {
       // The server opens an activity entry only if the cache misses, so send a
       // token instead of pre-creating a job: a cached load costs one request

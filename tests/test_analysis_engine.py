@@ -2150,6 +2150,21 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(indexed["display_x"], expected)
         self.assertEqual(legacy["display_x"], expected)
 
+    def test_compact_time_fallback_downsamples_without_optional_phase_array(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1, "cycle_end": 50, "x_axis": "time",
+            "display_mode": "consecutive", "max_points_per_cell": 50,
+        }
+        with patch.object(time_capacity_workers, "try_compute_time_capacity", return_value=None), \
+             patch.object(engine, "_downsample_indices", return_value=np.array([0, 10, 20])) as downsample:
+            result = engine.compute_time_capacity(self.db, spec, None,
+                                                 viewport_width=1, precision="standard", compact=True)
+        self.assertTrue(downsample.called)
+        trace = result["cell_traces"][0]
+        self.assertEqual(len(trace["display_x"]), len(trace["voltage_v"]))
+        self.assertGreater(len(trace["display_x"]), 0)
+
     def test_continuous_time_ignores_saved_cycle_limits_without_mutating_spec(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         spec["computation"]["time_capacity"] = {

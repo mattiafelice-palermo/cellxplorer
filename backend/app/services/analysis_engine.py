@@ -4598,7 +4598,7 @@ def compute_time_capacity(
                 take = np.unique(np.concatenate((take, source_boundary_indices)))
                 raw = raw.iloc[take]
                 display_x = display_x[take]
-                phases = np.asarray(phases)[take].tolist()
+                phases = np.asarray(phases)[take].tolist() if phases else []
                 voltage_by_channel = {
                     quantity: values[take]
                     for quantity, values in voltage_by_channel.items()

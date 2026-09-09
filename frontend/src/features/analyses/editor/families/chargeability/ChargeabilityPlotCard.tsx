@@ -226,6 +226,7 @@ export function useChargeabilityResult(
   const tokenKey = `chargeability:${analysisId}:${signature}`;
   const result = useQuery({
     queryKey: ["chargeability", analysisId, signature],
+    meta: { cacheOnly: familyActivity.cacheOnly },
     queryFn: async () => {
       const token = newRecognitionToken();
       setRecognitionToken(tokenKey, token);
