@@ -68,6 +68,12 @@ class IdentityGrammarTests(unittest.TestCase):
         identity = parsing.parser_identity("a.ndax")
         self.assertNotIn(cache.CALC_VERSION, identity)
 
+    def test_previous_biologic_adapter_identity_requires_reinspection(self):
+        self.assertEqual(parsing.parser_identity("a.mpr"), "bm:gcpl12:r1")
+        self.assertTrue(
+            parsing.is_legacy_biologic_parser_identity("mpr", "bm:gcpl11:r1")
+        )
+
     def test_current_identity_for_extension_matches_content_aware_path(self):
         for ext, path in ((".ndax", "a.ndax"), (".nda", "a.nda")):
             with self.subTest(ext=ext):

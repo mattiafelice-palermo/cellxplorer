@@ -52,6 +52,8 @@ paths.
 6. When one modal closes before opening a deferred confirmation, capture the pending mutation
    callback before closing the parent. A ref updated on every render can otherwise point at the
    cleared request by the time the user confirms.
+7. Poll asynchronous inspections only while at least one returned item is `pending`; stop when all
+   items are `ready` or terminal `error`. Keep an explicit retry action for terminal failures.
 
 ## UI or visual change
 

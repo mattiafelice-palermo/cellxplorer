@@ -118,6 +118,28 @@ def _map_rows(
     )
 
 
+def _id13_counter_records(
+    *,
+    rest_residual_mAh: float = -5e-7,
+    active_q13_mAh: float = -1.0,
+) -> np.ndarray:
+    rows = [
+        _row(0.0, ns=0, control=-3600.0, q_mAh=0.0, dq_mAh=0.0, ns_changed=True),
+        _row(1.0, ns=0, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
+        _row(2.0, ns=0, mode=MPR_MODE_REST, control=0.0, q_mAh=0.0, dq_mAh=0.0),
+        _row(3.0, ns=0, mode=MPR_MODE_REST, control=0.0, q_mAh=0.0, dq_mAh=0.0),
+    ]
+    records = _structured_records(rows)
+    records["raw_q_charge_discharge_mAh"] = 0.0
+    records["raw_q_minus_q0_mAh"] = [
+        0.0,
+        active_q13_mAh,
+        active_q13_mAh + rest_residual_mAh,
+        active_q13_mAh + rest_residual_mAh,
+    ]
+    return records
+
+
 _EXTENDED_COLUMN_IDS = (
     1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468, 379, 124, 125, 126, 182
 )
@@ -248,11 +270,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl11",
+                "adapter_revision": "gcpl12",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl11:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl12:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
@@ -1119,6 +1141,55 @@ class BiologicGcplMappingTests(unittest.TestCase):
         ]
         with self.assertRaises(UnsupportedBiologicGcplError):
             _map_rows(rows)
+
+    def test_id13_capacity_variant_is_selected_from_counter_evidence(self) -> None:
+        frame = map_gcpl_to_canonical(_id13_counter_records())
+
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["capacity_counter_profile"],
+            "gcpl-capacity-id13-zero-id211-v1",
+        )
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["capacity_counter_field"],
+            "raw_q_minus_q0_mAh",
+        )
+        np.testing.assert_allclose(
+            frame["discharge_capacity_mah"],
+            [0.0, 1.0, 0.0, 0.0],
+        )
+        residual = frame.attrs["biologic_gcpl"]["unassigned_rest_boundary_residuals_mah"]
+        self.assertEqual(len(residual), 1)
+        self.assertEqual(residual[0]["record_index"], 3)
+        self.assertAlmostEqual(residual[0]["delta_mah"], -5e-7, places=14)
+
+    def test_id13_capacity_variant_rejects_unmatched_active_increment(self) -> None:
+        records = _id13_counter_records()
+        records["raw_dq_mAh"][1] = -0.9
+
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "do not match the ID-7"):
+            map_gcpl_to_canonical(records)
+
+    def test_id13_capacity_variant_rejects_large_rest_boundary_residual(self) -> None:
+        records = _id13_counter_records(rest_residual_mAh=-1.1e-6)
+
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "unresolved active-to-Rest"):
+            map_gcpl_to_canonical(records)
+
+    def test_id211_remains_preferred_when_it_carries_capacity(self) -> None:
+        rows = [
+            _row(0.0, control=-3600.0, q_mAh=0.0, ns_changed=True),
+            _row(1.0, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
+        ]
+        records = _structured_records(rows)
+        records["raw_q_minus_q0_mAh"] = [10.0, 9.0]
+
+        frame = map_gcpl_to_canonical(records)
+
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["capacity_counter_profile"],
+            "gcpl-capacity-id211-v1",
+        )
+        np.testing.assert_allclose(frame["discharge_capacity_mah"], [0.0, 1.0])
 
     def test_gcpl6_per_step_capacity_origin_is_allowed_at_ns_boundary(self) -> None:
         rows = [

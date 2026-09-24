@@ -186,3 +186,13 @@ export function continuationInspectionHasErrors(
 ): boolean {
   return Boolean(result?.sources.some((source) => source.inspection_status === "error"));
 }
+
+export function continuationInspectionShouldPoll(
+  result: ContinuationInspectResult | null | undefined,
+): boolean {
+  return Boolean(
+    result
+    && !result.sources.some((source) => source.inspection_status === "error")
+    && result.sources.some((source) => source.inspection_status === "pending"),
+  );
+}

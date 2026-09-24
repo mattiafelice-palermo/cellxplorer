@@ -45,11 +45,10 @@ from .source_format_errors import (
 )
 
 
-# gcpl11 adds registry-resolved settings profiles for compatible GCPL technique
-# discriminators. It also keeps the prior gcpl10 cycle/provenance contract, so
-# sources registered under gcpl10 must be re-inspected before using the current
-# parser identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl11"
+# gcpl12 adds an evidence-selected ID-13 capacity-counter variant while keeping
+# the gcpl11 settings-profile and cycle/provenance contracts. Older source
+# caches must be re-inspected before they receive this parser identity.
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl12"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -88,6 +87,31 @@ class GcplSettingsProfile:
             if code == sign_code:
                 return factor
         return None
+
+
+@dataclass(frozen=True)
+class GcplCapacityCounterProfile:
+    """Validated record-counter interpretation, independent of settings IDs."""
+
+    profile_id: str
+    counter_field: str
+    boundary_policy: str
+
+
+_ID211_CAPACITY_COUNTER_PROFILE = GcplCapacityCounterProfile(
+    profile_id="gcpl-capacity-id211-v1",
+    counter_field="raw_q_charge_discharge_mAh",
+    boundary_policy="strict",
+)
+_ID13_ZERO_ID211_CAPACITY_COUNTER_PROFILE = GcplCapacityCounterProfile(
+    profile_id="gcpl-capacity-id13-zero-id211-v1",
+    counter_field="raw_q_minus_q0_mAh",
+    boundary_policy="unassigned_small_active_to_rest_residual",
+)
+GCPL_CAPACITY_COUNTER_PROFILES = (
+    _ID211_CAPACITY_COUNTER_PROFILE,
+    _ID13_ZERO_ID211_CAPACITY_COUNTER_PROFILE,
+)
 
 
 _PRIMARY_GCPL_SETTINGS_PROFILE = GcplSettingsProfile(
@@ -189,6 +213,11 @@ _CAPACITY_TOLERANCE_MAH = 1e-9
 # source's per-step counter origin, not an ambiguous transfer from the prior
 # step. Keep this bound narrow relative to the normal 30-second increments.
 _CAPACITY_COUNTER_RESET_TOLERANCE_MAH = 1e-5
+# The ID-13 counter variant may add one small counter-only residual on the
+# first Rest row. Keep the bound below 1e-6 mAh and accept it only when active
+# ID-13 increments match ID-7, ID-211 is inert, and the rest counter then stays
+# flat. The residual is intentionally left unassigned to either step.
+_ID13_REST_BOUNDARY_RESIDUAL_MAX_MAH = 1e-6
 _CURRENT_TOLERANCE_MA = 1e-9
 
 _REQUIRED_RECORD_FIELDS = (
@@ -1500,6 +1529,94 @@ def _validate_latched_counter_increment_flag(
         )
 
 
+def _resolve_capacity_counter_profile(
+    records: np.ndarray,
+    *,
+    raw_capacity_id211: np.ndarray,
+    raw_dq_mAh: np.ndarray,
+    mode: np.ndarray,
+    current_ma: np.ndarray,
+    boundaries: np.ndarray,
+) -> tuple[GcplCapacityCounterProfile, np.ndarray, dict[int, float]]:
+    """Select an ID-211 or narrowly evidenced ID-13 record-counter profile."""
+
+    if np.any(np.abs(raw_capacity_id211) > _CAPACITY_TOLERANCE_MAH):
+        return _ID211_CAPACITY_COUNTER_PROFILE, raw_capacity_id211, {}
+
+    raw_capacity_id13 = _optional_column(records, "raw_q_minus_q0_mAh")
+    if raw_capacity_id13 is None or not np.isfinite(raw_capacity_id13).all():
+        return _ID211_CAPACITY_COUNTER_PROFILE, raw_capacity_id211, {}
+    if np.ptp(raw_capacity_id13) <= _CAPACITY_TOLERANCE_MAH:
+        return _ID211_CAPACITY_COUNTER_PROFILE, raw_capacity_id211, {}
+
+    ranges = _block_ranges(boundaries)
+    if (
+        len(ranges) != 2
+        or ranges[0][0] != 0
+        or ranges[1][1] != len(records)
+        or np.any(mode[ranges[0][0] : ranges[0][1]] == MPR_MODE_REST)
+        or not np.all(mode[ranges[1][0] : ranges[1][1]] == MPR_MODE_REST)
+    ):
+        raise UnsupportedBiologicGcplError(
+            "ID-13 capacity is present while ID-211 is inert, but the source does not "
+            "match the validated single-active-block-then-Rest counter profile"
+        )
+
+    active_start, rest_start = ranges[0][0], ranges[0][1]
+    if abs(float(raw_capacity_id13[active_start])) > _CAPACITY_COUNTER_RESET_TOLERANCE_MAH:
+        raise UnsupportedBiologicGcplError(
+            "ID-13 capacity counter does not begin at a verified source-local origin"
+        )
+
+    id13_increments = np.diff(raw_capacity_id13, prepend=raw_capacity_id13[0])
+    active_slice = slice(active_start, rest_start)
+    if np.any(
+        np.abs(id13_increments[active_slice] - raw_dq_mAh[active_slice])
+        > _CAPACITY_TOLERANCE_MAH
+    ):
+        raise UnsupportedBiologicGcplError(
+            "ID-13 active capacity increments do not match the ID-7 incremental counter"
+        )
+
+    active_current = current_ma[active_slice]
+    has_charge_current = bool(np.any(active_current > _CURRENT_TOLERANCE_MA))
+    has_discharge_current = bool(np.any(active_current < -_CURRENT_TOLERANCE_MA))
+    if has_charge_current == has_discharge_current:
+        raise UnsupportedBiologicGcplError(
+            "ID-13 capacity profile has no single resolved active-current direction"
+        )
+    active_direction = 1 if has_charge_current else -1
+    active_transfer = float(
+        raw_capacity_id13[rest_start - 1] - raw_capacity_id13[active_start]
+    )
+    if active_direction * active_transfer <= _CAPACITY_TOLERANCE_MAH:
+        raise UnsupportedBiologicGcplError(
+            "ID-13 active counter direction or transfer disagrees with the source current"
+        )
+
+    boundary_delta = float(raw_capacity_id13[rest_start] - raw_capacity_id13[rest_start - 1])
+    if (
+        abs(float(raw_dq_mAh[rest_start])) > _CAPACITY_TOLERANCE_MAH
+        or abs(boundary_delta) > _ID13_REST_BOUNDARY_RESIDUAL_MAX_MAH
+        or active_direction * boundary_delta < -_CAPACITY_TOLERANCE_MAH
+        or np.ptp(raw_capacity_id13[rest_start:]) > _CAPACITY_TOLERANCE_MAH
+    ):
+        raise UnsupportedBiologicGcplError(
+            "ID-13 counter has an unresolved active-to-Rest boundary transfer"
+        )
+
+    unassigned_boundary_deltas = (
+        {rest_start: boundary_delta}
+        if abs(boundary_delta) > _CAPACITY_TOLERANCE_MAH
+        else {}
+    )
+    return (
+        _ID13_ZERO_ID211_CAPACITY_COUNTER_PROFILE,
+        raw_capacity_id13,
+        unassigned_boundary_deltas,
+    )
+
+
 def _validate_capacity_boundaries(
     raw_capacity: np.ndarray,
     raw_dq_mAh: np.ndarray,
@@ -1508,7 +1625,8 @@ def _validate_capacity_boundaries(
     ns: np.ndarray | None = None,
     mode: np.ndarray | None = None,
     allow_delayed_active_transfer: bool = False,
-) -> dict[int, float]:
+    allow_unassigned_rest_residual: bool = False,
+) -> tuple[dict[int, float], dict[int, float]]:
     """Reject ambiguous capacity ownership at an executed-step boundary.
 
     The source counters are cumulative, but the canonical columns reset at
@@ -1516,13 +1634,13 @@ def _validate_capacity_boundaries(
     interval belongs to the preceding or following operation, only a boundary
     with no incremental transfer and no cumulative counter jump is safe. An
     alternate profile may explicitly allow a delayed active-to-rest transfer;
-    those accepted boundaries are returned for ownership adjustment by the
-    caller.
+    another may accept a bounded ID-13 Rest residual while leaving it
+    unassigned to either canonical step.
     """
 
     starts = np.flatnonzero(boundaries)[1:]
     if len(starts) == 0:
-        return {}
+        return {}, {}
     boundary_dq = raw_dq_mAh[starts]
     q_delta = raw_capacity[starts] - raw_capacity[starts - 1]
     ambiguous = (np.abs(boundary_dq) > _CAPACITY_TOLERANCE_MAH) | (
@@ -1554,12 +1672,27 @@ def _validate_capacity_boundaries(
             for start, delta, is_delayed in zip(starts, q_delta, delayed, strict=True)
             if is_delayed
         }
+    unassigned_rest_residuals: dict[int, float] = {}
+    if allow_unassigned_rest_residual and mode is not None:
+        unassigned = (
+            (mode[starts - 1] != MPR_MODE_REST)
+            & (mode[starts] == MPR_MODE_REST)
+            & (np.abs(boundary_dq) <= _CAPACITY_TOLERANCE_MAH)
+            & (np.abs(q_delta) > _CAPACITY_TOLERANCE_MAH)
+            & (np.abs(q_delta) <= _ID13_REST_BOUNDARY_RESIDUAL_MAX_MAH)
+        )
+        ambiguous &= ~unassigned
+        unassigned_rest_residuals = {
+            int(start): float(delta)
+            for start, delta, is_unassigned in zip(starts, q_delta, unassigned, strict=True)
+            if is_unassigned
+        }
     if np.any(ambiguous):
         raise UnsupportedBiologicGcplError(
             "GCPL capacity transfer is ambiguous at an executed-step boundary; "
             "boundary rows must have zero incremental and cumulative transfer"
         )
-    return delayed_active_transfers
+    return delayed_active_transfers, unassigned_rest_residuals
 
 
 def _step_time_column(records: np.ndarray) -> np.ndarray | None:
@@ -2221,7 +2354,9 @@ def map_gcpl_to_canonical(
     _validate_total_time(total_time_s)
     step_time = _step_time_column(records)
     raw_dq_mAh = _require_float_column(records, "raw_dq_mAh")
-    raw_capacity = _require_float_column(records, "raw_q_charge_discharge_mAh")
+    raw_capacity_id211 = _require_float_column(
+        records, "raw_q_charge_discharge_mAh"
+    )
     control = _require_float_column(records, "raw_control_v_or_mA")
     if np.any(_flag_column(records, flags, "error")):
         raise InvalidBiologicGcplError(
@@ -2285,10 +2420,20 @@ def map_gcpl_to_canonical(
         step_time=step_time,
     )
     _validate_step_time_boundaries(step_time, boundaries)
+    capacity_counter_profile, raw_capacity, detected_unassigned_rest_residuals = (
+        _resolve_capacity_counter_profile(
+            records,
+            raw_capacity_id211=raw_capacity_id211,
+            raw_dq_mAh=raw_dq_mAh,
+            mode=mode,
+            current_ma=current_ma,
+            boundaries=boundaries,
+        )
+    )
     capacity_boundary_policy = str(
         (declared_settings or {}).get("capacity_boundary_policy") or "strict"
     )
-    delayed_active_transfers = _validate_capacity_boundaries(
+    delayed_active_transfers, unassigned_rest_residuals = _validate_capacity_boundaries(
         raw_capacity,
         raw_dq_mAh,
         boundaries,
@@ -2297,7 +2442,15 @@ def map_gcpl_to_canonical(
         allow_delayed_active_transfer=(
             capacity_boundary_policy == "delayed_active_transfer"
         ),
+        allow_unassigned_rest_residual=(
+            capacity_counter_profile.boundary_policy
+            == "unassigned_small_active_to_rest_residual"
+        ),
     )
+    if unassigned_rest_residuals != detected_unassigned_rest_residuals:
+        raise UnsupportedBiologicGcplError(
+            "ID-13 capacity profile boundary evidence changed during validation"
+        )
     capacity_for_mapping = raw_capacity
     dq_for_mapping = raw_dq_mAh
     if delayed_active_transfers:
@@ -2398,6 +2551,15 @@ def map_gcpl_to_canonical(
     frame.attrs["biologic_gcpl"] = {
         "adapter_revision": BIOLOGIC_GCPL_ADAPTER_REVISION,
         "settings_profile": (declared_settings or {}).get("settings_profile"),
+        "capacity_counter_profile": capacity_counter_profile.profile_id,
+        "capacity_counter_field": capacity_counter_profile.counter_field,
+        "unassigned_rest_boundary_residuals_mah": [
+            {
+                "record_index": int(boundary + 1),
+                "delta_mah": float(delta),
+            }
+            for boundary, delta in sorted(unassigned_rest_residuals.items())
+        ],
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": GCPL_STEP_INDEX_BASE_ADJUSTMENT,
@@ -2440,7 +2602,9 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
 
 __all__ = [
     "BIOLOGIC_GCPL_ADAPTER_REVISION",
+    "GCPL_CAPACITY_COUNTER_PROFILES",
     "GcplSettingsProfile",
+    "GcplCapacityCounterProfile",
     "GCPL_SETTINGS_PROFILES",
     "GCPL_SETTINGS_LAYOUT",
     "GCPL_SETTINGS_PARAMETER_COUNT",

@@ -7,6 +7,7 @@ import {
   applySuggestedOrder,
   continuationFindingAction,
   continuationInspectionHasErrors,
+  continuationInspectionShouldPoll,
   continuedInspectionStatus,
   findingSummary,
   isSubmitBlocked,
@@ -162,6 +163,17 @@ test("continued inspection status distinguishes not-started, preparing, and erro
   const failed = makeResult({ inspection_complete: false, sources: [failedSource] });
   assert.equal(continuedInspectionStatus(failed), "error");
   assert.equal(continuationInspectionHasErrors(failed), true);
+});
+
+test("continuation inspection polls while pending unless any source failed", () => {
+  const pending = { inspection_status: "pending" } as ContinuationInspectResult["sources"][number];
+  const failed = { inspection_status: "error" } as ContinuationInspectResult["sources"][number];
+  const ready = { inspection_status: "ready" } as ContinuationInspectResult["sources"][number];
+
+  assert.equal(continuationInspectionShouldPoll(undefined), false);
+  assert.equal(continuationInspectionShouldPoll(makeResult({ sources: [pending] })), true);
+  assert.equal(continuationInspectionShouldPoll(makeResult({ sources: [failed, ready] })), false);
+  assert.equal(continuationInspectionShouldPoll(makeResult({ sources: [failed, pending] })), false);
 });
 
 test("continued scientific overrides reject incomplete preset combinations", () => {

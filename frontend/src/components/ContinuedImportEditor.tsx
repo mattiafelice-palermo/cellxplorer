@@ -38,6 +38,7 @@ import {
 import {
   continuationSourceCanOpenRawData,
   continuationInspectionHasErrors,
+  continuationInspectionShouldPoll,
   moveSource,
   preserveAcknowledgements,
 } from "../continuationPolicy";
@@ -223,7 +224,12 @@ export function ContinuedImportEditor({
     }),
     enabled: opened && orderedDrafts.length >= 1,
     refetchInterval: (query) =>
-      opened && orderedDrafts.length >= 1 && !query.state.data?.inspection_complete ? 1000 : false,
+      opened
+      && orderedDrafts.length >= 1
+      && !query.state.error
+      && continuationInspectionShouldPoll(query.state.data)
+        ? 1000
+        : false,
   });
   const result = inspectionQuery.data;
   const sourceInspectionFailed = continuationInspectionHasErrors(result);

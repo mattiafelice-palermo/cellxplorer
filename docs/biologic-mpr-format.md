@@ -245,7 +245,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl11`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl12`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -274,6 +274,21 @@ conventions: the `Ns`-change flag is one record late, the counter-increment bit 
 after a validated backward loop wrap, and the final active interval may be recorded on the first
 same-`Ns` Rest row. That narrow active-to-Rest transfer is assigned to the preceding active step;
 arbitrary flag timing or capacity transfer remains unsupported.
+
+Record capacity counters use a separate evidence-selected profile registry. The ordinary profile
+continues to use ID-211 whenever it carries capacity. A bounded alternate profile uses ID-13 only
+when ID-211 is inert across the source, ID-13 starts at a source-local zero, its active increments
+match ID-7 within `1e-9 mA.h`, and the decoded execution is one active block followed by one Rest
+block. Current direction must agree with the active ID-13 transfer. This profile permits one
+counter-only change of at most `1e-6 mA.h` on the first Rest row when that row's ID-7 increment is
+zero and the remaining Rest counter is flat. That residual is reported in adapter provenance and
+left unassigned to either canonical step; it does not increase the active-step capacity. When ID-211
+is nonzero, the existing ID-211 profile remains in force. If ID-211 is inert but ID-13 does not
+match the complete bounded shape above—including larger or repeated Rest changes or another block
+history—the source remains fail-closed. The filename is not part of profile selection.
+
+The current BioLogic parser identity is `bm:gcpl12:r1`; moving to it re-inspects sources previously
+registered under `bm:gcpl11:r1` so cached output cannot bypass the new counter-profile decision.
 The supplied EGG GCPL6 source also establishes one narrow reset form at an executed `Ns` boundary:
 the first active row of the new `Ns` has an ID-211 cumulative charge/discharge quantity near zero
 and an ID-7 incremental `dQ` equal to that same short origin interval (about `1.75e-6 mA.h` in the
