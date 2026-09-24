@@ -442,7 +442,7 @@ function AddReferencesModal({
           rows.push(
             <Table.Tr
               key={`cell-${node.id}-${cell.id}`}
-              bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-0)" : undefined}
+              bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-light)" : undefined}
               style={{ cursor: "pointer" }}
               onClick={() =>
                 setSelectedCells((current) =>
@@ -473,7 +473,7 @@ function AddReferencesModal({
           rows.push(
             <Table.Tr
               key={`group-${node.id}-${group.id}`}
-              bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-0)" : undefined}
+              bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-light)" : undefined}
               style={{ cursor: "pointer" }}
               onClick={() =>
                 setSelectedGroups((current) =>
@@ -552,7 +552,7 @@ function AddReferencesModal({
               {!branchOnly && mode === "cells" && unfiledCells.map((cell) => (
                 <Table.Tr
                   key={cell.id}
-                  bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-0)" : undefined}
+                  bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-light)" : undefined}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     setSelectedCells((current) =>
@@ -578,7 +578,7 @@ function AddReferencesModal({
               {!branchOnly && mode === "replicate_groups" && unfiledGroups.map((group) => (
                 <Table.Tr
                   key={group.id}
-                  bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-0)" : undefined}
+                  bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-light)" : undefined}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     setSelectedGroups((current) =>

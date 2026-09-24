@@ -138,17 +138,6 @@ export function timeCapacityNativeExportPlan(
   style: PlotStyle,
 ): TimeCapacityNativeExportPlan | null {
   if (config.view !== "voltage_current" || config.display_mode !== "consecutive") return null;
-  if (
-    result.cell_traces.some((trace) =>
-      (trace.source_descriptors ?? []).some(
-        (source) => source.source_position > 1 && source.status !== "missing",
-      ),
-    )
-  ) {
-    // Preserve the established source-boundary marker export for multi-source
-    // traces until that presentation-only column is retired explicitly.
-    return null;
-  }
 
   const palette = plotPalette(style);
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);

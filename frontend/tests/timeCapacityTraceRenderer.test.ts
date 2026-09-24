@@ -165,25 +165,39 @@ async function assertParity(result: TimeCapacityResult, spec: AnalysisSpec, webG
   return { exported, interactive };
 }
 
-test("voltage/time consecutive preserves sources, hover and boundary markers with either provenance encoding", async () => {
+test("voltage/time consecutive preserves source provenance without boundary markers", async () => {
   for (const compactSources of [false, true]) {
     const { exported, interactive } = await assertParity(makeResult(compactSources), makeSpec());
-    assert.equal(interactive.length, 2);
+    assert.equal(interactive.length, 1);
     assert.deepEqual(interactive[0].x, [0, 10, 20, 30, 40, 50, 60, 70]);
     assert.deepEqual(interactive[0].customdata, [[1, 1], [1, 1], [1, 1], [1, 1], [2, 1], [2, 1], [2, 1], [2, 1]]);
     assert.match(interactive[0].hovertemplate as string, /customdata\[1\]/);
-    const boundary = interactive.find((trace) => trace.name === "Source boundary");
-    assert.deepEqual(boundary?.x, [40]);
-    assert.deepEqual(boundary?.customdata, [[2, 1]]);
+    assert.equal(interactive.some((trace) => trace.name === "Source boundary"), false);
     assert.deepEqual(exported[0].cellxplorer_export_columns?.find((column) => column.header === "Source file")?.values,
       ["a.nda", "a.nda", "a.nda", "a.nda", "b.nda", "b.nda", "b.nda", "b.nda"]);
   }
 });
 
+test("consecutive capacity omits rest rows and does not connect separate cycles", async () => {
+  const result = makeResult();
+  const trace = result.cell_traces[0];
+  trace.cycle = [1, 1, 1, 2, 2, 2, 2, 2];
+  trace.display_x = [0, 1, 1, 1, 2, 2, 3, 3];
+  trace.phase = ["discharge", "discharge", "rest", "charge", "charge", "discharge", "discharge", "rest"];
+  trace.voltage_v = [1, 0.8, 0.9, 1.2, 0.7, 0.9, 0.6, 0.5];
+  trace.voltage_v_by_channel = { voltage: trace.voltage_v };
+
+  const { interactive } = await assertParity(result, makeSpec({ x_axis: "capacity_mah" }));
+  assert.equal(interactive.length, 3);
+  assert.deepEqual(interactive.map((series) => series.x), [[0, 1], [1, 2], [2, 3]]);
+  assert.deepEqual(interactive.map((series) => series.y), [[1, 0.8], [1.2, 0.7], [0.9, 0.6]]);
+  assert.equal(interactive.filter((series) => series.showlegend).length, 1);
+});
+
 test("phase-aligned reset and mirrored voltage/time retain segmentation and gaps", async () => {
   for (const display_mode of ["overlap_reset", "overlap_mirror"] as const) {
     const { interactive } = await assertParity(makeResult(), makeSpec({ display_mode }));
-    const primary = interactive.filter((trace) => trace.name !== "Source boundary");
+    const primary = interactive;
     assert.equal(primary.length, 4);
     assert.deepEqual(primary[0].x, [0, 10]);
     assert.deepEqual(primary[1].x, display_mode === "overlap_mirror" ? [10, 0] : [0, 10]);
@@ -219,11 +233,11 @@ test("series/channel and analysis-sample visibility do not depend on export meta
   assert.equal((await assertParity(result, hidden)).interactive.length, 0);
   const channels = makeSpec({ voltage_channels: ["voltage", "working_potential"] });
   channels.presentation.hidden_series_ids = ["time_capacity:c1|working_potential"];
-  assert.equal((await assertParity(result, channels)).interactive.length, 2);
+  assert.equal((await assertParity(result, channels)).interactive.length, 1);
   const unselected = makeSpec();
   unselected.selection.entries = [];
   assert.equal((await assertParity(result, unselected)).interactive.length, 0);
   const retained = await assertParity(result, unselected, false, true);
-  assert.equal(retained.interactive.length, 2);
+  assert.equal(retained.interactive.length, 1);
   assert.deepEqual(retained.interactive[0].cellxplorer_analysis_sample, { cell_id: 1, group_id: null, excluded: false });
 });

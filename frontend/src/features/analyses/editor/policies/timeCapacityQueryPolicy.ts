@@ -1,4 +1,5 @@
 import type { AnalysisSpec } from "../../../../api";
+import { ensureVoltageChannelSelection } from "./voltageChannelPolicy.ts";
 
 export type TimeCapacityQueryConfig = NonNullable<
   AnalysisSpec["computation"]["time_capacity"]
@@ -56,10 +57,32 @@ export function timeCapacityScientificRequestSpec<T extends Pick<AnalysisSpec, "
 ): T {
   const computation = (spec as Partial<AnalysisSpec>).computation;
   const config = computation?.time_capacity;
+  const voltageChannels = config
+    ? ensureVoltageChannelSelection(
+        config.voltage_channels,
+        config.voltage_channels === undefined
+          ? config.voltage_channel ?? "voltage"
+          : "voltage",
+      )
+    : null;
+  const normalizedConfig = config && voltageChannels
+    ? {
+        ...config,
+        voltage_channel: voltageChannels[0],
+        voltage_channels: voltageChannels,
+      }
+    : null;
   return {
     ...spec,
-    ...(config && timeCapacityUsesContinuousTime(config)
-      ? { computation: { ...computation, time_capacity: timeCapacityEffectiveConfig(config) } }
+    ...(normalizedConfig && computation
+      ? {
+          computation: {
+            ...computation,
+            time_capacity: timeCapacityUsesContinuousTime(normalizedConfig)
+              ? timeCapacityEffectiveConfig(normalizedConfig)
+              : normalizedConfig,
+          },
+        }
       : {}),
     selection: {
       ...spec.selection,

@@ -60,15 +60,36 @@ test("plot-style normalization round-trips series order without sharing its arra
 });
 
 test("only the Time/Capacity new-plot default forces line rendering", () => {
-  const markerStyle = styleWith({ marker_mode: "points", ce_marker_mode: "lines_points" });
+  const markerStyle = styleWith({
+    marker_mode: "points",
+    ce_marker_mode: "lines_points",
+    series_overrides: {
+      c1: { marker_mode: "points", line_width: 3 },
+    },
+    series_rules: [{
+      id: "markers",
+      enabled: true,
+      field: "kind",
+      operator: "equals",
+      value: "cell",
+      style: { marker_mode: "lines_points", color: "#123456" },
+    }],
+  });
   const timeCapacity = defaultPlotStyleForTab("time_capacity", markerStyle);
   const cycles = defaultPlotStyleForTab("cycles", markerStyle);
 
   assert.equal(timeCapacity.marker_mode, "none");
   assert.equal(timeCapacity.ce_marker_mode, "none");
+  assert.equal(timeCapacity.series_overrides?.c1?.marker_mode, undefined);
+  assert.equal(timeCapacity.series_overrides?.c1?.line_width, 3);
+  assert.equal(timeCapacity.series_rules?.[0]?.style.marker_mode, undefined);
+  assert.equal(timeCapacity.series_rules?.[0]?.style.color, "#123456");
   assert.equal(cycles.marker_mode, "points");
   assert.equal(cycles.ce_marker_mode, "lines_points");
+  assert.equal(cycles.series_overrides?.c1?.marker_mode, "points");
+  assert.equal(cycles.series_rules?.[0]?.style.marker_mode, "lines_points");
   assert.equal(markerStyle.marker_mode, "points");
+  assert.equal(markerStyle.series_overrides?.c1?.marker_mode, "points");
 });
 
 test("a saved palette id marks the palette custom; a built-in leaves the key alone", () => {

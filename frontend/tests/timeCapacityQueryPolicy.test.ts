@@ -405,7 +405,10 @@ test("Continuous ignores saved cycle limits for queries and plot-range exports, 
   assert.deepEqual(config.cycles, [30]);
   const spec = { ...makeSpec(), computation: { ...makeSpec().computation, time_capacity: config } };
   const request = timeCapacityScientificRequestSpec(spec);
-  assert.deepEqual(request.computation.time_capacity, timeCapacityEffectiveConfig(config));
+  assert.deepEqual(
+    request.computation.time_capacity,
+    timeCapacityEffectiveConfig({ ...config, voltage_channels: ["voltage"] }),
+  );
   assert.equal(request.computation.time_capacity.cycle_start, null);
   assert.equal(request.computation.time_capacity.cycle_end, null);
   assert.deepEqual(request.computation.time_capacity.cycles, []);

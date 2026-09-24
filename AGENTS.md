@@ -247,7 +247,7 @@ Cellxplorer/
 │   │   │       │   │                       useTimeCapacityProgressiveWarmup.ts (Spec 058)
 │   │   │       │   │                       timeCapacityWarmupDebug.ts (temporary diagnostics)
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
-│   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
+│   │   │       │   ├── policies/   Analysis draft, plot, visibility, multi-source, and sample-picker policies
 │   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views
 │   │   │       │   ├── portable/   Portable report estimate, preflight, export, and share flow
 │   │   │       │   ├── recognition/ Recognition job progress hooks and presentation
@@ -269,7 +269,7 @@ Cellxplorer/
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
-│   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts, librarySelectionScope.test.ts, and cellMetadataDisplay.test.ts
+│   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts, librarySelectionScope.test.ts, cellMetadataDisplay.test.ts, and analysisSamplePickerPolicy.test.ts
 ├── tests/                          Python backend and domain tests
 │   ├── biologic_mpr_fixture.py     Synthetic BioLogic MPR/GCPL byte fixtures (Specs 041.1/041.2)
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer

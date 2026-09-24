@@ -456,7 +456,7 @@ export function ImportFilesystemPickerModal({
                         const active = browseQuery.data?.current_path === item.path;
                         const pinIndex = pinnedPaths.indexOf(item.path);
                         return (
-                          <Group key={`${section}-${item.path}`} gap={4} wrap="nowrap" px="xs" py={6} bg={active ? "var(--mantine-primary-color-0)" : undefined} style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}>
+                          <Group key={`${section}-${item.path}`} gap={4} wrap="nowrap" px="xs" py={6} bg={active ? "var(--mantine-primary-color-light)" : undefined} style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}>
                             <Button variant="subtle" color={active ? "var(--mantine-primary-color-6)" : undefined} size="compact-sm" leftSection={shortcutIcon(item)} disabled={!item.available} justify="flex-start" style={{ flex: 1, minWidth: 0 }} onClick={() => navigate(item.path)}>
                               <Text size="sm" truncate title={item.label}>{item.label}</Text>
                             </Button>

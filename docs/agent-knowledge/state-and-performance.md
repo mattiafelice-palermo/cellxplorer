@@ -316,6 +316,22 @@ cancellation guarantee. A retained placeholder is display-only: plot/image/vecto
 disabled until the current query resolves, while the separate data-export path requests and validates
 full-resolution data for the current identity.
 
+Voltage/current requests must contain at least one selected voltage channel.
+Missing or explicitly empty saved selections recover to primary `voltage` in
+the frontend and backend, and the selector cannot remove its final channel.
+A transport failure before an HTTP response is not a scientific empty result:
+keep a compatible last-rendered figure visible and offer retry, but never label
+data from a different voltage-channel selection as the current result. If no
+compatible result has ever loaded and the API is unreachable, the plot cannot
+show new data.
+
+New Time/Capacity plots use line-only defaults (`marker_mode: none`), including
+when a selected default preset carries marker modes in per-series rules or
+overrides. Marker choices made after plot creation and existing saved plot
+styles remain intact. Time/Capacity plots do not add synthetic source-boundary
+marker traces; source identity remains in export provenance, while hover shows
+global and local cycle identity.
+
 Time/Capacity separates two time references under the internal `consecutive` transform.
 `time_reference: selected_range` (the default for older saved plots) is labelled **Cycle-aligned**:
 each Cell starts its selected range at zero, and duration differences accumulate inside the range.

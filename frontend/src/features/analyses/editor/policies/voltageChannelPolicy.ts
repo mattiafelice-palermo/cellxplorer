@@ -20,8 +20,10 @@ export const VOLTAGE_CHANNEL_ORDER: VoltageChannel[] = [
 
 /**
  * Normalize a saved multi-selection without changing its semantic order.
- * `undefined` means a legacy single-channel spec; an explicitly empty array
- * is retained so the UI can implement its deselect-all action honestly.
+ * `undefined` means a legacy single-channel spec. An explicit empty array is
+ * retained here so callers that compare result metadata can distinguish it;
+ * voltage/current plot configuration must additionally use
+ * `ensureVoltageChannelSelection`.
  */
 export function normalizeVoltageChannels(
   channels: readonly VoltageChannel[] | undefined,
@@ -31,6 +33,15 @@ export function normalizeVoltageChannels(
     return VOLTAGE_CHANNEL_ORDER.filter((channel) => channels.includes(channel));
   }
   return VOLTAGE_CHANNEL_ORDER.includes(fallback) ? [fallback] : ["voltage"];
+}
+
+/** Voltage/current plots always need a selected voltage series to render. */
+export function ensureVoltageChannelSelection(
+  channels: readonly VoltageChannel[] | undefined,
+  fallback: VoltageChannel = "voltage",
+): VoltageChannel[] {
+  const normalized = normalizeVoltageChannels(channels, fallback);
+  return normalized.length > 0 ? normalized : [fallback];
 }
 
 function selectedVoltageChannels(

@@ -154,8 +154,9 @@ export const DEFAULT_PLOT_STYLE: PlotStyle = {
 /**
  * Resolve the style used when starting a new plot on a specific tab.
  * Time/Capacity defaults to lines because its dense scientific series are
- * much easier to read that way; existing saved styles and every other tab
- * retain their configured marker defaults.
+ * much easier to read that way. A default preset's marker fields at any
+ * style layer are cleared for a new plot; marker choices made after creation
+ * and styles on already saved plots remain intact.
  */
 export function defaultPlotStyleForTab(
   scope: AnalysisTabKey,
@@ -165,6 +166,22 @@ export function defaultPlotStyleForTab(
   if (scope === "time_capacity") {
     next.marker_mode = "none";
     next.ce_marker_mode = "none";
+    if (next.series_overrides) {
+      const overrides: NonNullable<PlotStyle["series_overrides"]> = {};
+      for (const [key, override] of Object.entries(next.series_overrides)) {
+        const { marker_mode: _markerMode, ...rest } = override;
+        if (Object.values(rest).some((value) => value !== undefined && value !== null)) {
+          overrides[key] = rest;
+        }
+      }
+      next.series_overrides = overrides;
+    }
+    if (next.series_rules) {
+      next.series_rules = next.series_rules.map((rule) => {
+        const { marker_mode: _markerMode, ...ruleStyle } = rule.style;
+        return { ...rule, style: ruleStyle };
+      });
+    }
   }
   return next;
 }

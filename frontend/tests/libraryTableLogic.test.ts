@@ -52,6 +52,8 @@ function makeCell(overrides: Partial<CellSummary> = {}): CellSummary {
     },
     n_files: 1,
     total_cycles: 10,
+    cycle_count_ready: true,
+    summary_ready: true,
     total_charge_capacity_mah: 100,
     total_discharge_capacity_mah: 95,
     max_specific_discharge_capacity_mah_g: 150,

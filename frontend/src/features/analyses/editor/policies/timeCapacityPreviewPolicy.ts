@@ -1,7 +1,7 @@
 import type { AnalysisSpec, TimeCapacityResult } from "../../../../api";
 
 import {
-  normalizeVoltageChannels,
+  ensureVoltageChannelSelection,
   timeCapacityResultMatchesVoltageChannels,
   voltageChannelsUnavailable,
   type VoltageChannel,
@@ -14,7 +14,10 @@ function selectedVoltageChannels(spec: AnalysisSpec): VoltageChannel[] {
     selected === "working_potential" || selected === "counter_potential"
       ? selected
       : "voltage";
-  return normalizeVoltageChannels(config?.voltage_channels, fallback);
+  return ensureVoltageChannelSelection(
+    config?.voltage_channels,
+    config?.voltage_channels === undefined ? fallback : "voltage",
+  );
 }
 
 /**

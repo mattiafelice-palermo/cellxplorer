@@ -1134,6 +1134,8 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertNotIn("n_tests", payload[ready.id])
         self.assertEqual(payload[ready.id]["n_files"], 2)
         self.assertEqual(payload[ready.id]["total_cycles"], 22)
+        self.assertTrue(payload[ready.id]["cycle_count_ready"])
+        self.assertTrue(payload[ready.id]["summary_ready"])
         self.assertEqual(payload[ready.id]["total_charge_capacity_mah"], 7.75)
         self.assertEqual(payload[ready.id]["total_discharge_capacity_mah"], 7.25)
         self.assertAlmostEqual(
@@ -1151,12 +1153,22 @@ class SourceAndReplicateTests(unittest.TestCase):
                 "effective_value": 9.5,
             },
         )
+        self.assertTrue(library.get_cell(ready.id, db=db)["summary_ready"])
         self.assertIsNone(payload[pending.id]["total_charge_capacity_mah"])
         self.assertIsNone(payload[pending.id]["max_specific_discharge_capacity_mah_g"])
+        self.assertEqual(payload[pending.id]["total_cycles"], 4)
+        self.assertTrue(payload[pending.id]["cycle_count_ready"])
         self.assertTrue(payload[pending.id]["has_offline"])
         self.assertTrue(payload[pending.id]["has_summary_pending"])
+        self.assertFalse(payload[pending.id]["summary_ready"])
+        pending_detail = library.get_cell(pending.id, db=db)
+        self.assertFalse(pending_detail["summary_ready"])
+        self.assertEqual(pending_detail["total_cycles"], 4)
+        self.assertTrue(pending_detail["cycle_count_ready"])
         self.assertNotIn("n_tests", payload[empty.id])
         self.assertEqual(payload[empty.id]["n_files"], 0)
+        self.assertFalse(payload[empty.id]["cycle_count_ready"])
+        self.assertFalse(payload[empty.id]["summary_ready"])
         self.assertIsNone(payload[empty.id]["total_discharge_capacity_mah"])
 
     def test_cell_source_check_skips_completed_cells_and_marks_changed_active_sources(self):

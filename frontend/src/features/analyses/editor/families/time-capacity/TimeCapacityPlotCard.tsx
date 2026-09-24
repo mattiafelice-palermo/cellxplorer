@@ -40,7 +40,7 @@ import {
 import { DebouncedNumberInput } from "../../../../../components/DebouncedInputs";
 import {
   shouldShowVoltageChannelSelector,
-  normalizeVoltageChannels,
+  ensureVoltageChannelSelection,
   plotlySafeText,
   timeCapacityExportOptions,
   timeCapacityExportMatchesRequest,
@@ -305,7 +305,10 @@ export function timeCapacityConfig(spec: AnalysisSpec): TimeCapacityConfig {
     saved?.voltage_channel === "working_potential" || saved?.voltage_channel === "counter_potential"
       ? saved.voltage_channel
       : "voltage";
-  const selectedChannels = normalizeVoltageChannels(saved?.voltage_channels, legacyChannel);
+  const selectedChannels = ensureVoltageChannelSelection(
+    saved?.voltage_channels,
+    saved?.voltage_channels === undefined ? legacyChannel : "voltage",
+  );
   return {
     ...DEFAULT_TIME_CAPACITY,
     ...saved,
@@ -438,6 +441,8 @@ function timeCapacitySegments(
   const x = xOverride ?? timeCapacityX(trace, spec).x;
   const segments: TimeCapacitySegment[] = [];
   let current: TimeCapacitySegment | null = null;
+  const consecutiveCapacity =
+    cfg.display_mode === "consecutive" && cfg.x_axis !== "time";
 
   const flush = () => {
     if (current && current.x.length > 0) segments.push(current);
@@ -445,15 +450,24 @@ function timeCapacitySegments(
   };
 
   for (let index = 0; index < x.length; index += 1) {
-    const phase = cfg.display_mode === "consecutive" ? "consecutive" : trace.phase[index] ?? "rest";
-    if (cfg.display_mode !== "consecutive" && phase !== "charge" && phase !== "discharge") {
+    const sourcePhase = trace.phase[index] ?? "rest";
+    const phase = cfg.display_mode === "consecutive" && !consecutiveCapacity
+      ? "consecutive"
+      : sourcePhase;
+    if (
+      (cfg.display_mode !== "consecutive" || consecutiveCapacity) &&
+      trace.phase[index] !== "charge" &&
+      trace.phase[index] !== "discharge"
+    ) {
       flush();
       continue;
     }
 
     const key =
       cfg.display_mode === "consecutive"
-        ? "consecutive"
+        ? consecutiveCapacity
+          ? `cycle:${trace.cycle[index] ?? "unknown"}:phase:${phase}`
+          : "consecutive"
         : `${trace.cycle[index] ?? "unknown"}:${phase}`;
     if (!current || current.key !== key) {
       flush();
@@ -874,52 +888,6 @@ export function timeCapacityTracesForResult(
         }
       }
     }
-    const boundaryChannel = channelStyles.find(
-      (channelStyle) =>
-        visibleVoltageChannels.has(channelStyle.channel) &&
-        hasFinitePoint(traceVoltageValues(trace, channelStyle.channel, cfg.voltage_channel)),
-    )?.channel;
-    const boundaryVoltage = boundaryChannel
-      ? traceVoltageValues(trace, boundaryChannel, cfg.voltage_channel)
-      : [];
-    const boundaryPoints = (trace.source_descriptors ?? [])
-      .filter((descriptor) => descriptor.source_position > 1 && descriptor.status !== "missing")
-      .map((descriptor) => {
-        const index = fullX.findIndex(
-          (value, candidate) =>
-            timeCapacitySourceAt(trace, candidate).position === descriptor.source_position &&
-            Number.isFinite(value) &&
-            Number.isFinite(boundaryVoltage[candidate] ?? NaN) &&
-            (cfg.display_mode === "consecutive" ||
-              trace.phase[candidate] === "charge" ||
-              trace.phase[candidate] === "discharge")
-        );
-        return index >= 0 ? { index, descriptor } : null;
-      })
-      .filter((value): value is { index: number; descriptor: NonNullable<TimeCapacityTrace["source_descriptors"]>[number] } => value !== null);
-    if (boundaryPoints.length) {
-      out.push({
-        x: boundaryPoints.map(({ index }) => fullX[index]),
-        y: boundaryPoints.map(({ index }) => boundaryVoltage[index]),
-        name: "Source boundary",
-        type: traceType,
-        mode: "markers",
-        cellxplorer_analysis_sample: analysisSample,
-        marker: {
-          color,
-          size: Math.max(style.marker_size + 2, 7),
-          symbol: "diamond-open",
-          line: { color: style.paper_bgcolor, width: 1.2 },
-        },
-        showlegend: false,
-        customdata: boundaryPoints.map(({ index }) => [
-          trace.cycle[index] ?? "",
-          trace.source_cycle?.[index] ?? "",
-        ]),
-        hovertemplate:
-          "<b>Source boundary</b><br>cycle %{customdata[0]} · local %{customdata[1]}<extra></extra>",
-      } as Plotly.Data);
-    }
   }
   return out;
 }
@@ -1208,12 +1176,14 @@ function TimeCapacityVoltageChannelSelector({
     onDropdownClose: () => combobox.resetSelectedOption(),
   });
   const allSelected = options.length > 0 && options.every((option) => value.includes(option.value));
+  const resetChannel = options.some((option) => option.value === "voltage")
+    ? "voltage"
+    : options[0]?.value ?? "voltage";
   const toggleChannel = (channel: VoltageChannel) => {
-    onChange(
-      value.includes(channel)
-        ? value.filter((selected) => selected !== channel)
-        : [...value, channel],
-    );
+    const next = value.includes(channel)
+      ? value.filter((selected) => selected !== channel)
+      : [...value, channel];
+    onChange(ensureVoltageChannelSelection(next));
   };
 
   return (
@@ -1248,10 +1218,15 @@ function TimeCapacityVoltageChannelSelector({
               variant="subtle"
               onClick={(event) => {
                 event.stopPropagation();
-                onChange(allSelected ? [] : options.map((option) => option.value));
+                onChange(
+                  ensureVoltageChannelSelection(
+                    allSelected ? [resetChannel] : options.map((option) => option.value),
+                    resetChannel,
+                  ),
+                );
               }}
             >
-              {allSelected ? "Deselect all" : "Select all"}
+              {allSelected ? "Cell voltage only" : "Select all"}
             </Button>
           </Group>
         </Combobox.Header>
@@ -3542,7 +3517,24 @@ function TimeCapacityPlotCardView({
           spec={spec}
         />}
         {timeResult.isError && (
-          <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
+          <Alert color="red" title="Time/capacity request failed">
+            <Group justify="space-between" align="center" gap="sm" wrap="nowrap">
+              <Text size="sm">
+                {timeResult.error instanceof TypeError &&
+                /failed to fetch|networkerror/i.test(timeResult.error.message)
+                  ? "Could not reach the local analysis service. The plot will retry when you ask it to."
+                  : (timeResult.error as Error).message || "Time/capacity compute failed"}
+              </Text>
+              <Button
+                size="compact-xs"
+                variant="light"
+                loading={timeResult.isFetching}
+                onClick={() => void timeResult.refetch()}
+              >
+                Retry
+              </Button>
+            </Group>
+          </Alert>
         )}
          {loadingWithoutResult ? (
           // Hold the space silently until the load is slow enough to mention.

@@ -150,8 +150,13 @@ test("direct Time/Capacity export includes configured stacked-current quantities
   ]);
 });
 
-test("multi-source results retain the established Plotly export fallback", () => {
+test("multi-source direct export retains per-row source provenance", () => {
   const trace = makeTrace(1, "Cell A");
+  trace.sources = [
+    { position: 1, filename: "Cell A.ndax", hash: "Cell A-hash" },
+    { position: 2, filename: "continued.ndax", hash: "continued-hash" },
+  ];
+  trace.source_index = [0, 1, 1];
   trace.source_descriptors = [
     {
       source_position: 2,
@@ -165,14 +170,19 @@ test("multi-source results retain the established Plotly export fallback", () =>
       global_cycle_end: 7,
     },
   ];
-  assert.equal(
-    consecutiveTimeCapacityExportColumns(
-      { ...makeResult(), cell_traces: [trace] },
-      makeSpec(),
-      config,
-      DEFAULT_PLOT_STYLE,
-      null,
-    ),
+  const columns = consecutiveTimeCapacityExportColumns(
+    { ...makeResult(), cell_traces: [trace] },
+    makeSpec(),
+    config,
+    DEFAULT_PLOT_STYLE,
     null,
   );
+  assert.ok(columns);
+  assert.deepEqual(columns.find((column) => column.header === "Source position")?.values, [1, 2, 2]);
+  assert.deepEqual(columns.find((column) => column.header === "Source file")?.values, [
+    "Cell A.ndax", "continued.ndax", "continued.ndax",
+  ]);
+  assert.deepEqual(columns.find((column) => column.header === "Source hash")?.values, [
+    "Cell A-hash", "continued-hash", "continued-hash",
+  ]);
 });

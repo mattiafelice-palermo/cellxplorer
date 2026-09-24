@@ -624,6 +624,8 @@ def _empty_cell_file_summary() -> dict:
     return {
         "n_files": 0,
         "total_cycles": 0,
+        "cycle_count_ready": False,
+        "summary_ready": False,
         "total_charge_capacity_mah": None,
         "total_discharge_capacity_mah": None,
         "has_offline": False,
@@ -664,7 +666,8 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
                 func.sum(
                     case(
                         (
-                            SourceFile.capacity_summary_status == "ready",
+                            (SourceFile.parse_status == "parsed")
+                            & SourceFile.cycle_count.is_not(None),
                             func.coalesce(SourceFile.cycle_count, 0),
                         ),
                         else_=0,
@@ -672,6 +675,19 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
                 ),
                 0,
             ).label("total_cycles"),
+            func.sum(
+                case(
+                    (
+                        SourceFile.id.is_not(None)
+                        & (
+                            (func.coalesce(SourceFile.parse_status, "") != "parsed")
+                            | SourceFile.cycle_count.is_(None)
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("cycle_count_not_ready"),
             func.sum(SourceFile.total_charge_capacity_mah).label("total_charge"),
             func.sum(SourceFile.total_discharge_capacity_mah).label("total_discharge"),
             func.max(SourceFile.max_discharge_capacity_mah).label("max_discharge"),
@@ -730,6 +746,11 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
         summaries[int(row.cell_id)] = {
             "n_files": int(row.n_files or 0),
             "total_cycles": int(row.total_cycles or 0),
+            "cycle_count_ready": (
+                int(row.n_files or 0) > 0
+                and int(row.cycle_count_not_ready or 0) == 0
+            ),
+            "summary_ready": all_ready,
             "total_charge_capacity_mah": (
                 round(float(row.total_charge), 6)
                 if all_ready and row.total_charge is not None
@@ -826,9 +847,13 @@ def cell_dict(
     source_files = _ordered_cell_source_files(cell)
     n_files = len(source_files)
     cycles = 0
+    cycle_count_ready = n_files > 0 and all(
+        source_file.parse_status == "parsed" and source_file.cycle_count is not None
+        for source_file in source_files
+    )
     statuses = set()
     for source_file in source_files:
-        if source_file.capacity_summary_status == "ready":
+        if source_file.parse_status == "parsed" and source_file.cycle_count is not None:
             cycles += source_file.cycle_count or 0
         statuses.add(source_file.location_status)
         statuses.add(source_file.parse_status)
@@ -857,6 +882,12 @@ def cell_dict(
         "scientific_presets": cell_scientific_presets(cell, meta),
         "n_files": n_files,
         "total_cycles": cycles,
+        "cycle_count_ready": cycle_count_ready,
+        "summary_ready": n_files > 0
+        and all(
+            source_file.capacity_summary_status == "ready"
+            for source_file in source_files
+        ),
         "total_charge_capacity_mah": totals["total_charge_capacity_mah"],
         "total_discharge_capacity_mah": totals["total_discharge_capacity_mah"],
         "max_specific_discharge_capacity_mah_g": (

@@ -1648,16 +1648,19 @@ def time_capacity_settings(computation: dict, *, preserve_cycle_window: bool = F
     configured_voltage_channels = cfg.get("voltage_channels")
     if isinstance(configured_voltage_channels, list):
         # Keep the canonical primary-first order regardless of how a client
-        # serialized the checkbox selection. An explicit empty list is kept
-        # as-is for the UI's deselect-all action.
+        # serialized the checkbox selection. Empty selections recover to the
+        # primary cell-voltage channel so a voltage/current plot always has a
+        # scientifically meaningful voltage series to request.
         voltage_channels = [
             quantity
             for quantity in canonical_cycling.VOLTAGE_QUANTITIES
             if quantity in configured_voltage_channels
         ]
+        if not voltage_channels:
+            voltage_channels = [canonical_cycling.DEFAULT_VOLTAGE_QUANTITY]
     else:
         voltage_channels = [legacy_voltage_channel]
-    voltage_channel = voltage_channels[0] if voltage_channels else legacy_voltage_channel
+    voltage_channel = voltage_channels[0]
     time_reference = "test_start" if cfg.get("time_reference") == "test_start" else "selected_range"
     continuous_test_time = (
         (cfg.get("x_axis") or "time") == "time"

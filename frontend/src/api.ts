@@ -572,6 +572,10 @@ export interface CellSummary {
   };
   n_files: number;
   total_cycles: number;
+  /** True when every source has a parsed, known cycle count. */
+  cycle_count_ready: boolean;
+  /** True only when every source has a complete cycle/capacity summary. */
+  summary_ready: boolean;
   total_charge_capacity_mah: number | null;
   total_discharge_capacity_mah: number | null;
   max_specific_discharge_capacity_mah_g: number | null;
