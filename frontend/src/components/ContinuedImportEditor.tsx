@@ -36,11 +36,13 @@ import {
   previewContinuationSources,
 } from "../api";
 import {
+  applySuggestedOrder,
   continuationSourceCanOpenRawData,
   continuationInspectionHasErrors,
   continuationInspectionShouldPoll,
   moveSource,
   preserveAcknowledgements,
+  shouldAutoApplySuggestedOrder,
 } from "../continuationPolicy";
 import {
   assignContinuationSourceColors,
@@ -206,6 +208,7 @@ export function ContinuedImportEditor({
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const previousOrderRef = useRef<string[]>(order);
+  const userReorderedRef = useRef(false);
 
   const byKey = useMemo(() => new Map(drafts.map((item) => [item.staged_name, item])), [drafts]);
   const orderedDrafts = useMemo(
@@ -233,6 +236,11 @@ export function ContinuedImportEditor({
   });
   const result = inspectionQuery.data;
   const sourceInspectionFailed = continuationInspectionHasErrors(result);
+  const orderNeedsAutomaticCorrection = shouldAutoApplySuggestedOrder(
+    result,
+    order,
+    userReorderedRef.current,
+  );
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
     queryKey: continuationPreviewQueryKey(
       order,
@@ -248,6 +256,7 @@ export function ContinuedImportEditor({
     enabled: opened
       && previewMode === "combined"
       && Boolean(result?.inspection_complete)
+      && !orderNeedsAutomaticCorrection
       && orderedDrafts.length >= 2,
     staleTime: Infinity,
   });
@@ -305,7 +314,13 @@ export function ContinuedImportEditor({
   }, [result]);
 
   useEffect(() => {
+    if (!orderNeedsAutomaticCorrection || !result) return;
+    setOrder((current) => applySuggestedOrder(current, result.suggested_order));
+  }, [orderNeedsAutomaticCorrection, result]);
+
+  useEffect(() => {
     if (!opened) {
+      userReorderedRef.current = false;
       setPreviewMode("combined");
       setPreviewQuantity("discharge_capacity_mah");
       setPreviewInterpretation("stitched");
@@ -338,11 +353,26 @@ export function ContinuedImportEditor({
   const disabled = importing;
   const move = (index: number, direction: -1 | 1) => {
     if (disabled) return;
-    setOrder((current) => moveSource(current, index, direction));
+    setOrder((current) => {
+      const next = moveSource(current, index, direction);
+      if (next.some((key, itemIndex) => key !== current[itemIndex])) {
+        userReorderedRef.current = true;
+      }
+      return next;
+    });
   };
-  const confirmationFindings = result?.findings.filter(
+  const visibleFindings = orderNeedsAutomaticCorrection ? [] : result?.findings;
+  const confirmationFindings = visibleFindings?.filter(
     (finding) => finding.severity === "confirmation",
   ) ?? [];
+  const warningFindings = visibleFindings?.filter(
+    (finding) => finding.severity === "warning",
+  ) ?? [];
+  const orderCouldNotBeVerified = Boolean(
+    result?.inspection_complete
+    && orderedDrafts.length > 1
+    && result.suggested_order_basis === "selection_order",
+  );
   const selectedDraft = byKey.get(selectedSourceKey) ?? orderedDrafts[0];
   const selectedSource = orderedSources.find((source) => source.key === selectedSourceKey) ?? orderedSources[0];
   const selectedRawDataAvailable = Boolean(
@@ -482,7 +512,13 @@ export function ContinuedImportEditor({
                 onSelect={selectSource}
                 onMove={move}
                 onReorder={disabled ? undefined : (from, to) => {
-                  setOrder((current) => reorderContinuationSourceKeys(current, from, to));
+                  setOrder((current) => {
+                    const next = reorderContinuationSourceKeys(current, from, to);
+                    if (next.some((key, itemIndex) => key !== current[itemIndex])) {
+                      userReorderedRef.current = true;
+                    }
+                    return next;
+                  });
                 }}
                 onRemove={disabled ? undefined : (sourceKey) => {
                   onRemoveSource(sourceKey);
@@ -573,6 +609,8 @@ export function ContinuedImportEditor({
                     </Alert>
                   ) : inspectionQuery.isFetching ? (
                     <Alert color="gray">Waiting for continuity inspection…</Alert>
+                  ) : orderNeedsAutomaticCorrection ? (
+                    <Alert color="gray">Ordering sources by their available timestamps…</Alert>
                   ) : orderedDrafts.length < 2 ? (
                     <Alert color="gray">
                       This source is ready. The merged preview will appear when another source is added.
@@ -799,6 +837,20 @@ export function ContinuedImportEditor({
               })}
               label={inlineFindingLabel(finding, result.sources)}
             />
+          ))}
+        </Stack>
+      )}
+      {(orderCouldNotBeVerified || warningFindings.length > 0) && result && (
+        <Stack gap={2} style={{ flex: "none" }}>
+          {orderCouldNotBeVerified && (
+            <Text size="xs" c="orange">
+              Recorded times do not establish a unique source order. Review the sequence before importing.
+            </Text>
+          )}
+          {warningFindings.map((finding) => (
+            <Text key={finding.id} size="xs" c="orange">
+              {inlineFindingLabel(finding, result.sources)}
+            </Text>
           ))}
         </Stack>
       )}

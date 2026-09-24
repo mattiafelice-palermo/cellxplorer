@@ -2234,6 +2234,7 @@ export interface ContinuationFinding {
 export interface ContinuationInspectResult {
   sources: ContinuationInspectSource[];
   suggested_order: string[];
+  suggested_order_basis: "recorded_timestamps" | "header_start_times" | "selection_order";
   findings: ContinuationFinding[];
   inspection_complete: boolean;
   can_submit: boolean;

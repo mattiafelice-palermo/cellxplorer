@@ -13,6 +13,7 @@ import {
   isSubmitBlocked,
   scientificDraftIsValid,
   sourceRoleLabel,
+  shouldAutoApplySuggestedOrder,
 } from "../src/continuationPolicy.ts";
 
 function makeResult(
@@ -21,6 +22,7 @@ function makeResult(
   return {
     sources: [],
     suggested_order: [],
+    suggested_order_basis: "selection_order",
     findings: [],
     inspection_complete: true,
     can_submit: true,
@@ -40,20 +42,20 @@ test("acknowledgementFindingIds collects confirmation severities only", () => {
       findings: [
         {
           id: "confirm-1",
-          code: "timestamp_overlap",
+          code: "active_mass_mismatch",
           severity: "confirmation",
           source_keys: ["a", "b"],
-          title: "Overlap",
-          message: "Overlap message",
+          title: "Mass differs",
+          message: "Mass message",
           details: {},
         },
         {
           id: "warn-1",
-          code: "timestamp_gap",
+          code: "timestamp_overlap",
           severity: "warning",
           source_keys: ["a", "b"],
-          title: "Gap",
-          message: "Gap message",
+          title: "Overlap",
+          message: "Overlap message",
           details: {},
         },
         {
@@ -77,6 +79,31 @@ test("applySuggestedOrder preserves existing keys and reorders staged keys", () 
     ["staged-a", "staged-b"],
   );
   assert.deepEqual(next, ["existing-1", "staged-a", "staged-b"]);
+});
+
+test("automatic ordering requires complete unique timestamp evidence and no manual reorder", () => {
+  const recorded = makeResult({
+    suggested_order: ["a", "b", "c"],
+    suggested_order_basis: "recorded_timestamps",
+  });
+  assert.equal(shouldAutoApplySuggestedOrder(recorded, ["a", "c", "b"]), true);
+  assert.equal(shouldAutoApplySuggestedOrder(recorded, ["a", "c", "b"], true), false);
+  assert.equal(shouldAutoApplySuggestedOrder(recorded, ["a", "b", "c"]), false);
+  assert.equal(shouldAutoApplySuggestedOrder(
+    makeResult({
+      inspection_complete: false,
+      suggested_order: ["a", "b", "c"],
+      suggested_order_basis: "recorded_timestamps",
+    }),
+    ["a", "c", "b"],
+  ), false);
+  assert.equal(shouldAutoApplySuggestedOrder(
+    makeResult({
+      suggested_order: ["a", "b", "c"],
+      suggested_order_basis: "selection_order",
+    }),
+    ["a", "c", "b"],
+  ), false);
 });
 
 test("sourceRoleLabel marks the final source as the tracked tail", () => {

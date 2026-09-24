@@ -125,6 +125,27 @@ export function applySuggestedOrder(
   return [...prefix, ...suggestedStaged];
 }
 
+export function shouldAutoApplySuggestedOrder(
+  result: ContinuationInspectResult | null | undefined,
+  currentOrder: string[],
+  userReordered = false,
+): boolean {
+  if (
+    !result?.inspection_complete
+    || userReordered
+    || (result.suggested_order_basis !== "recorded_timestamps"
+      && result.suggested_order_basis !== "header_start_times")
+    || result.suggested_order.length !== currentOrder.length
+  ) {
+    return false;
+  }
+  const currentKeys = new Set(currentOrder);
+  const suggestedKeys = new Set(result.suggested_order);
+  return suggestedKeys.size === currentKeys.size
+    && result.suggested_order.every((key) => currentKeys.has(key))
+    && result.suggested_order.some((key, index) => key !== currentOrder[index]);
+}
+
 export function sourceRoleLabel(
   source: ContinuationInspectSource,
   index: number,

@@ -16,6 +16,11 @@ from .stitch import observed_local_cycles
 
 InspectionStatus = Literal["ready", "pending", "error"]
 FindingSeverity = Literal["info", "warning", "confirmation", "blocking"]
+SuggestedOrderBasis = Literal[
+    "recorded_timestamps",
+    "header_start_times",
+    "selection_order",
+]
 SourceKind = Literal["existing", "staged"]
 
 MATERIAL_MISMATCH_TOLERANCE = 0.05
@@ -176,17 +181,44 @@ def protocol_signature_from_header(header_meta: dict[str, str] | None, nominal_c
     return reconstructed.get("signature")
 
 
-def _chronological_sort_key(source: dict[str, Any]) -> tuple:
-    first_ts = source.get("first_record_timestamp")
-    start_ts = _parse_timestamp(source.get("start_time"))
-    reliable = 0 if first_ts is not None else 1
-    primary = first_ts or start_ts or datetime.max.replace(tzinfo=timezone.utc)
-    return (reliable, primary, source.get("input_order", 0))
+def suggested_order_basis(sources: list[dict[str, Any]]) -> SuggestedOrderBasis:
+    """Report whether timestamps establish a unique order for all sources."""
+    if len(sources) < 2:
+        return "selection_order"
+
+    recorded = [_parse_timestamp(source.get("first_record_timestamp")) for source in sources]
+    if all(timestamp is not None for timestamp in recorded) and len(set(recorded)) == len(recorded):
+        return "recorded_timestamps"
+
+    headers = [_parse_timestamp(source.get("start_time")) for source in sources]
+    if all(timestamp is not None for timestamp in headers) and len(set(headers)) == len(headers):
+        return "header_start_times"
+
+    return "selection_order"
 
 
 def suggest_chronological_order(sources: list[dict[str, Any]]) -> list[str]:
-    """Chronological order for any source list using the staged suggestion rules."""
-    return [source["key"] for source in sorted(sources, key=_chronological_sort_key)]
+    """Sort by one consistent timestamp source, or preserve input order if ambiguous."""
+    basis = suggested_order_basis(sources)
+    if basis == "recorded_timestamps":
+        ordered = sorted(
+            sources,
+            key=lambda source: (
+                _parse_timestamp(source.get("first_record_timestamp")),
+                source.get("input_order", 0),
+            ),
+        )
+    elif basis == "header_start_times":
+        ordered = sorted(
+            sources,
+            key=lambda source: (
+                _parse_timestamp(source.get("start_time")),
+                source.get("input_order", 0),
+            ),
+        )
+    else:
+        ordered = sorted(sources, key=lambda source: source.get("input_order", 0))
+    return [source["key"] for source in ordered]
 
 
 def suggest_staged_order(sources: list[dict[str, Any]]) -> list[str]:
@@ -404,7 +436,7 @@ def _pair_findings(
         _append_finding(
             findings,
             code="timestamp_overlap",
-            severity="confirmation",
+            severity="warning",
             source_keys=keys,
             title="Recorded timestamps overlap",
             message=(
@@ -651,6 +683,7 @@ def _continuation_chain_response(
     *,
     findings: list[dict[str, Any]],
     suggested_order: list[str],
+    suggested_order_basis: SuggestedOrderBasis,
 ) -> dict[str, Any]:
     deduped: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -723,6 +756,7 @@ def _continuation_chain_response(
     return {
         "sources": response_sources,
         "suggested_order": suggested_order,
+        "suggested_order_basis": suggested_order_basis,
         "findings": deduped,
         "inspection_complete": inspection_complete,
         "can_submit": can_submit,
@@ -752,6 +786,7 @@ def analyze_existing_order_chain(
         ordered_sources,
         findings=findings,
         suggested_order=suggested_order,
+        suggested_order_basis=suggested_order_basis(ordered_sources),
     )
 
 
@@ -768,6 +803,7 @@ def analyze_continuation_chain(
     findings.extend(_duplicate_hash_findings(ordered_sources))
 
     suggested_order = suggest_staged_order(ordered_sources)
+    staged_sources = [source for source in ordered_sources if source.get("kind") == "staged"]
     effective_staged_order = proposed_staged_order if proposed_staged_order is not None else staged_keys
     findings.extend(
         _order_reversed_findings(staged_keys, effective_staged_order, suggested_order)
@@ -781,6 +817,7 @@ def analyze_continuation_chain(
         ordered_sources,
         findings=findings,
         suggested_order=suggested_order,
+        suggested_order_basis=suggested_order_basis(staged_sources),
     )
 
 

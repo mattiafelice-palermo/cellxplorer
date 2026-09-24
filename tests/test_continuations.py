@@ -90,6 +90,104 @@ class ContinuationPolicyTests(unittest.TestCase):
             ["staged-a", "staged-b"],
         )
 
+    def test_import_order_is_sorted_by_unique_record_times_not_selection_order(self):
+        times = {
+            "04": (datetime(2026, 9, 22, 17, 32, tzinfo=timezone.utc), datetime(2026, 9, 22, 18, 37, tzinfo=timezone.utc)),
+            "06": (datetime(2026, 9, 22, 18, 39, tzinfo=timezone.utc), datetime(2026, 9, 22, 18, 59, tzinfo=timezone.utc)),
+            "08": (datetime(2026, 9, 22, 19, 1, tzinfo=timezone.utc), datetime(2026, 9, 22, 19, 17, tzinfo=timezone.utc)),
+            "10": (datetime(2026, 9, 22, 19, 19, tzinfo=timezone.utc), datetime(2026, 9, 22, 19, 34, tzinfo=timezone.utc)),
+        }
+        sources = [
+            _source(
+                "04",
+                input_order=0,
+                first_record_timestamp=times["04"][0],
+                end_timestamp=times["04"][1],
+                end_time=times["04"][1].isoformat(),
+            ),
+            _source(
+                "10",
+                input_order=1,
+                first_record_timestamp=times["10"][0],
+                end_timestamp=times["10"][1],
+                end_time=times["10"][1].isoformat(),
+            ),
+            _source(
+                "08",
+                input_order=2,
+                first_record_timestamp=times["08"][0],
+                end_timestamp=times["08"][1],
+                end_time=times["08"][1].isoformat(),
+            ),
+            _source(
+                "06",
+                input_order=3,
+                first_record_timestamp=times["06"][0],
+                end_timestamp=times["06"][1],
+                end_time=times["06"][1].isoformat(),
+            ),
+        ]
+
+        initial = continuations.analyze_continuation_chain(
+            sources,
+            staged_keys=[source["key"] for source in sources],
+        )
+        expected_order = ["04", "06", "08", "10"]
+        by_key = {source["key"]: source for source in sources}
+        corrected = continuations.analyze_continuation_chain(
+            [by_key[key] for key in expected_order],
+            staged_keys=expected_order,
+            proposed_staged_order=expected_order,
+        )
+
+        self.assertEqual(initial["suggested_order"], expected_order)
+        self.assertEqual(initial["suggested_order_basis"], "recorded_timestamps")
+        self.assertNotIn("timestamp_overlap", {item["code"] for item in corrected["findings"]})
+
+    def test_duplicate_or_missing_times_do_not_claim_a_verified_order(self):
+        sources = [
+            _source("staged-b", input_order=0),
+            _source("staged-a", input_order=1, hash="hash-staged-a"),
+        ]
+        result = continuations.analyze_continuation_chain(
+            sources,
+            staged_keys=[source["key"] for source in sources],
+        )
+
+        self.assertEqual(result["suggested_order"], ["staged-b", "staged-a"])
+        self.assertEqual(result["suggested_order_basis"], "selection_order")
+
+    def test_header_fallback_uses_one_consistent_timestamp_source(self):
+        sources = [
+            _source(
+                "staged-c",
+                input_order=0,
+                first_record_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                start_time="2026-01-03 00:00:00",
+            ),
+            _source(
+                "staged-a",
+                input_order=1,
+                first_record_timestamp=None,
+                start_time="2026-01-01 00:00:00",
+                hash="hash-staged-a",
+            ),
+            _source(
+                "staged-b",
+                input_order=2,
+                first_record_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                start_time="2026-01-02 00:00:00",
+                hash="hash-staged-b",
+            ),
+        ]
+        result = continuations.analyze_continuation_chain(
+            sources,
+            staged_keys=[source["key"] for source in sources],
+        )
+
+        self.assertEqual(result["suggested_order"], ["staged-a", "staged-b", "staged-c"])
+        self.assertEqual(result["suggested_order_basis"], "header_start_times")
+
     def test_duplicate_hash_blocks_submit(self):
         first = _source("staged-a", hash="same-hash")
         second = _source("staged-b", hash="same-hash")
@@ -239,7 +337,7 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertIn("days", gap["message"].lower())
         self.assertIn("gap_label", gap["details"])
 
-    def test_timestamp_overlap_is_confirmation(self):
+    def test_timestamp_overlap_is_warning_and_needs_no_acknowledgement(self):
         left_end = datetime(2026, 1, 2, tzinfo=timezone.utc)
         right_start = left_end - timedelta(hours=2)
         result = continuations.analyze_continuation_chain(
@@ -255,7 +353,8 @@ class ContinuationPolicyTests(unittest.TestCase):
             staged_keys=["staged-a", "staged-b"],
         )
         overlap = next(item for item in result["findings"] if item["code"] == "timestamp_overlap")
-        self.assertEqual(overlap["severity"], "confirmation")
+        self.assertEqual(overlap["severity"], "warning")
+        continuations.ensure_submittable_chain(result, [])
 
     def test_reversed_order_requires_confirmation(self):
         sources = [
