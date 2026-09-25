@@ -1602,6 +1602,7 @@ export interface SourceDescriptor {
   local_cycle_start: number | null;
   local_cycle_end: number | null;
   local_cycle_count: number;
+  display_only_source_cycles?: number[];
   global_cycle_start: number | null;
   global_cycle_end: number | null;
   start_timestamp?: string | null;
@@ -1722,6 +1723,8 @@ export interface TimeCapacityTrace {
   nominal_capacity_mah: number | null;
   electrode_area_cm2: number | null;
   cycle: (number | null)[];
+  /** True for raw curve rows without a completed charge/discharge cycle. */
+  display_only_cycle?: boolean[];
   /** Canonical plotted x coordinates calculated before display sampling. */
   display_x?: (number | null)[];
   time_s: (number | null)[];
@@ -1745,7 +1748,7 @@ export interface TimeCapacityTrace {
   status: (string | null)[];
   derivative_x: (number | null)[];
   derivative_y: (number | null)[];
-  segments?: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
+  segments?: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null; display_only_source_cycles?: number[] }[];
   source_descriptors?: SourceDescriptor[];
   source_cycle?: (number | null)[];
   /** Compact ordinary Time/Capacity provenance table (Spec 050.15). */
@@ -2299,7 +2302,6 @@ export interface ImportCellDraft {
   active_material_specific_capacity_mah_g?: number | null;
   electrode_area_preset_id?: string | null;
   electrode_area_preset_name?: string | null;
-  acknowledged_finding_ids?: string[];
   folder_watch?: ImportFolderWatchDraft | null;
 }
 
@@ -2332,18 +2334,15 @@ export interface SourceLifecycleMutationResult {
 
 export interface AttachContinuationsRequest {
   sources: ContinuationInspectSourceRequest[];
-  acknowledged_finding_ids?: string[];
 }
 
 export interface ReorderSourcesRequest {
   file_ids: number[];
-  acknowledged_finding_ids?: string[];
 }
 
 export interface DetachSourceRequest {
   confirm?: boolean;
   confirmation_token?: string | null;
-  acknowledged_finding_ids?: string[];
 }
 
 export interface CellFolderWatchCandidate {

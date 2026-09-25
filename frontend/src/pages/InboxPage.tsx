@@ -136,7 +136,6 @@ export type ImportDraft = ImportPreview & {
   metadata: Record<string, string>;
   preview_state: ImportPreviewState;
   preview_loading: boolean;
-  metadata_only_acknowledged: boolean;
   active_mass_mg_override: number | null;
   nominal_capacity_mah_override: number | null;
   electrode_area_cm2_override: number | null;
@@ -966,7 +965,6 @@ function importDraft(file: ImportPreview): ImportDraft {
     metadata: file.metadata,
     preview_state: { status: "idle" },
     preview_loading: false,
-    metadata_only_acknowledged: false,
     active_mass_mg_override: null,
     nominal_capacity_mah_override: null,
     electrode_area_cm2_override: null,
@@ -1107,7 +1105,6 @@ function ImportModal({
   const [continuedSubmissionState, setContinuedSubmissionState] = useState<ContinuedImportSubmissionState>({
     canSubmit: false,
     order: [],
-    acknowledgedFindingIds: [],
     metadataOnlySourceKeys: [],
     inspectionStatus: "not_started",
     findingAction: null,
@@ -1164,7 +1161,6 @@ function ImportModal({
       setContinuedSubmissionState({
         canSubmit: false,
         order: [],
-        acknowledgedFindingIds: [],
         metadataOnlySourceKeys: [],
         inspectionStatus: "not_started",
         findingAction: null,
@@ -1288,7 +1284,6 @@ function ImportModal({
     save.mutate({
       mode: "continued",
       order: continuedSubmissionState.order,
-      acknowledgedFindingIds: continuedSubmissionState.acknowledgedFindingIds,
       metadataOnlySourceKeys: continuedSubmissionState.metadataOnlySourceKeys,
       continuedCellDraft,
       folderWatch,
@@ -1411,7 +1406,6 @@ function ImportModal({
     mutationFn: (variables: {
       mode: "separate" | "continued";
       order?: string[];
-      acknowledgedFindingIds?: string[];
       metadataOnlySourceKeys?: string[];
       continuedCellDraft?: ContinuedCellDraft;
       folderWatch?: ImportFolderWatchDraft | null;
@@ -1459,7 +1453,6 @@ function ImportModal({
                 variables.continuedCellDraft?.active_material_specific_capacity_mah_g,
               electrode_area_preset_id: variables.continuedCellDraft?.electrode_area_preset_id,
               electrode_area_preset_name: variables.continuedCellDraft?.electrode_area_preset_name,
-              acknowledged_finding_ids: variables.acknowledgedFindingIds ?? [],
               folder_watch: variables.folderWatch?.enabled ? variables.folderWatch : null,
             }]
           : includedDrafts.map((d) => ({
@@ -1467,7 +1460,7 @@ function ImportModal({
           source_path: d.source_path,
           filename: d.filename,
           inspection: d.inspection,
-          allow_metadata_only: d.metadata_only && d.metadata_only_acknowledged,
+          allow_metadata_only: d.metadata_only,
           cell_name: d.cell_name,
           description: d.description || null,
           metadata: d.metadata,
@@ -1610,7 +1603,6 @@ function ImportModal({
   const canSave =
     includedDrafts.length > 0 &&
     includedDrafts.every((d) => d.cell_name.trim()) &&
-    includedDrafts.every((d) => !d.metadata_only || d.metadata_only_acknowledged) &&
     includedDrafts.every(
       (d) =>
         d.active_material_selection === "custom" ||
@@ -1711,8 +1703,6 @@ function ImportModal({
                 <Text size="sm" c="red">Continuity inspection failed; resolve the source error before importing.</Text>
               ) : continuedSubmissionState.findingAction === "blocking" ? (
                 <Text size="sm" c="red">Resolve the blocking continuity findings above before importing.</Text>
-              ) : continuedSubmissionState.findingAction === "acknowledgement" ? (
-                <Text size="sm" c="orange">Acknowledge the continuity confirmations above before importing.</Text>
               ) : continuedSubmissionState.inspectionStatus === "preparing" ? (
                 <Text size="sm" c="dimmed">Continuity inspection is still preparing.</Text>
               ) : continuedSubmissionState.inspectionStatus === "not_started" ? (
@@ -2262,16 +2252,6 @@ function ImportModal({
                       {draft.capability_warning ||
                         "This file can be registered with its header metadata, but it cannot be used for canonical cycling analysis yet."}
                     </Text>
-                    <Checkbox
-                      label="Register this source explicitly as metadata-only"
-                      checked={draft.metadata_only_acknowledged}
-                      onChange={(event) =>
-                        onChange(active, {
-                          ...draft,
-                          metadata_only_acknowledged: event.currentTarget.checked,
-                        })
-                      }
-                    />
                   </Stack>
                 </Alert>
               )}
@@ -3096,7 +3076,7 @@ export function InboxPage() {
         <div>
           <Title order={3}>Import</Title>
           <Text size="sm" c="dimmed">
-            Load Neware (.nda, .ndax, structured .xlsx) or BioLogic GCPL-family (.mpr) files and choose separate or continued-cell import. BioLogic metadata can be reviewed even when canonical cycling is not yet verified for a source.
+            Load Neware (.nda, .ndax, structured .xlsx) or BioLogic GCPL, CP, and OCV (.mpr) data, then choose separate or continued-cell import. CP/OCV voltage curves can be plotted even when a complete charge/discharge cycle is not present.
           </Text>
         </div>
         <Button

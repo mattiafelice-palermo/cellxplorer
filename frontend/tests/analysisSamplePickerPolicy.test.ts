@@ -10,12 +10,9 @@ import {
   cellMatchesPickerColumnFilters,
   cellPickerColumnHasFilter,
   cellPickerFacetValues,
-  setCellPickerSortLevel,
   updateCellPickerFacetFilters,
   toggleCellPickerBulkSelection,
-  toggleCellPickerPrimarySortLock,
   updateCellPickerColumnFilterDraft,
-  cellHasOnlyMetadataOnlyBiologicSources,
   resolveCellPickerPreviewCellId,
   EMPTY_CELL_PICKER_FILTERS,
   EMPTY_CELL_PICKER_SORT,
@@ -57,8 +54,6 @@ const rows: CellPickerCell[] = [
 test("cell picker sorts only the supplied cell list and keeps unknown metrics last", () => {
   const sort = {
     primary: { key: "cycle_count", direction: "desc" } as const,
-    secondary: null,
-    primaryLocked: false,
   };
   const firstFolder = sortCellPickerCells(rows.slice(0, 2), sort);
   const secondFolder = sortCellPickerCells(rows.slice(1), sort);
@@ -81,8 +76,6 @@ test("cell picker supports sorting by every displayed value", () => {
     assert.deepEqual(
       sortCellPickerCells(rows, {
         primary: { key, direction },
-        secondary: null,
-        primaryLocked: false,
       }).map((cell) => cell.id),
       expected,
       key,
@@ -94,22 +87,17 @@ test("cell picker sort header starts with useful direction and toggles on repeat
   const first = nextCellPickerSort(EMPTY_CELL_PICKER_SORT, "cycle_count");
   assert.deepEqual(first, {
     primary: { key: "cycle_count", direction: "desc" },
-    secondary: null,
-    primaryLocked: false,
   });
   assert.deepEqual(nextCellPickerSort(first, "cycle_count"), {
     ...first,
     primary: { key: "cycle_count", direction: "asc" },
   });
-  const locked = toggleCellPickerPrimarySortLock(first);
-  assert.equal(locked.primaryLocked, true);
-  assert.deepEqual(nextCellPickerSort(locked, "last_modified_at").secondary, {
-    key: "last_modified_at",
-    direction: "desc",
+  assert.deepEqual(nextCellPickerSort(first, "last_modified_at"), {
+    primary: { key: "last_modified_at", direction: "desc" },
   });
 });
 
-test("cell picker secondary sort breaks ties while unknown values stay last", () => {
+test("cell picker keeps unknown values last when sorting a single column", () => {
   const tied = [
     { ...rows[0], id: 4, cycle_count: 20, last_modified_at: "2025-02-01T00:00:00Z" },
     { ...rows[1], id: 5, cycle_count: 20, last_modified_at: "2025-04-01T00:00:00Z" },
@@ -117,45 +105,7 @@ test("cell picker secondary sort breaks ties while unknown values stay last", ()
   ];
   assert.deepEqual(sortCellPickerCells(tied, {
     primary: { key: "cycle_count", direction: "desc" },
-    secondary: { key: "last_modified_at", direction: "desc" },
-    primaryLocked: true,
-  }).map((cell) => cell.id), [5, 4, 6]);
-});
-
-test("picker header sort controls keep a primary and an explicit locked tie-break sort", () => {
-  const primary = setCellPickerSortLevel(
-    EMPTY_CELL_PICKER_SORT,
-    "cycle_count",
-    "desc",
-    "primary",
-  );
-  const sorted = setCellPickerSortLevel(primary, "last_modified_at", "asc", "secondary");
-  assert.deepEqual(sorted, {
-    primary: { key: "cycle_count", direction: "desc" },
-    secondary: { key: "last_modified_at", direction: "asc" },
-    primaryLocked: true,
-  });
-  const tied = [
-    { ...rows[0], id: 4, cycle_count: 20, last_modified_at: "2025-02-01T00:00:00Z" },
-    { ...rows[1], id: 5, cycle_count: 20, last_modified_at: "2025-04-01T00:00:00Z" },
-    { ...rows[2], id: 6, cycle_count: 10, last_modified_at: "2025-05-01T00:00:00Z" },
-  ];
-  assert.deepEqual(sortCellPickerCells(tied, sorted).map((cell) => cell.id), [4, 5, 6]);
-});
-
-test("locking the primary sort keeps its groups in order and sorts only ties", () => {
-  const primary = nextCellPickerSort(EMPTY_CELL_PICKER_SORT, "cycle_count");
-  const locked = toggleCellPickerPrimarySortLock(primary);
-  const sort = nextCellPickerSort(locked, "last_modified_at");
-  assert.equal(sort.primaryLocked, true);
-  assert.deepEqual(sort.primary, primary.primary);
-  assert.deepEqual(sort.secondary, { key: "last_modified_at", direction: "desc" });
-  const cells = [
-    { ...rows[0], id: 10, cycle_count: 5, last_modified_at: "2025-03-01T00:00:00Z" },
-    { ...rows[0], id: 11, cycle_count: 8, last_modified_at: "2025-01-01T00:00:00Z" },
-    { ...rows[0], id: 12, cycle_count: 8, last_modified_at: "2025-04-01T00:00:00Z" },
-  ];
-  assert.deepEqual(sortCellPickerCells(cells, sort).map((cell) => cell.id), [12, 11, 10]);
+  }).map((cell) => cell.id), [4, 5, 6]);
 });
 
 test("picker facets require one source file to satisfy all selected facets", () => {
@@ -249,23 +199,11 @@ test("picker facet changes remove incompatible format and protocol selections", 
   });
 });
 
-test("preview falls back when the selected Cell is filtered out and metadata-only requires all sources", () => {
+test("preview falls back when the selected Cell is filtered out", () => {
   assert.equal(resolveCellPickerPreviewCellId(1, 2, [2, 3]), 2);
   assert.equal(resolveCellPickerPreviewCellId(3, 2, [2, 3]), 3);
   assert.equal(resolveCellPickerPreviewCellId(null, 2, [2, 3]), 2);
 
-  assert.equal(cellHasOnlyMetadataOnlyBiologicSources([
-    { system: "biologic", format: ".mpr", technique: "OCV" },
-    { system: "biologic", format: ".mpr", technique: "CP" },
-  ]), true);
-  assert.equal(cellHasOnlyMetadataOnlyBiologicSources([
-    { system: "biologic", format: ".mpr", technique: "OCV" },
-    { system: "biologic", format: ".mpr", technique: "GCPL" },
-  ]), false);
-  assert.equal(cellHasOnlyMetadataOnlyBiologicSources([
-    { system: "biologic", format: ".mpr", technique: "OCV" },
-    { system: "neware", format: ".ndax", technique: null },
-  ]), false);
 });
 
 test("picker column filters support text, numeric, and inclusive date ranges", () => {

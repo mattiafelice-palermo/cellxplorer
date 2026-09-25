@@ -2057,9 +2057,6 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
             test,
             [sources[1].id, sources[0].id],
         )
-        finding_id = next(
-            item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
-        )
         ready_analysis = self._ready_analysis(analysis)
         with patch.object(files, "_inspect_test_chain", return_value=ready_analysis), patch.object(
             files.cache_maintenance,
@@ -2070,7 +2067,6 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
                 test.id,
                 files.ReorderRequest(
                     file_ids=[sources[1].id, sources[0].id],
-                    acknowledged_finding_ids=[finding_id],
                 ),
                 db=db,
             )
@@ -2089,9 +2085,6 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         analysis = self._ready_analysis(
             files._inspect_existing_order(db, test, [sources[1].id, sources[0].id])
         )
-        finding_id = next(
-            item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
-        )
         with patch.object(files, "_inspect_test_chain", return_value=analysis), patch.object(
             files.cache_maintenance,
             "invalidate_cell_dependents",
@@ -2101,7 +2094,6 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
                 cell.id,
                 files.ReorderRequest(
                     file_ids=[sources[1].id, sources[0].id],
-                    acknowledged_finding_ids=[finding_id],
                 ),
                 db=db,
             )
@@ -2134,40 +2126,16 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         cell = db.query(Cell).filter(Cell.name == "New cell").one()
         self.assertEqual(len(cell.tests), 1)
 
-    def test_reorder_reverse_requires_acknowledgement(self):
+    def test_reorder_reverse_is_allowed_with_warning_only(self):
         db = self.make_session()
         _cell, test, sources = self._seed_test_with_sources(db)
         sources[0].start_time = "2026-01-01 00:00:00"
         sources[1].start_time = "2026-01-03 00:00:00"
         db.commit()
-        with self.assertRaises(HTTPException) as ctx:
-            with patch.object(
-                files,
-                "_inspect_test_chain",
-                return_value=self._ready_analysis(
-                    files._inspect_existing_order(
-                        db,
-                        test,
-                        [sources[1].id, sources[0].id],
-                    )
-                ),
-            ):
-                files.reorder_files(
-                    test.id,
-                    files.ReorderRequest(file_ids=[sources[1].id, sources[0].id]),
-                    db=db,
-                )
-        self.assertEqual(ctx.exception.status_code, 422)
-        self.assertTrue(
-            any(item["code"] == "order_reversed" for item in ctx.exception.detail["findings"])
-        )
         analysis = files._inspect_existing_order(
             db,
             test,
             [sources[1].id, sources[0].id],
-        )
-        finding_id = next(
-            item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
         )
         ready_analysis = self._ready_analysis(analysis)
         with patch.object(files, "_inspect_test_chain", return_value=ready_analysis), patch.object(
@@ -2179,7 +2147,6 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
                 test.id,
                 files.ReorderRequest(
                     file_ids=[sources[1].id, sources[0].id],
-                    acknowledged_finding_ids=[finding_id],
                 ),
                 db=db,
             )

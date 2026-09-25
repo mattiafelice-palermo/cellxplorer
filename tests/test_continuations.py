@@ -227,7 +227,7 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertIn("protocol_changed", codes)
         self.assertIn("channel_changed", codes)
 
-    def test_mixed_neware_biologic_chain_surfaces_metadata_only_acknowledgement(self):
+    def test_mixed_neware_biologic_chain_surfaces_metadata_only_warning(self):
         neware = _source("staged-neware", filename="first.ndax")
         biologic = _source(
             "staged-biologic",
@@ -256,11 +256,9 @@ class ContinuationPolicyTests(unittest.TestCase):
             for finding in result["findings"]
             if finding["code"] == "metadata_only_source"
         )
-        with self.assertRaises(continuations.ContinuationValidationError):
-            continuations.ensure_submittable_chain(result, [])
-        continuations.ensure_submittable_chain(result, [metadata_finding["id"]])
+        continuations.ensure_submittable_chain(result)
 
-    def test_metadata_only_acknowledgement_changes_with_hash_but_survives_reorder(self):
+    def test_metadata_only_warning_identity_changes_with_hash_but_survives_reorder(self):
         first = _source(
             "staged-a",
             filename="a.mpr",
@@ -298,8 +296,7 @@ class ContinuationPolicyTests(unittest.TestCase):
             if finding["code"] == "metadata_only_source"
         )
         self.assertNotEqual(original_id, changed_id)
-        with self.assertRaises(continuations.ContinuationValidationError):
-            continuations.ensure_submittable_chain(changed, [original_id])
+        continuations.ensure_submittable_chain(changed)
 
         reordered = continuations.analyze_continuation_chain(
             [second, first],
@@ -354,7 +351,7 @@ class ContinuationPolicyTests(unittest.TestCase):
         )
         overlap = next(item for item in result["findings"] if item["code"] == "timestamp_overlap")
         self.assertEqual(overlap["severity"], "warning")
-        continuations.ensure_submittable_chain(result, [])
+        continuations.ensure_submittable_chain(result)
 
     def test_reversed_order_requires_confirmation(self):
         sources = [
@@ -533,7 +530,7 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertIn("channel_changed", codes)
 
         with self.assertRaises(continuations.ContinuationValidationError) as ctx:
-            continuations.ensure_submittable_chain(result, [])
+            continuations.ensure_submittable_chain(result)
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.payload["code"], "inspection_incomplete")
 
@@ -703,7 +700,7 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertEqual(enriched["cache_build_status"], "started")
         schedule.assert_called_once()
 
-    def test_metadata_only_confirmation_requires_acknowledgement(self):
+    def test_metadata_only_confirmation_does_not_block_submit(self):
         source = _source(
             "staged-mpr",
             filename="staged-mpr.mpr",
@@ -718,9 +715,7 @@ class ContinuationPolicyTests(unittest.TestCase):
         )
         finding = next(item for item in result["findings"] if item["code"] == "metadata_only_source")
         self.assertEqual(finding["severity"], "confirmation")
-        with self.assertRaises(continuations.ContinuationValidationError):
-            continuations.ensure_submittable_chain(result, [])
-        continuations.ensure_submittable_chain(result, [finding["id"]])
+        continuations.ensure_submittable_chain(result)
 
     def test_raw_only_cache_remains_pending_until_cycles_are_available(self):
         source = _source(
@@ -807,7 +802,7 @@ class ContinuationPolicyTests(unittest.TestCase):
 
 
 class ContinuationLifecycleValidationTests(unittest.TestCase):
-    def test_unacknowledged_confirmation_blocks_submit(self):
+    def test_source_order_confirmation_is_non_blocking(self):
         finding = {
             "id": "confirm-1",
             "code": "order_reversed",
@@ -818,22 +813,7 @@ class ContinuationLifecycleValidationTests(unittest.TestCase):
             "details": {},
         }
         analysis = {"can_submit": True, "findings": [finding]}
-        with self.assertRaises(continuations.ContinuationValidationError) as ctx:
-            continuations.ensure_submittable_chain(analysis, [])
-        self.assertEqual(ctx.exception.status_code, 422)
-
-    def test_acknowledged_confirmation_allows_submit(self):
-        finding = {
-            "id": "confirm-1",
-            "code": "order_reversed",
-            "severity": "confirmation",
-            "source_keys": ["a"],
-            "title": "Confirm",
-            "message": "Confirm order",
-            "details": {},
-        }
-        analysis = {"can_submit": True, "findings": [finding]}
-        continuations.ensure_submittable_chain(analysis, ["confirm-1"])
+        continuations.ensure_submittable_chain(analysis)
 
     def test_validate_exact_permutation_rejects_partial_list(self):
         with self.assertRaises(continuations.ContinuationValidationError) as ctx:

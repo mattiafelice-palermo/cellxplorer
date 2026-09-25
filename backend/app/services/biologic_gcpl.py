@@ -47,8 +47,9 @@ from .source_format_errors import (
 
 # gcpl13 admits verified CP/OCV metadata layouts at the MPR boundary and
 # allows only the measured f64 ID-13/ID-7 active-counter rounding residual.
+# gcpl14 counts a cycle only when its rows include both active directions.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl13"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl14"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -2507,6 +2508,22 @@ def map_gcpl_to_canonical(
         )
     else:
         cycle_identity_source = "explicit_full_cycle"
+    # Keep every verified raw trajectory available for voltage/time plotting,
+    # but only call a source-local cycle complete when active current includes
+    # both charge and discharge. Rest/OCV blocks are neutral and cannot supply
+    # either direction or advance cycle identity.
+    directions_by_cycle: dict[int, set[int]] = {}
+    for (start, _end), direction in zip(ranges, directions, strict=True):
+        if direction:
+            directions_by_cycle.setdefault(int(cycle[start]), set()).add(int(direction))
+    cycle_complete = np.fromiter(
+        (
+            directions_by_cycle.get(int(cycle_number), set()) == {-1, 1}
+            for cycle_number in cycle
+        ),
+        dtype=bool,
+        count=len(cycle),
+    )
     charge_capacity, discharge_capacity = _capacity_columns(
         capacity_for_mapping, directions, ranges
     )
@@ -2530,6 +2547,7 @@ def map_gcpl_to_canonical(
     frame_values: dict[str, Any] = {
         "record_index": np.arange(1, len(records) + 1, dtype=np.int64),
         "cycle": cycle,
+        "cycle_complete": cycle_complete,
         "step": step,
         "step_index": ns,
         "status": pd.Series(status, dtype="string"),

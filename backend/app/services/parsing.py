@@ -82,7 +82,7 @@ from typing import Any
 import NewareNDA
 import pandas as pd
 
-from . import biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, neware_excel
+from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, neware_excel
 from .source_format_errors import (
     InvalidSourceFormatError,
     SourceFormatError,
@@ -142,7 +142,10 @@ _NEWARE_EXCEL_FORMAT = SourceFormatDescriptor(
 _BIOLOGIC_MPR_FORMAT = SourceFormatDescriptor(
     format_id=FORMAT_BIOLOGIC_MPR,
     extensions=frozenset({".mpr"}),
-    adapter_revision=biologic_gcpl.BIOLOGIC_GCPL_ADAPTER_REVISION,
+    adapter_revision=(
+        f"{biologic_gcpl.BIOLOGIC_GCPL_ADAPTER_REVISION}"
+        f"cpocv{biologic_cp_ocv.BIOLOGIC_CP_OCV_ADAPTER_REVISION}"
+    ),
 )
 _FORMAT_DESCRIPTORS: dict[str, SourceFormatDescriptor] = {
     _NEWARE_BINARY_FORMAT.format_id: _NEWARE_BINARY_FORMAT,
@@ -429,9 +432,10 @@ RAW_COLUMNS = {
 # for a header-proven neutral setup/control preamble, gcpl9 widened the
 # binary column-layout contract, gcpl10 widened logical-cycle reconstruction,
 # gcpl11 added validated settings profiles, gcpl12 added evidence-selected
-# capacity-counter interpretation, and gcpl13 adds verified CP/OCV layouts plus
-# narrow ID-13 increment precision tolerance. Sources under each prior identity
-# must pass the current source-reading path before receiving gcpl13.
+# capacity-counter interpretation, gcpl13 adds verified CP/OCV layouts plus
+# narrow ID-13 increment precision tolerance, and gcpl14 counts only complete
+# charge/discharge pairs. Sources under each prior identity must pass the
+# current source-reading path before receiving the current identity.
 # Keep these sets explicit so a later BioLogic revision can add its own
 # bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
@@ -446,6 +450,8 @@ LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
         "bm:gcpl10:r1",
         "bm:gcpl11:r1",
         "bm:gcpl12:r1",
+        "bm:gcpl13:r1",
+        "bm:gcpl13cpocv1:r1",
     }
 )
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
@@ -463,13 +469,13 @@ RETIRED_BIOLOGIC_MPR_WARNING = (
     "verified; this source is metadata-only."
 )
 BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING = (
-    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl13 "
+    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl14 "
     "identity from stored registry-resolved layout evidence; canonical "
     "cycling remains unavailable until logical cycle identity is independently "
     "verified, so this source is metadata-only."
 )
 BIOLOGIC_MPR_REINSPECTION_WARNING = (
-    "This BioLogic MPR was registered under a pre-gcpl13 parser identity, but "
+    "This BioLogic MPR was registered under a pre-gcpl14 parser identity, but "
     "its stored binary-layout evidence does not prove a safe registry-resolved "
     "layout. Re-inspect the source before using it; it remains metadata-only."
 )
@@ -1352,7 +1358,22 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     if format_id == FORMAT_NEWARE_BINARY:
         return _parse_neware_binary_timeseries(source_path)
     if format_id == FORMAT_BIOLOGIC_MPR:
-        return biologic_gcpl.parse_timeseries(source_path)
+        with biologic_mpr.read_mpr(source_path) as document:
+            technique_id = biologic_mpr.mpr_technique_id(document)
+            if technique_id in {
+                biologic_mpr.MPR_CP_TECHNIQUE_ID,
+                biologic_mpr.MPR_OCV_TECHNIQUE_ID,
+            }:
+                start_time = biologic_gcpl.decode_gcpl_log(document.vmp_log).get("start_time")
+                return biologic_cp_ocv.map_curve_to_canonical(
+                    document,
+                    technique_id=technique_id,
+                    acquisition_start=start_time,
+                )
+            return biologic_gcpl.map_gcpl_to_canonical(
+                document,
+                acquisition_start=biologic_gcpl.decode_gcpl_log(document.vmp_log).get("start_time"),
+            )
     raise UnsupportedSourceFormatError(
         f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
     )
@@ -1495,8 +1516,10 @@ def _metadata_only_biologic_header(
     )
     log = biologic_gcpl.decode_gcpl_log(document.vmp_log)
     warning = (
-        f"BioLogic {technique} data is readable, but this technique does not provide a "
-        "verified charge/discharge cycle contract; no canonical cycling rows are available."
+        "BioLogic OCV provides a voltage-time curve and is not counted as a cycling test."
+        if technique == "OCV"
+        else "BioLogic CP provides voltage/current data; complete cycles are inferred only "
+        "when positive and negative current phases alternate."
     )
     data = document.vmp_data
     data_header = {
@@ -1524,14 +1547,16 @@ def _metadata_only_biologic_header(
         for module in document.modules
     ]
     capabilities = {
-        "cycling_rows": False,
-        "canonical_cycling": False,
+        "cycling_rows": True,
+        "canonical_cycling": True,
         "canonical_cycling_pending": False,
-        "canonical_cycling_verified": False,
-        "metadata_only": True,
-        "cycle_identity_source": "unresolved",
+        "canonical_cycling_verified": True,
+        "metadata_only": False,
+        "cycle_identity_source": "curve_only" if technique == "OCV" else "current_sign_alternation",
         "absolute_timestamps": bool(log.get("absolute_timestamps")),
         "measurement_voltage_available": 174 in data.resolved_base_id_set,
+        "curve_data": True,
+        "complete_cycles_inferred": technique == "CP",
     }
     channel_number = log.get("channel_number")
     device_parts: list[str] = []
@@ -1581,6 +1606,9 @@ def _metadata_only_biologic_header(
         "electrode_area_cm2": None,
         "protocol_warnings": [warning],
         "capabilities": capabilities,
+        "voltage_capabilities": canonical_cycling.voltage_capabilities(
+            voltage_origin="measured",
+        ),
     }
 
 

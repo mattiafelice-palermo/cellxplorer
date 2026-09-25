@@ -3,7 +3,6 @@ import test from "node:test";
 
 import type { ContinuationInspectResult } from "../src/api.ts";
 import {
-  acknowledgementFindingIds,
   applySuggestedOrder,
   continuationFindingAction,
   continuationInspectionHasErrors,
@@ -34,43 +33,6 @@ test("isSubmitBlocked follows can_submit from the server", () => {
   assert.equal(isSubmitBlocked(makeResult({ can_submit: true })), false);
   assert.equal(isSubmitBlocked(makeResult({ can_submit: false })), true);
   assert.equal(isSubmitBlocked(makeResult({ inspection_complete: false })), true);
-});
-
-test("acknowledgementFindingIds collects confirmation severities only", () => {
-  const ids = acknowledgementFindingIds(
-    makeResult({
-      findings: [
-        {
-          id: "confirm-1",
-          code: "active_mass_mismatch",
-          severity: "confirmation",
-          source_keys: ["a", "b"],
-          title: "Mass differs",
-          message: "Mass message",
-          details: {},
-        },
-        {
-          id: "warn-1",
-          code: "timestamp_overlap",
-          severity: "warning",
-          source_keys: ["a", "b"],
-          title: "Overlap",
-          message: "Overlap message",
-          details: {},
-        },
-        {
-          id: "block-1",
-          code: "duplicate_hash",
-          severity: "blocking",
-          source_keys: ["a"],
-          title: "Duplicate",
-          message: "Duplicate message",
-          details: {},
-        },
-      ],
-    }),
-  );
-  assert.deepEqual(ids, ["confirm-1"]);
 });
 
 test("applySuggestedOrder preserves existing keys and reorders staged keys", () => {
@@ -163,7 +125,7 @@ test("findingSummary combines title, message, and source keys", () => {
   assert.match(summary, /staged-a → staged-b/);
 });
 
-test("inline finding action keeps warning and info findings out of the import gate", () => {
+test("inline finding action keeps every non-blocking finding out of the import gate", () => {
   const findings = [
     { id: "warning", code: "gap", severity: "warning" as const, source_keys: ["a"], title: "Gap", message: "", details: {} },
     { id: "info", code: "note", severity: "info" as const, source_keys: [], title: "Note", message: "", details: {} },
@@ -172,7 +134,7 @@ test("inline finding action keeps warning and info findings out of the import ga
   assert.equal(continuationFindingAction(informational), null);
   assert.equal(continuationFindingAction(makeResult({
     findings: [{ id: "confirm", code: "overlap", severity: "confirmation", source_keys: ["a", "b"], title: "Overlap", message: "", details: {} }],
-  })), "acknowledgement");
+  })), null);
   assert.equal(continuationFindingAction(makeResult({
     findings: [{ id: "confirm", code: "overlap", severity: "confirmation", source_keys: ["a", "b"], title: "Overlap", message: "", details: {} }],
   }), ["confirm"]), null);

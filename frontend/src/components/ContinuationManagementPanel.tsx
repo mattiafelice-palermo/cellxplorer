@@ -2,7 +2,6 @@ import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Group,
   Modal,
   Stack,
@@ -37,7 +36,7 @@ import {
   previewCellSourceChange,
   reorderCellSources,
 } from "../api";
-import { acknowledgementFindingIds, findingSummary, moveSource, preserveAcknowledgements } from "../continuationPolicy";
+import { findingSummary, moveSource } from "../continuationPolicy";
 import { folderTrackingInlineSummary } from "../folderTrackingPolicy";
 import {
   invalidateAnalysisQueries,
@@ -133,7 +132,6 @@ export function ContinuationManagementPanel({
   const [stagedSources, setStagedSources] = useState<ImportPreview[]>([]);
   const [mode, setMode] = useState<Mode>(null);
   const [detachFileId, setDetachFileId] = useState<number | null>(null);
-  const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const [trackingSettingsOpen, setTrackingSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -271,32 +269,23 @@ export function ContinuationManagementPanel({
     return order.map((fileId) => sourceMap.get(`existing-${fileId}`) ?? sourceFromFile(fileById.get(fileId)!)).filter(Boolean);
   }, [currentInspection.data?.sources, fileById, mode, order, proposalInspection?.sources, stagedSources]);
 
-  useEffect(() => {
-    if (proposalInspection) {
-      setAcknowledged((current) => new Set(preserveAcknowledgements(current, proposalInspection)));
-    }
-  }, [proposalInspection]);
-
   const sourceName = (id: number | null) => id === null ? "Unknown" : fileById.get(id)?.filename ?? `Source ${id}`;
-  const proposalConfirmationIds = proposalInspection ? acknowledgementFindingIds(proposalInspection) : [];
   const proposalReady = Boolean(
     proposalInspection?.inspection_complete &&
-      proposalInspection.can_submit &&
-      proposalConfirmationIds.every((id) => acknowledged.has(id)),
+      proposalInspection.can_submit,
   );
 
   const closeProposal = () => {
     setMode(null);
     setDetachFileId(null);
     setStagedSources([]);
-    setAcknowledged(new Set());
   };
 
   const lifecycleMutation = useMutation({
     mutationFn: (action: { mode: Exclude<Mode, null>; order?: number[]; sources?: ReturnType<typeof stagedSource>[]; fileId?: number; confirmationToken?: string }) => {
-      if (action.mode === "attach") return attachCellContinuations(cell.id, { sources: action.sources ?? [], acknowledged_finding_ids: Array.from(acknowledged) });
-      if (action.mode === "reorder") return reorderCellSources(cell.id, { file_ids: action.order ?? [], acknowledged_finding_ids: Array.from(acknowledged) });
-      return detachCellSource(cell.id, action.fileId ?? 0, { confirm: true, confirmation_token: action.confirmationToken, acknowledged_finding_ids: Array.from(acknowledged) });
+      if (action.mode === "attach") return attachCellContinuations(cell.id, { sources: action.sources ?? [] });
+      if (action.mode === "reorder") return reorderCellSources(cell.id, { file_ids: action.order ?? [] });
+      return detachCellSource(cell.id, action.fileId ?? 0, { confirm: true, confirmation_token: action.confirmationToken });
     },
     onSuccess: (result, action) => {
       notifications.show({
@@ -359,7 +348,7 @@ export function ContinuationManagementPanel({
           <Text size="xs" c="dimmed">Original files stay separate. The final source is the tracked tail; earlier sources are historical.</Text>
         </div>
         <Group gap="xs">
-          {dirty && <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} loading={proposalQuery.isFetching} onClick={() => { setAcknowledged(new Set()); setMode("reorder"); }}>Review order</Button>}
+          {dirty && <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} loading={proposalQuery.isFetching} onClick={() => { setMode("reorder"); }}>Review order</Button>}
           <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setPickerOpen(true)}>Add continuation</Button>
         </Group>
       </Group>
@@ -456,7 +445,6 @@ export function ContinuationManagementPanel({
           const fileId = Number(sourceKey.replace("existing-", ""));
           setMode("detach");
           setDetachFileId(fileId);
-          setAcknowledged(new Set());
         }}
         disabled={lifecycleMutation.isPending}
       />
@@ -474,7 +462,7 @@ export function ContinuationManagementPanel({
           {proposalQuery.isPending && <Alert color="blue">Preparing the complete Cell proposal…</Alert>}
           {proposalQuery.isError && <Alert color="red">{proposalQuery.error instanceof Error ? proposalQuery.error.message : "The Cell proposal could not be prepared."}</Alert>}
           {proposalInspection && !proposalInspection.inspection_complete && <Alert color="blue">Preparation is still pending. This review will update automatically.</Alert>}
-          {proposalInspection?.findings.filter((finding) => finding.severity === "blocking").map((finding) => <Alert key={finding.id} color="red" icon={<IconAlertTriangle size={16} />}>{findingSummary(finding)}</Alert>)}
+          {proposalInspection?.findings.filter((finding) => finding.severity === "blocking").map((finding) => <Alert key={finding.id} color="red" icon={<IconAlertTriangle size={16} />}>{finding.message}</Alert>)}
           {proposal && <Text size="sm" c="dimmed">{impactSummary(proposal, sourceName)} {proposal.global_cycle_numbering_changes ? "Global cycle numbering will change." : "Global cycle numbering is unchanged."} {proposal.destructive ? "The source row will be detached, but the original disk file will remain." : "This change is reversible by changing the order."}</Text>}
           {mode === "attach" && proposalInspection && proposalInspection.suggested_order.length > 0 && <Group justify="flex-end"><Button size="compact-xs" variant="default" leftSection={<IconArrowUp size={13} />} disabled={actionInProgress} onClick={() => setStagedSources((current) => { const byKey = new Map(current.map((source) => [source.staged_name, source])); return proposalInspection.suggested_order.map((key) => byKey.get(key)).filter((source): source is ImportPreview => Boolean(source)); })}>Use suggested order</Button></Group>}
           <ContinuationSourceList
@@ -490,8 +478,16 @@ export function ContinuationManagementPanel({
             disabled={actionInProgress || mode !== "attach"}
             emptyMessage="No sources remain in this proposal."
           />
-          {proposalInspection?.sources.some((source) => source.metadata_only) && <Alert color="orange" title="Metadata-only continuation">One or more selected sources has readable metadata but no independently verified canonical cycling rows. The explicit acknowledgement below is required; no cycling cache or analysis data will be created for that source.</Alert>}
-          {proposalInspection && proposalConfirmationIds.length > 0 && <Stack gap={4}><Text size="xs" fw={700}>Acknowledgements</Text>{proposalInspection.findings.filter((finding) => finding.severity === "confirmation").map((finding) => <Checkbox key={finding.id} size="xs" disabled={actionInProgress} checked={acknowledged.has(finding.id)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); if (event.currentTarget.checked) next.add(finding.id); else next.delete(finding.id); return next; })} label={findingSummary(finding)} />)}</Stack>}
+          {proposalInspection?.sources.some((source) => source.metadata_only) && <Alert color="orange" title="Some sources are metadata-only">One or more sources has readable metadata but no verified cycling rows. These sources can be registered, but will not contribute cycling curves or analysis data.</Alert>}
+          {proposalInspection?.findings.some((finding) => finding.severity === "confirmation") && (
+            <Alert color="orange" title="Source-chain warnings">
+              <Stack gap={2}>
+                {proposalInspection.findings
+                  .filter((finding) => finding.severity === "confirmation")
+                  .map((finding) => <Text key={finding.id} size="xs">{findingSummary(finding)}</Text>)}
+              </Stack>
+            </Alert>
+          )}
           <Group justify="flex-end" gap="xs">
             <Button variant="default" onClick={closeProposal}>Cancel</Button>
             <Button

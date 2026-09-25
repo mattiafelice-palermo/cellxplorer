@@ -65,7 +65,13 @@ def apply_cycle_mapping(
         source_cycles = pd.to_numeric(out["cycle"], errors="coerce")
         out["source_cycle"] = source_cycles
         if local_labels:
-            out["cycle"] = source_cycles.map(cycle_map)
+            mapped_cycles = source_cycles.map(cycle_map)
+            display_only = mapped_cycles.isna()
+            # Zero is a display-only curve address in stitched consumers. It
+            # is deliberately outside the positive, dense complete-cycle
+            # namespace and must never advance that namespace.
+            out["cycle"] = mapped_cycles.fillna(0).astype("int64")
+            out["display_only_cycle"] = display_only.to_numpy(dtype=bool)
     out["segment"] = segment
     out["source_hash"] = source_hash
     return out
@@ -115,6 +121,7 @@ def _stitch_ordered(
     skipped_segments: list[int] = []
     timestamp_starts: list[pd.Timestamp] = []
     observed_cycle_overrides: dict[int, list[int]] = {}
+    complete_cycle_overrides: dict[int, list[int]] = {}
     selective_row_groups: set[int] = set()
     selective_rows_read = 0
     global_next = 1
@@ -143,6 +150,12 @@ def _stitch_ordered(
                 observed_cycle_overrides[segment] = [int(value) for value in raw_observed_cycles]
             except (TypeError, ValueError):
                 observed_cycle_overrides.pop(segment, None)
+        raw_complete_cycles = loaded.attrs.get("_raw_complete_source_cycles")
+        if isinstance(raw_complete_cycles, list):
+            try:
+                complete_cycle_overrides[segment] = [int(value) for value in raw_complete_cycles]
+            except (TypeError, ValueError):
+                complete_cycle_overrides.pop(segment, None)
         raw_groups = loaded.attrs.get("_raw_step_row_groups")
         if isinstance(raw_groups, tuple):
             selective_row_groups.update(int(value) for value in raw_groups)
@@ -162,7 +175,21 @@ def _stitch_ordered(
             continuation_blocked = True
             continue
 
-        cycle_map = build_dense_cycle_map(local_labels, global_next)
+        if segment in complete_cycle_overrides:
+            complete_labels = complete_cycle_overrides[segment]
+        elif "cycle_complete" in loaded.columns:
+            complete_mask = loaded["cycle_complete"].fillna(False).astype(bool)
+            complete_labels, complete_errors = canonical_cycling.observed_cycle_labels(
+                loaded.loc[complete_mask, "cycle"]
+            )
+            if complete_errors:
+                missing.append(file_hash)
+                missing_positions.append(segment)
+                continuation_blocked = True
+                continue
+        else:
+            complete_labels = list(local_labels)
+        cycle_map = build_dense_cycle_map(complete_labels, global_next)
         mapped = apply_cycle_mapping(
             loaded,
             segment=segment,
@@ -176,12 +203,15 @@ def _stitch_ordered(
             segment_metadata(
                 file_hash=file_hash,
                 segment=segment,
-                local_labels=local_labels,
+                local_labels=complete_labels,
                 global_start=global_next,
             )
         )
-        if local_labels:
-            global_next += len(local_labels)
+        display_only_labels = sorted(set(local_labels).difference(complete_labels))
+        if display_only_labels:
+            segments[-1]["display_only_source_cycles"] = display_only_labels
+        if complete_labels:
+            global_next += len(complete_labels)
         frames.append(mapped)
 
     if not frames:

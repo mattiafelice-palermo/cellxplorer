@@ -27,7 +27,7 @@ that matches the change, then follow its links to the authoritative implementati
   the verified current sign convention, capacity/energy reset semantics, and the
   validator/adapter ownership boundary.
 
-The independently authored BioLogic MPR reader contract (canonical GCPL plus metadata-only CP/OCV)
+The independently authored BioLogic MPR reader contract (canonical GCPL and voltage-curve CP/OCV)
 is documented in
 [`../biologic-mpr-format.md`](../biologic-mpr-format.md), including the bounded metadata contract,
 the explicit/declared-loop/execution-evidenced cycle-identity boundary, the fail-closed rules for

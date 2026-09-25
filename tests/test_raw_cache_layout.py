@@ -103,6 +103,7 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertEqual(index["parser_version"], self.PARSER)
         self.assertEqual(index["canonical_raw_version"], canonical_cycling.CANONICAL_RAW_VERSION)
         self.assertEqual(index["observed_source_cycles"], [1, 2, 4])
+        self.assertEqual(index["complete_source_cycles"], [1, 2, 4])
         self.assertEqual(index["raw_row_count"], 12)
         self.assertEqual(index["raw_row_group_count"], 3)
         self.assertEqual(index["cycle_to_row_groups"]["1"], [0, 1])
@@ -120,6 +121,18 @@ class RawCacheLayoutTests(unittest.TestCase):
             {"raw_time_s": 5.0, "reset_offset_s": 0.0},
         )
         self.assertEqual(cache.raw_layout_status(self.FILE_HASH, self.PARSER), "ready")
+
+    def test_index_distinguishes_display_only_curve_labels(self) -> None:
+        frame = canonical_frame()
+        frame["cycle_complete"] = frame["cycle"].eq(2)
+        index = self._indexed(frame)
+
+        self.assertEqual(index["observed_source_cycles"], [1, 2, 4])
+        self.assertEqual(index["complete_source_cycles"], [2])
+        self.assertEqual(
+            cache.load_raw_layout_index(self.FILE_HASH, self.PARSER)["complete_source_cycles"],
+            [2],
+        )
 
     def test_new_cache_build_writes_indexed_raw_without_changing_calc_content(self) -> None:
         frame = canonical_frame()

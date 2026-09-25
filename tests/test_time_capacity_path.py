@@ -59,8 +59,12 @@ class TimeCapacityPathTests(unittest.TestCase):
         file_hash: str,
         parser_version: str,
         labels: list[int],
+        *,
+        complete_labels: set[int] | None = None,
     ) -> stitch.CachedSourceRef:
         frame = raw_frame(labels)
+        if complete_labels is not None:
+            frame["cycle_complete"] = frame["cycle"].isin(complete_labels)
         target = cache.raw_path(file_hash, parser_version)
         cache._publish_optimized_raw(frame, target, parser_version)
         return stitch.CachedSourceRef(file_hash, parser_version)
@@ -207,6 +211,7 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertEqual(list(selected.columns), [
             *requested,
             "source_cycle",
+            "display_only_cycle",
             "segment",
             "source_hash",
         ])
@@ -233,6 +238,77 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertEqual(set(selected["source_cycle"]), {4})
         self.assertEqual(diagnostics["source_reads"][0]["requested_source_cycles"], [4])
         self.assertEqual(diagnostics["selected_rows"], 3)
+
+    def test_display_only_curves_do_not_advance_complete_cycle_numbers(self) -> None:
+        curve = self._publish("f" * 64, "parser-a", [1], complete_labels=set())
+        cycling = self._publish("0" * 64, "parser-b", [7], complete_labels={7})
+        plan = time_capacity_path.build_time_capacity_stitch_plan([curve, cycling])
+
+        self.assertEqual(plan.sources[0].cycle_map, {})
+        self.assertEqual(plan.sources[0].display_only_source_cycles, (1,))
+        self.assertEqual(plan.sources[1].cycle_map, {7: 1})
+        self.assertEqual(
+            time_capacity_path.requested_global_cycles(
+                plan, explicit_cycles=[], cycle_start=1, cycle_end=None
+            ),
+            (1,),
+        )
+
+        selected = time_capacity_path.load_indexed_time_capacity_raw(plan, [1])
+        self.assertIsNotNone(selected)
+        self.assertEqual(set(selected["cycle"]), {0, 1})
+        curve_rows = selected[selected["display_only_cycle"]]
+        self.assertEqual(set(curve_rows["source_hash"]), {curve.file_hash})
+        self.assertEqual(set(curve_rows["source_cycle"]), {1})
+        self.assertEqual(
+            set(selected.loc[~selected["display_only_cycle"], "source_hash"]),
+            {cycling.file_hash},
+        )
+
+    def test_narrow_cycle_request_omits_display_only_sources(self) -> None:
+        curve = self._publish("d" * 64, "parser-a", [1], complete_labels=set())
+        cycling = self._publish("c" * 64, "parser-b", [4, 7, 9], complete_labels={4, 7, 9})
+        plan = time_capacity_path.build_time_capacity_stitch_plan([curve, cycling])
+
+        self.assertFalse(time_capacity_path.should_include_display_only_rows(plan, [3]))
+        selected = time_capacity_path.load_indexed_time_capacity_raw(plan, [3])
+        self.assertIsNotNone(selected)
+        self.assertEqual(set(selected["cycle"]), {3})
+        self.assertFalse(selected["display_only_cycle"].any())
+        self.assertEqual(set(selected["source_hash"]), {cycling.file_hash})
+
+    def test_empty_out_of_range_request_does_not_include_display_only_sources(self) -> None:
+        curve = self._publish("d" * 64, "parser-a", [1], complete_labels=set())
+        cycling = self._publish("c" * 64, "parser-b", [4, 7, 9], complete_labels={4, 7, 9})
+        plan = time_capacity_path.build_time_capacity_stitch_plan([curve, cycling])
+        requested = time_capacity_path.requested_global_cycles(
+            plan,
+            explicit_cycles=[],
+            cycle_start=99,
+            cycle_end=100,
+        )
+
+        self.assertEqual(requested, ())
+        self.assertFalse(time_capacity_path.should_include_display_only_rows(plan, requested))
+        selected = time_capacity_path.load_indexed_time_capacity_raw(plan, requested)
+        self.assertIsNotNone(selected)
+        self.assertTrue(selected.empty)
+
+    def test_curve_only_source_is_readable_with_no_complete_cycles(self) -> None:
+        curve = self._publish("e" * 64, "parser-a", [4], complete_labels=set())
+        plan = time_capacity_path.build_time_capacity_stitch_plan([curve])
+
+        self.assertEqual(
+            time_capacity_path.requested_global_cycles(
+                plan, explicit_cycles=[], cycle_start=1, cycle_end=None
+            ),
+            (),
+        )
+        selected = time_capacity_path.load_indexed_time_capacity_raw(plan, [])
+        self.assertIsNotNone(selected)
+        self.assertEqual(set(selected["cycle"]), {0})
+        self.assertTrue(selected["display_only_cycle"].all())
+        self.assertEqual(set(selected["voltage_v"]), {3.0, 3.001, 3.002})
 
     def test_later_source_request_does_not_read_earlier_source(self) -> None:
         first = self._publish("b" * 64, "parser-a", [1, 2])

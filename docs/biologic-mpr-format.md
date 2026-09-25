@@ -243,27 +243,32 @@ timezone offset. Canonical timestamps are `acquisition_start + total_time_s`. A 
 non-finite, or out-of-range OLE date leaves `absolute_timestamps` false and every canonical timestamp
 as `NaT`; file modification time is never used.
 
-## Metadata-only CP and OCV layouts
+## CP and OCV curve layouts
 
 The low-level reader selects record requirements by the technique byte in the VMP Set payload.
 This admission is separate from canonical cycling support. Two observed non-GCPL families are
-readable for source identity/header inspection and can be registered as metadata-only:
+readable for source inspection and have verified voltage/time curve mappings:
 
 | Technique | Byte | Verified encoded data columns | Record stride | Capability |
 |---|---:|---|---:|---|
-| CP (chronopotentiometry) | `0x19` | `1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295` | 49 | Metadata-only; no GCPL cycle identity |
-| OCV | `0x0b` | `1, 3, 4, 174` | 13 | Metadata-only; no charge/discharge cycle |
+| CP (chronopotentiometry) | `0x19` | `1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295` | 49 | Voltage/current and capacity curves; complete cycles inferred from alternating current signs |
+| OCV | `0x0b` | `1, 3, 4, 174` | 13 | Voltage/time curve; no charge/discharge cycle |
 
 Both use the same length-checked MPR modules and VMP data header as GCPL, but each has its own
-required flags and storage fields. The CP/OCV paths never call the GCPL settings or canonical-row
-mapper. They preserve readable module/data-header metadata and a clear capability warning, while
-the import flow requires its existing explicit acknowledgement for metadata-only sources. Unknown
-technique bytes and unverified column layouts remain unsupported. This boundary deliberately avoids
-inventing cycle numbers, capacity, or a charge/discharge interpretation for CP and OCV data.
+required flags and storage fields. They use an independent curve adapter, not the GCPL settings or
+cycle mapper. CP charge/discharge phases are classified from the sign of measured current; zero
+current rows are neutral and never change cycle counting. Only charge/discharge pairs in the same
+CP source are reported as complete cycles. A single-direction or unmatched half-cycle remains
+available to Time/Capacity plots without being counted as a full cycle. OCV records are retained
+as voltage/time rows with a storage-only cycle index and are excluded from cycle summaries. OCV
+does not provide capacity, and no capacity curve is fabricated. Non-blocking continuity findings
+remain visible warnings; import no longer requires users to acknowledge them. Unknown technique
+bytes and unverified column layouts remain unsupported.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl13`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (GCPL adapter revision `gcpl14`,
+with `cpocv1` curve dispatch in the source identity)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -338,8 +343,10 @@ The ID-468 half-cycle remains decoded diagnostic evidence only. It must be finit
 non-negative, but its starting value, parity, progression, and resets are not converted with an
 arithmetic formula and are not a sole step/cycle boundary. Explicit `raw_cycle_index` remains the
 strongest identity, followed by protocol/execution loop reconstruction and the bounded
-non-repeating cycle-1 convention. The inferred cycle labels are source-local and do not claim an
-absolute experiment cycle number or MPR/MPT semantic parity.
+non-repeating storage-cycle-1 convention. The inferred raw labels are source-local and do not claim
+an absolute experiment cycle number or MPR/MPT semantic parity. A per-cycle summary is emitted only
+when rows with that label contain both active directions; single-direction curves remain available
+for plotting without increasing the complete-cycle count. Rest blocks remain neutral.
 
 ### Electrode roles and primary voltage
 

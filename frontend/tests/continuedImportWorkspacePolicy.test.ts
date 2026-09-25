@@ -122,7 +122,7 @@ test("reorderContinuationSourceKeys moves stable source ids without changing inv
   assert.equal(reorderContinuationSourceKeys(original, -1, 2), original);
 });
 
-test("buildContinuedImportSubmissionState carries the exact visible order and acknowledgement ids", () => {
+test("buildContinuedImportSubmissionState submits with non-blocking continuity warnings", () => {
   const inspection = result({
     findings: [
       { id: "confirm-1", code: "timestamp_overlap", severity: "confirmation", source_keys: ["a"], title: "Overlap", message: "", details: {} },
@@ -136,7 +136,6 @@ test("buildContinuedImportSubmissionState carries the exact visible order and ac
     ["confirm-1"],
   );
   assert.deepEqual(state.order, ["b", "a"]);
-  assert.deepEqual(state.acknowledgedFindingIds, ["confirm-1"]);
   assert.equal(state.canSubmit, true);
   assert.equal(state.inspectionStatus, "ready");
   assert.equal(state.findingAction, null);
@@ -196,7 +195,7 @@ test("buildContinuedImportSubmissionState blocks submission for an invalid scien
   assert.equal(state.canSubmit, false);
 });
 
-test("buildContinuedImportSubmissionState carries metadata-only source keys bound to acknowledged findings", () => {
+test("buildContinuedImportSubmissionState does not require metadata-only acknowledgements", () => {
   const inspection = result({
     sources: [
       { key: "metadata-a", kind: "staged", source_file_id: null, filename: "a.mpr", hash: "a", start_time: null, end_time: null, local_cycle_start: null, local_cycle_end: null, local_cycle_count: null, protocol_signature: null, device_info: null, channel: null, nominal_capacity_mah: null, active_mass_mg: null, inspection_status: "ready", canonical_cycling: false, metadata_only: true },
@@ -212,5 +211,5 @@ test("buildContinuedImportSubmissionState carries metadata-only source keys boun
     inspection,
     ["metadata-a-confirm"],
   );
-  assert.deepEqual(state.metadataOnlySourceKeys, ["metadata-a"]);
+  assert.deepEqual(state.metadataOnlySourceKeys, []);
 });

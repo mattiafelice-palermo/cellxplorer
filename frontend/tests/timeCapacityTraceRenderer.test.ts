@@ -194,6 +194,61 @@ test("consecutive capacity omits rest rows and does not connect separate cycles"
   assert.equal(interactive.filter((series) => series.showlegend).length, 1);
 });
 
+test("curve-only sources stay separate and are omitted when capacity is unavailable", async () => {
+  const timeResult = makeResult();
+  const trace = timeResult.cell_traces[0];
+  trace.cycle = [...trace.cycle, 0, 0, 0, 0];
+  trace.time_s = [...trace.time_s, 80, 90, 100, 110];
+  trace.capacity_mah = [...trace.capacity_mah, 0, 0, 0, 0];
+  trace.capacity_mah_g = [...trace.capacity_mah_g, 0, 0, 0, 0];
+  trace.capacity_mah_cm2 = [...(trace.capacity_mah_cm2 ?? Array(8).fill(null)), 0, 0, 0, 0];
+  trace.voltage_v = [...trace.voltage_v, 3.2, 3.3, 3.4, 3.5];
+  trace.voltage_v_by_channel = {
+    voltage: trace.voltage_v,
+    working_potential: [...(trace.voltage_v_by_channel?.working_potential ?? []), 3.2, 3.3, 3.4, 3.5],
+  };
+  trace.current_ma = [...trace.current_ma, 0, 0, 0, 0];
+  trace.phase = [...trace.phase, "rest", "rest", "rest", "rest"];
+  trace.status = [...trace.status, null, null, null, null];
+  trace.derivative_x = [...trace.derivative_x, 0, 0, 0, 0];
+  trace.derivative_y = [...trace.derivative_y, null, null, null, null];
+  trace.source_cycle = [...(trace.source_cycle ?? Array(8).fill(1)), 1, 1, 1, 1];
+  trace.source_position = [...(trace.source_position ?? Array(8).fill(1)), 3, 3, 4, 4];
+  trace.source_filename = [...(trace.source_filename ?? Array(8).fill("a.nda")), "c.mpr", "c.mpr", "d.mpr", "d.mpr"];
+  trace.source_hash = [...(trace.source_hash ?? Array(8).fill("a")), "c", "c", "d", "d"];
+  trace.display_only_cycle = [...Array(8).fill(false), true, true, true, true];
+
+  const timeTraces = (await assertParity(timeResult, makeSpec())).interactive;
+  const curveTraces = timeTraces.filter((series) =>
+    Array.isArray(series.customdata)
+      && (series.customdata as unknown[][]).some((point) => point[0] === "curve only (not a counted cycle)"),
+  );
+  assert.equal(curveTraces.length, 2);
+  assert.deepEqual(curveTraces.map((series) => series.x), [[80, 90], [100, 110]]);
+
+  const capacityResult = makeResult();
+  const capacityTrace = capacityResult.cell_traces[0];
+  capacityTrace.cycle = [...capacityTrace.cycle, 0, 0];
+  capacityTrace.display_only_cycle = [...Array(8).fill(false), true, true];
+  capacityTrace.display_x = [...Array.from({ length: 8 }, (_, index) => index), 0, 0];
+  capacityTrace.capacity_mah = [...capacityTrace.capacity_mah, 0, 0];
+  capacityTrace.capacity_mah_g = [...capacityTrace.capacity_mah_g, 0, 0];
+  capacityTrace.time_s = [...capacityTrace.time_s, 80, 90];
+  capacityTrace.voltage_v = [...capacityTrace.voltage_v, 3.2, 3.3];
+  capacityTrace.voltage_v_by_channel = { voltage: capacityTrace.voltage_v };
+  capacityTrace.current_ma = [...capacityTrace.current_ma, 0, 0];
+  capacityTrace.phase = [...capacityTrace.phase, "rest", "rest"];
+  capacityTrace.status = [...capacityTrace.status, null, null];
+  capacityTrace.source_hash = [...(capacityTrace.source_hash ?? Array(8).fill("a")), "ocv", "ocv"];
+  capacityTrace.derivative_x = [...capacityTrace.derivative_x, 0, 0];
+  capacityTrace.derivative_y = [...capacityTrace.derivative_y, null, null];
+  const capacityTraces = (await assertParity(capacityResult, makeSpec({ x_axis: "capacity_mah" }))).interactive;
+  assert.equal(capacityTraces.some((series) =>
+    Array.isArray(series.customdata)
+      && (series.customdata as unknown[][]).some((point) => point[0] === "curve only (not a counted cycle)"),
+  ), false);
+});
+
 test("phase-aligned reset and mirrored voltage/time retain segmentation and gaps", async () => {
   for (const display_mode of ["overlap_reset", "overlap_mirror"] as const) {
     const { interactive } = await assertParity(makeResult(), makeSpec({ display_mode }));

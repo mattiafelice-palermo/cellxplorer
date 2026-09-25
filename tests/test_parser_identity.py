@@ -69,7 +69,7 @@ class IdentityGrammarTests(unittest.TestCase):
         self.assertNotIn(cache.CALC_VERSION, identity)
 
     def test_previous_biologic_adapter_identity_requires_reinspection(self):
-        self.assertEqual(parsing.parser_identity("a.mpr"), "bm:gcpl13:r1")
+        self.assertEqual(parsing.parser_identity("a.mpr"), "bm:gcpl14cpocv1:r1")
         self.assertTrue(
             parsing.is_legacy_biologic_parser_identity("mpr", "bm:gcpl11:r1")
         )

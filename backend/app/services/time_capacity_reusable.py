@@ -60,6 +60,10 @@ def artifact_key(job, request) -> str | None:
         return None
     source = job.plan.sources[0]
     index = source.index
+    # The reusable artifact predates display-only curve rows. Keep those sources
+    # on the indexed reader, which preserves their uncounted row markers.
+    if set(index.get("complete_source_cycles", ())) != set(index.get("observed_source_cycles", ())):
+        return None
     # Conservative full-materialization admission before reading any full array.
     rows = index.get("raw_row_count", 0)
     if not isinstance(rows, int) or rows < 1 or rows * 8 * len(_COLUMNS) > MAX_ARRAY_BYTES:

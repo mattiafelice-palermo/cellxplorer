@@ -59,8 +59,6 @@ import {
   IconGauge,
   IconInfoCircle,
   IconLayersIntersect,
-  IconLock,
-  IconLockOpen,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -155,17 +153,13 @@ import {
   cellMatchesPickerFilters,
   cellPickerColumnHasFilter,
   cellPickerFacetValues,
-  cellHasOnlyMetadataOnlyBiologicSources,
   resolveCellPickerPreviewCellId,
   EMPTY_CELL_PICKER_FILTERS,
   EMPTY_CELL_PICKER_SORT,
   nextCellPickerSort,
-  removeCellPickerSecondarySort,
   selectableCellPickerSelection,
   sortCellPickerCells,
-  setCellPickerSortLevel,
   toggleCellPickerBulkSelection,
-  toggleCellPickerPrimarySortLock,
   UNKNOWN_CELL_PICKER_FACET,
   updateCellPickerFacetFilters,
   updateCellPickerColumnFilterDraft,
@@ -1420,7 +1414,6 @@ function AddEntriesModal({
   const previewCellSummary = activePreviewCellId === null
     ? undefined
     : cellSummariesById.get(activePreviewCellId);
-  const previewIsNonCyclingBiologic = cellHasOnlyMetadataOnlyBiologicSources(previewCellSummary?.source_facets);
   const previewSpec = useMemo<AnalysisSpec | null>(() => {
     if (activePreviewCellId === null) return null;
     return {
@@ -1472,7 +1465,6 @@ function AddEntriesModal({
     enabled:
       opened &&
       mode === "cell" &&
-      !previewIsNonCyclingBiologic &&
       activePreviewCellId !== null &&
       previewSpec !== null,
     staleTime: 30_000,
@@ -1492,7 +1484,7 @@ function AddEntriesModal({
     const discharge = previewTrace.phase.map((phase, index) =>
       phase === "discharge" && Number.isFinite(voltage[index]) ? voltage[index] : null,
     );
-    return [
+    const series = [
       {
         type: "scatter",
         mode: "lines",
@@ -1514,6 +1506,22 @@ function AddEntriesModal({
         hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Discharge</extra>",
       },
     ];
+    if (previewTrace.display_only_cycle?.some(Boolean)) {
+      const uncounted = voltage.map((value, index) =>
+        previewTrace.display_only_cycle?.[index] && Number.isFinite(value) ? value : null,
+      );
+      series.push({
+        type: "scatter",
+        mode: "lines",
+        name: "Voltage curve (not counted as a cycle)",
+        x,
+        y: uncounted,
+        connectgaps: false,
+        line: { color: PLOT_PALETTES.app[1], width: 2 },
+        hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Voltage curve</extra>",
+      });
+    }
+    return series;
   }, [previewTrace, previewXAxis]);
   const unfiledGroups = (groups.data ?? []).filter(
     (group) => !filedGroupIds.has(group.id) && matches(group.name)
@@ -1752,47 +1760,19 @@ function AddEntriesModal({
           <Button
             size="xs"
             variant={cellSort.primary?.key === key && cellSort.primary.direction === "asc" ? "light" : "default"}
-            onClick={() => setCellSort((current) => setCellPickerSortLevel(current, key, "asc", "primary"))}
+            onClick={() => setCellSort({ primary: { key, direction: "asc" } })}
           >
-            Primary ↑
+            Sort ascending
           </Button>
           <Button
             size="xs"
             variant={cellSort.primary?.key === key && cellSort.primary.direction === "desc" ? "light" : "default"}
-            onClick={() => setCellSort((current) => setCellPickerSortLevel(current, key, "desc", "primary"))}
+            onClick={() => setCellSort({ primary: { key, direction: "desc" } })}
           >
-            Primary ↓
-          </Button>
-        </Group>
-        <Group grow gap={6}>
-          <Button
-            size="xs"
-            variant={cellSort.secondary?.key === key && cellSort.secondary.direction === "asc" ? "light" : "default"}
-            disabled={!cellSort.primary || cellSort.primary.key === key}
-            onClick={() => setCellSort((current) => setCellPickerSortLevel(current, key, "asc", "secondary"))}
-          >
-            Tie-break ↑
-          </Button>
-          <Button
-            size="xs"
-            variant={cellSort.secondary?.key === key && cellSort.secondary.direction === "desc" ? "light" : "default"}
-            disabled={!cellSort.primary || cellSort.primary.key === key}
-            onClick={() => setCellSort((current) => setCellPickerSortLevel(current, key, "desc", "secondary"))}
-          >
-            Tie-break ↓
+            Sort descending
           </Button>
         </Group>
         {cellSort.primary && (
-          <Button
-            size="xs"
-            variant={cellSort.primaryLocked ? "light" : "default"}
-            leftSection={cellSort.primaryLocked ? <IconLock size={13} /> : <IconLockOpen size={13} />}
-            onClick={() => setCellSort(toggleCellPickerPrimarySortLock)}
-          >
-            {cellSort.primaryLocked ? "Unlock primary sort" : "Lock primary sort"}
-          </Button>
-        )}
-        {(cellSort.primary || cellSort.secondary) && (
           <Button size="xs" variant="subtle" onClick={() => setCellSort(EMPTY_CELL_PICKER_SORT)}>
             Clear sorting
           </Button>
@@ -1867,10 +1847,7 @@ function AddEntriesModal({
 
   const renderCellSortHeader = (key: CellPickerSortKey, label: string, right = false) => {
     const primary = cellSort.primary?.key === key ? cellSort.primary : null;
-    const secondary = cellSort.secondary?.key === key ? cellSort.secondary : null;
-    const activeSort: CellPickerSort | null = primary ?? secondary;
-    const sortOrder = primary ? 1 : secondary ? 2 : null;
-    const locked = Boolean(primary && cellSort.primaryLocked);
+    const activeSort: CellPickerSort | null = primary;
     return (
       <Table.Th
         ta={right ? "right" : "left"}
@@ -1886,13 +1863,12 @@ function AddEntriesModal({
       >
         <Group wrap="nowrap" gap={2} justify="space-between" pr={12}>
           <UnstyledButton
-            aria-label={`${activeSort ? `Sort order ${sortOrder}` : "Click to sort by"} ${label}${activeSort ? `, ${activeSort.direction === "asc" ? "ascending" : "descending"}` : ""}`}
-            title={cellSort.primaryLocked && !primary ? `Sort ties by ${label}` : `Click to sort by ${label}`}
+            aria-label={`${activeSort ? "Change sort direction for" : "Click to sort by"} ${label}${activeSort ? `, currently ${activeSort.direction === "asc" ? "ascending" : "descending"}` : ""}`}
+            title={`Click to sort by ${label}`}
             onClick={() => setCellSort((current) => nextCellPickerSort(current, key))}
             style={{ minWidth: 0, flex: "1 1 auto", cursor: "pointer" }}
           >
             <Group gap={4} wrap="nowrap" justify={right ? "flex-end" : "flex-start"}>
-              {sortOrder !== null && <Badge size="xs" variant="light">{sortOrder}</Badge>}
               <Text size="xs" fw={700} c="dimmed" truncate>{label}</Text>
               {activeSort ? (
                 <IconChevronDown
@@ -1902,39 +1878,6 @@ function AddEntriesModal({
               ) : <IconArrowsSort size={12} color="var(--mantine-color-dimmed)" />}
             </Group>
           </UnstyledButton>
-          {primary && (
-            <Tooltip label={locked ? "Unlock primary sort and clear the tie-breaker" : "Lock this primary sort, then click another column to sort ties"}>
-              <ActionIcon
-                size="sm"
-                variant={locked ? "filled" : "light"}
-                aria-pressed={locked}
-                aria-label={locked ? `Unlock ${label} primary sort` : `Lock ${label} as primary sort`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setCellSort((current) => toggleCellPickerPrimarySortLock(current));
-                }}
-                style={{ flex: "0 0 auto" }}
-              >
-                {locked ? <IconLock size={13} /> : <IconLockOpen size={13} />}
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {secondary && (
-            <Tooltip label={`Remove ${label} tie-break sort`}>
-              <ActionIcon
-                size="xs"
-                variant="subtle"
-                aria-label={`Remove ${label} tie-break sort`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setCellSort(removeCellPickerSecondarySort);
-                }}
-              >
-                <IconX size={12} />
-              </ActionIcon>
-            </Tooltip>
-          )}
           <Popover
             opened={openColumnFilter === key}
             onChange={(opened) => setOpenColumnFilter(opened ? key : null)}
@@ -2564,11 +2507,6 @@ function AddEntriesModal({
               />
               {previewQuery.isLoading ? (
                 <Center h={300}><Loader size="sm" /></Center>
-              ) : previewIsNonCyclingBiologic ? (
-                <Alert color="blue" title="Readable source, no cycle preview">
-                  BioLogic CP and OCV files are readable as metadata-only sources. They do not
-                  provide verified charge/discharge cycle data for this plot.
-                </Alert>
               ) : previewQuery.isError ? (
                 <Alert color="yellow" title="Preview unavailable">
                   This cell has no verified cycling curve for its first cycle, or the preview

@@ -45,6 +45,7 @@ class IndexedSourcePlan:
     segment: int
     index: dict[str, Any]
     observed_source_cycles: tuple[int, ...]
+    display_only_source_cycles: tuple[int, ...]
     cycle_map: dict[int, int]
     segment_metadata: dict[str, Any]
 
@@ -105,6 +106,15 @@ def _freeze(value):
         return _FrozenDict((key, _freeze(item)) for key, item in value.items())
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value):
+    """Return JSON-shaped metadata for API results, including nested lists."""
+    if isinstance(value, dict):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw(item) for item in value]
     return value
 
 
@@ -179,7 +189,7 @@ def _source_plan_from_facts(facts: _SourcePlanningFacts) -> TimeCapacityStitchPl
     # The envelope and user-facing metadata containers remain request-owned.
     return TimeCapacityStitchPlan(
         refs=(source.ref,), path="indexed", sources=(source,),
-        segments=[deepcopy(source.segment_metadata)],
+        segments=[_thaw(source.segment_metadata)],
         source_facts={source.ref.file_hash: {
             **source.timestamp_bounds,
             "voltage_data_availability": dict(source.voltage_data_availability),
@@ -196,6 +206,7 @@ def _remember_source_plan(key: tuple, index: dict, plan: TimeCapacityStitchPlan)
     source = IndexedSourcePlan(
         ref=original.ref, segment=0, index=_freeze(index),
         observed_source_cycles=original.observed_source_cycles,
+        display_only_source_cycles=original.display_only_source_cycles,
         cycle_map=_freeze(original.cycle_map), segment_metadata=_freeze(original.segment_metadata),
     )
     bounds = (1, len(source.cycle_map)) if source.cycle_map else None
@@ -418,18 +429,24 @@ def build_time_capacity_stitch_plan(
             )
 
         labels = tuple(int(value) for value in index.get("observed_source_cycles", ()))
-        cycle_map = stitch.build_dense_cycle_map(labels, global_next)
+        complete_labels = tuple(int(value) for value in index.get("complete_source_cycles", ()))
+        complete_set = set(complete_labels)
+        display_only_labels = tuple(value for value in labels if value not in complete_set)
+        cycle_map = stitch.build_dense_cycle_map(list(complete_labels), global_next)
         metadata = stitch.segment_metadata(
             file_hash=ref.file_hash,
             segment=segment,
-            local_labels=list(labels),
+            local_labels=list(complete_labels),
             global_start=global_next,
         )
+        if display_only_labels:
+            metadata["display_only_source_cycles"] = list(display_only_labels)
         source = IndexedSourcePlan(
             ref=ref,
             segment=segment,
             index=index,
             observed_source_cycles=labels,
+            display_only_source_cycles=display_only_labels,
             cycle_map=cycle_map,
             segment_metadata=metadata,
         )
@@ -439,8 +456,8 @@ def build_time_capacity_stitch_plan(
             **source.timestamp_bounds,
             "voltage_data_availability": source.voltage_data_availability,
         }
-        if labels:
-            global_next += len(labels)
+        if complete_labels:
+            global_next += len(complete_labels)
 
     path = "missing" if missing_positions else "indexed"
     _set_diagnostic(
@@ -478,14 +495,7 @@ def requested_global_cycles(
     """Resolve Time/Capacity cycle settings against the dense plan."""
 
     if explicit_cycles:
-        values: set[int] = set()
-        for value in explicit_cycles:
-            try:
-                values.add(int(value))
-            except (TypeError, ValueError):
-                continue
-        return tuple(sorted(values))
-
+        return requested_cycles_for_labels((), explicit_cycles=explicit_cycles)
     facts = _memo_facts(plan)
     if facts is not None:
         if facts.bounds is None:
@@ -501,16 +511,66 @@ def requested_global_cycles(
             return ()
         known_lower = min(known)
         known_upper = max(known)
+    return requested_cycles_for_labels(
+        range(known_lower, known_upper + 1),
+        explicit_cycles=explicit_cycles,
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
+    )
+
+
+def requested_cycles_for_labels(
+    available_cycles: Iterable[int],
+    *,
+    explicit_cycles: Iterable[object] = (),
+    cycle_start: object = None,
+    cycle_end: object = None,
+) -> tuple[int, ...]:
+    """Resolve a cycle selection against an already known complete cycle set."""
+
+    if explicit_cycles:
+        values: set[int] = set()
+        for value in explicit_cycles:
+            try:
+                values.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        return tuple(sorted(values))
+
+    known = tuple(sorted({int(value) for value in available_cycles}))
+    if not known:
+        return ()
+    known_lower, known_upper = known[0], known[-1]
     lower = known_lower if cycle_start is None else int(cycle_start)
     upper = known_upper if cycle_end is None else int(cycle_end)
-    # Clamp before materializing the range.  Saved/direct requests can carry
-    # stale or adversarially large endpoints, but the valid dense cycle plan is
-    # always bounded by the indexed source chain.
     lower = max(lower, known_lower)
     upper = min(upper, known_upper)
     if upper < lower:
         return ()
-    return tuple(range(lower, upper + 1))
+    return tuple(value for value in known if lower <= value <= upper)
+
+
+def should_include_display_only_rows(
+    plan: TimeCapacityStitchPlan,
+    requested_cycles: Iterable[int],
+    *,
+    available_cycles: Iterable[int] | None = None,
+) -> bool:
+    """Keep curve-only rows for unfiltered/full-range views, not narrow cycles."""
+
+    requested = {int(value) for value in requested_cycles}
+    all_complete = (
+        {int(value) for value in available_cycles}
+        if available_cycles is not None
+        else {
+            int(global_cycle)
+            for source in plan.sources
+            for global_cycle in source.cycle_map.values()
+        }
+    )
+    if not all_complete:
+        return not requested
+    return bool(requested) and requested == all_complete
 
 
 def consecutive_time_cycle_facts(
@@ -652,7 +712,11 @@ def load_indexed_time_capacity_raw(
         return None
 
     requested = set(int(value) for value in requested_cycles)
-    if not requested:
+    include_display_only = should_include_display_only_rows(plan, requested)
+    has_display_only = include_display_only and any(
+        source.display_only_source_cycles for source in plan.sources
+    )
+    if not requested and not has_display_only:
         result = _empty_raw_frame(plan, projected_columns)
         result.attrs["stitch_complete"] = True
         _set_diagnostic(diagnostics, selected_rows=0, raw_rows_materialized=0)
@@ -669,7 +733,8 @@ def load_indexed_time_capacity_raw(
         local_cycles = tuple(
             local_cycle
             for local_cycle in source.observed_source_cycles
-            if source.cycle_map.get(local_cycle) in requested
+            if (include_display_only and local_cycle in source.display_only_source_cycles)
+            or source.cycle_map.get(local_cycle) in requested
         )
         available = source.index.get("raw_column_names", ())
         columns = (
@@ -731,6 +796,10 @@ def load_indexed_time_capacity_raw(
                 "source_hash": source.ref.file_hash,
                 "segment": source.segment,
                 "requested_source_cycles": list(local_cycles),
+                "display_only_source_cycles": [
+                    cycle for cycle in local_cycles
+                    if include_display_only and cycle in source.display_only_source_cycles
+                ],
                 "row_groups_read": list(read_diagnostics.row_groups_read),
                 "row_groups_total": read_diagnostics.row_groups_total,
                 "rows_materialized": read_diagnostics.rows_read,

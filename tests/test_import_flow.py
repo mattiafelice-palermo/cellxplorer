@@ -1346,7 +1346,6 @@ class ImportFlowTests(unittest.TestCase):
             schedule.assert_not_called()
             request = files.AttachContinuationsRequest(
                 sources=[source_request],
-                acknowledged_finding_ids=finding_ids,
             )
             with patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
                 patch.object(files.continuations, "_maybe_schedule_cache_build") as schedule, \
@@ -1431,12 +1430,6 @@ class ImportFlowTests(unittest.TestCase):
                     for finding in analysis["findings"]
                 )
             )
-            draft.acknowledged_finding_ids = [
-                finding["id"]
-                for finding in analysis["findings"]
-                if finding["severity"] == "confirmation"
-            ]
-
             with patch.object(files.parsing, "read_header_metadata", side_effect=metadata_for), \
                 patch.object(files.continuations, "enrich_source_timing", side_effect=ready_non_mpr), \
                 patch.object(files, "start_import_cache_jobs", return_value={}) as start_cache:
@@ -2299,7 +2292,7 @@ class ImportFlowTests(unittest.TestCase):
                 patch.object(files, "start_import_cache_jobs", return_value={}),
             ):
                 analysis = files._inspect_cell_draft_chain(request.cells[0], db)
-                files.continuations.ensure_submittable_chain(analysis, [])
+                files.continuations.ensure_submittable_chain(analysis)
                 result = files._create_imported_cells_impl(request, db)
 
             cell = db.get(Cell, result["created"][0]["cell_id"])

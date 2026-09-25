@@ -409,6 +409,7 @@ type TimeCapacitySegment = {
   x: number[];
   cycle: (number | null)[];
   sourceCycle: (number | null)[];
+  displayOnlyCycle: boolean[];
   sources: TimeCapacitySourcePoint[];
   voltage: (number | null)[];
   voltageByChannel: Partial<Record<VoltageChannel, (number | null)[]>>;
@@ -444,6 +445,26 @@ function timeCapacitySegments(
   let current: TimeCapacitySegment | null = null;
   const consecutiveCapacity =
     cfg.display_mode === "consecutive" && cfg.x_axis !== "time";
+  const capacityDisplayOnlySources = new Set<string>();
+  if (cfg.x_axis !== "time" && trace.display_only_cycle?.some(Boolean)) {
+    const boundsBySource = new Map<string, { min: number; max: number }>();
+    trace.display_only_cycle.forEach((isDisplayOnly, index) => {
+      if (!isDisplayOnly || !Number.isFinite(x[index])) return;
+      const sourceKey = trace.source_hash?.[index]
+        ?? (trace.source_index?.[index] == null ? "unknown" : String(trace.source_index[index]));
+      const value = x[index]!;
+      const bounds = boundsBySource.get(sourceKey);
+      if (bounds) {
+        bounds.min = Math.min(bounds.min, value);
+        bounds.max = Math.max(bounds.max, value);
+      } else {
+        boundsBySource.set(sourceKey, { min: value, max: value });
+      }
+    });
+    for (const [sourceKey, bounds] of boundsBySource) {
+      if (bounds.max - bounds.min > 1e-9) capacityDisplayOnlySources.add(sourceKey);
+    }
+  }
 
   const flush = () => {
     if (current && current.x.length > 0) segments.push(current);
@@ -451,6 +472,13 @@ function timeCapacitySegments(
   };
 
   for (let index = 0; index < x.length; index += 1) {
+    const displayOnlyCycle = trace.display_only_cycle?.[index] === true;
+    const sourceKey = trace.source_hash?.[index]
+      ?? (trace.source_index?.[index] == null ? "unknown" : String(trace.source_index[index]));
+    if (displayOnlyCycle && cfg.x_axis !== "time" && !capacityDisplayOnlySources.has(sourceKey)) {
+      flush();
+      continue;
+    }
     const sourcePhase = trace.phase[index] ?? "rest";
     const phase = cfg.display_mode === "consecutive" && !consecutiveCapacity
       ? "consecutive"
@@ -458,14 +486,16 @@ function timeCapacitySegments(
     if (
       (cfg.display_mode !== "consecutive" || consecutiveCapacity) &&
       trace.phase[index] !== "charge" &&
-      trace.phase[index] !== "discharge"
+      trace.phase[index] !== "discharge" &&
+      !displayOnlyCycle
     ) {
       flush();
       continue;
     }
 
-    const key =
-      cfg.display_mode === "consecutive"
+    const key = displayOnlyCycle
+      ? `display-only:${sourceKey}:${phase}`
+      : cfg.display_mode === "consecutive"
         ? consecutiveCapacity
           ? `cycle:${trace.cycle[index] ?? "unknown"}:phase:${phase}`
           : "consecutive"
@@ -478,6 +508,7 @@ function timeCapacitySegments(
         x: [],
         cycle: [],
         sourceCycle: [],
+        displayOnlyCycle: [],
         sources: [],
         voltage: [],
         voltageByChannel: Object.fromEntries(
@@ -489,6 +520,7 @@ function timeCapacitySegments(
     current.x.push(x[index]);
     current.cycle.push(trace.cycle[index] ?? null);
     current.sourceCycle.push(trace.source_cycle?.[index] ?? null);
+    current.displayOnlyCycle.push(displayOnlyCycle);
     if (includeExportColumns) current.sources.push(timeCapacitySourceAt(trace, index));
     const firstChannel = selectedChannels[0];
     current.voltage.push(
@@ -787,7 +819,9 @@ export function timeCapacityTracesForResult(
       );
       if (visibleChannelStyles.length === 0) continue;
       const segmentCustomdata = segment.x.map((_, index) => [
-        segment.cycle[index] ?? "",
+        segment.displayOnlyCycle[index]
+          ? "curve only (not a counted cycle)"
+          : segment.cycle[index] ?? "unknown",
         segment.sourceCycle[index] ?? "",
       ]);
       for (const channelStyle of visibleChannelStyles) {
@@ -834,7 +868,7 @@ export function timeCapacityTracesForResult(
           hovertemplate:
             `<b>${compactHoverName(channelName)}</b><br>` +
             `${plotlySafeText(channelLabel.replace(/\s*\(V\)$/, ""))}: %{y:.4f} V<br>` +
-            "time: %{x:.4f}<br>cycle: %{customdata[0]} · local %{customdata[1]}<extra></extra>",
+            "time: %{x:.4f}<br>cycle %{customdata[0]} · source label %{customdata[1]}<extra></extra>",
         } as Plotly.Data);
       }
       if (cfg.stacked) {
@@ -2491,7 +2525,6 @@ function TimeCapacityPlotCardView({
       JSON.stringify({
         cfg: renderCfg,
         legend: renderSpec.presentation.legend,
-        visibility: renderSpec.presentation.hidden_series_ids ?? [],
         style: currentPlotStyle(renderSpec, "time_capacity"),
       }),
     [renderSpec]
@@ -2648,6 +2681,39 @@ function TimeCapacityPlotCardView({
     () => numericTraceExtent(visiblePlotTraces, "y", ["y3"]),
     [visiblePlotTraces],
   );
+  const traceVisibilityLayoutUpdate = useMemo(() => {
+    const update: Record<string, unknown> = {};
+    const fit = (
+      name: "xaxis" | "xaxis2" | "yaxis" | "yaxis2" | "yaxis3",
+      axis: PlotStyle["x_axis"],
+      extent: [number, number] | undefined,
+    ) => {
+      if (axis.mode !== "auto") return;
+      const range = paddedAutoRange(extent);
+      if (!range) {
+        update[`${name}.autorange`] = true;
+        return;
+      }
+      update[`${name}.range`] = range;
+      update[`${name}.autorange`] = false;
+    };
+    fit(cfg.stacked ? "xaxis2" : "xaxis", plotAxisStyle.x_axis, visibleXAxisExtent);
+    fit("yaxis", plotAxisStyle.y_axis, visibleYAxisExtent);
+    if (cfg.stacked) {
+      fit("yaxis2", plotAxisStyle.y2_axis, visibleY2AxisExtent);
+      fit("yaxis3", plotAxisStyle.y2_axis, visibleY3AxisExtent);
+    }
+    return update;
+  }, [
+    cfg.stacked,
+    plotAxisStyle.x_axis,
+    plotAxisStyle.y_axis,
+    plotAxisStyle.y2_axis,
+    visibleXAxisExtent,
+    visibleYAxisExtent,
+    visibleY2AxisExtent,
+    visibleY3AxisExtent,
+  ]);
   // Fit invalidation follows the stable analysis visibility state, not the
   // rendered Plotly trace array: refinement can change a Cell's segment count
   // without changing which samples the user chose to show.
@@ -2668,8 +2734,7 @@ function TimeCapacityPlotCardView({
     stacked: cfg.stacked,
   });
   const lastVisibleAutoFitSignatureRef = useRef<string | null>(null);
-  const fitVisibleAutoRanges = lastVisibleAutoFitSignatureRef.current !== visibleAutoFitSignature;
-  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}|${sampleVisibilitySignature}`;
+  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
@@ -2737,37 +2802,11 @@ function TimeCapacityPlotCardView({
   }, [cfg.stacked, invalidateRefinement]);
 
   const layout = useMemo(() => {
-    // Use the same neutral scientific spec as the stable figure data. The
-    // live Analysis-sample selection stays in the Plotly data array, while
-    // visible-only extents keep Auto ranges fitted to the rows still shown.
-    const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, visiblePlotTraces));
+    // Keep the declarative figure stable across visibility edits. The visible
+    // Auto ranges are applied with Plotly.relayout alongside the trace restyle.
+    const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, plotTraces));
     const next = { ...base } as Record<string, unknown>;
-    const fitAutoAxis = (
-      axisName: "xaxis" | "xaxis2" | "yaxis" | "yaxis2" | "yaxis3",
-      axis: PlotStyle["x_axis"],
-      extent: [number, number] | undefined,
-    ) => {
-      if (!fitVisibleAutoRanges || axis.mode !== "auto") return;
-      const range = paddedAutoRange(extent);
-      const layoutAxis = { ...(next[axisName] as Record<string, unknown> | undefined) };
-      if (!range) {
-        delete layoutAxis.range;
-        layoutAxis.autorange = true;
-      } else {
-        layoutAxis.range = range;
-        layoutAxis.autorange = false;
-      }
-      next[axisName] = layoutAxis;
-    };
-    fitAutoAxis(cfg.stacked ? "xaxis2" : "xaxis", plotAxisStyle.x_axis, visibleXAxisExtent);
-    fitAutoAxis("yaxis", plotAxisStyle.y_axis, visibleYAxisExtent);
-    if (cfg.stacked) {
-      fitAutoAxis("yaxis2", plotAxisStyle.y2_axis, visibleY2AxisExtent);
-      fitAutoAxis("yaxis3", plotAxisStyle.y2_axis, visibleY3AxisExtent);
-    }
-    const retainedY = fitVisibleAutoRanges && plotAxisStyle.y_axis.mode === "auto"
-      ? null
-      : panFrozenYRef.current;
+    const retainedY = panFrozenYRef.current;
     // Stacked layouts intentionally omit uirevision because Plotly can enter
     // a relayout loop when matched x axes use it. Preserve the accepted
     // refinement viewport explicitly while replacing the coarse result so the
@@ -2796,13 +2835,8 @@ function TimeCapacityPlotCardView({
     [
       plotResult,
       scientificRenderSpec,
-      visiblePlotTraces,
-      visibleXAxisExtent,
-      visibleYAxisExtent,
-      visibleY2AxisExtent,
-      visibleY3AxisExtent,
+      plotTraces,
       plotAxisStyle,
-      fitVisibleAutoRanges,
       panActive,
       panPresentationActive,
       cfg.stacked,
@@ -3677,6 +3711,7 @@ function TimeCapacityPlotCardView({
               layout={layout}
               config={plotConfig}
               traceVisibility={traceVisibility}
+              traceVisibilityLayoutUpdate={traceVisibilityLayoutUpdate}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {

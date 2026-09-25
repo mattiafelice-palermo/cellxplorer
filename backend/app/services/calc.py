@@ -216,6 +216,23 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "cycle" not in df.columns:
         return pd.DataFrame(columns=CYCLE_COLUMNS)
 
+    # Curve-only data and incomplete half-cycles retain raw rows for
+    # Time/Capacity plotting, but only explicitly completed polarity pairs
+    # contribute cycle summaries. Adapters without this optional flag keep
+    # their established cycle accounting.
+    if "cycle_complete" in df.columns:
+        # Concatenated heterogeneous sources may have NaN here for adapters
+        # that predate or do not need the optional completion flag. Preserve
+        # their established complete-cycle behavior while honoring explicit
+        # False values from adapters that identify incomplete half-cycles.
+        complete_mask = df["cycle_complete"].fillna(True).astype(bool)
+        complete_cycles = pd.to_numeric(df["cycle"], errors="coerce").loc[
+            complete_mask
+        ].dropna().unique()
+        if len(complete_cycles) == 0:
+            return pd.DataFrame(columns=CYCLE_COLUMNS)
+        df = df.loc[pd.to_numeric(df["cycle"], errors="coerce").isin(complete_cycles)]
+
     grouped = df.groupby("cycle", sort=True)
     index = grouped.size().index
 

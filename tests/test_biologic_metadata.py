@@ -342,7 +342,7 @@ class BiologicMetadataTests(unittest.TestCase):
                     with self.assertRaisesRegex(UnsupportedBiologicGcplError, message):
                         decode_gcpl_settings(document.vmp_set)
 
-    def test_cp_and_ocv_headers_are_readable_metadata_only_sources(self) -> None:
+    def test_cp_and_ocv_headers_advertise_voltage_curve_support(self) -> None:
         cases = (
             (0x19, (1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295), 49, "CP"),
             (0x0B, (1, 3, 4, 174), 13, "OCV"),
@@ -360,10 +360,10 @@ class BiologicMetadataTests(unittest.TestCase):
 
             self.assertEqual(metadata["technique"], technique)
             self.assertEqual(metadata["raw"]["data"]["n_datapoints"], 2)
-            self.assertTrue(metadata["raw"]["capabilities"]["metadata_only"])
-            self.assertFalse(metadata["raw"]["capabilities"]["canonical_cycling"])
-            self.assertTrue(parsing.source_metadata_only(metadata))
-            self.assertIn(technique, parsing.source_metadata_only_message(metadata))
+            self.assertFalse(metadata["raw"]["capabilities"]["metadata_only"])
+            self.assertTrue(metadata["raw"]["capabilities"]["canonical_cycling"])
+            self.assertFalse(parsing.source_metadata_only(metadata))
+            self.assertIn(technique, metadata["protocol_warnings"][0])
 
 
 if __name__ == "__main__":

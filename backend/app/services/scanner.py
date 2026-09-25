@@ -196,12 +196,13 @@ def reconcile_retired_biologic_sources(db: Session) -> int:
 def reinspect_legacy_biologic_sources(db: Session) -> int:
     """Rebuild registrations from the immediately prior BioLogic identity.
 
-    ``gcpl5`` through ``gcpl9`` sources were registered before the current
+    Previous BioLogic identities were registered before the current
     candidate/verified boundary. The single-direction fallback, the
     gcpl7-to-gcpl8 neutral-preamble widening, the gcpl9 registry-layout change,
     the gcpl10 protocol-cycle reconstruction change, gcpl11 settings-profile
-    support, gcpl12 capacity-counter interpretation, and gcpl13 CP/OCV layout
-    admission with narrow counter-parity precision change the canonical
+    support, gcpl12 capacity-counter interpretation, gcpl13 CP/OCV layout
+    admission with narrow counter-parity precision, and gcpl14 complete
+    charge/discharge cycle accounting change the canonical
     capability contract, so an online source must pass the current
     header/full-parse path before it can become usable. Offline rows are
     downgraded database-only so their old relational summaries cannot remain
@@ -326,7 +327,7 @@ def start_capacity_summary_backfill(
     try:
         # Do this before selecting parsed sources. A withdrawn or pre-R8 row
         # can otherwise enter the normal identity path with stale capability
-        # state when the current gcpl13 build fails closed.
+        # state when the current gcpl14 build fails closed.
         reconcile_retired_biologic_sources(db)
         reinspect_legacy_biologic_sources(db)
         preparation_state = scientific_preparation.get_state(db)

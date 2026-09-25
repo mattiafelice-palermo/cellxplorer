@@ -56,6 +56,6 @@ INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").stri
 #        pre-034.1 global cycle numbers for gapped or multi-source selections.
 # 1.6.2: protocol identity includes source-declared termination/control conditions
 #        and resolves the prior condition-free signature as a compatibility alias.
-CALC_VERSION = "1.6.2"
+CALC_VERSION = "1.6.3"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

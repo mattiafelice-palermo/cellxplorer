@@ -389,7 +389,7 @@ export function ImportFilesystemPickerModal({
       step={1}
       titleInfo={mode === "folder"
         ? "Choose the folder to monitor. The watcher checks source files directly in this folder."
-        : "Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL-family (.mpr; canonical cycling is verified per source), plus folders. Click a folder row to open it; use its checkbox to select the folder."}
+        : "Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL, CP, or OCV (.mpr) data, plus folders. Click a folder row to open it; use its checkbox to select the folder."}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       actions={
         <>

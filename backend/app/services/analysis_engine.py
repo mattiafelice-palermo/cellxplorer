@@ -699,6 +699,11 @@ def source_descriptors(
             "local_cycle_start": segment.get("source_cycle_start"),
             "local_cycle_end": segment.get("source_cycle_end"),
             "local_cycle_count": segment.get("source_cycle_count", 0),
+            **(
+                {"display_only_source_cycles": list(segment["display_only_source_cycles"])}
+                if segment.get("display_only_source_cycles")
+                else {}
+            ),
             "global_cycle_start": segment.get("cycle_start"),
             "global_cycle_end": segment.get("cycle_end"),
             "start_timestamp": start_timestamp,
@@ -722,6 +727,11 @@ def source_columns(frame: pd.DataFrame, files: list[SourceFile]) -> dict[str, li
         if "source_cycle" in frame.columns
         else [None] * len(frame)
     )
+    display_only_cycles = (
+        frame["display_only_cycle"].fillna(False).astype(bool).tolist()
+        if "display_only_cycle" in frame.columns
+        else [False] * len(frame)
+    )
 
     def safe_int(value):
         if value is None or pd.isna(value):
@@ -738,12 +748,15 @@ def source_columns(frame: pd.DataFrame, files: list[SourceFile]) -> dict[str, li
         source_position.append(positions.get(value))
         source_filename.append(source_file.filename if source_file is not None else None)
         source_hash.append(value if source_file is not None else None)
-    return {
+    result = {
         "source_cycle": source_cycle,
         "source_position": source_position,
         "source_filename": source_filename,
         "source_hash": source_hash,
     }
+    if any(display_only_cycles):
+        result["display_only_cycle"] = display_only_cycles
+    return result
 
 
 def compact_source_columns(
@@ -776,13 +789,18 @@ def compact_source_columns(
         if "source_cycle" in frame.columns
         else [None] * len(frame)
     )
+    display_only_cycles = (
+        frame["display_only_cycle"].fillna(False).astype(bool).tolist()
+        if "display_only_cycle" in frame.columns
+        else [False] * len(frame)
+    )
 
     def safe_int(value):
         if value is None or pd.isna(value):
             return None
         return int(value)
 
-    return {
+    result = {
         "source_cycle": [safe_int(value) for value in source_cycles],
         "sources": ordered_sources,
         "source_index": [
@@ -790,6 +808,9 @@ def compact_source_columns(
             for value in hashes
         ],
     }
+    if any(display_only_cycles):
+        result["display_only_cycle"] = display_only_cycles
+    return result
 
 
 # NOTE (Spec 052.5): reading `header_meta` here defeats the deliberate
@@ -1793,7 +1814,8 @@ def _restore_time_capacity_cycle_times(
     values = frame["time_s"].to_numpy(dtype="float64")
     first = frame.groupby("cycle", sort=False)["time_s"].transform("first").to_numpy(dtype="float64")
     expected = frame["cycle"].map(cycle_starts).to_numpy(dtype="float64")
-    return frame.assign(time_s=values + expected - first)
+    restored = np.where(np.isfinite(expected), values + expected - first, values)
+    return frame.assign(time_s=restored)
 
 
 def _time_capacity_display_cycle_origins(
@@ -4021,12 +4043,17 @@ def compute_time_capacity(
         if canonical_time and plan.complete and display_origin_time_s is None:
             indexed_path = False
         requested_cycles: tuple[int, ...] = ()
+        include_display_only_rows = False
         if indexed_path:
             requested_cycles = time_capacity_path.requested_global_cycles(
                 plan,
                 explicit_cycles=settings["cycles"],
                 cycle_start=settings["cycle_start"],
                 cycle_end=settings["cycle_end"],
+            )
+            include_display_only_rows = time_capacity_path.should_include_display_only_rows(
+                plan,
+                requested_cycles,
             )
             indexed_available_columns = {
                 column
@@ -4068,6 +4095,27 @@ def compute_time_capacity(
             cell_diagnostics["raw_rows_materialized"] = len(raw)
             cell_diagnostics["row_groups_read"] = "full"
             cell_diagnostics["row_groups_total"] = "full"
+            cycle_values = pd.to_numeric(raw.get("cycle", pd.Series(dtype="float64")), errors="coerce")
+            if "display_only_cycle" in raw.columns:
+                complete_row_mask = ~raw["display_only_cycle"].fillna(False).astype(bool)
+            else:
+                complete_row_mask = pd.Series(True, index=raw.index)
+            complete_cycles = tuple(sorted({
+                int(value)
+                for value in cycle_values.loc[complete_row_mask].dropna().tolist()
+                if int(value) > 0
+            }))
+            requested_cycles = time_capacity_path.requested_cycles_for_labels(
+                complete_cycles,
+                explicit_cycles=settings["cycles"],
+                cycle_start=settings["cycle_start"],
+                cycle_end=settings["cycle_end"],
+            )
+            include_display_only_rows = time_capacity_path.should_include_display_only_rows(
+                plan,
+                requested_cycles,
+                available_cycles=complete_cycles,
+            )
         if indexed_path:
             matched_files_by_quantity = {
                 quantity: [] for quantity in canonical_cycling.VOLTAGE_QUANTITIES
@@ -4251,12 +4299,21 @@ def compute_time_capacity(
             cell_diagnostics, "exact_cycle_filter_and_sort"
         ):
             if settings["cycles"]:
-                raw = raw[raw["cycle"].isin(settings["cycles"])]
+                raw = raw[
+                    raw["cycle"].isin(settings["cycles"])
+                    | (raw.get("display_only_cycle", False) & include_display_only_rows)
+                ]
             else:
                 if settings["cycle_start"] is not None:
-                    raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+                    raw = raw[
+                        (raw["cycle"] >= int(settings["cycle_start"]))
+                        | (raw.get("display_only_cycle", False) & include_display_only_rows)
+                    ]
                 if settings["cycle_end"] is not None:
-                    raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+                    raw = raw[
+                        (raw["cycle"] <= int(settings["cycle_end"]))
+                        | (raw.get("display_only_cycle", False) & include_display_only_rows)
+                    ]
 
             raw = raw.sort_values(
                 ["cycle", "segment", "record_index"]

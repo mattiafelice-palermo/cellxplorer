@@ -1371,7 +1371,6 @@ class ImportCellDraft(BaseModel):
     active_material_specific_capacity_mah_g: float | None = None
     electrode_area_preset_id: str | None = None
     electrode_area_preset_name: str | None = None
-    acknowledged_finding_ids: list[str] = []
     folder_watch: FolderWatchDraft | None = None
 
 
@@ -3283,15 +3282,6 @@ def _prepare_import_source_file(
     if not isinstance(meta, dict):
         meta = parsing.read_header_metadata(source_path)
     parsing.ensure_supported_source_metadata(source_path, meta)
-    if parsing.source_metadata_only(meta) and not allow_metadata_only:
-        raise HTTPException(
-            422,
-            {
-                "code": "metadata_only_source_requires_acknowledgement",
-                "message": parsing.source_metadata_only_message(meta),
-                "filename": source_path.name,
-            },
-        )
     try:
         parsing.assert_source_fingerprint(source_path, fingerprint, verify_hash=False)
     except parsing.SourceIdentityError as exc:
@@ -3453,15 +3443,6 @@ def _register_or_refresh_source_file(
     if meta is None:
         meta = parsing.read_header_metadata(source_path)
     parsing.ensure_supported_source_metadata(source_path, meta)
-    if parsing.source_metadata_only(meta) and not allow_metadata_only:
-        raise HTTPException(
-            422,
-            {
-                "code": "metadata_only_source_requires_acknowledgement",
-                "message": parsing.source_metadata_only_message(meta),
-                "filename": source_path.name,
-            },
-        )
     try:
         parsing.assert_source_fingerprint(
             source_path,
@@ -4020,7 +4001,6 @@ def _create_imported_cells_impl_raw(
         draft
         for draft in req.cells
         if (draft.sources and len(normalize_import_cell_sources(draft)) > 1)
-        or bool(draft.acknowledged_finding_ids)
         or id(draft) in validated_folder_watches
     ]
     continuation_draft_ids = {id(draft) for draft in continuation_drafts}
@@ -4050,10 +4030,7 @@ def _create_imported_cells_impl_raw(
             if source.get("kind") == "staged" and source.get("hash"):
                 inspected_hashes_by_staged_name[source["key"]] = source["hash"]
         try:
-            continuations.ensure_submittable_chain(
-                analysis,
-                draft.acknowledged_finding_ids,
-            )
+            continuations.ensure_submittable_chain(analysis)
         except continuations.ContinuationValidationError as exc:
             _raise_continuation_validation(exc)
 
@@ -4831,7 +4808,6 @@ def register_files(req: RegisterRequest, db: Session = Depends(get_db)):
 
 class AttachContinuationsRequest(BaseModel):
     sources: list[ContinuationInspectSourceRequest]
-    acknowledged_finding_ids: list[str] = []
 
 
 class SourceChangeImpactRequest(BaseModel):
@@ -4844,12 +4820,10 @@ class SourceChangeImpactRequest(BaseModel):
 class DetachSourceRequest(BaseModel):
     confirm: bool = False
     confirmation_token: str | None = None
-    acknowledged_finding_ids: list[str] = []
 
 
 class ReorderRequest(BaseModel):
     file_ids: list[int]
-    acknowledged_finding_ids: list[str] = []
 
 
 def _load_test_or_404(db: Session, test_id: int) -> Test:
@@ -5063,7 +5037,7 @@ def attach_continuations(
         if source.get("kind") == "staged" and source.get("hash")
     }
     try:
-        continuations.ensure_submittable_chain(analysis, req.acknowledged_finding_ids)
+        continuations.ensure_submittable_chain(analysis)
     except continuations.ContinuationValidationError as exc:
         _raise_continuation_validation(exc)
     _validate_staged_source_snapshots(req.sources, inspected_hashes_by_staged_name)
@@ -5183,10 +5157,7 @@ def detach_file(
         proposed_file_ids=proposed,
     )
     try:
-        continuations.ensure_submittable_chain(
-            analysis,
-            body.acknowledged_finding_ids,
-        )
+        continuations.ensure_submittable_chain(analysis)
     except continuations.ContinuationValidationError as exc:
         _raise_continuation_validation(exc)
 
@@ -5260,7 +5231,7 @@ def reorder_files(test_id: int, req: ReorderRequest, db: Session = Depends(get_d
 
     analysis = _inspect_existing_order(db, test, req.file_ids)
     try:
-        continuations.ensure_submittable_chain(analysis, req.acknowledged_finding_ids)
+        continuations.ensure_submittable_chain(analysis)
     except continuations.ContinuationValidationError as exc:
         _raise_continuation_validation(exc)
 

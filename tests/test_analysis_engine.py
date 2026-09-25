@@ -997,6 +997,20 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
 
+    def test_cycle_free_curve_is_visible_in_default_time_capacity_view(self):
+        source_hash = "c3" * 32
+        frame = synth_raw(3, 2.0, 0.0)
+        frame["cycle_complete"] = False
+        cell = self._add_cached_cell("curve-only", source_hash, frame)
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+
+        result = engine.compute_time_capacity(self.db, spec, None)
+        trace = result["cell_traces"][0]
+
+        self.assertEqual(set(trace["cycle"]), {0})
+        self.assertTrue(trace["display_only_cycle"])
+        self.assertGreater(len(trace["time_s"]), 0)
+
     def test_full_time_capacity_export_request_keeps_all_points_and_precision(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         spec["computation"]["time_capacity"] = {

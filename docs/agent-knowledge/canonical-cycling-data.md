@@ -248,11 +248,14 @@ code — never to the validator.
 
 ### BioLogic GCPL cycle convention (Spec 041 / 051.1)
 
-The verified BioLogic GCPL MPR layout may provide no separate full-cycle column. Cycle identity is
-resolved in descending strength: an explicit decoded cycle field, a validated declared top-level
+The verified BioLogic GCPL MPR layout may provide no separate full-cycle column. Raw rows retain a
+source-local storage cycle label so curves remain selectable and plottable, but per-cycle summaries
+count only labels containing both active charge and discharge directions. Zero-current Rest/OCV
+blocks are neutral: they do not satisfy either direction and never advance cycle identity. Cycle
+identity is resolved in descending strength: an explicit decoded cycle field, a validated declared top-level
 loop whose observed `Ns` progression returns only from its control step to its loop start, a
 bounded execution-evidenced loop for sources with no usable loop fields, or one bounded
-non-repeating cycling episode assigned source-local cycle 1. The execution-evidenced path requires
+non-repeating active episode assigned source-local storage cycle 1. The execution-evidenced path requires
 decoded settings, one contiguous observed body, exactly one unique backward edge establishing
 `control_step -> loop_start_step`, a first body row at the inferred start, forward-only progression
 inside that body, and resolved charge/discharge semantics. Each completed loop iteration must
@@ -261,6 +264,16 @@ active preconditioning, an unresolved control, a contradictory direction, a seco
 or an invalid backward edge remains metadata-only. A partial final loop prefix is allowed only when
 it is a valid continuation of the same loop and no missing phase is fabricated. This boundary is
 owned by the adapter and is not a BioLogic-specific branch in generic scientific services.
+
+BioLogic CP and OCV can provide useful voltage curves without a complete cycling cycle. Preserve
+their source-local raw cycle labels only as Parquet row-address keys. In the stitched Time/Capacity
+view, complete cycles receive positive dense global numbers; rows without a completed charge /
+discharge pair use cycle `0` plus `display_only_cycle=true`. Keep those rows in Time/Capacity reads,
+including when no complete cycles are selected, and identify them as uncounted curves in hover
+details. Never let them advance complete-cycle numbering or enter cycle summaries. Raw labels remain
+available in `source_cycle` and `display_only_source_cycles` provenance. The indexed layout records
+`complete_source_cycles` alongside every observed raw source label so selective readers and full
+stitch fallbacks apply the same rule.
 
 The decoded half-cycle field is diagnostic-only for this reconstruction. It must be a finite,
 integer, non-negative value, but its starting value, parity, progression, and resets are never

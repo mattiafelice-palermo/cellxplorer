@@ -4,13 +4,15 @@
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
 inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data,
-plus BioLogic GCPL-family `.mpr` sources. Verified BioLogic CP and OCV variants can also be read as
-metadata-only sources; they do not claim canonical charge/discharge cycles. The verified GCPL
-contract includes explicit
-cycle identity, a bounded declared/observed-`Ns` loop reconstruction path, and source-local cycle 1
-for deterministic non-repeating episodes, including a header-proven neutral setup/control
-preamble. Ambiguous restarts, branching, unresolved controls, contradictory directions, and
-unsupported layouts remain metadata-only until their cycle identity is independently verified.
+plus BioLogic GCPL-family `.mpr` sources. Verified BioLogic CP and OCV variants provide voltage
+curves; CP may infer complete cycles from charge/discharge polarity pairs, while OCV contributes no
+cycle summary. GCPL raw curves remain available when a source has only one active direction; cycle
+summaries require both charge and discharge, and zero-current Rest/OCV rows are neutral. The
+verified GCPL contract includes explicit cycle identity, a bounded declared/observed-`Ns` loop
+reconstruction path, and storage-local cycle labels for deterministic non-repeating episodes,
+including a header-proven neutral setup/control preamble. Ambiguous restarts, branching, unresolved
+controls, contradictory directions, and unsupported layouts remain metadata-only until their cycle
+identity is independently verified.
 BioLogic `.mpt` files remain validation artifacts rather than user-imported sources. MPR/MPT parity
 is deferred future validation, not a Parent 041 merge blocker under the user's 2026-08-16
 amendment.
@@ -160,6 +162,7 @@ production migrations. See `docs/database-migrations.md`.
   every adapter's errors derive from (Spec 040.2)
 - `backend/app/services/biologic_mpr.py`: independent BioLogic MPR reader with verified GCPL/CP/OCV layouts (Spec 041.1)
 - `backend/app/services/biologic_gcpl.py`: direct GCPL-to-canonical cycling adapter (Spec 041.2)
+- `backend/app/services/biologic_cp_ocv.py`: CP/OCV voltage-curve adapter with current-polarity cycle inference
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/time_capacity_derived.py`: shared exact phase/capacity transforms and prepared-row contract (Spec 050.6)
@@ -209,6 +212,7 @@ Cellxplorer/
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR reader with verified GCPL/CP/OCV layouts (Spec 041.1)
 │           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)
+│           ├── biologic_cp_ocv.py BioLogic CP/OCV voltage curves and polarity cycle inference
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
@@ -288,6 +292,7 @@ Cellxplorer/
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
+│   ├── test_biologic_cp_ocv.py       BioLogic CP/OCV curve and cycle-inference tests
 │   ├── test_biologic_metadata.py     BioLogic GCPL settings/log/protocol tests (Spec 041.3)
 │   ├── test_biologic_closure.py       Synthetic MPR/cache/analysis closure regressions (Spec 041.6)
 │   ├── test_parser_dispatch.py     Format-neutral dispatch and adapter-identity tests (Spec 040.2)

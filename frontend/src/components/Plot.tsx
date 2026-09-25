@@ -99,17 +99,22 @@ type PlotProps = PlotParams & {
    * with a stable trace array can use this for fast local visibility edits.
    */
   traceVisibility?: PlotTraceVisibility;
+  /** Apply axis changes alongside a trace-visibility restyle, without Plotly.react. */
+  traceVisibilityLayoutUpdate?: Partial<Plotly.Layout>;
 };
 
-function Plot({ traceVisibility, ...props }: PlotProps) {
+function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotProps) {
   const graphDivRef = useRef<HTMLElement | null>(null);
   const latestVisibilityRef = useRef<PlotTraceVisibility | undefined>(traceVisibility);
   latestVisibilityRef.current = traceVisibility;
   const appliedVisibilityRef = useRef<PlotTraceVisibility | null>(null);
+  const appliedVisibilityLayoutRef = useRef<Partial<Plotly.Layout> | undefined>(undefined);
   const baseVisibilityStylesRef = useRef<PlotTraceVisibilityStyle[]>([]);
   const visibilityUpdateRef = useRef(Promise.resolve());
   const internalVisibilityRestyleRef = useRef(0);
   const frameHoldsRef = useRef(new Set<PlotFrameHold>());
+  const latestVisibilityLayoutRef = useRef(traceVisibilityLayoutUpdate);
+  latestVisibilityLayoutRef.current = traceVisibilityLayoutUpdate;
   const previousFigureRef = useRef<{
     data: PlotParams["data"];
     layout: PlotParams["layout"];
@@ -171,13 +176,15 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
         if (!next || graphDivRef.current !== graphDiv) return;
         const previous = appliedVisibilityRef.current;
         if (figureUpdatePendingRef.current) return;
+        const nextLayout = latestVisibilityLayoutRef.current;
+        const layoutChanged = nextLayout !== appliedVisibilityLayoutRef.current;
         const changed: Array<{ index: number; hidden: boolean }> = [];
         next.forEach((value, index) => {
           if (previous === null ? value !== true : previous[index] !== value) {
             changed.push({ index, hidden: value === false });
           }
         });
-        if (changed.length === 0) return;
+        if (changed.length === 0 && !layoutChanged) return;
 
         const indices = changed.map(({ index }) => index);
         const opacityValues = changed.map(({ index, hidden }) => {
@@ -210,38 +217,47 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
             fallbackTimer = window.setTimeout(releaseFrameHold, 1_000);
           }
         }
-        internalVisibilityRestyleRef.current += 1;
         try {
           // Plotly's supported restyle keeps its canonical trace, legend, and
           // hover state in sync. A short-lived copy of the visible WebGL
           // frame masks the shared-canvas clear while scattergl recalculates.
-          await Plotly.restyle(
-            graphDiv as never,
-            { opacity: opacityValues, showlegend: legendValues } as unknown as Plotly.Data,
-            indices,
-          );
+          if (changed.length > 0) {
+            internalVisibilityRestyleRef.current += 1;
+            await Plotly.restyle(
+              graphDiv as never,
+              { opacity: opacityValues, showlegend: legendValues } as unknown as Plotly.Data,
+              indices,
+            );
+          }
+          if (layoutChanged && nextLayout) {
+            await Plotly.relayout(graphDiv as never, nextLayout as never);
+          }
         } finally {
           // Plotly emits plotly_restyle before resolving the promise. The
           // guard prevents that internal event from being treated as a new
           // externally-driven figure update.
-          internalVisibilityRestyleRef.current = Math.max(
-            0,
-            internalVisibilityRestyleRef.current - 1,
-          );
+          if (changed.length > 0) {
+            internalVisibilityRestyleRef.current = Math.max(
+              0,
+              internalVisibilityRestyleRef.current - 1,
+            );
+          }
           if (frameHold && !(graphDiv as PlotlyGraphDiv).once) {
             requestAnimationFrame(() => {
               releaseFrameHold?.();
             });
           }
         }
-        appliedVisibilityRef.current = [...next];
+        if (changed.length > 0) appliedVisibilityRef.current = [...next];
+        if (layoutChanged) appliedVisibilityLayoutRef.current = nextLayout;
       });
-  }, [plotGeneration, traceVisibility]);
+  }, [plotGeneration, traceVisibility, traceVisibilityLayoutUpdate]);
 
   const handlePlotInitialized = (figure: Readonly<Figure>, graphDiv: Readonly<HTMLElement>) => {
     graphDivRef.current = graphDiv as HTMLElement;
     figureUpdatePendingRef.current = false;
     appliedVisibilityRef.current = null;
+    appliedVisibilityLayoutRef.current = undefined;
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
@@ -257,6 +273,7 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
     graphDivRef.current = graphDiv as HTMLElement;
     figureUpdatePendingRef.current = false;
     appliedVisibilityRef.current = null;
+    appliedVisibilityLayoutRef.current = undefined;
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
@@ -267,6 +284,7 @@ function Plot({ traceVisibility, ...props }: PlotProps) {
   const handlePlotPurged = (figure: Readonly<Figure>, graphDiv: Readonly<HTMLElement>) => {
     graphDivRef.current = null;
     appliedVisibilityRef.current = null;
+    appliedVisibilityLayoutRef.current = undefined;
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     disposePlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);

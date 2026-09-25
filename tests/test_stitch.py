@@ -141,6 +141,30 @@ class StitchServiceTests(unittest.TestCase):
         self.assertEqual(raw_result.loc[raw_result["segment"] == 0, "record_index"].tolist(), [1, 2, 3])
         self.assertEqual(raw_result.loc[raw_result["segment"] == 1, "record_index"].tolist(), [1, 2])
 
+    def test_display_only_source_does_not_shift_complete_cycle_numbering(self):
+        curve_hash = _hash("x")
+        cycling_hash = _hash("y")
+        curve = _raw_frame([1, 1])
+        curve["cycle_complete"] = False
+        cycling = _raw_frame([7, 7])
+        cycling["cycle_complete"] = True
+
+        result, segments, missing = self._stitch_raw(
+            [curve_hash, cycling_hash],
+            {curve_hash: curve, cycling_hash: cycling},
+        )
+
+        self.assertEqual(missing, [])
+        curve_rows = result[result["source_hash"] == curve_hash]
+        cycling_rows = result[result["source_hash"] == cycling_hash]
+        self.assertEqual(set(curve_rows["cycle"]), {0})
+        self.assertTrue(curve_rows["display_only_cycle"].all())
+        self.assertEqual(set(cycling_rows["cycle"]), {1})
+        self.assertFalse(cycling_rows["display_only_cycle"].any())
+        self.assertEqual(segments[0]["cycle_start"], None)
+        self.assertEqual(segments[0]["display_only_source_cycles"], [1])
+        self.assertEqual(segments[1]["cycle_start"], 1)
+
     def test_incomplete_final_raw_cycle_stays_separate_global_cycle(self):
         hash_a = _hash("x")
         raw = pd.DataFrame(

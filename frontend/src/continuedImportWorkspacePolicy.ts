@@ -1,6 +1,5 @@
 import type { ContinuationInspectResult, ContinuationInspectSource } from "./api";
 import {
-  acknowledgedMetadataOnlySourceKeys,
   continuedImportCanSubmit,
   continuedInspectionStatus,
   continuationFindingAction,
@@ -128,7 +127,6 @@ export function nextSelectedSourceKey(
 export type ContinuedImportSubmissionState = {
   canSubmit: boolean;
   order: string[];
-  acknowledgedFindingIds: string[];
   metadataOnlySourceKeys: string[];
   inspectionStatus: ContinuedInspectionStatus;
   findingAction: ContinuationFindingAction;
@@ -140,31 +138,29 @@ export type ContinuedImportSubmissionState = {
  * continued-cell import, computed from state the workspace editor owns.
  *
  * A continued Cell always needs at least two ordered sources; beyond that,
- * submission safety is exactly the existing continuation policy: a valid
- * scientific draft, a complete/submittable inspection result, and every
- * current confirmation finding acknowledged.
+ * submission safety is the existing continuation policy: a valid scientific
+ * draft and a complete/submittable inspection result. Non-blocking findings
+ * remain visible warnings and do not require acknowledgement.
  */
 export function buildContinuedImportSubmissionState(
   order: string[],
   cellDraft: ContinuedScientificDraft,
   cellName: string,
   result: ContinuationInspectResult | null | undefined,
-  acknowledged: Iterable<string>,
+  _acknowledged: Iterable<string>,
   requestFailed = false,
   trackingEnabled = false,
 ): ContinuedImportSubmissionState {
-  const acknowledgedFindingIds = Array.from(acknowledged);
   const inspectionStatus = continuedInspectionStatus(result, requestFailed);
   return {
     canSubmit:
       (order.length >= 2 || (order.length === 1 && trackingEnabled))
       && scientificDraftIsValid(cellDraft)
-      && continuedImportCanSubmit(result, cellName, acknowledgedFindingIds),
+      && continuedImportCanSubmit(result, cellName),
     order,
-    acknowledgedFindingIds,
-    metadataOnlySourceKeys: acknowledgedMetadataOnlySourceKeys(result, acknowledgedFindingIds, order),
+    metadataOnlySourceKeys: [],
     inspectionStatus,
-    findingAction: continuationFindingAction(result, acknowledgedFindingIds),
+    findingAction: continuationFindingAction(result),
     trackingEnabled,
   };
 }

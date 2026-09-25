@@ -947,21 +947,8 @@ def hash_prefix(file_hash: str | None) -> str | None:
     return file_hash[:8]
 
 
-def unacknowledged_confirmation_findings(
-    findings: list[dict[str, Any]],
-    acknowledged_finding_ids: list[str] | None,
-) -> list[dict[str, Any]]:
-    acknowledged = set(acknowledged_finding_ids or [])
-    return [
-        finding
-        for finding in findings
-        if finding.get("severity") == "confirmation" and finding["id"] not in acknowledged
-    ]
-
-
 def ensure_submittable_chain(
     analysis: dict[str, Any],
-    acknowledged_finding_ids: list[str] | None,
 ) -> None:
     sources = analysis.get("sources") or []
     incomplete_sources = [
@@ -997,20 +984,6 @@ def ensure_submittable_chain(
                 "findings": blocking,
             },
         )
-    unacknowledged = unacknowledged_confirmation_findings(
-        analysis.get("findings") or [],
-        acknowledged_finding_ids,
-    )
-    if unacknowledged:
-        raise ContinuationValidationError(
-            422,
-            {
-                "message": "Confirmation is required before continuing.",
-                "findings": unacknowledged,
-            },
-        )
-
-
 def validate_exact_file_id_permutation(
     current_file_ids: list[int],
     proposed_file_ids: list[int],

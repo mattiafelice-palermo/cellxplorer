@@ -12,8 +12,6 @@ export type CellPickerSort = {
 
 export type CellPickerSortState = {
   primary: CellPickerSort | null;
-  secondary: CellPickerSort | null;
-  primaryLocked: boolean;
 };
 
 export type CellPickerColumnFilter = {
@@ -109,8 +107,6 @@ export function cellMatchesPickerColumnFilters(
 
 export const EMPTY_CELL_PICKER_SORT: CellPickerSortState = {
   primary: null,
-  secondary: null,
-  primaryLocked: false,
 };
 
 export type CellPickerSourceFacet = {
@@ -260,15 +256,6 @@ export function updateCellPickerFacetFilters(
   };
 }
 
-/** True only when every source is a BioLogic CP/OCV metadata-only source. */
-export function cellHasOnlyMetadataOnlyBiologicSources(
-  sources: readonly CellPickerSourceFacet[] | null | undefined,
-): boolean {
-  return Boolean(sources?.length) && (sources ?? []).every((source) =>
-    source.system === "biologic" && ["CP", "OCV"].includes((source.technique ?? "").toUpperCase()),
-  );
-}
-
 /** Keep the current preview only while it remains among the currently displayed cells. */
 export function resolveCellPickerPreviewCellId(
   currentPreviewId: number | null,
@@ -297,22 +284,20 @@ function comparableValue(cell: CellPickerCell, key: CellPickerSortKey): number |
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-/** Sort one folder's cells by primary and optional tie-break criteria. */
+/** Sort one folder's cells by its selected column. */
 export function sortCellPickerCells<T extends CellPickerCell>(
   cells: readonly T[],
   sort: CellPickerSortState,
 ): T[] {
-  const criteria = [sort.primary, sort.secondary].filter((value): value is CellPickerSort => value !== null);
-  if (criteria.length === 0) return [...cells];
+  const criterion = sort.primary;
+  if (!criterion) return [...cells];
   return cells.map((cell, index) => ({ cell, index })).sort((left, right) => {
-    for (const criterion of criteria) {
-      const leftValue = comparableValue(left.cell, criterion.key);
-      const rightValue = comparableValue(right.cell, criterion.key);
-      if (leftValue === null || rightValue === null) {
-        if (leftValue === null && rightValue !== null) return 1;
-        if (rightValue === null && leftValue !== null) return -1;
-        continue;
-      }
+    const leftValue = comparableValue(left.cell, criterion.key);
+    const rightValue = comparableValue(right.cell, criterion.key);
+    if (leftValue === null || rightValue === null) {
+      if (leftValue === null && rightValue !== null) return 1;
+      if (rightValue === null && leftValue !== null) return -1;
+    } else {
       const order = typeof leftValue === "string" && typeof rightValue === "string"
         ? leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: "base" })
         : Number(leftValue) - Number(rightValue);
@@ -341,56 +326,7 @@ export function nextCellPickerSort(
   current: CellPickerSortState,
   key: CellPickerSortKey,
 ): CellPickerSortState {
-  if (!current.primary) {
-    return { primary: nextSort(null, key), secondary: null, primaryLocked: false };
-  }
-  if (current.primary.key === key) {
-    return { ...current, primary: nextSort(current.primary, key) };
-  }
-  if (current.secondary?.key === key) {
-    return { ...current, secondary: nextSort(current.secondary, key) };
-  }
-  if (!current.primaryLocked) {
-    return { primary: nextSort(null, key), secondary: null, primaryLocked: false };
-  }
-  return { ...current, secondary: nextSort(current.secondary, key) };
-}
-
-export function toggleCellPickerPrimarySortLock(
-  current: CellPickerSortState,
-): CellPickerSortState {
-  if (!current.primary) return current;
-  const primaryLocked = !current.primaryLocked;
   return {
-    ...current,
-    primaryLocked,
-    secondary: primaryLocked ? current.secondary : null,
-  };
-}
-
-export function removeCellPickerSecondarySort(
-  current: CellPickerSortState,
-): CellPickerSortState {
-  return { ...current, secondary: null };
-}
-
-export function setCellPickerSortLevel(
-  current: CellPickerSortState,
-  key: CellPickerSortKey,
-  direction: CellPickerSort["direction"],
-  level: "primary" | "secondary",
-): CellPickerSortState {
-  if (level === "primary" || !current.primary) {
-    return {
-      primary: { key, direction },
-      secondary: null,
-      primaryLocked: false,
-    };
-  }
-  if (current.primary.key === key) return current;
-  return {
-    ...current,
-    secondary: { key, direction },
-    primaryLocked: true,
+    primary: nextSort(current.primary, key),
   };
 }

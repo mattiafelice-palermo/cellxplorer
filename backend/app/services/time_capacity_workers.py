@@ -524,18 +524,26 @@ def _source_columns(frame: Any, descriptor: ResolvedCellDescriptor) -> dict[str,
     }
     hashes = frame["source_hash"].tolist() if "source_hash" in frame.columns else [None] * len(frame)
     source_cycles = frame["source_cycle"].tolist() if "source_cycle" in frame.columns else [None] * len(frame)
+    display_only_cycles = (
+        frame["display_only_cycle"].fillna(False).astype(bool).tolist()
+        if "display_only_cycle" in frame.columns
+        else [False] * len(frame)
+    )
 
     def safe_int(value: object) -> int | None:
         if value is None or isna(value):
             return None
         return int(value)
 
-    return {
+    result = {
         "source_cycle": [safe_int(value) for value in source_cycles],
         "source_position": [positions.get(value) for value in hashes],
         "source_filename": [names.get(value) for value in hashes],
         "source_hash": [value if value in names else None for value in hashes],
     }
+    if any(display_only_cycles):
+        result["display_only_cycle"] = display_only_cycles
+    return result
 
 
 def _compact_source_columns(frame: Any, descriptor: ResolvedCellDescriptor) -> dict[str, list[Any]]:
@@ -551,17 +559,25 @@ def _compact_source_columns(frame: Any, descriptor: ResolvedCellDescriptor) -> d
     ]
     source_indexes = {source["hash"]: index for index, source in enumerate(sources)}
     source_cycles = frame["source_cycle"].tolist() if "source_cycle" in frame.columns else [None] * len(frame)
+    display_only_cycles = (
+        frame["display_only_cycle"].fillna(False).astype(bool).tolist()
+        if "display_only_cycle" in frame.columns
+        else [False] * len(frame)
+    )
 
     def safe_index(value: object) -> int | None:
         if value is None or isna(value):
             return None
         return source_indexes.get(value)
 
-    return {
+    result = {
         "source_cycle": [None if value is None or isna(value) else int(value) for value in source_cycles],
         "sources": sources,
         "source_index": [safe_index(value) for value in hashes],
     }
+    if any(display_only_cycles):
+        result["display_only_cycle"] = display_only_cycles
+    return result
 
 
 def _empty_trace(
@@ -692,12 +708,21 @@ def _cell_result(
     )
     with time_capacity_path.timed_stage(diagnostics, "exact_cycle_filter_and_sort"):
         if settings["cycles"]:
-            raw = raw[raw["cycle"].isin(settings["cycles"])]
+            raw = raw[
+                raw["cycle"].isin(settings["cycles"])
+                | raw.get("display_only_cycle", False)
+            ]
         else:
             if settings["cycle_start"] is not None:
-                raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+                raw = raw[
+                    (raw["cycle"] >= int(settings["cycle_start"]))
+                    | raw.get("display_only_cycle", False)
+                ]
             if settings["cycle_end"] is not None:
-                raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+                raw = raw[
+                    (raw["cycle"] <= int(settings["cycle_end"]))
+                    | raw.get("display_only_cycle", False)
+                ]
         raw = raw.sort_values(
             ["cycle", "segment", "record_index"]
             if "record_index" in raw.columns

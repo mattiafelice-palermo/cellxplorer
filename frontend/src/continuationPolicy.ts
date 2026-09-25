@@ -34,23 +34,11 @@ export function scientificDraftIsValid(draft: ContinuedScientificDraft): boolean
   return true;
 }
 
-export function preserveAcknowledgements(
-  previous: Iterable<string>,
-  result: ContinuationInspectResult | null | undefined,
-): string[] {
-  if (!result) return [];
-  const valid = new Set(acknowledgementFindingIds(result));
-  return Array.from(previous).filter((id) => valid.has(id));
-}
-
 export function continuedImportCanSubmit(
   result: ContinuationInspectResult | null | undefined,
   cellName: string,
-  acknowledged: Iterable<string>,
 ): boolean {
-  if (!result || isSubmitBlocked(result) || !cellName.trim()) return false;
-  const acknowledgedSet = new Set(acknowledged);
-  return acknowledgementFindingIds(result).every((id) => acknowledgedSet.has(id));
+  return Boolean(result && !isSubmitBlocked(result) && cellName.trim());
 }
 
 export function moveSource<T>(items: T[], index: number, direction: -1 | 1): T[] {
@@ -63,36 +51,6 @@ export function moveSource<T>(items: T[], index: number, direction: -1 | 1): T[]
 
 export function isSubmitBlocked(result: ContinuationInspectResult): boolean {
   return !result.inspection_complete || !result.can_submit;
-}
-
-export function acknowledgementFindingIds(result: ContinuationInspectResult): string[] {
-  return result.findings
-    .filter((finding) => finding.severity === "confirmation")
-    .map((finding) => finding.id);
-}
-
-export function acknowledgedMetadataOnlySourceKeys(
-  result: ContinuationInspectResult | null | undefined,
-  acknowledged: Iterable<string>,
-  currentSourceKeys?: Iterable<string>,
-): string[] {
-  if (!result) return [];
-  const acknowledgedIds = new Set(acknowledged);
-  const currentKeys = currentSourceKeys ? new Set(currentSourceKeys) : null;
-  const sourceKeys = new Set<string>();
-  for (const finding of result.findings) {
-    if (
-      finding.code !== "metadata_only_source" ||
-      finding.severity !== "confirmation" ||
-      !acknowledgedIds.has(finding.id)
-    ) {
-      continue;
-    }
-    for (const sourceKey of finding.source_keys) {
-      if (!currentKeys || currentKeys.has(sourceKey)) sourceKeys.add(sourceKey);
-    }
-  }
-  return Array.from(sourceKeys);
 }
 
 export function continuationSourceCanOpenRawData(
@@ -172,19 +130,15 @@ export function blockingFindings(result: ContinuationInspectResult): Continuatio
   return result.findings.filter((finding) => finding.severity === "blocking");
 }
 
-export type ContinuationFindingAction = "blocking" | "acknowledgement" | null;
+export type ContinuationFindingAction = "blocking" | null;
 
 /** Describe the inline action required before a continued import can be submitted. */
 export function continuationFindingAction(
   result: ContinuationInspectResult | null | undefined,
-  acknowledged?: Iterable<string>,
 ): ContinuationFindingAction {
   if (!result?.inspection_complete) return null;
   if (blockingFindings(result).length > 0) return "blocking";
-  const acknowledgedIds = new Set(acknowledged ?? []);
-  return acknowledgementFindingIds(result).some((id) => !acknowledgedIds.has(id))
-    ? "acknowledgement"
-    : null;
+  return null;
 }
 
 export type ContinuedInspectionStatus = "not_started" | "preparing" | "ready" | "error";

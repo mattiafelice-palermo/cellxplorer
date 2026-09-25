@@ -270,11 +270,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl13",
+                "adapter_revision": "gcpl14cpocv1",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl13:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl14cpocv1:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
@@ -314,6 +314,8 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertEqual(frame["step"].tolist(), [1, 1, 2, 2])
         self.assertEqual(frame["status"].tolist(), ["CC_Chg", "CC_Chg", "CC_DChg", "CC_DChg"])
         self.assertEqual(frame["cycle"].tolist(), [1, 1, 1, 1])
+        self.assertTrue(frame["cycle_complete"].all())
+        self.assertEqual(len(calc.per_cycle(frame)), 1)
         self.assertEqual(frame["current_ma"].tolist(), [1.0, 1.0, -1.0, -1.0])
         self.assertEqual(frame["charge_capacity_mah"].tolist(), [0.0, 1.0, 0.0, 0.0])
         self.assertEqual(frame["discharge_capacity_mah"].tolist(), [0.0, 0.0, 0.0, 1.0])
@@ -512,7 +514,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         )
         canonical_cycling.validate_raw_timeseries(frame)
 
-    def test_single_charge_mpr_infers_cycle_one_without_full_cycle_field(self) -> None:
+    def test_single_charge_keeps_curve_rows_without_counting_a_full_cycle(self) -> None:
         rows = [
             _row(
                 0.0,
@@ -559,11 +561,14 @@ class BiologicGcplMappingTests(unittest.TestCase):
             frame = parsing.parse_timeseries(path)
 
         self.assertEqual(frame["cycle"].tolist(), [1, 1, 1])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
         self.assertEqual(frame["status"].tolist(), ["CC_Chg", "CC_Chg", "Rest"])
         self.assertEqual(
             frame.attrs["biologic_gcpl"]["cycle_source"],
             "non_repeating_cycle_1",
         )
+        self.assertTrue(calc.per_cycle(frame).empty)
         canonical_cycling.validate_raw_timeseries(frame)
 
     def test_single_direction_allows_zero_current_setup_sequence_before_discharge(self) -> None:
@@ -610,6 +615,8 @@ class BiologicGcplMappingTests(unittest.TestCase):
             frame = parsing.parse_timeseries(path)
 
         self.assertEqual(frame["cycle"].tolist(), [1, 1, 1])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
         self.assertEqual(frame["status"].tolist(), ["CC_DChg", "CC_DChg", "Rest"])
         self.assertEqual(
             frame.attrs["biologic_gcpl"]["cycle_source"],
@@ -753,6 +760,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             [
                 "record_index",
                 "cycle",
+                "cycle_complete",
                 "step",
                 "step_index",
                 "status",

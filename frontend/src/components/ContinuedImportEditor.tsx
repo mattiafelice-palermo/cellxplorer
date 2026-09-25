@@ -2,7 +2,6 @@ import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Divider,
   Group,
   Loader,
@@ -41,7 +40,6 @@ import {
   continuationInspectionHasErrors,
   continuationInspectionShouldPoll,
   moveSource,
-  preserveAcknowledgements,
   shouldAutoApplySuggestedOrder,
 } from "../continuationPolicy";
 import {
@@ -206,7 +204,6 @@ export function ContinuedImportEditor({
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
   const [previewQuantity, setPreviewQuantity] = useState<ContinuationPreviewQuantity>("discharge_capacity_mah");
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
-  const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const previousOrderRef = useRef<string[]>(order);
   const userReorderedRef = useRef(false);
 
@@ -310,10 +307,6 @@ export function ContinuedImportEditor({
   }, [byKey, onPreviewRequested, previewMode, selectedSourceKey]);
 
   useEffect(() => {
-    if (result) setAcknowledged((current) => new Set(preserveAcknowledgements(current, result)));
-  }, [result]);
-
-  useEffect(() => {
     if (!orderNeedsAutomaticCorrection || !result) return;
     setOrder((current) => applySuggestedOrder(current, result.suggested_order));
   }, [orderNeedsAutomaticCorrection, result]);
@@ -324,7 +317,6 @@ export function ContinuedImportEditor({
       setPreviewMode("combined");
       setPreviewQuantity("discharge_capacity_mah");
       setPreviewInterpretation("stitched");
-      setAcknowledged(new Set());
     }
   }, [opened]);
 
@@ -334,11 +326,11 @@ export function ContinuedImportEditor({
       cellDraft,
       cellDraft.cell_name,
       result,
-      acknowledged,
+      [],
       inspectionQuery.isError,
       folderWatch?.enabled === true,
     ),
-    [acknowledged, cellDraft, folderWatch?.enabled, inspectionQuery.isError, order, result],
+    [cellDraft, folderWatch?.enabled, inspectionQuery.isError, order, result],
   );
   useEffect(() => {
     onSubmissionStateChange(submissionState);
@@ -362,11 +354,8 @@ export function ContinuedImportEditor({
     });
   };
   const visibleFindings = orderNeedsAutomaticCorrection ? [] : result?.findings;
-  const confirmationFindings = visibleFindings?.filter(
-    (finding) => finding.severity === "confirmation",
-  ) ?? [];
   const warningFindings = visibleFindings?.filter(
-    (finding) => finding.severity === "warning",
+    (finding) => finding.severity === "warning" || finding.severity === "confirmation",
   ) ?? [];
   const orderCouldNotBeVerified = Boolean(
     result?.inspection_complete
@@ -522,7 +511,6 @@ export function ContinuedImportEditor({
                 }}
                 onRemove={disabled ? undefined : (sourceKey) => {
                   onRemoveSource(sourceKey);
-                  setAcknowledged(new Set());
                 }}
                 disabled={disabled}
               />
@@ -821,25 +809,6 @@ export function ContinuedImportEditor({
         </Paper>
       </Group>
 
-      {confirmationFindings.length > 0 && result && (
-        <Stack gap={2} style={{ flex: "none" }}>
-          {confirmationFindings.map((finding) => (
-            <Checkbox
-              key={finding.id}
-              size="xs"
-              disabled={disabled}
-              checked={acknowledged.has(finding.id)}
-              onChange={(event) => setAcknowledged((current) => {
-                const next = new Set(current);
-                if (event.currentTarget.checked) next.add(finding.id);
-                else next.delete(finding.id);
-                return next;
-              })}
-              label={inlineFindingLabel(finding, result.sources)}
-            />
-          ))}
-        </Stack>
-      )}
       {(orderCouldNotBeVerified || warningFindings.length > 0) && result && (
         <Stack gap={2} style={{ flex: "none" }}>
           {orderCouldNotBeVerified && (

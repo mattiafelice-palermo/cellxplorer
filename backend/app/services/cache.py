@@ -56,7 +56,7 @@ def background_layout_reads(enabled: bool):
 # This is a physical access-layout generation, not a scientific meaning or
 # calculation version.  A current raw file without this sidecar remains a
 # valid legacy cache and uses the existing full-read API.
-RAW_CACHE_LAYOUT_VERSION = 2
+RAW_CACHE_LAYOUT_VERSION = 3
 
 # Chosen from the Spec 050.2 profiling pass on the approved golden source
 # `cycles_time_steps.ndax` (71,190 rows, 193 observed cycles) under the pinned
@@ -727,9 +727,21 @@ def _build_raw_layout_index(
         raise RawLayoutError("; ".join(errors))
     if len(frame) > 0 and not observed_cycles:
         raise RawLayoutError("non-empty raw cache has no valid observed cycles")
+    if "cycle_complete" in frame.columns:
+        complete_mask = frame["cycle_complete"].fillna(False).astype(bool)
+        complete_cycles, complete_errors = canonical_cycling.observed_cycle_labels(
+            frame.loc[complete_mask, "cycle"]
+        )
+        if complete_errors:
+            raise RawLayoutError("; ".join(complete_errors))
+    else:
+        # Adapters without an explicit completeness signal keep their
+        # established source-local cycle contract.
+        complete_cycles = list(observed_cycles)
 
     row_groups: list[dict[str, Any]] = []
     cycle_to_row_groups: dict[str, list[int]] = {}
+    indexed_complete_cycles: set[int] = set()
     cursor = 0
     for group, row_count in enumerate(row_group_counts):
         group_frame = frame.iloc[cursor : cursor + row_count]
@@ -740,11 +752,22 @@ def _build_raw_layout_index(
             raise RawLayoutError(
                 f"raw row group {group} has no valid observed cycle labels"
             )
+        if "cycle_complete" in group_frame.columns:
+            group_complete_mask = group_frame["cycle_complete"].fillna(False).astype(bool)
+            group_complete, complete_errors = canonical_cycling.observed_cycle_labels(
+                group_frame.loc[group_complete_mask, "cycle"]
+            )
+            if complete_errors:
+                raise RawLayoutError("; ".join(complete_errors))
+        else:
+            group_complete = list(labels)
+        indexed_complete_cycles.update(group_complete)
         row_groups.append(
             {
                 "row_group": group,
                 "row_count": row_count,
                 "source_cycles": labels,
+                "complete_source_cycles": group_complete,
             }
         )
         for cycle in labels:
@@ -752,6 +775,8 @@ def _build_raw_layout_index(
         cursor += row_count
     if cursor != len(frame):
         raise RawLayoutError("raw row-group metadata does not cover the source frame")
+    if indexed_complete_cycles != set(complete_cycles):
+        raise RawLayoutError("raw row-group completeness disagrees with source cycle metadata")
 
     raw_file_size = parquet_path.stat().st_size
     timestamp_start, timestamp_end = _timestamp_bounds(frame)
@@ -768,6 +793,7 @@ def _build_raw_layout_index(
         "raw_column_names": column_names,
         "raw_row_group_count": len(row_groups),
         "observed_source_cycles": observed_cycles,
+        "complete_source_cycles": complete_cycles,
         "row_groups": row_groups,
         "cycle_to_row_groups": cycle_to_row_groups,
         "voltage_data_availability": voltage_availability,
@@ -973,6 +999,7 @@ def _validate_raw_layout_index(
     row_groups: list[dict[str, Any]] = []
     row_group_counts: list[int] = []
     expected_cycle_to_groups: dict[int, list[int]] = {}
+    row_group_complete_cycles: set[int] = set()
     for expected_group, raw_group in enumerate(row_groups_value):
         if not isinstance(raw_group, dict):
             raise RawLayoutError("raw layout index contains a malformed row group")
@@ -993,11 +1020,25 @@ def _validate_raw_layout_index(
         ]
         if source_cycles != sorted(set(source_cycles)):
             raise RawLayoutError("raw layout index row-group cycles are not sorted")
+        complete_cycles_value = raw_group.get("complete_source_cycles")
+        if not isinstance(complete_cycles_value, list):
+            raise RawLayoutError("raw layout index row group has invalid complete-cycle metadata")
+        group_complete = [
+            _coerce_index_cycle(
+                value,
+                f"row_groups[{expected_group}].complete_source_cycles",
+            )
+            for value in complete_cycles_value
+        ]
+        if group_complete != sorted(set(group_complete)) or not set(group_complete).issubset(source_cycles):
+            raise RawLayoutError("raw layout index row-group complete cycles are inconsistent")
+        row_group_complete_cycles.update(group_complete)
         row_groups.append(
             {
                 "row_group": expected_group,
                 "row_count": row_count,
                 "source_cycles": source_cycles,
+                "complete_source_cycles": group_complete,
             }
         )
         row_group_counts.append(row_count)
@@ -1019,6 +1060,19 @@ def _validate_raw_layout_index(
         raise RawLayoutError("raw layout index observed cycles are not sorted")
     if observed_cycles != sorted(expected_cycle_to_groups):
         raise RawLayoutError("raw layout index observed cycles disagree with row groups")
+
+    complete_value = index.get("complete_source_cycles")
+    if not isinstance(complete_value, list):
+        raise RawLayoutError("raw layout index has invalid complete-cycle metadata")
+    complete_cycles = [
+        _coerce_index_cycle(value, "complete_source_cycles") for value in complete_value
+    ]
+    if complete_cycles != sorted(set(complete_cycles)):
+        raise RawLayoutError("raw layout index complete cycles are not sorted")
+    if not set(complete_cycles).issubset(observed_cycles):
+        raise RawLayoutError("raw layout index complete cycles are not observed source cycles")
+    if set(complete_cycles) != row_group_complete_cycles:
+        raise RawLayoutError("raw layout index complete cycles disagree with row groups")
 
     consecutive_time_value = index.get("consecutive_time")
     if not isinstance(consecutive_time_value, dict):
@@ -1149,6 +1203,7 @@ def _validate_raw_layout_index(
     normalized["raw_column_names"] = column_names
     normalized["row_groups"] = row_groups
     normalized["observed_source_cycles"] = observed_cycles
+    normalized["complete_source_cycles"] = complete_cycles
     normalized["cycle_to_row_groups"] = cycle_mapping
     normalized["consecutive_time"] = consecutive_time
     if step_detail is not None:
@@ -1977,6 +2032,7 @@ def load_raw_step_rows(
             result = pd.DataFrame(columns=requested_columns)
             result.attrs["_raw_timestamp_start"] = index.get("timestamp_start")
             result.attrs["_raw_observed_source_cycles"] = index.get("observed_source_cycles") or []
+            result.attrs["_raw_complete_source_cycles"] = index.get("complete_source_cycles") or []
             result.attrs["_raw_step_row_groups"] = tuple(row_groups)
             result.attrs["_raw_step_rows_read"] = 0
             if diagnostics is not None:
@@ -2010,6 +2066,7 @@ def load_raw_step_rows(
         result = loaded.loc[numeric_steps.isin(requested_steps), requested_columns].reset_index(drop=True)
         result.attrs["_raw_timestamp_start"] = index.get("timestamp_start")
         result.attrs["_raw_observed_source_cycles"] = index.get("observed_source_cycles") or []
+        result.attrs["_raw_complete_source_cycles"] = index.get("complete_source_cycles") or []
         result.attrs["_raw_step_row_groups"] = tuple(row_groups)
         result.attrs["_raw_step_rows_read"] = sum(row_group_counts.get(group, 0) for group in row_groups)
         if diagnostics is not None:
