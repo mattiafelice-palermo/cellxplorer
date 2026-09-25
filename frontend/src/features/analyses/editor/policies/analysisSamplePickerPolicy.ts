@@ -16,6 +16,97 @@ export type CellPickerSortState = {
   primaryLocked: boolean;
 };
 
+export type CellPickerColumnFilter = {
+  operator: string;
+  value: string;
+  secondValue: string;
+};
+
+export type CellPickerColumnFilters = Partial<
+  Record<CellPickerSortKey, CellPickerColumnFilter>
+>;
+
+export type CellPickerColumnFilterOperator =
+  | "contains"
+  | "equals"
+  | "eq"
+  | "gt"
+  | "lt"
+  | "between"
+  | "before"
+  | "after";
+
+export function cellPickerColumnHasFilter(
+  filter: CellPickerColumnFilter | undefined,
+  key: CellPickerSortKey,
+): boolean {
+  if (!filter || !filter.value.trim()) return false;
+  return filter.operator !== "between" || Boolean(filter.secondValue.trim());
+}
+
+/** Update an Excel-style filter draft without clearing an operator before its value is entered. */
+export function updateCellPickerColumnFilterDraft(
+  filters: CellPickerColumnFilters,
+  key: CellPickerSortKey,
+  defaultFilter: CellPickerColumnFilter,
+  patch: Partial<CellPickerColumnFilter>,
+): CellPickerColumnFilters {
+  return {
+    ...filters,
+    [key]: { ...(filters[key] ?? defaultFilter), ...patch },
+  };
+}
+
+/** Apply Excel-style, per-column picker filters without changing folder order. */
+export function cellMatchesPickerColumnFilters(
+  cell: CellPickerCell,
+  filters: CellPickerColumnFilters,
+): boolean {
+  for (const [rawKey, filter] of Object.entries(filters)) {
+    const key = rawKey as CellPickerSortKey;
+    if (!cellPickerColumnHasFilter(filter, key)) continue;
+    const value = cell[key];
+    if (key === "name") {
+      const actual = cell.name.toLocaleLowerCase();
+      const expected = filter.value.trim().toLocaleLowerCase();
+      if (filter.operator === "equals" ? actual !== expected : !actual.includes(expected)) {
+        return false;
+      }
+      continue;
+    }
+    if (key === "cycle_count" || key === "max_specific_discharge_capacity_mah_g") {
+      if (typeof value !== "number" || !Number.isFinite(value)) return false;
+      const first = Number(filter.value);
+      const second = Number(filter.secondValue);
+      if (!Number.isFinite(first)) return false;
+      switch (filter.operator) {
+        case "gt": if (!(value > first)) return false; break;
+        case "lt": if (!(value < first)) return false; break;
+        case "between":
+          if (!Number.isFinite(second) || value < Math.min(first, second) || value > Math.max(first, second)) return false;
+          break;
+        default:
+          if (Math.abs(value - first) > 1e-9 * Math.max(1, Math.abs(value), Math.abs(first))) return false;
+      }
+      continue;
+    }
+    if (typeof value !== "string") return false;
+    const actual = value.slice(0, 10);
+    const first = filter.value.trim();
+    const second = filter.secondValue.trim();
+    if (!first) return false;
+    switch (filter.operator) {
+      case "before": if (!(actual < first)) return false; break;
+      case "after": if (!(actual > first)) return false; break;
+      case "between":
+        if (!second || actual < (first < second ? first : second) || actual > (first > second ? first : second)) return false;
+        break;
+      default: if (actual !== first) return false;
+    }
+  }
+  return true;
+}
+
 export const EMPTY_CELL_PICKER_SORT: CellPickerSortState = {
   primary: null,
   secondary: null,
@@ -104,7 +195,7 @@ function selectedFacetValue(value: string | null | undefined): string {
 
 /** A Cell matches when one of its source files satisfies all active facets. */
 export function cellMatchesPickerFilters(
-  cell: Pick<CellPickerCell, "source_facets">,
+  cell: { source_facets?: readonly CellPickerSourceFacet[] },
   filters: CellPickerFilters,
 ): boolean {
   if (
@@ -112,26 +203,81 @@ export function cellMatchesPickerFilters(
     filters.fileFormats.length === 0 &&
     filters.techniques.length === 0
   ) return true;
-  return cell.source_facets.some((source) =>
+  return (cell.source_facets ?? []).some((source) =>
     (filters.sourceSystems.length === 0 || filters.sourceSystems.includes(selectedFacetValue(source.system))) &&
     (filters.fileFormats.length === 0 || filters.fileFormats.includes(selectedFacetValue(source.format))) &&
     (filters.techniques.length === 0 || filters.techniques.includes(selectedFacetValue(source.technique)))
   );
 }
 
+/** Expose a hierarchy: system -> format -> technique, independent of downstream selections. */
 export function cellPickerFacetValues(
   cells: readonly { source_facets?: readonly CellPickerSourceFacet[] }[],
   facet: "system" | "format" | "technique",
+  filters: CellPickerFilters = EMPTY_CELL_PICKER_FILTERS,
 ): string[] {
   const values = new Set<string>();
+  const filtersForFacet: CellPickerFilters = facet === "system"
+    ? EMPTY_CELL_PICKER_FILTERS
+    : facet === "format"
+      ? { sourceSystems: filters.sourceSystems, fileFormats: [], techniques: [] }
+      : { sourceSystems: filters.sourceSystems, fileFormats: filters.fileFormats, techniques: [] };
   cells.forEach((cell) => (cell.source_facets ?? []).forEach((source) => {
-    values.add(selectedFacetValue(source[facet]));
+    if (cellMatchesPickerFilters({ source_facets: [source] }, filtersForFacet)) {
+      values.add(selectedFacetValue(source[facet]));
+    }
   }));
   return Array.from(values).sort((left, right) => {
     if (left === UNKNOWN_CELL_PICKER_FACET) return right === UNKNOWN_CELL_PICKER_FACET ? 0 : 1;
     if (right === UNKNOWN_CELL_PICKER_FACET) return -1;
     return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
   });
+}
+
+/** Change one facet and prune only downstream selections made incompatible by that change. */
+export function updateCellPickerFacetFilters(
+  cells: readonly { source_facets?: readonly CellPickerSourceFacet[] }[],
+  filters: CellPickerFilters,
+  facet: "system" | "format" | "technique",
+  values: readonly string[],
+): CellPickerFilters {
+  const next: CellPickerFilters = facet === "system"
+    ? { ...filters, sourceSystems: values }
+    : facet === "format"
+      ? { ...filters, fileFormats: values }
+      : { ...filters, techniques: values };
+  const systemScoped: CellPickerFilters = { ...next, fileFormats: [], techniques: [] };
+  const formatsToKeep = facet === "system" || facet === "format"
+    ? new Set(cellPickerFacetValues(cells, "format", systemScoped))
+    : new Set(next.fileFormats);
+  const fileFormats = next.fileFormats.filter((value) => formatsToKeep.has(value));
+  const formatScoped: CellPickerFilters = { ...next, fileFormats, techniques: [] };
+  const compatibleTechniques = new Set(cellPickerFacetValues(cells, "technique", formatScoped));
+  return {
+    ...next,
+    fileFormats,
+    techniques: next.techniques.filter((value) => compatibleTechniques.has(value)),
+  };
+}
+
+/** True only when every source is a BioLogic CP/OCV metadata-only source. */
+export function cellHasOnlyMetadataOnlyBiologicSources(
+  sources: readonly CellPickerSourceFacet[] | null | undefined,
+): boolean {
+  return Boolean(sources?.length) && (sources ?? []).every((source) =>
+    source.system === "biologic" && ["CP", "OCV"].includes((source.technique ?? "").toUpperCase()),
+  );
+}
+
+/** Keep the current preview only while it remains among the currently displayed cells. */
+export function resolveCellPickerPreviewCellId(
+  currentPreviewId: number | null,
+  defaultPreviewId: number | null,
+  visibleCellIds: readonly number[],
+): number | null {
+  return currentPreviewId !== null && visibleCellIds.includes(currentPreviewId)
+    ? currentPreviewId
+    : defaultPreviewId;
 }
 
 function comparableValue(cell: CellPickerCell, key: CellPickerSortKey): number | string | null {
@@ -226,4 +372,25 @@ export function removeCellPickerSecondarySort(
   current: CellPickerSortState,
 ): CellPickerSortState {
   return { ...current, secondary: null };
+}
+
+export function setCellPickerSortLevel(
+  current: CellPickerSortState,
+  key: CellPickerSortKey,
+  direction: CellPickerSort["direction"],
+  level: "primary" | "secondary",
+): CellPickerSortState {
+  if (level === "primary" || !current.primary) {
+    return {
+      primary: { key, direction },
+      secondary: null,
+      primaryLocked: false,
+    };
+  }
+  if (current.primary.key === key) return current;
+  return {
+    ...current,
+    secondary: { key, direction },
+    primaryLocked: true,
+  };
 }

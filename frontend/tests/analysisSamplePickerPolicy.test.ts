@@ -7,9 +7,16 @@ import {
   selectableCellPickerSelection,
   sortCellPickerCells,
   cellMatchesPickerFilters,
+  cellMatchesPickerColumnFilters,
+  cellPickerColumnHasFilter,
   cellPickerFacetValues,
+  setCellPickerSortLevel,
+  updateCellPickerFacetFilters,
   toggleCellPickerBulkSelection,
   toggleCellPickerPrimarySortLock,
+  updateCellPickerColumnFilterDraft,
+  cellHasOnlyMetadataOnlyBiologicSources,
+  resolveCellPickerPreviewCellId,
   EMPTY_CELL_PICKER_FILTERS,
   EMPTY_CELL_PICKER_SORT,
   UNKNOWN_CELL_PICKER_FACET,
@@ -115,6 +122,27 @@ test("cell picker secondary sort breaks ties while unknown values stay last", ()
   }).map((cell) => cell.id), [5, 4, 6]);
 });
 
+test("picker header sort controls keep a primary and an explicit locked tie-break sort", () => {
+  const primary = setCellPickerSortLevel(
+    EMPTY_CELL_PICKER_SORT,
+    "cycle_count",
+    "desc",
+    "primary",
+  );
+  const sorted = setCellPickerSortLevel(primary, "last_modified_at", "asc", "secondary");
+  assert.deepEqual(sorted, {
+    primary: { key: "cycle_count", direction: "desc" },
+    secondary: { key: "last_modified_at", direction: "asc" },
+    primaryLocked: true,
+  });
+  const tied = [
+    { ...rows[0], id: 4, cycle_count: 20, last_modified_at: "2025-02-01T00:00:00Z" },
+    { ...rows[1], id: 5, cycle_count: 20, last_modified_at: "2025-04-01T00:00:00Z" },
+    { ...rows[2], id: 6, cycle_count: 10, last_modified_at: "2025-05-01T00:00:00Z" },
+  ];
+  assert.deepEqual(sortCellPickerCells(tied, sorted).map((cell) => cell.id), [4, 5, 6]);
+});
+
 test("locking the primary sort keeps its groups in order and sorts only ties", () => {
   const primary = nextCellPickerSort(EMPTY_CELL_PICKER_SORT, "cycle_count");
   const locked = toggleCellPickerPrimarySortLock(primary);
@@ -149,6 +177,133 @@ test("picker facets require one source file to satisfy all selected facets", () 
   }), false);
   assert.equal(cellMatchesPickerFilters(continuedCell, EMPTY_CELL_PICKER_FILTERS), true);
   assert.deepEqual(cellPickerFacetValues([continuedCell], "technique"), ["GCPL", UNKNOWN_CELL_PICKER_FACET]);
+  assert.deepEqual(cellPickerFacetValues([continuedCell], "format", {
+    sourceSystems: ["biologic"],
+    fileFormats: [],
+    techniques: [],
+  }), [".mpr"]);
+  assert.deepEqual(cellPickerFacetValues([continuedCell], "technique", {
+    sourceSystems: ["biologic"],
+    fileFormats: [".mpr"],
+    techniques: [],
+  }), ["GCPL"]);
+});
+
+test("picker facet options narrow using the other active facets", () => {
+  const cells = [
+    { source_facets: [{ system: "biologic", format: ".mpr", technique: "GCPL" }] },
+    { source_facets: [{ system: "neware", format: ".ndax", technique: null }] },
+  ];
+  assert.deepEqual(
+    cellPickerFacetValues(cells, "format", {
+      sourceSystems: ["biologic"],
+      fileFormats: [],
+      techniques: [],
+    }),
+    [".mpr"],
+  );
+  assert.deepEqual(
+    cellPickerFacetValues(cells, "technique", {
+      sourceSystems: ["neware"],
+      fileFormats: [".ndax"],
+      techniques: [],
+    }),
+    [UNKNOWN_CELL_PICKER_FACET],
+  );
+  assert.deepEqual(
+    cellPickerFacetValues(cells, "format", {
+      sourceSystems: [],
+      fileFormats: [".mpr"],
+      techniques: ["GCPL"],
+    }),
+    [".mpr", ".ndax"],
+    "format choices stay available when the previous technique will be pruned by the new format",
+  );
+});
+
+test("picker facet changes remove incompatible format and protocol selections", () => {
+  const cells = [
+    { source_facets: [{ system: "biologic", format: ".mpr", technique: "GCPL" }] },
+    { source_facets: [{ system: "neware", format: ".ndax", technique: "GCD" }] },
+  ];
+  const neware = updateCellPickerFacetFilters(cells, EMPTY_CELL_PICKER_FILTERS, "system", ["neware"]);
+  const selectedFormat = updateCellPickerFacetFilters(cells, neware, "format", [".ndax"]);
+  const changedSystem = updateCellPickerFacetFilters(cells, selectedFormat, "system", ["biologic"]);
+
+  assert.deepEqual(changedSystem, {
+    sourceSystems: ["biologic"],
+    fileFormats: [],
+    techniques: [],
+  });
+  assert.deepEqual(cellPickerFacetValues(cells, "format", changedSystem), [".mpr"]);
+
+  const changedFormat = updateCellPickerFacetFilters(cells, {
+    sourceSystems: [],
+    fileFormats: [".mpr"],
+    techniques: ["GCPL"],
+  }, "format", [".ndax"]);
+  assert.deepEqual(changedFormat, {
+    sourceSystems: [],
+    fileFormats: [".ndax"],
+    techniques: [],
+  });
+});
+
+test("preview falls back when the selected Cell is filtered out and metadata-only requires all sources", () => {
+  assert.equal(resolveCellPickerPreviewCellId(1, 2, [2, 3]), 2);
+  assert.equal(resolveCellPickerPreviewCellId(3, 2, [2, 3]), 3);
+  assert.equal(resolveCellPickerPreviewCellId(null, 2, [2, 3]), 2);
+
+  assert.equal(cellHasOnlyMetadataOnlyBiologicSources([
+    { system: "biologic", format: ".mpr", technique: "OCV" },
+    { system: "biologic", format: ".mpr", technique: "CP" },
+  ]), true);
+  assert.equal(cellHasOnlyMetadataOnlyBiologicSources([
+    { system: "biologic", format: ".mpr", technique: "OCV" },
+    { system: "biologic", format: ".mpr", technique: "GCPL" },
+  ]), false);
+  assert.equal(cellHasOnlyMetadataOnlyBiologicSources([
+    { system: "biologic", format: ".mpr", technique: "OCV" },
+    { system: "neware", format: ".ndax", technique: null },
+  ]), false);
+});
+
+test("picker column filters support text, numeric, and inclusive date ranges", () => {
+  const cell = rows[0];
+  assert.equal(cellPickerColumnHasFilter({ operator: "gt", value: "", secondValue: "" }, "cycle_count"), false);
+  assert.equal(cellMatchesPickerColumnFilters(cell, {
+    cycle_count: { operator: "gt", value: "9", secondValue: "" },
+    name: { operator: "contains", value: "cell 1", secondValue: "" },
+  }), true);
+  assert.equal(cellMatchesPickerColumnFilters(cell, {
+    max_specific_discharge_capacity_mah_g: {
+      operator: "between",
+      value: "119",
+      secondValue: "121",
+    },
+  }), true);
+  assert.equal(cellMatchesPickerColumnFilters(cell, {
+    created_at: { operator: "between", value: "2025-01-01", secondValue: "2025-01-02" },
+  }), true);
+  assert.equal(cellMatchesPickerColumnFilters(cell, {
+    created_at: { operator: "after", value: "2025-01-01", secondValue: "" },
+  }), false);
+  assert.equal(cellPickerColumnHasFilter({ operator: "between", value: "", secondValue: "121" }, "cycle_count"), false);
+  assert.equal(cellMatchesPickerColumnFilters(cell, {
+    cycle_count: { operator: "between", value: "", secondValue: "121" },
+  }), true);
+  assert.equal(cellPickerColumnHasFilter({ operator: "between", value: "119", secondValue: "121" }, "cycle_count"), true);
+});
+
+test("picker column filter operator remains selected while its value is blank", () => {
+  const draft = updateCellPickerColumnFilterDraft(
+    {},
+    "cycle_count",
+    { operator: "eq", value: "", secondValue: "" },
+    { operator: "gt" },
+  );
+  assert.deepEqual(draft.cycle_count, { operator: "gt", value: "", secondValue: "" });
+  assert.equal(cellPickerColumnHasFilter(draft.cycle_count, "cycle_count"), false);
 });
 
 test("cell picker bulk selection is tri-state and only changes visible rows", () => {
