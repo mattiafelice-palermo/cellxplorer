@@ -15,6 +15,7 @@ from typing import Literal
 
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 from ..services import import_inspection
+from ..services import import_file_hints
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -1585,6 +1586,10 @@ class ImportRawDataRequest(BaseModel):
 class ImportPathInspectRequest(BaseModel):
     paths: list[str]
     job_token: str | None = Field(default=None, max_length=100)
+
+
+class ImportHeaderHintsRequest(BaseModel):
+    paths: list[str] = Field(default_factory=list, max_length=import_file_hints.MAX_HINT_PATHS)
 
 
 class ContinuationInspectSourceRequest(BaseModel):
@@ -3768,6 +3773,15 @@ def list_import_source_paths(req: ImportSourceListRequest):
 @router.post("/imports/browse")
 def browse_import_source_paths(req: ImportBrowseRequest, db: Session = Depends(get_db)):
     return browse_import_directory(req.path, db)
+
+
+@router.post("/imports/header-hints")
+def inspect_import_header_hints(req: ImportHeaderHintsRequest):
+    """Return optional file metadata without delaying the import browser."""
+    try:
+        return {"files": import_file_hints.inspect_header_hints(req.paths)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/imports/quick-access")

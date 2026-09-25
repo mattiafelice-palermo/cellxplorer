@@ -202,7 +202,11 @@ export function ContinuedImportEditor({
   const [colors, setColors] = useState<SourceColorAssignments>({});
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
-  const [previewQuantity, setPreviewQuantity] = useState<ContinuationPreviewQuantity>("discharge_capacity_mah");
+  const [previewQuantity, setPreviewQuantity] = useState<ContinuationPreviewQuantity>(() =>
+    drafts.length > 0 && drafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV")
+      ? "voltage"
+      : "discharge_capacity_mah",
+  );
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
   const previousOrderRef = useRef<string[]>(order);
   const userReorderedRef = useRef(false);
@@ -238,11 +242,16 @@ export function ContinuedImportEditor({
     order,
     userReorderedRef.current,
   );
+  const allOcvSources = orderedDrafts.length >= 2
+    && orderedDrafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV");
+  useEffect(() => {
+    if (allOcvSources) setPreviewQuantity("voltage");
+  }, [allOcvSources]);
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
     queryKey: continuationPreviewQueryKey(
       order,
       orderedDrafts,
-      inspectionQuery.dataUpdatedAt,
+      allOcvSources ? 0 : inspectionQuery.dataUpdatedAt,
       previewQuantity,
       previewInterpretation,
     ),
@@ -252,8 +261,8 @@ export function ContinuedImportEditor({
     ),
     enabled: opened
       && previewMode === "combined"
-      && Boolean(result?.inspection_complete)
-      && !orderNeedsAutomaticCorrection
+      && (Boolean(result?.inspection_complete) || (allOcvSources && previewQuantity === "voltage"))
+      && (allOcvSources || !orderNeedsAutomaticCorrection)
       && orderedDrafts.length >= 2,
     staleTime: Infinity,
   });
@@ -315,10 +324,12 @@ export function ContinuedImportEditor({
     if (!opened) {
       userReorderedRef.current = false;
       setPreviewMode("combined");
-      setPreviewQuantity("discharge_capacity_mah");
+      setPreviewQuantity(drafts.length > 0 && drafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV")
+        ? "voltage"
+        : "discharge_capacity_mah");
       setPreviewInterpretation("stitched");
     }
-  }, [opened]);
+  }, [drafts, opened]);
 
   const submissionState = useMemo(
     () => buildContinuedImportSubmissionState(
@@ -436,15 +447,15 @@ export function ContinuedImportEditor({
           )}
         </Group>
         <Group gap="xs" justify="flex-end" align="center">
-          {inspectionQuery.isFetching && (
+          {inspectionQuery.isFetching && !allOcvSources && (
             <Text size="xs" c="dimmed">Preparing merged preview…</Text>
           )}
-          {inspectionQuery.isError && (
+          {inspectionQuery.isError && !allOcvSources && (
             <Text size="xs" c="red">
               {inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Continuation inspection failed."}
             </Text>
           )}
-          {(sourceInspectionFailed || inspectionQuery.isError) && (
+          {(sourceInspectionFailed || inspectionQuery.isError) && !allOcvSources && (
             <Button
               size="compact-sm"
               variant="subtle"
@@ -577,27 +588,27 @@ export function ContinuedImportEditor({
                     >
                       <Tabs.List grow>
                         <Tabs.Tab value="voltage">Voltage</Tabs.Tab>
-                        <Tabs.Tab value="discharge_capacity_mah">Discharge capacity</Tabs.Tab>
-                        <Tabs.Tab value="charge_capacity_mah">Charge capacity</Tabs.Tab>
+                        <Tabs.Tab value="discharge_capacity_mah" disabled={allOcvSources}>Discharge capacity</Tabs.Tab>
+                        <Tabs.Tab value="charge_capacity_mah" disabled={allOcvSources}>Charge capacity</Tabs.Tab>
                       </Tabs.List>
                     </Tabs>
                   </Stack>
                 )}
                 {previewMode === "combined" ? (
-                  sourceInspectionFailed ? (
+                  sourceInspectionFailed && !allOcvSources ? (
                     <Text size="sm" c="red">Continuity inspection failed. Review the source error before retrying.</Text>
-                  ) : inspectionQuery.isError ? (
+                  ) : inspectionQuery.isError && !allOcvSources ? (
                     <Text size="sm" c="red">The merged preview is waiting for a successful continuity inspection.</Text>
-                  ) : !result?.inspection_complete ? (
+                  ) : !result?.inspection_complete && !allOcvSources ? (
                     <Alert color="gray">
                       <Group gap="xs" align="center">
                         <Loader size="sm" />
                         <Text size="sm">Preparing continuity inspection…</Text>
                       </Group>
                     </Alert>
-                  ) : inspectionQuery.isFetching ? (
+                  ) : inspectionQuery.isFetching && !allOcvSources ? (
                     <Alert color="gray">Waiting for continuity inspection…</Alert>
-                  ) : orderNeedsAutomaticCorrection ? (
+                  ) : orderNeedsAutomaticCorrection && !allOcvSources ? (
                     <Alert color="gray">Ordering sources by their available timestamps…</Alert>
                   ) : orderedDrafts.length < 2 ? (
                     <Alert color="gray">

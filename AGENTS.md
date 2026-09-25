@@ -171,6 +171,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/continuations.py`: continuation compatibility inspection (Spec 034.2) and lifecycle submit validation helpers (Spec 034.3)
 - `backend/app/services/cell_folder_watch.py`: continued-Cell folder discovery, candidate state, and deterministic append decisions (Spec 047.4)
 - `backend/app/services/import_inspection.py`: bounded file inspection workers and immutable batch identity matching (Spec 035.7)
+- `backend/app/services/import_file_hints.py`: optional concurrent header-only import-browser hints; never parses cycling rows or blocks file selection
 - `backend/app/services/portable_analysis.py`: versioned single-HTML analysis export/import
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
 - `frontend/src/pages/ProjectsPage.tsx`: folder tree and previews
@@ -215,6 +216,7 @@ Cellxplorer/
 │           ├── biologic_cp_ocv.py BioLogic CP/OCV voltage curves and polarity cycle inference
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
+│           ├── import_file_hints.py Optional concurrent header-only import-browser hints
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           ├── continuation_preview.py  Display-only stitched cycle inference for Spec 047 previews
 │           ├── cell_folder_watch.py     Per-Cell continued-import folder tracking (Spec 047.4)
@@ -262,6 +264,8 @@ Cellxplorer/
 │   │   ├── appChannel.ts           Stable/Beta/Alpha channel branding (Specs 021/053.1)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
+│   │   ├── analysisCellPreviewPolicy.ts Cycle preview range navigation policy
+│   │   ├── importFilePickerPolicy.ts Import-browser metadata filters and sorting policy
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
@@ -275,7 +279,7 @@ Cellxplorer/
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
-│   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts, librarySelectionScope.test.ts, cellMetadataDisplay.test.ts, and analysisSamplePickerPolicy.test.ts
+│   └── tests/                      Lightweight TypeScript policy tests, including importFilePickerPolicy.test.ts and analysisCellPreviewPolicy.test.ts
 ├── tests/                          Python backend and domain tests
 │   ├── biologic_mpr_fixture.py     Synthetic BioLogic MPR/GCPL byte fixtures (Specs 041.1/041.2)
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer
@@ -290,6 +294,7 @@ Cellxplorer/
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
+│   ├── test_import_file_hints.py    Optional header-only import-browser hint tests
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
 │   ├── test_biologic_cp_ocv.py       BioLogic CP/OCV curve and cycle-inference tests

@@ -172,6 +172,7 @@ import {
   type CellPickerSortKey,
   type CellPickerSortState,
 } from "./policies/analysisSamplePickerPolicy";
+import { shiftPreviewCycleWindow } from "../../../analysisCellPreviewPolicy";
 import {
   DebouncedNumberInput,
   DebouncedTextInput,
@@ -1232,7 +1233,11 @@ function AddEntriesModal({
   const [filtersOpened, setFiltersOpened] = useState(false);
   const [openColumnFilter, setOpenColumnFilter] = useState<CellPickerSortKey | null>(null);
   const [previewCellId, setPreviewCellId] = useState<number | null>(null);
-  const [previewXAxis, setPreviewXAxis] = useState<"time" | "capacity">("time");
+  const [previewTab, setPreviewTab] = useState<"voltage-time" | "voltage-capacity" | "cycle-capacity">("voltage-time");
+  const [previewCycleStart, setPreviewCycleStart] = useState(1);
+  const [previewCycleEnd, setPreviewCycleEnd] = useState(20);
+  const [showPreviewCharge, setShowPreviewCharge] = useState(true);
+  const [showPreviewDischarge, setShowPreviewDischarge] = useState(true);
   const [cellColumnWidths, setCellColumnWidths] = useState<CellPickerColumnWidths>(
     CELL_PICKER_INITIAL_COLUMN_WIDTHS,
   );
@@ -1414,6 +1419,25 @@ function AddEntriesModal({
   const previewCellSummary = activePreviewCellId === null
     ? undefined
     : cellSummariesById.get(activePreviewCellId);
+  const previewIsPureOcv = Boolean(
+    previewCellSummary?.source_facets?.length
+    && previewCellSummary.source_facets.every((facet) => facet.technique?.trim().toLocaleUpperCase() === "OCV"),
+  );
+  const previewCycleCount = previewCellSummary?.cycle_count_ready ? previewCellSummary.total_cycles : 0;
+  const previewHasVerifiedCycles = previewCycleCount > 0;
+  const previewXAxis = previewTab === "voltage-capacity" ? "capacity" : "time";
+  const resolvedPreviewCycleStart = previewCycleCount > 0
+    ? Math.max(1, Math.min(previewCycleStart, previewCycleCount))
+    : 0;
+  const resolvedPreviewCycleEnd = previewCycleCount > 0
+    ? Math.max(resolvedPreviewCycleStart, Math.min(previewCycleEnd, previewCycleCount))
+    : 0;
+  useEffect(() => {
+    const end = previewCycleCount;
+    setPreviewCycleEnd(end);
+    setPreviewCycleStart(end > 0 ? Math.max(1, end - 19) : 0);
+    setPreviewTab("voltage-time");
+  }, [activePreviewCellId, previewCycleCount]);
   const previewSpec = useMemo<AnalysisSpec | null>(() => {
     if (activePreviewCellId === null) return null;
     return {
@@ -1426,7 +1450,10 @@ function AddEntriesModal({
       },
       computation: {
         ...analysisSpec.computation,
-        cycle_range: { start: 1, end: 1 },
+        cycle_range: {
+          start: previewCycleCount > 0 ? resolvedPreviewCycleStart : 1,
+          end: previewCycleCount > 0 ? resolvedPreviewCycleEnd : 1,
+        },
         protocol_filter: { excluded_segment_ids: [], only_segment_ids: [] },
         time_capacity: {
           ...DEFAULT_TIME_CAPACITY,
@@ -1439,9 +1466,11 @@ function AddEntriesModal({
           // separating charge and discharge points in the preview.
           display_mode: "consecutive",
           view: "voltage_current",
-          cycle_start: 1,
-          cycle_end: 1,
-          cycles: [1],
+          cycle_start: previewCycleCount > 0 ? resolvedPreviewCycleStart : 1,
+          cycle_end: previewCycleCount > 0 ? resolvedPreviewCycleEnd : 1,
+          cycles: previewCycleCount > 0
+            ? Array.from({ length: resolvedPreviewCycleEnd - resolvedPreviewCycleStart + 1 }, (_, index) => resolvedPreviewCycleStart + index)
+            : [],
           current_right: "none",
           voltage_channel: "voltage",
           voltage_channels: ["voltage"],
@@ -1449,15 +1478,14 @@ function AddEntriesModal({
         },
       },
     };
-  }, [activePreviewCellId, analysisSpec, previewXAxis]);
+  }, [activePreviewCellId, analysisSpec, previewCycleCount, previewXAxis, resolvedPreviewCycleEnd, resolvedPreviewCycleStart]);
   const previewQuery = useQuery({
-    queryKey: ["analysis-cell-picker-preview", analysisId, activePreviewCellId, previewXAxis],
+    queryKey: ["analysis-cell-picker-preview", analysisId, activePreviewCellId, previewXAxis, resolvedPreviewCycleStart, resolvedPreviewCycleEnd],
     queryFn: () => post<TimeCapacityResult>(
       `/api/analyses/${analysisId}/time-capacity`,
       {
         spec: previewSpec,
         recompute: false,
-        persist: false,
         compact: false,
         viewport_width: 420,
       },
@@ -1466,63 +1494,101 @@ function AddEntriesModal({
       opened &&
       mode === "cell" &&
       activePreviewCellId !== null &&
-      previewSpec !== null,
+      previewSpec !== null &&
+      previewTab !== "cycle-capacity",
     staleTime: 30_000,
     retry: false,
   });
   const previewTrace = previewQuery.data?.cell_traces.find(
     (trace) => trace.cell_id === activePreviewCellId,
   );
+  const cyclePreviewSpec = useMemo<AnalysisSpec | null>(() => {
+    if (activePreviewCellId === null || !previewHasVerifiedCycles) return null;
+    return {
+      ...analysisSpec,
+      selection: {
+        ...analysisSpec.selection,
+        entries: [{ kind: "cell", ref_id: activePreviewCellId }],
+        exclusions: [],
+        hidden_replicate_group_ids: [],
+      },
+      computation: {
+        ...analysisSpec.computation,
+        cycle_range: { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd },
+        exclude_check_cycles_every_n: 0,
+        protocol_filter: { excluded_segment_ids: [], only_segment_ids: [] },
+      },
+    };
+  }, [activePreviewCellId, analysisSpec, previewHasVerifiedCycles, resolvedPreviewCycleEnd, resolvedPreviewCycleStart]);
+  const cyclePreviewQuery = useQuery({
+    queryKey: ["analysis-cell-picker-cycle-preview", analysisId, activePreviewCellId, resolvedPreviewCycleStart, resolvedPreviewCycleEnd],
+    queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
+      spec: cyclePreviewSpec,
+      cache_only: false,
+    }),
+    enabled: opened && mode === "cell" && previewTab === "cycle-capacity" && cyclePreviewSpec !== null,
+    staleTime: 30_000,
+    retry: false,
+  });
   const previewChartData = useMemo(() => {
     if (!previewTrace) return [];
     const rawX = previewXAxis === "time" ? previewTrace.time_s : previewTrace.capacity_mah;
-    const x = rawX.map((value) => value === null ? null : previewXAxis === "time" ? value / 60 : value);
+    const x = previewTrace.display_x?.length === previewTrace.cycle.length
+      ? previewTrace.display_x
+      : rawX.map((value) => value === null ? null : previewXAxis === "time" ? value / 60 : value);
     const voltage = previewTrace.voltage_v_by_channel?.voltage ?? previewTrace.voltage_v;
-    const charge = previewTrace.phase.map((phase, index) =>
-      phase === "charge" && Number.isFinite(voltage[index]) ? voltage[index] : null,
-    );
-    const discharge = previewTrace.phase.map((phase, index) =>
-      phase === "discharge" && Number.isFinite(voltage[index]) ? voltage[index] : null,
-    );
-    const series = [
+    return [
       {
         type: "scatter",
         mode: "lines",
-        name: "Charge",
+        name: "Voltage",
         x,
-        y: charge,
-        connectgaps: false,
+        y: voltage,
         line: { color: PLOT_PALETTES.app[0], width: 2 },
-        hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Charge</extra>",
+        connectgaps: false,
+        hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Voltage</extra>",
       },
       {
         type: "scatter",
         mode: "lines",
-        name: "Discharge",
+        name: "Current",
         x,
-        y: discharge,
+        y: previewTrace.current_ma,
+        yaxis: "y2",
+        line: { color: PLOT_PALETTES.app[1], width: 1.5 },
         connectgaps: false,
-        line: { color: PLOT_PALETTES.app[0], width: 2, dash: "dash" },
-        hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Discharge</extra>",
+        hovertemplate: "%{x:.3g}<br>%{y:.4g} mA<extra>Current</extra>",
       },
     ];
-    if (previewTrace.display_only_cycle?.some(Boolean)) {
-      const uncounted = voltage.map((value, index) =>
-        previewTrace.display_only_cycle?.[index] && Number.isFinite(value) ? value : null,
-      );
-      series.push({
-        type: "scatter",
-        mode: "lines",
-        name: "Voltage curve (not counted as a cycle)",
-        x,
-        y: uncounted,
-        connectgaps: false,
-        line: { color: PLOT_PALETTES.app[1], width: 2 },
-        hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Voltage curve</extra>",
-      });
-    }
-    return series;
   }, [previewTrace, previewXAxis]);
+  const cyclePreviewSeries = cyclePreviewQuery.data?.cell_series.find(
+    (series) => series.cell_id === activePreviewCellId,
+  );
+  const previewCycleChartData = useMemo(() => {
+    if (!cyclePreviewSeries) return [];
+    const x = cyclePreviewSeries.x;
+    const quantities = cyclePreviewSeries.quantities;
+    const output = [];
+    if (showPreviewCharge) output.push({
+      type: "scatter", mode: "lines+markers", name: "Charge capacity", x,
+      y: quantities.charge_capacity_mah ?? [], yaxis: "y",
+      line: { color: PLOT_PALETTES.app[0], width: 1.8 }, marker: { size: 3 },
+      hovertemplate: "Cycle %{x}<br>%{y:.4g} mAh<extra>Charge capacity</extra>",
+    });
+    if (showPreviewDischarge) output.push({
+      type: "scatter", mode: "lines+markers", name: "Discharge capacity", x,
+      y: quantities.discharge_capacity_mah ?? [], yaxis: "y",
+      line: { color: PLOT_PALETTES.app[1], width: 1.8 }, marker: { size: 3 },
+      hovertemplate: "Cycle %{x}<br>%{y:.4g} mAh<extra>Discharge capacity</extra>",
+    });
+    output.push({
+      type: "scatter", mode: "lines+markers", name: "Coulombic efficiency", x,
+      y: quantities.coulombic_efficiency_pct ?? [], yaxis: "y2",
+      line: { color: PLOT_PALETTES.app[2], width: 1.5 }, marker: { size: 2 },
+      hovertemplate: "Cycle %{x}<br>%{y:.3g}%<extra>Coulombic efficiency</extra>",
+    });
+    return output;
+  }, [cyclePreviewSeries, showPreviewCharge, showPreviewDischarge]);
   const unfiledGroups = (groups.data ?? []).filter(
     (group) => !filedGroupIds.has(group.id) && matches(group.name)
   );
@@ -2495,74 +2561,105 @@ function AddEntriesModal({
                   {previewCellSummary?.name ?? "Select a cell to preview"}
                 </Text>
               </div>
-              <SegmentedControl
-                size="xs"
-                fullWidth
-                value={previewXAxis}
-                onChange={(value) => setPreviewXAxis(value as "time" | "capacity")}
-                data={[
-                  { value: "time", label: "Voltage vs time" },
-                  { value: "capacity", label: "Voltage vs capacity" },
-                ]}
-              />
-              {previewQuery.isLoading ? (
+              <Tabs value={previewTab} onChange={(value) => {
+                if (value === "voltage-time" || value === "voltage-capacity" || value === "cycle-capacity") setPreviewTab(value);
+              }} keepMounted={false}>
+                <Tabs.List grow>
+                  <Tabs.Tab value="voltage-time">Voltage vs time</Tabs.Tab>
+                  <Tabs.Tab value="voltage-capacity" disabled={previewIsPureOcv}>Voltage vs capacity</Tabs.Tab>
+                  <Tabs.Tab value="cycle-capacity" disabled={!previewHasVerifiedCycles}>Charge / discharge</Tabs.Tab>
+                </Tabs.List>
+              </Tabs>
+              {previewTab === "cycle-capacity" ? (
+                cyclePreviewQuery.isLoading ? (
+                  <Center h={300}><Loader size="sm" /></Center>
+                ) : cyclePreviewQuery.isError ? (
+                  <Alert color="yellow" title="Cycle preview unavailable">Cycle capacities could not be loaded for this cell.</Alert>
+                ) : cyclePreviewSeries && previewCycleChartData.length ? (
+                  <>
+                    <Group gap="md" justify="center">
+                      <Checkbox label="Charge capacity" checked={showPreviewCharge} onChange={(event) => setShowPreviewCharge(event.currentTarget.checked)} />
+                      <Checkbox label="Discharge capacity" checked={showPreviewDischarge} onChange={(event) => setShowPreviewDischarge(event.currentTarget.checked)} />
+                    </Group>
+                    <Plot
+                      data={previewCycleChartData as never}
+                      layout={{
+                        autosize: true, height: 300, margin: { l: 48, r: 14, t: 8, b: 42 }, showlegend: false,
+                        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+                        font: { color: "var(--mantine-color-text)" },
+                        xaxis: { title: { text: "Cycle" }, gridcolor: "var(--mantine-color-default-border)", zerolinecolor: "var(--mantine-color-default-border)", automargin: true, anchor: "y" },
+                        yaxis: { title: { text: "Capacity (mAh)" }, domain: [0.12, 0.68], gridcolor: "var(--mantine-color-default-border)", zerolinecolor: "var(--mantine-color-default-border)", automargin: true },
+                        yaxis2: { title: { text: "CE (%)" }, domain: [0.82, 1], gridcolor: "var(--mantine-color-default-border)", zerolinecolor: "var(--mantine-color-default-border)", automargin: true, anchor: "x" },
+                      }}
+                      config={{ responsive: true, displayModeBar: false }}
+                      style={{ width: "100%", height: 300 }}
+                    />
+                  </>
+                ) : <Center h={300}><Text size="sm" c="dimmed">No charge/discharge cycle summary is available.</Text></Center>
+              ) : previewQuery.isLoading ? (
                 <Center h={300}><Loader size="sm" /></Center>
               ) : previewQuery.isError ? (
-                <Alert color="yellow" title="Preview unavailable">
-                  This cell has no verified cycling curve for its first cycle, or the preview
-                  could not be loaded.
-                </Alert>
+                <Alert color="yellow" title="Preview unavailable">This cell has no curve for the selected cycle range, or the preview could not be loaded.</Alert>
               ) : previewTrace && previewChartData.length > 0 ? (
                 <>
                   <Plot
                     data={previewChartData as never}
                     layout={{
-                      autosize: true,
-                      height: 300,
-                      margin: { l: 48, r: 10, t: 8, b: 42 },
-                      showlegend: false,
-                      paper_bgcolor: "rgba(0,0,0,0)",
-                      plot_bgcolor: "rgba(0,0,0,0)",
+                      autosize: true, height: 300, margin: { l: 48, r: 10, t: 8, b: 42 }, showlegend: false,
+                      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
                       font: { color: "var(--mantine-color-text)" },
-                      xaxis: {
-                        title: { text: previewXAxis === "time" ? "Time (min)" : "Capacity (mAh)" },
-                        gridcolor: "var(--mantine-color-default-border)",
-                        zerolinecolor: "var(--mantine-color-default-border)",
-                        automargin: true,
-                      },
-                      yaxis: {
-                        title: { text: "Voltage (V)" },
-                        gridcolor: "var(--mantine-color-default-border)",
-                        zerolinecolor: "var(--mantine-color-default-border)",
-                        automargin: true,
-                      },
+                      xaxis: { title: { text: previewXAxis === "time" ? "Time (min)" : "Capacity (mAh)" }, domain: [0, 1], gridcolor: "var(--mantine-color-default-border)", zerolinecolor: "var(--mantine-color-default-border)", automargin: true, anchor: "y2" },
+                      yaxis: { title: { text: "Voltage (V)" }, domain: [0.34, 1], gridcolor: "var(--mantine-color-default-border)", zerolinecolor: "var(--mantine-color-default-border)", automargin: true },
+                      yaxis2: { title: { text: "Current (mA)" }, domain: [0, 0.23], gridcolor: "var(--mantine-color-default-border)", zerolinecolor: "var(--mantine-color-default-border)", automargin: true, anchor: "x" },
                     }}
                     config={{ responsive: true, displayModeBar: false }}
                     style={{ width: "100%", height: 300 }}
                   />
                   <Group gap="md" justify="center">
-                    {previewChartData.map((trace) => (
-                      <Group gap={5} key={trace.name} wrap="nowrap">
-                        <Box
-                          w={16}
-                          h={0}
-                          style={{
-                            borderTop: `2px ${trace.name === "Discharge" ? "dashed" : "solid"} ${trace.line.color}`,
-                            flex: "0 0 auto",
-                          }}
-                        />
-                        <Text size="xs">{trace.name}</Text>
-                      </Group>
+                    {[{ name: "Voltage", color: PLOT_PALETTES.app[0] }, { name: "Current", color: PLOT_PALETTES.app[1] }].map((trace) => (
+                      <Group gap={5} key={trace.name} wrap="nowrap"><Box w={16} h={0} style={{ borderTop: `2px solid ${trace.color}`, flex: "0 0 auto" }} /><Text size="xs">{trace.name}</Text></Group>
                     ))}
                   </Group>
                 </>
               ) : (
-                <Center h={300}>
-                  <Text size="sm" c="dimmed" ta="center">
-                    Select a cell to preview its first charge/discharge cycle.
-                  </Text>
-                </Center>
+                <Center h={300}><Text size="sm" c="dimmed" ta="center">No voltage curve is available for this cell.</Text></Center>
               )}
+              <Group gap="xs" justify="center" align="flex-end">
+                <Tooltip label="Move the selected cycle window left">
+                  <ActionIcon variant="default" aria-label="Previous cycle window" disabled={!previewHasVerifiedCycles || resolvedPreviewCycleStart <= 1} onClick={() => {
+                    const shifted = shiftPreviewCycleWindow(
+                      { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd },
+                      previewCycleCount,
+                      -1,
+                    );
+                    setPreviewCycleStart(shifted.start);
+                    setPreviewCycleEnd(shifted.end);
+                  }}><IconChevronRight size={15} style={{ transform: "rotate(180deg)" }} /></ActionIcon>
+                </Tooltip>
+                <NumberInput aria-label="First preview cycle" min={1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? resolvedPreviewCycleStart : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
+                  const next = Number(value);
+                  if (!Number.isFinite(next)) return;
+                  const start = Math.max(1, Math.min(Math.trunc(next), resolvedPreviewCycleEnd));
+                  setPreviewCycleStart(start);
+                }} w={78} />
+                <Text size="sm" c="dimmed">–</Text>
+                <NumberInput aria-label="Last preview cycle" min={previewHasVerifiedCycles ? resolvedPreviewCycleStart : 1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? resolvedPreviewCycleEnd : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
+                  const next = Number(value);
+                  if (!Number.isFinite(next)) return;
+                  setPreviewCycleEnd(Math.max(resolvedPreviewCycleStart, Math.min(Math.trunc(next), previewCycleCount)));
+                }} w={78} />
+                <Tooltip label="Move the selected cycle window right">
+                  <ActionIcon variant="default" aria-label="Next cycle window" disabled={!previewHasVerifiedCycles || resolvedPreviewCycleEnd >= previewCycleCount} onClick={() => {
+                    const shifted = shiftPreviewCycleWindow(
+                      { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd },
+                      previewCycleCount,
+                      1,
+                    );
+                    setPreviewCycleStart(shifted.start);
+                    setPreviewCycleEnd(shifted.end);
+                  }}><IconChevronRight size={15} /></ActionIcon>
+                </Tooltip>
+              </Group>
             </Stack>
           </Paper>
         )}
