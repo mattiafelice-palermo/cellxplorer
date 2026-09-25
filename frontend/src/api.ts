@@ -587,6 +587,14 @@ export interface CellSummary {
   has_summary_pending: boolean;
   has_summary_error: boolean;
   created_at: string;
+  /** Filesystem modification time of the Cell's ordered tail source file. */
+  last_modified_at?: string | null;
+  /** Compact source metadata used by the analysis sample picker facets. */
+  source_facets?: {
+    system: string;
+    format: string | null;
+    technique: string | null;
+  }[];
 }
 
 export type CellSource = Omit<SourceFile, "test_id" | "test_name"> & {

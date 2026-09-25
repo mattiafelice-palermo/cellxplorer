@@ -1244,7 +1244,7 @@ export function SeriesStyleModal({
                   style={{
                     borderRadius: 4,
                     cursor: "pointer",
-                    background: isAllSeries ? "var(--mantine-primary-color-light)" : undefined,
+                    background: isAllSeries ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
                   }}
                 >
                   <Text size="xs" fw={600} truncate style={{ flex: seriesCollapsed ? "none" : 1 }}>
@@ -2524,7 +2524,7 @@ function SortableSeriesRow({
         style={{
           borderRadius: 4,
           cursor: "pointer",
-          background: selected ? "var(--mantine-primary-color-light)" : undefined,
+          background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
           opacity: previewHidden ? 0.5 : 1,
           transform: CSS.Transform.toString(transform),
           transition,

@@ -18,6 +18,7 @@ import {
   LoadingOverlay,
   Menu,
   Modal,
+  MultiSelect,
   NumberInput,
   Paper,
   Popover,
@@ -53,10 +54,13 @@ import {
   IconDownload,
   IconEye,
   IconEyeOff,
+  IconFilter,
   IconFolder,
   IconGauge,
   IconInfoCircle,
   IconLayersIntersect,
+  IconLock,
+  IconLockOpen,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -147,13 +151,22 @@ import {
 } from "./policies/analysisPlotPolicy";
 import {
   cellPickerBulkSelectionState,
+  cellMatchesPickerFilters,
+  cellPickerFacetValues,
+  EMPTY_CELL_PICKER_FILTERS,
+  EMPTY_CELL_PICKER_SORT,
   nextCellPickerSort,
+  removeCellPickerSecondarySort,
   selectableCellPickerSelection,
   sortCellPickerCells,
   toggleCellPickerBulkSelection,
+  toggleCellPickerPrimarySortLock,
+  UNKNOWN_CELL_PICKER_FACET,
   type CellPickerCell,
+  type CellPickerFilters,
   type CellPickerSort,
   type CellPickerSortKey,
+  type CellPickerSortState,
 } from "./policies/analysisSamplePickerPolicy";
 import {
   DebouncedNumberInput,
@@ -1100,7 +1113,9 @@ function pickerDateLabel(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString();
 }
 
-function CellPickerMetricCells({ cell }: { cell: CellPickerCell }) {
+const CELL_PICKER_SELECTED_TEXT_COLOR = "light-dark(var(--mantine-color-black), var(--mantine-color-white))";
+
+function CellPickerMetricCells({ cell, selected = false }: { cell: CellPickerCell; selected?: boolean }) {
   const fullDate = (value: string | null) => {
     if (!value) return undefined;
     const date = new Date(value);
@@ -1110,21 +1125,28 @@ function CellPickerMetricCells({ cell }: { cell: CellPickerCell }) {
     cell.max_specific_discharge_capacity_mah_g === null
       ? "—"
       : `${Math.round(cell.max_specific_discharge_capacity_mah_g).toLocaleString(undefined, { maximumFractionDigits: 0 })} mAh/g`;
+  const lastModifiedLabel = pickerDateLabel(cell.last_modified_at);
+  const textColor = selected ? CELL_PICKER_SELECTED_TEXT_COLOR : "dimmed";
   return (
     <>
       <Table.Td ta="right">
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c={textColor}>
           {cell.cycle_count === null ? "—" : cell.cycle_count.toLocaleString()}
         </Text>
       </Table.Td>
       <Table.Td ta="right">
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c={textColor}>
           {capacityLabel}
         </Text>
       </Table.Td>
       <Table.Td>
-        <Text size="xs" c="dimmed" title={fullDate(cell.created_at)}>
+        <Text size="xs" c={textColor} title={fullDate(cell.created_at)}>
           {pickerDateLabel(cell.created_at)}
+        </Text>
+      </Table.Td>
+      <Table.Td>
+        <Text size="xs" c={textColor} title={fullDate(cell.last_modified_at)}>
+          {lastModifiedLabel}
         </Text>
       </Table.Td>
     </>
@@ -1166,6 +1188,7 @@ const CELL_PICKER_INITIAL_COLUMN_WIDTHS: CellPickerColumnWidths = {
   cycle_count: 104,
   max_specific_discharge_capacity_mah_g: 148,
   created_at: 138,
+  last_modified_at: 142,
 };
 
 function minCellPickerColumnWidth(key: CellPickerSortKey): number {
@@ -1194,7 +1217,9 @@ function AddEntriesModal({
   const [hideAddedCells, setHideAddedCells] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
-  const [cellSort, setCellSort] = useState<CellPickerSort | null>(null);
+  const [cellSort, setCellSort] = useState<CellPickerSortState>(EMPTY_CELL_PICKER_SORT);
+  const [pickerFilters, setPickerFilters] = useState<CellPickerFilters>(EMPTY_CELL_PICKER_FILTERS);
+  const [filtersOpened, setFiltersOpened] = useState(false);
   const [cellColumnWidths, setCellColumnWidths] = useState<CellPickerColumnWidths>(
     CELL_PICKER_INITIAL_COLUMN_WIDTHS,
   );
@@ -1205,6 +1230,7 @@ function AddEntriesModal({
     cycle_count: null,
     max_specific_discharge_capacity_mah_g: null,
     created_at: null,
+    last_modified_at: null,
   });
   useEffect(() => {
     if (opened) setMode("cell");
@@ -1214,8 +1240,8 @@ function AddEntriesModal({
     if (!opened) columnResizeCleanup.current?.();
   }, [opened]);
   const cells = useQuery({
-    queryKey: ["cells", "analysis-picker"],
-    queryFn: () => get<CellSummary[]>("/api/cells?include_archived=true"),
+    queryKey: ["cells", "analysis-picker", "picker-metadata"],
+    queryFn: () => get<CellSummary[]>("/api/cells?include_archived=true&include_picker_metadata=true"),
     enabled: opened,
   });
   const groups = useQuery({
@@ -1230,6 +1256,40 @@ function AddEntriesModal({
   });
   const needle = search.trim().toLowerCase();
   const matches = (value: string) => !needle || value.toLowerCase().includes(needle);
+  const matchesCell = useCallback(
+    (cell: CellPickerCell) =>
+      (!needle || cell.name.toLowerCase().includes(needle)) &&
+      cellMatchesPickerFilters(cell, pickerFilters),
+    [needle, pickerFilters],
+  );
+  const sourceFilterOptions = useMemo(() => {
+    const availableCells = cells.data ?? [];
+    const labelFor = (value: string, facet: "system" | "format" | "technique") => {
+      if (value === UNKNOWN_CELL_PICKER_FACET) return "Unknown / other";
+      if (facet === "system") {
+        return value === "biologic" ? "BioLogic" : value === "neware" ? "Neware" : "Other";
+      }
+      if (facet === "format") {
+        const friendly = value === ".xlsx" ? "Excel" : value.slice(1).toUpperCase();
+        return `${friendly} (${value})`;
+      }
+      return value;
+    };
+    const options = (facet: "system" | "format" | "technique") =>
+      cellPickerFacetValues(availableCells, facet).map((value) => ({
+        value,
+        label: labelFor(value, facet),
+      }));
+    return {
+      systems: options("system"),
+      formats: options("format"),
+      techniques: options("technique"),
+    };
+  }, [cells.data]);
+  const activePickerFilterCount =
+    pickerFilters.sourceSystems.length +
+    pickerFilters.fileFormats.length +
+    pickerFilters.techniques.length;
   const folderRoot = currentFolderId ? findFolderInTree(tree.data?.folders ?? [], currentFolderId) : null;
   const visibleFolders = branchOnly && folderRoot ? [folderRoot] : tree.data?.folders ?? [];
   const cellPickerTableWidth =
@@ -1256,7 +1316,6 @@ function AddEntriesModal({
     const visit = (folders: FolderNode[]) => {
       for (const folder of folders) {
         const rows = folder.cells
-          .filter((cell) => matches(cell.name))
           .map((cell) => {
             const summary = cellSummariesById.get(cell.id);
             return {
@@ -1266,31 +1325,43 @@ function AddEntriesModal({
               max_specific_discharge_capacity_mah_g:
                 cell.max_specific_discharge_capacity_mah_g,
               created_at: summary?.created_at ?? null,
+              last_modified_at: summary?.last_modified_at ?? null,
+              source_facets: summary?.source_facets ?? [],
             };
-          });
+          })
+          .filter(matchesCell);
         rowsByFolderId.set(folder.id, sortCellPickerCells(rows, cellSort));
         visit(folder.children);
       }
     };
     visit(tree.data?.folders ?? []);
     return rowsByFolderId;
-  }, [cellSort, cellSummariesById, needle, tree.data?.folders]);
+  }, [cellSort, cellSummariesById, matchesCell, tree.data?.folders]);
   const unfiledCells = useMemo(
     () =>
       sortCellPickerCells(
         (cells.data ?? [])
-          .filter((cell) => !cell.archived && !filedCellIds.has(cell.id) && matches(cell.name))
+          .filter((cell) => !cell.archived && !filedCellIds.has(cell.id) && matchesCell({
+            id: cell.id,
+            name: cell.name,
+            cycle_count: cell.cycle_count_ready ? cell.total_cycles : null,
+            max_specific_discharge_capacity_mah_g: cell.max_specific_discharge_capacity_mah_g,
+            created_at: cell.created_at,
+            last_modified_at: cell.last_modified_at ?? null,
+            source_facets: cell.source_facets ?? [],
+          }))
           .map((cell) => ({
             id: cell.id,
             name: cell.name,
             cycle_count: cell.cycle_count_ready ? cell.total_cycles : null,
-            max_specific_discharge_capacity_mah_g:
-              cell.max_specific_discharge_capacity_mah_g,
+            max_specific_discharge_capacity_mah_g: cell.max_specific_discharge_capacity_mah_g,
             created_at: cell.created_at,
+            last_modified_at: cell.last_modified_at ?? null,
+            source_facets: cell.source_facets ?? [],
           })),
         cellSort,
       ),
-    [cellSort, cells.data, filedCellIds, needle],
+    [cellSort, cells.data, filedCellIds, matchesCell],
   );
   const shownUnfiledCells = hideAddedCells
     ? unfiledCells.filter((cell) => !existingCellIds.has(cell.id))
@@ -1483,32 +1554,69 @@ function AddEntriesModal({
   ).map(entryOf);
 
   const renderCellSortHeader = (key: CellPickerSortKey, label: string, right = false) => {
-    const active = cellSort?.key === key;
+    const primary = cellSort.primary?.key === key ? cellSort.primary : null;
+    const secondary = cellSort.secondary?.key === key ? cellSort.secondary : null;
+    const activeSort: CellPickerSort | null = primary ?? secondary;
+    const sortOrder = primary ? 1 : secondary ? 2 : null;
+    const locked = Boolean(primary && cellSort.primaryLocked);
     return (
       <Table.Th
         ta={right ? "right" : "left"}
-        aria-sort={active ? (cellSort.direction === "asc" ? "ascending" : "descending") : "none"}
+        aria-sort={activeSort ? (activeSort.direction === "asc" ? "ascending" : "descending") : "none"}
         style={{ position: "relative", width: cellColumnWidths[key] }}
       >
-        <UnstyledButton
-          aria-label={`${active ? "Sorted by" : "Click to sort by"} ${label}${active ? `, ${cellSort.direction === "asc" ? "ascending" : "descending"}` : ""}`}
-          title={`Click to sort by ${label}`}
-          onClick={() => setCellSort((current) => nextCellPickerSort(current, key))}
-          style={{ width: "100%", paddingRight: 10, cursor: "pointer" }}
-        >
-          <Group gap={4} wrap="nowrap" justify={right ? "flex-end" : "flex-start"}>
-            <Text size="xs" fw={700} c="dimmed">
-              {label}
-            </Text>
-            {active && (
-              <IconChevronDown
-                size={12}
-                style={{ transform: cellSort.direction === "asc" ? "rotate(180deg)" : undefined }}
-              />
-            )}
-            {!active && <IconArrowsSort size={12} color="var(--mantine-color-dimmed)" />}
-          </Group>
-        </UnstyledButton>
+        <Group wrap="nowrap" gap={2} justify="space-between" pr={12}>
+          <UnstyledButton
+            aria-label={`${activeSort ? `Sort order ${sortOrder}` : "Click to sort by"} ${label}${activeSort ? `, ${activeSort.direction === "asc" ? "ascending" : "descending"}` : ""}`}
+            title={cellSort.primaryLocked && !primary ? `Sort ties by ${label}` : `Click to sort by ${label}`}
+            onClick={() => setCellSort((current) => nextCellPickerSort(current, key))}
+            style={{ minWidth: 0, flex: "1 1 auto", cursor: "pointer" }}
+          >
+            <Group gap={4} wrap="nowrap" justify={right ? "flex-end" : "flex-start"}>
+              {sortOrder !== null && <Badge size="xs" variant="light">{sortOrder}</Badge>}
+              <Text size="xs" fw={700} c="dimmed" truncate>{label}</Text>
+              {activeSort ? (
+                <IconChevronDown
+                  size={12}
+                  style={{ flexShrink: 0, transform: activeSort.direction === "asc" ? "rotate(180deg)" : undefined }}
+                />
+              ) : <IconArrowsSort size={12} color="var(--mantine-color-dimmed)" />}
+            </Group>
+          </UnstyledButton>
+          {primary && (
+            <Tooltip label={locked ? "Unlock primary sort and clear the tie-breaker" : "Lock this primary sort, then click another column to sort ties"}>
+              <ActionIcon
+                size="sm"
+                variant={locked ? "filled" : "light"}
+                aria-pressed={locked}
+                aria-label={locked ? `Unlock ${label} primary sort` : `Lock ${label} as primary sort`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setCellSort((current) => toggleCellPickerPrimarySortLock(current));
+                }}
+                style={{ flex: "0 0 auto" }}
+              >
+                {locked ? <IconLock size={13} /> : <IconLockOpen size={13} />}
+              </ActionIcon>
+            </Tooltip>
+          )}
+          {secondary && (
+            <Tooltip label={`Remove ${label} tie-break sort`}>
+              <ActionIcon
+                size="xs"
+                variant="subtle"
+                aria-label={`Remove ${label} tie-break sort`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setCellSort(removeCellPickerSecondarySort);
+                }}
+              >
+                <IconX size={12} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
         <Box
           component="span"
           role="separator"
@@ -1566,7 +1674,7 @@ function AddEntriesModal({
             onChange={() => toggleFolder(folder)}
           />
         </Table.Td>
-        <Table.Td colSpan={mode === "cell" ? 4 : 1}>
+        <Table.Td colSpan={mode === "cell" ? 5 : 1}>
           <Group
             gap={6}
             pl={depth * 16}
@@ -1601,7 +1709,7 @@ function AddEntriesModal({
           rows.push(
             <Table.Tr
               key={`cell-${folder.id}-${cell.id}`}
-              bg={selected.has(key) ? "var(--mantine-primary-color-light)" : undefined}
+              bg={selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
               style={{ cursor: added ? "default" : "pointer" }}
               onMouseDown={preventShiftTextSelection}
               onClick={(event) => toggleEntry(entry, event)}
@@ -1616,10 +1724,11 @@ function AddEntriesModal({
                   wrap="nowrap"
                   style={{ minWidth: 0, width: "100%", overflow: "hidden" }}
                 >
-                  <IconDatabase size={14} color="var(--mantine-color-gray-6)" style={{ flexShrink: 0 }} />
+                  <IconDatabase size={14} color={selected.has(key) ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} style={{ flexShrink: 0 }} />
                   <Text
                     size="sm"
                     fw={600}
+                    c={selected.has(key) ? CELL_PICKER_SELECTED_TEXT_COLOR : undefined}
                     truncate
                     title={cell.name}
                     style={{ minWidth: 0, flex: "1 1 auto", whiteSpace: "nowrap" }}
@@ -1633,7 +1742,7 @@ function AddEntriesModal({
                   )}
                 </Group>
               </Table.Td>
-              <CellPickerMetricCells cell={cell} />
+              <CellPickerMetricCells cell={cell} selected={selected.has(key)} />
             </Table.Tr>
           );
         });
@@ -1647,7 +1756,7 @@ function AddEntriesModal({
           rows.push(
             <Table.Tr
               key={`group-${folder.id}-${group.id}`}
-              bg={selected.has(key) ? "var(--mantine-primary-color-light)" : undefined}
+              bg={selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
               style={{ cursor: added ? "default" : "pointer" }}
               onMouseDown={preventShiftTextSelection}
               onClick={(event) => toggleEntry(entry, event)}
@@ -1659,10 +1768,10 @@ function AddEntriesModal({
                 <Group gap={6} pl={(depth + 1) * 16}>
                   <IconLayersIntersect size={14} color="var(--mantine-primary-color-6)" />
                   <div>
-                    <Text size="sm" fw={600} truncate>
+                    <Text size="sm" fw={600} c={selected.has(key) ? CELL_PICKER_SELECTED_TEXT_COLOR : undefined} truncate>
                       {group.name}
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text size="xs" c={selected.has(key) ? CELL_PICKER_SELECTED_TEXT_COLOR : "dimmed"}>
                       {group.cell_ids.length} cells
                     </Text>
                   </div>
@@ -1725,6 +1834,101 @@ function AddEntriesModal({
           />
           {mode === "cell" && (
             <Group gap="xs" wrap="nowrap" style={{ flex: "0 0 auto" }}>
+              <Popover
+                opened={filtersOpened}
+                onChange={setFiltersOpened}
+                position="bottom-end"
+                shadow="md"
+                withinPortal
+              >
+                <Popover.Target>
+                  <Button
+                    size="sm"
+                    variant={activePickerFilterCount ? "light" : "default"}
+                    leftSection={<IconFilter size={16} />}
+                    rightSection={activePickerFilterCount > 0 ? <Badge size="xs">{activePickerFilterCount}</Badge> : undefined}
+                    onClick={() => setFiltersOpened((opened) => !opened)}
+                    aria-expanded={filtersOpened}
+                    aria-label={activePickerFilterCount ? `Filters, ${activePickerFilterCount} selections active` : "Filters"}
+                  >
+                    Filters
+                  </Button>
+                </Popover.Target>
+                <Popover.Dropdown p="sm" style={{ width: 900, maxWidth: "calc(100vw - 64px)" }}>
+                  <Stack gap="sm">
+                    <Group grow align="flex-start" wrap="nowrap">
+                      <MultiSelect
+                        label="Source system"
+                        placeholder="Any system"
+                        size="sm"
+                        data={sourceFilterOptions.systems}
+                        value={[...pickerFilters.sourceSystems]}
+                        onChange={(sourceSystems) => setPickerFilters((current) => ({ ...current, sourceSystems }))}
+                        searchable
+                        clearable
+                        hidePickedOptions={false}
+                        maxDropdownHeight={240}
+                        renderOption={({ option, checked }) => (
+                          <Group gap="xs" wrap="nowrap">
+                            <Checkbox size="xs" checked={checked} readOnly tabIndex={-1} aria-hidden="true" />
+                            <Text size="sm">{option.label}</Text>
+                          </Group>
+                        )}
+                        nothingFoundMessage="No source systems"
+                      />
+                      <MultiSelect
+                        label="File format"
+                        placeholder="Any format"
+                        size="sm"
+                        data={sourceFilterOptions.formats}
+                        value={[...pickerFilters.fileFormats]}
+                        onChange={(fileFormats) => setPickerFilters((current) => ({ ...current, fileFormats }))}
+                        searchable
+                        clearable
+                        hidePickedOptions={false}
+                        maxDropdownHeight={240}
+                        renderOption={({ option, checked }) => (
+                          <Group gap="xs" wrap="nowrap">
+                            <Checkbox size="xs" checked={checked} readOnly tabIndex={-1} aria-hidden="true" />
+                            <Text size="sm">{option.label}</Text>
+                          </Group>
+                        )}
+                        nothingFoundMessage="No file formats"
+                      />
+                      <MultiSelect
+                        label="Technique / protocol"
+                        placeholder="Any technique"
+                        size="sm"
+                        data={sourceFilterOptions.techniques}
+                        value={[...pickerFilters.techniques]}
+                        onChange={(techniques) => setPickerFilters((current) => ({ ...current, techniques }))}
+                        searchable
+                        clearable
+                        hidePickedOptions={false}
+                        maxDropdownHeight={240}
+                        renderOption={({ option, checked }) => (
+                          <Group gap="xs" wrap="nowrap">
+                            <Checkbox size="xs" checked={checked} readOnly tabIndex={-1} aria-hidden="true" />
+                            <Text size="sm">{option.label}</Text>
+                          </Group>
+                        )}
+                        nothingFoundMessage="No techniques or protocols"
+                      />
+                    </Group>
+                    <Divider />
+                    <Group justify="flex-end">
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        disabled={activePickerFilterCount === 0}
+                        onClick={() => setPickerFilters(EMPTY_CELL_PICKER_FILTERS)}
+                      >
+                        Clear all
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Popover.Dropdown>
+              </Popover>
               <Button
                 size="sm"
                 variant={bulkSelectionState.checked ? "light" : "default"}
@@ -1800,6 +2004,12 @@ function AddEntriesModal({
                     }}
                     style={{ width: cellColumnWidths.created_at }}
                   />
+                  <col
+                    ref={(node) => {
+                      cellPickerColumnRefs.current.last_modified_at = node;
+                    }}
+                    style={{ width: cellColumnWidths.last_modified_at }}
+                  />
                 </colgroup>
                 <Table.Thead>
                   <Table.Tr>
@@ -1808,6 +2018,7 @@ function AddEntriesModal({
                     {renderCellSortHeader("cycle_count", "Cycles", true)}
                     {renderCellSortHeader("max_specific_discharge_capacity_mah_g", "Max mAh/g", true)}
                     {renderCellSortHeader("created_at", "Created")}
+                    {renderCellSortHeader("last_modified_at", "Last modified")}
                   </Table.Tr>
                 </Table.Thead>
               </>
@@ -1816,7 +2027,7 @@ function AddEntriesModal({
               {visibleFolders.flatMap((folder) => renderFolderRows(folder, 0))}
               {(!branchOnly || !currentFolderId) && (
                 <Table.Tr>
-                  <Table.Td colSpan={mode === "cell" ? 5 : 2}>
+                  <Table.Td colSpan={mode === "cell" ? 6 : 2}>
                     <Group gap={6}>
                       <IconFolder size={14} color="var(--mantine-color-gray-6)" />
                       <Text size="xs" fw={700} c="dimmed">
@@ -1835,7 +2046,7 @@ function AddEntriesModal({
                   return (
                     <Table.Tr
                       key={`unfiled-cell-${cell.id}`}
-                      bg={selected.has(key) ? "var(--mantine-primary-color-light)" : undefined}
+                      bg={selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                       style={{ cursor: added ? "default" : "pointer" }}
                       onMouseDown={preventShiftTextSelection}
                       onClick={(event) => toggleEntry(entry, event)}
@@ -1850,10 +2061,11 @@ function AddEntriesModal({
                           wrap="nowrap"
                           style={{ minWidth: 0, width: "100%", overflow: "hidden" }}
                         >
-                          <IconDatabase size={14} color="var(--mantine-color-gray-6)" style={{ flexShrink: 0 }} />
+                          <IconDatabase size={14} color={selected.has(key) ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} style={{ flexShrink: 0 }} />
                           <Text
                             size="sm"
                             fw={600}
+                            c={selected.has(key) ? CELL_PICKER_SELECTED_TEXT_COLOR : undefined}
                             truncate
                             title={cell.name}
                             style={{ minWidth: 0, flex: "1 1 auto", whiteSpace: "nowrap" }}
@@ -1862,7 +2074,7 @@ function AddEntriesModal({
                           </Text>
                         </Group>
                       </Table.Td>
-                      <CellPickerMetricCells cell={cell} />
+                      <CellPickerMetricCells cell={cell} selected={selected.has(key)} />
                     </Table.Tr>
                   );
                 })}
@@ -1875,7 +2087,7 @@ function AddEntriesModal({
                   return (
                     <Table.Tr
                       key={`unfiled-group-${group.id}`}
-                      bg={selected.has(key) ? "var(--mantine-primary-color-light)" : undefined}
+                      bg={selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                       style={{ cursor: added ? "default" : "pointer" }}
                       onMouseDown={preventShiftTextSelection}
                       onClick={(event) => toggleEntry(entry, event)}
@@ -1886,7 +2098,7 @@ function AddEntriesModal({
                       <Table.Td>
                         <Group gap={6} pl={16}>
                           <IconLayersIntersect size={14} color="var(--mantine-primary-color-6)" />
-                          <Text size="sm" fw={600} truncate>
+                          <Text size="sm" fw={600} c={selected.has(key) ? CELL_PICKER_SELECTED_TEXT_COLOR : undefined} truncate>
                             {group.name}
                           </Text>
                         </Group>
@@ -2539,7 +2751,7 @@ function SamplePanelView({
                     justify="space-between"
                     gap={6}
                     wrap="nowrap"
-                    bg={selected ? "var(--mantine-primary-color-light)" : undefined}
+                    bg={selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                     px={4}
                     py={2}
                     style={{ borderRadius: "var(--mantine-radius-sm)" }}
@@ -2566,13 +2778,13 @@ function SamplePanelView({
                         <Text
                           size="sm"
                           fw={700}
-                          c={groupHidden ? "dimmed" : undefined}
+                          c={selected ? CELL_PICKER_SELECTED_TEXT_COLOR : groupHidden ? "dimmed" : undefined}
                           truncate
                           title={group?.name ?? `replicate #${entry.ref_id}`}
                         >
                           {group?.name ?? `replicate #${entry.ref_id}`}
                         </Text>
-                        <Text size="10px" c="dimmed" tt="uppercase">
+                        <Text size="10px" c={selected ? CELL_PICKER_SELECTED_TEXT_COLOR : "dimmed"} tt="uppercase">
                           Replicate
                         </Text>
                       </Box>
@@ -2675,7 +2887,7 @@ function SamplePanelView({
                 justify="space-between"
                 gap={6}
                 wrap="nowrap"
-                bg={selected ? "var(--mantine-primary-color-light)" : undefined}
+                bg={selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                 px={4}
                 py={2}
                 onDoubleClick={
@@ -2716,13 +2928,13 @@ function SamplePanelView({
                         <Text
                           size="sm"
                           fw={700}
-                          c={isHidden ? "dimmed" : undefined}
+                          c={selected ? CELL_PICKER_SELECTED_TEXT_COLOR : isHidden ? "dimmed" : undefined}
                           truncate
                           title={cell?.name ?? `cell #${entry.ref_id}`}
                         >
                           {cell?.name ?? `cell #${entry.ref_id}`}
                         </Text>
-                        <Text size="10px" c="dimmed" tt="uppercase">
+                        <Text size="10px" c={selected ? CELL_PICKER_SELECTED_TEXT_COLOR : "dimmed"} tt="uppercase">
                           Cell
                         </Text>
                       </Box>

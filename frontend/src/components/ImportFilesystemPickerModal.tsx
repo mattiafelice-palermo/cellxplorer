@@ -456,8 +456,8 @@ export function ImportFilesystemPickerModal({
                         const active = browseQuery.data?.current_path === item.path;
                         const pinIndex = pinnedPaths.indexOf(item.path);
                         return (
-                          <Group key={`${section}-${item.path}`} gap={4} wrap="nowrap" px="xs" py={6} bg={active ? "var(--mantine-primary-color-light)" : undefined} style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}>
-                            <Button variant="subtle" color={active ? "var(--mantine-primary-color-6)" : undefined} size="compact-sm" leftSection={shortcutIcon(item)} disabled={!item.available} justify="flex-start" style={{ flex: 1, minWidth: 0 }} onClick={() => navigate(item.path)}>
+                          <Group key={`${section}-${item.path}`} gap={4} wrap="nowrap" px="xs" py={6} bg={active ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined} style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}>
+                            <Button variant="subtle" color={active ? "light-dark(var(--mantine-primary-color-6), var(--mantine-color-white))" : undefined} size="compact-sm" leftSection={shortcutIcon(item)} disabled={!item.available} justify="flex-start" style={{ flex: 1, minWidth: 0 }} onClick={() => navigate(item.path)}>
                               <Text size="sm" truncate title={item.label}>{item.label}</Text>
                             </Button>
                             {item.pinned && <>
@@ -554,8 +554,11 @@ export function ImportFilesystemPickerModal({
                   {renderedEntries.map((entry) => {
                   const isFolder = entry.kind === "folder";
                   const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
+                  const rowSelected = selected.has(entry.path) || folderState !== "none";
+                  const selectedForeground = "light-dark(var(--mantine-color-black), var(--mantine-color-white))";
+                  const metadataColor = rowSelected ? selectedForeground : "dimmed";
                   const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
-                  return <Group key={entry.path} gap="xs" wrap="nowrap" px="sm" py={7} bg={selected.has(entry.path) || folderState === "some" ? "var(--mantine-primary-color-light)" : undefined} role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : "default", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
+                  return <Group key={entry.path} gap="xs" wrap="nowrap" px="sm" py={7} bg={selected.has(entry.path) || folderState === "some" ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined} role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : "default", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
                     <Checkbox
                       aria-label={isFolder ? `Select all importable files in ${entry.name}` : `Select ${entry.name}`}
                       checked={isFolder ? folderState === "all" : selected.has(entry.path)}
@@ -571,7 +574,7 @@ export function ImportFilesystemPickerModal({
                         toggleFile(entry, native.shiftKey, native.ctrlKey, native.metaKey);
                       }}
                     />
-                    {isFolder ? <IconFolder size={17} color="var(--mantine-primary-color-6)" /> : <IconFile size={17} color="var(--mantine-color-gray-6)" />}<Text size="sm" truncate title={entry.name} style={{ flex: 1 }}>{entry.name}</Text><Text size="xs" c="dimmed" w={90} ta="right">{entry.size === null ? "" : formatBytes(entry.size)}</Text><Text size="xs" c="dimmed" w={145}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
+                    {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}<Text size="sm" truncate title={entry.name} style={{ flex: 1 }}>{entry.name}</Text><Text size="xs" c={metadataColor} w={90} ta="right">{entry.size === null ? "" : formatBytes(entry.size)}</Text><Text size="xs" c={metadataColor} w={145}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
                   </Group>;
                   })}
                   <Box h={trailingSpacerHeight} aria-hidden="true" />

@@ -24,6 +24,7 @@ import {
   IconDeviceFloppy,
   IconPalette,
   IconPlus,
+  IconRefresh,
 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -625,17 +626,34 @@ export function PlotStylePanel({
               />
               {xAxisNumeric ? (
                 <>
-                  <Select
-                    label="X range"
-                    data={[
-                      { value: "auto", label: "Auto" },
-                      { value: "manual", label: "Manual" },
-                    ]}
-                    value={style.x_axis.mode}
-                    onChange={(value) =>
-                      value && setAxis("x_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
-                    }
-                  />
+                  <Group align="flex-end" wrap="nowrap" gap="xs">
+                    <Select
+                      label="X range"
+                      data={[
+                        { value: "auto", label: "Auto" },
+                        { value: "manual", label: "Manual" },
+                      ]}
+                      value={style.x_axis.mode}
+                      onChange={(value) =>
+                        value && setAxis("x_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
+                      }
+                      style={{ flex: "1 1 auto", minWidth: 0 }}
+                    />
+                    <Tooltip label="Reset X range to auto">
+                      <ActionIcon
+                        variant="default"
+                        aria-label="Reset X range to auto"
+                        disabled={style.x_axis.mode === "auto"}
+                        onClick={() => setAxis("x_axis", (axis) => {
+                          axis.mode = "auto";
+                          axis.min = null;
+                          axis.max = null;
+                        })}
+                      >
+                        <IconRefresh size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
                   {style.x_axis.mode === "manual" && (
                     <Group grow>
                       <DebouncedNumberInput
@@ -663,17 +681,34 @@ export function PlotStylePanel({
                   Numeric X range and tick controls apply when the view uses proportional spacing.
                 </Text>
               )}
-              <Select
-                label="Y range"
-                data={[
-                  { value: "auto", label: "Auto" },
-                  { value: "manual", label: "Manual" },
-                ]}
-                value={style.y_axis.mode}
-                onChange={(value) =>
-                  value && setAxis("y_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
-                }
-              />
+              <Group align="flex-end" wrap="nowrap" gap="xs">
+                <Select
+                  label="Y range"
+                  data={[
+                    { value: "auto", label: "Auto" },
+                    { value: "manual", label: "Manual" },
+                  ]}
+                  value={style.y_axis.mode}
+                  onChange={(value) =>
+                    value && setAxis("y_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
+                  }
+                  style={{ flex: "1 1 auto", minWidth: 0 }}
+                />
+                <Tooltip label="Reset Y range to auto">
+                  <ActionIcon
+                    variant="default"
+                    aria-label="Reset Y range to auto"
+                    disabled={style.y_axis.mode === "auto"}
+                    onClick={() => setAxis("y_axis", (axis) => {
+                      axis.mode = "auto";
+                      axis.min = null;
+                      axis.max = null;
+                    })}
+                  >
+                    <IconRefresh size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
               {style.y_axis.mode === "manual" && (
                 <Group grow>
                   <DebouncedNumberInput
@@ -843,17 +878,34 @@ export function PlotStylePanel({
                     value={style.y2_title ?? ""}
                     onCommit={(value) => setAxisTitle("y2_title", value)}
                   />
-                  <Select
-                    label="Right axis range"
-                    data={[
-                      { value: "auto", label: "Auto" },
-                      { value: "manual", label: "Manual" },
-                    ]}
-                    value={style.y2_axis.mode}
-                    onChange={(value) =>
-                      value && setAxis("y2_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
-                    }
-                  />
+                  <Group align="flex-end" wrap="nowrap" gap="xs">
+                    <Select
+                      label="Right axis range"
+                      data={[
+                        { value: "auto", label: "Auto" },
+                        { value: "manual", label: "Manual" },
+                      ]}
+                      value={style.y2_axis.mode}
+                      onChange={(value) =>
+                        value && setAxis("y2_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
+                      }
+                      style={{ flex: "1 1 auto", minWidth: 0 }}
+                    />
+                    <Tooltip label="Reset right axis range to auto">
+                      <ActionIcon
+                        variant="default"
+                        aria-label="Reset right axis range to auto"
+                        disabled={style.y2_axis.mode === "auto"}
+                        onClick={() => setAxis("y2_axis", (axis) => {
+                          axis.mode = "auto";
+                          axis.min = null;
+                          axis.max = null;
+                        })}
+                      >
+                        <IconRefresh size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
                   {style.y2_axis.mode === "manual" && (
                     <Group grow>
                       <DebouncedNumberInput

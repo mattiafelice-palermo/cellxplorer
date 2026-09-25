@@ -442,7 +442,7 @@ function AddReferencesModal({
           rows.push(
             <Table.Tr
               key={`cell-${node.id}-${cell.id}`}
-              bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-light)" : undefined}
+              bg={selectedCells.includes(cell.id) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
               style={{ cursor: "pointer" }}
               onClick={() =>
                 setSelectedCells((current) =>
@@ -473,7 +473,7 @@ function AddReferencesModal({
           rows.push(
             <Table.Tr
               key={`group-${node.id}-${group.id}`}
-              bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-light)" : undefined}
+              bg={selectedGroups.includes(group.id) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
               style={{ cursor: "pointer" }}
               onClick={() =>
                 setSelectedGroups((current) =>
@@ -552,7 +552,7 @@ function AddReferencesModal({
               {!branchOnly && mode === "cells" && unfiledCells.map((cell) => (
                 <Table.Tr
                   key={cell.id}
-                  bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-light)" : undefined}
+                  bg={selectedCells.includes(cell.id) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     setSelectedCells((current) =>
@@ -566,10 +566,10 @@ function AddReferencesModal({
                     <Checkbox checked={selectedCells.includes(cell.id)} readOnly />
                   </Table.Td>
                   <Table.Td>
-                    <Text size="sm" fw={600}>
+                    <Text size="sm" fw={600} c={selectedCells.includes(cell.id) ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : undefined}>
                       {cell.name}
                     </Text>
-                    <Text size="xs" c="dimmed">
+                    <Text size="xs" c={selectedCells.includes(cell.id) ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"}>
                       {cell.total_cycles} cycles
                     </Text>
                   </Table.Td>
@@ -578,7 +578,7 @@ function AddReferencesModal({
               {!branchOnly && mode === "replicate_groups" && unfiledGroups.map((group) => (
                 <Table.Tr
                   key={group.id}
-                  bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-light)" : undefined}
+                  bg={selectedGroups.includes(group.id) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     setSelectedGroups((current) =>
@@ -593,12 +593,12 @@ function AddReferencesModal({
                   </Table.Td>
                   <Table.Td>
                     <Group gap={6}>
-                      <IconLayersIntersect size={15} color="var(--mantine-primary-color-6)" />
+                      <IconLayersIntersect size={15} color={selectedGroups.includes(group.id) ? "light-dark(var(--mantine-primary-color-6), var(--mantine-color-white))" : "var(--mantine-primary-color-6)"} />
                       <div>
-                        <Text size="sm" fw={600}>
+                        <Text size="sm" fw={600} c={selectedGroups.includes(group.id) ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : undefined}>
                           {group.name}
                         </Text>
-                        <Text size="xs" c="dimmed">
+                        <Text size="xs" c={selectedGroups.includes(group.id) ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"}>
                           {group.cells.map((cell) => cell.name).join(", ")}
                         </Text>
                       </div>

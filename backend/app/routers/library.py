@@ -1,6 +1,7 @@
 """The canonical Library: Cells, source-chain compatibility rows, metadata, and tags."""
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -776,6 +777,146 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
     return summaries
 
 
+_CELL_PICKER_STAT_TIMEOUT_SECONDS = 0.75
+_cell_picker_stat_executor = thread_pool_executor(
+    max_workers=8,
+    thread_name_prefix="cell-picker-source-stat",
+)
+
+
+def _cell_picker_source_mtime_ns(path: str) -> int | None:
+    try:
+        return Path(path).stat().st_mtime_ns
+    except (OSError, ValueError):
+        return None
+
+
+def _cell_picker_source_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
+    """Return compact source facets and the ordered tail file modification time.
+
+    This is a single scalar-column query: it deliberately does not materialize
+    each SourceFile or its potentially large complete header document.
+    """
+    if not cell_ids:
+        return {}
+    technique = func.coalesce(
+        func.json_extract(SourceFile.header_meta, "$.settings.technique"),
+        func.json_extract(SourceFile.header_meta, "$.technique"),
+        func.json_extract(SourceFile.header_meta, "$.technique_family"),
+        func.json_extract(SourceFile.header_meta, "$.protocol.technique"),
+        func.json_extract(SourceFile.header_meta, "$.protocol.name"),
+    )
+    rows = (
+        db.query(
+            Test.cell_id.label("cell_id"),
+            TestFile.position.label("position"),
+            SourceFile.ext.label("extension"),
+            SourceFile.path.label("path"),
+            SourceFile.observed_mtime_ns.label("modified_ns"),
+            technique.label("technique"),
+        )
+        .join(TestFile, TestFile.test_id == Test.id)
+        .join(SourceFile, SourceFile.id == TestFile.file_id)
+        .filter(Test.cell_id.in_(cell_ids))
+        .order_by(Test.cell_id, TestFile.position)
+        .all()
+    )
+    summaries: dict[int, dict] = {
+        cell_id: {
+            "last_modified_at": None,
+            "source_facets": [],
+            "_tail_path": None,
+            "_modified_ns": None,
+        }
+        for cell_id in cell_ids
+    }
+    for row in rows:
+        cell_id = int(row.cell_id)
+        extension = str(row.extension or "").casefold().lstrip(".")
+        system = (
+            "biologic" if extension == "mpr"
+            else "neware" if extension in {"nda", "ndax", "xlsx"}
+            else "other"
+        )
+        raw_technique = row.technique
+        if not isinstance(raw_technique, (str, int, float)):
+            raw_technique = None
+        technique_label = str(raw_technique).strip()[:64] if raw_technique is not None else ""
+        if technique_label.startswith(("{", "[")):
+            try:
+                decoded = json.loads(technique_label)
+            except (TypeError, ValueError):
+                decoded = None
+            if isinstance(decoded, dict):
+                technique_label = str(
+                    decoded.get("technique")
+                    or decoded.get("technique_family")
+                    or decoded.get("name")
+                    or decoded.get("type")
+                    or ""
+                ).strip()[:64]
+            else:
+                technique_label = ""
+        summary = summaries[cell_id]
+        summary["source_facets"].append(
+            {
+                "system": system,
+                "format": f".{extension}" if extension else None,
+                "technique": technique_label or None,
+            }
+        )
+        # Rows are in TestFile.position order, so the final row is the tracked
+        # source tail for this Cell. Stat that path for its current filesystem
+        # mtime; retain the stored observation as a fallback when it is offline.
+        summary["_tail_path"] = row.path
+        summary["_modified_ns"] = row.modified_ns
+
+    tail_paths = {
+        str(summary["_tail_path"])
+        for summary in summaries.values()
+        if summary["_tail_path"]
+    }
+    stat_futures = {
+        _cell_picker_stat_executor.submit(_cell_picker_source_mtime_ns, path): path
+        for path in sorted(
+            tail_paths,
+            key=lambda path: (path.startswith(("\\\\", "//")), path.casefold()),
+        )
+    }
+    actual_mtimes: dict[str, int] = {}
+    if stat_futures:
+        completed, pending = wait(
+            stat_futures,
+            timeout=_CELL_PICKER_STAT_TIMEOUT_SECONDS,
+        )
+        for future in completed:
+            modified_ns = future.result()
+            if modified_ns is not None:
+                actual_mtimes[stat_futures[future]] = modified_ns
+        # Do not let an unavailable/network path hold this picker response.
+        # Running stats may finish in the bounded shared pool; queued work is
+        # cancelled, and each unfinished source keeps its last observed mtime.
+        for future in pending:
+            future.cancel()
+
+    for summary in summaries.values():
+        tail_path = summary.pop("_tail_path")
+        modified_ns = summary.pop("_modified_ns")
+        if tail_path:
+            modified_ns = actual_mtimes.get(str(tail_path), modified_ns)
+        if modified_ns is not None:
+            try:
+                summary["last_modified_at"] = datetime.fromtimestamp(
+                    int(modified_ns) / 1_000_000_000,
+                    tz=timezone.utc,
+                ).isoformat()
+            except (OverflowError, OSError, ValueError):
+                summary["last_modified_at"] = None
+        else:
+            summary["last_modified_at"] = None
+    return summaries
+
+
 def _cell_source_scientific_values(
     db: Session, cell_ids: list[int]
 ) -> dict[int, tuple[float | None, float | None]]:
@@ -922,6 +1063,7 @@ def list_cells(
     folder_id: int | None = None,
     project_id: int | None = None,
     include_archived: bool = False,
+    include_picker_metadata: bool = False,
     db: Session = Depends(get_db),
 ):
     q = db.query(Cell)
@@ -943,6 +1085,9 @@ def list_cells(
     tags_by_cell: dict[int, list[str]] = {cell.id: [] for cell in cells}
     metadata_by_cell: dict[int, dict[str, str]] = {cell.id: {} for cell in cells}
     file_summaries = _cell_file_summaries(db, cell_ids)
+    picker_source_summaries = (
+        _cell_picker_source_summaries(db, cell_ids) if include_picker_metadata else {}
+    )
     source_values = _cell_source_scientific_values(db, cell_ids)
     if cells:
         tag_rows = (
@@ -968,6 +1113,7 @@ def list_cells(
         metadata = metadata_by_cell[cell.id]
         source_mass, source_nominal = source_values.get(cell.id, (None, None))
         summary = file_summaries.get(cell.id, _empty_cell_file_summary())
+        picker_sources = picker_source_summaries.get(cell.id)
         max_specific = _max_specific_from_summary(
             summary, metadata, source_mass, source_nominal
         )
@@ -991,6 +1137,14 @@ def list_cells(
                 **public_summary,
                 "max_specific_discharge_capacity_mah_g": max_specific,
                 "created_at": cell.created_at.isoformat(),
+                **(
+                    {
+                        "last_modified_at": picker_sources["last_modified_at"],
+                        "source_facets": picker_sources["source_facets"],
+                    }
+                    if picker_sources is not None
+                    else {}
+                ),
             }
         )
     return result

@@ -1716,7 +1716,7 @@ export function LibraryPage() {
                     tabIndex={0}
                     bg={
                       selectedCellIds.has(cell.id)
-                        ? "var(--mantine-primary-color-light)"
+                        ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
                         : undefined
                     }
                     onClick={(event) => {
@@ -1781,7 +1781,7 @@ export function LibraryPage() {
                             {cell.name}
                           </Text>
                           {cell.description && (
-                            <Text size="xs" c="dimmed" lineClamp={1}>
+                            <Text size="xs" c={selectedCellIds.has(cell.id) ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} lineClamp={1}>
                               {cell.description}
                             </Text>
                           )}

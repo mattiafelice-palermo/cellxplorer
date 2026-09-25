@@ -80,6 +80,7 @@ import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
 import {
   axisLayout,
   numericTraceExtent,
+  paddedAutoRange,
 } from "../../plotting/plotAxisLayout";
 import {
   blobFromDataUrl,
@@ -2623,7 +2624,52 @@ function TimeCapacityPlotCardView({
     () => interactivePlotTraces(exportTraces),
     [exportTraces],
   );
-  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}`;
+  const plotAxisStyle = useMemo(
+    () => currentPlotStyle(scientificRenderSpec, "time_capacity"),
+    [scientificRenderSpec],
+  );
+  const visibleXAxisExtent = useMemo(
+    () => numericTraceExtent(
+      visiblePlotTraces,
+      "x",
+      cfg.stacked ? ["x", "x2"] : ["x"],
+    ),
+    [cfg.stacked, visiblePlotTraces],
+  );
+  const visibleYAxisExtent = useMemo(
+    () => numericTraceExtent(visiblePlotTraces, "y", ["y"]),
+    [visiblePlotTraces],
+  );
+  const visibleY2AxisExtent = useMemo(
+    () => numericTraceExtent(visiblePlotTraces, "y", ["y2"]),
+    [visiblePlotTraces],
+  );
+  const visibleY3AxisExtent = useMemo(
+    () => numericTraceExtent(visiblePlotTraces, "y", ["y3"]),
+    [visiblePlotTraces],
+  );
+  // Fit invalidation follows the stable analysis visibility state, not the
+  // rendered Plotly trace array: refinement can change a Cell's segment count
+  // without changing which samples the user chose to show.
+  const sampleVisibilitySignature = JSON.stringify({
+    entries: spec.selection.entries,
+    exclusions: spec.selection.exclusions,
+    hiddenReplicateGroupIds: [...(spec.selection.hidden_replicate_group_ids ?? [])].sort((a, b) => a - b),
+    hiddenSeriesIds: [...(spec.presentation.hidden_series_ids ?? [])].sort(),
+    hiddenAnalysisSegmentIds: [...(spec.presentation.hidden_analysis_segment_ids ?? [])].sort(),
+  });
+  const visibleAutoFitSignature = JSON.stringify({
+    sampleVisibilitySignature,
+    xMode: plotAxisStyle.x_axis.mode,
+    yMode: plotAxisStyle.y_axis.mode,
+    y2Mode: plotAxisStyle.y2_axis.mode,
+    xQuantity: cfg.x_axis,
+    timeUnit: cfg.time_unit,
+    stacked: cfg.stacked,
+  });
+  const lastVisibleAutoFitSignatureRef = useRef<string | null>(null);
+  const fitVisibleAutoRanges = lastVisibleAutoFitSignatureRef.current !== visibleAutoFitSignature;
+  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}|${sampleVisibilitySignature}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
@@ -2634,6 +2680,19 @@ function TimeCapacityPlotCardView({
   const [frozenY, setFrozenY] = useState<[number, number] | null>(null);
   const panFrozenYRef = useRef<[number, number] | null>(null);
   panFrozenYRef.current = frozenY;
+  useEffect(() => {
+    const previousSignature = lastVisibleAutoFitSignatureRef.current;
+    lastVisibleAutoFitSignatureRef.current = visibleAutoFitSignature;
+    if (
+      previousSignature !== null &&
+      previousSignature !== visibleAutoFitSignature &&
+      plotAxisStyle.y_axis.mode === "auto"
+    ) {
+      // A retained pan window must not override the new Auto fit after visible
+      // sample membership or an Auto/Manual mode changes.
+      setFrozenY(null);
+    }
+  }, [plotAxisStyle.y_axis.mode, visibleAutoFitSignature]);
   const panWasActiveRef = useRef(false);
   useEffect(() => {
     const wasActive = panWasActiveRef.current;
@@ -2679,11 +2738,36 @@ function TimeCapacityPlotCardView({
 
   const layout = useMemo(() => {
     // Use the same neutral scientific spec as the stable figure data. The
-    // live Analysis-sample selection is applied by Plotly restyle, so an eye
-    // edit does not rebuild axes or margins either.
-    const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, plotTraces));
-    const retainedY = panFrozenYRef.current;
+    // live Analysis-sample selection stays in the Plotly data array, while
+    // visible-only extents keep Auto ranges fitted to the rows still shown.
+    const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, visiblePlotTraces));
     const next = { ...base } as Record<string, unknown>;
+    const fitAutoAxis = (
+      axisName: "xaxis" | "xaxis2" | "yaxis" | "yaxis2" | "yaxis3",
+      axis: PlotStyle["x_axis"],
+      extent: [number, number] | undefined,
+    ) => {
+      if (!fitVisibleAutoRanges || axis.mode !== "auto") return;
+      const range = paddedAutoRange(extent);
+      const layoutAxis = { ...(next[axisName] as Record<string, unknown> | undefined) };
+      if (!range) {
+        delete layoutAxis.range;
+        layoutAxis.autorange = true;
+      } else {
+        layoutAxis.range = range;
+        layoutAxis.autorange = false;
+      }
+      next[axisName] = layoutAxis;
+    };
+    fitAutoAxis(cfg.stacked ? "xaxis2" : "xaxis", plotAxisStyle.x_axis, visibleXAxisExtent);
+    fitAutoAxis("yaxis", plotAxisStyle.y_axis, visibleYAxisExtent);
+    if (cfg.stacked) {
+      fitAutoAxis("yaxis2", plotAxisStyle.y2_axis, visibleY2AxisExtent);
+      fitAutoAxis("yaxis3", plotAxisStyle.y2_axis, visibleY3AxisExtent);
+    }
+    const retainedY = fitVisibleAutoRanges && plotAxisStyle.y_axis.mode === "auto"
+      ? null
+      : panFrozenYRef.current;
     // Stacked layouts intentionally omit uirevision because Plotly can enter
     // a relayout loop when matched x axes use it. Preserve the accepted
     // refinement viewport explicitly while replacing the coarse result so the
@@ -2712,7 +2796,14 @@ function TimeCapacityPlotCardView({
     [
       plotResult,
       scientificRenderSpec,
-      plotTraces,
+      visiblePlotTraces,
+      visibleXAxisExtent,
+      visibleYAxisExtent,
+      visibleY2AxisExtent,
+      visibleY3AxisExtent,
+      plotAxisStyle,
+      fitVisibleAutoRanges,
+      panActive,
       panPresentationActive,
       cfg.stacked,
       frozenY,

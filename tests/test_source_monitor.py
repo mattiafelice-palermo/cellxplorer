@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -915,6 +915,37 @@ class SourceMonitorValidationTests(unittest.TestCase):
         self.assertEqual((runs[2] - runs[1]).days, 14)
         for run in runs:
             self.assertEqual((run.hour, run.minute), (2, 0))
+
+    def test_following_scheduled_runs_keep_wall_time_after_fall_dst_change(self):
+        now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+        fall_transition_date = None
+        for days_ahead in range(1, 401):
+            before = (now + timedelta(days=days_ahead - 1)).astimezone()
+            after = (now + timedelta(days=days_ahead)).astimezone()
+            if after.utcoffset() < before.utcoffset():
+                fall_transition_date = after.date()
+                break
+        if fall_transition_date is None:
+            self.skipTest("Local timezone has no fall-back transition in the next 400 days")
+
+        config = {
+            "schedule_mode": "scheduled",
+            "scheduled_every_value": 2,
+            "scheduled_every_unit": "weeks",
+            "daily_time": "02:00",
+        }
+        due_date = fall_transition_date - timedelta(days=14)
+        scheduled_for = datetime.combine(due_date, datetime_time(2, 0)).astimezone(
+            timezone.utc
+        )
+        first_after_transition = source_monitor.following_scheduled_run(config, scheduled_for)
+        second_after_transition = source_monitor.following_scheduled_run(
+            config, first_after_transition
+        )
+
+        for run in (first_after_transition, second_after_transition):
+            local_run = run.astimezone()
+            self.assertEqual((local_run.hour, local_run.minute), (2, 0))
 
     def test_preview_reports_the_same_error_a_save_would(self):
         with self.assertRaises(HTTPException) as caught:

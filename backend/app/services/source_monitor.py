@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -165,8 +165,8 @@ def calculate_next_run(config: dict[str, Any], after: datetime | None = None) ->
     if is_scheduled_mode(config):
         local_now = now.astimezone()
         hour, minute = _daily_hour_minute(config)
-        candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= local_now:
+        candidate = datetime.combine(local_now.date(), datetime_time(hour, minute))
+        if candidate <= local_now.replace(tzinfo=None):
             candidate += timedelta(days=scheduled_step_days(config))
         return candidate.astimezone(timezone.utc)
     return now + _interval_delta(config)
@@ -177,11 +177,10 @@ def following_scheduled_run(config: dict[str, Any], scheduled_for: datetime) -> 
     if not is_scheduled_mode(config):
         return scheduled_for + _interval_delta(config)
     local_due = scheduled_for.astimezone()
-    next_local = local_due + timedelta(days=scheduled_step_days(config))
+    next_date = local_due.date() + timedelta(days=scheduled_step_days(config))
     hour, minute = _daily_hour_minute(config)
-    return next_local.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(
-        timezone.utc
-    )
+    next_local = datetime.combine(next_date, datetime_time(hour, minute))
+    return next_local.astimezone(timezone.utc)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

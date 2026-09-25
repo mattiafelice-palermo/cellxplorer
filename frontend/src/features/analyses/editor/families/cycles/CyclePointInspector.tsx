@@ -242,7 +242,7 @@ export function CyclePointSelectionOverlay({
       {completedPoints.length > 0 && (
         <polygon
           points={completedPolygon}
-          fill="var(--mantine-primary-color-light)"
+          fill="light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
           fillOpacity={0.12}
           stroke="var(--mantine-primary-color-6)"
           strokeWidth={1.5}
@@ -286,7 +286,7 @@ export function CyclePointSelectionOverlay({
           y={Math.min(dragPreview.start.y, dragPreview.end.y)}
           width={Math.abs(dragPreview.end.x - dragPreview.start.x)}
           height={Math.abs(dragPreview.end.y - dragPreview.start.y)}
-          fill="var(--mantine-primary-color-light)"
+          fill="light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
           fillOpacity={0.18}
           stroke="var(--mantine-primary-color-6)"
           strokeWidth={1.5}
@@ -932,7 +932,7 @@ export function CyclePointInspector({
                     }}
                     style={{
                       cursor: "pointer",
-                      background: active ? "var(--mantine-primary-color-light)" : undefined,
+                      background: active ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
                       fontWeight: active ? 650 : undefined,
                     }}
                   >
@@ -946,7 +946,7 @@ export function CyclePointInspector({
                               ? record.sampleLabel.slice(samplePrefix.length) : record.sampleLabel}
                           </Text>
                           {measurePresentation.showMeasurePerRow && (
-                            <Text size="xs" c="dimmed" lh={1.25} mt={2}>
+                            <Text size="xs" c={active ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} lh={1.25} mt={2}>
                               {record.quantityLabel}
                             </Text>
                           )}

@@ -56,6 +56,20 @@ export function numericTraceExtent(
   return Number.isFinite(min) && Number.isFinite(max) ? [min, max] : undefined;
 }
 
+/** Give an explicit auto-fit range a small margin around visible trace data. */
+export function paddedAutoRange(
+  extent: [number, number] | undefined,
+  paddingFraction = 0.04,
+): [number, number] | undefined {
+  if (!extent || !extent.every(Number.isFinite)) return undefined;
+  const [min, max] = extent[0] <= extent[1] ? extent : [extent[1], extent[0]];
+  const span = max - min;
+  const padding = span > 0
+    ? span * Math.max(0, paddingFraction)
+    : Math.max(Math.abs(min) * Math.max(0, paddingFraction), 0.01);
+  return [min - padding, max + padding];
+}
+
 // Returns ONLY the keys that should override Plotly's defaults. In auto mode
 // this is empty on purpose: passing `range: undefined, autorange: true` on a
 // layout-only re-render (grid/zero-line/border toggles) made Plotly.react

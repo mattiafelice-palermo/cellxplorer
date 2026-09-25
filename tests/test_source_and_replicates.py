@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -1035,6 +1036,72 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertNotIn("metadata", payload[0])
         detail = library.get_cell(cell.id, db=db)
         self.assertEqual(detail["metadata"]["raw.large.header"], "x" * 20_000)
+
+    def test_cell_picker_source_summary_uses_ordered_tail_file_mtime_and_compact_facets(self):
+        db = self.make_session()
+        cell = Cell(name="Picker source summary")
+        first_source = SourceFile(
+            hash="picker-first-source",
+            path="C:/data/first.ndax",
+            filename="first.ndax",
+            size=10,
+            ext="ndax",
+            observed_mtime_ns=1_600_000_000_000_000_000,
+            last_source_check_at=datetime(2026, 1, 1),
+            header_meta={"technique": "Neware protocol"},
+            parse_status="parsed",
+            cycle_count=3,
+            capacity_summary_status="ready",
+        )
+        tail_source = SourceFile(
+            hash="picker-tail-source",
+            path="C:/data/tail.mpr",
+            filename="tail.mpr",
+            size=10,
+            ext="mpr",
+            observed_mtime_ns=1_600_000_000_000_000_000,
+            last_source_check_at=datetime(2026, 9, 1),
+            header_meta={"settings": {"technique": "GCPL"}},
+            parse_status="parsed",
+            cycle_count=4,
+            capacity_summary_status="ready",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tail_path = Path(tmp) / "tail.mpr"
+            tail_path.write_bytes(b"source")
+            tail_mtime_ns = 1_700_000_000_000_000_000
+            os.utime(tail_path, ns=(tail_mtime_ns, tail_mtime_ns))
+            tail_source.path = str(tail_path)
+            cell.tests = [Test(name="Imported file", file_links=[
+                TestFile(file=tail_source, position=1),
+                TestFile(file=first_source, position=0),
+            ])]
+            db.add(cell)
+            db.commit()
+
+            payload = library.list_cells(db=db, include_picker_metadata=True)[0]
+
+            self.assertEqual(payload["last_modified_at"], "2023-11-14T22:13:20+00:00")
+            self.assertEqual(
+                payload["source_facets"],
+                [
+                    {"system": "neware", "format": ".ndax", "technique": "Neware protocol"},
+                    {"system": "biologic", "format": ".mpr", "technique": "GCPL"},
+                ],
+            )
+            with patch.object(
+                library,
+                "wait",
+                side_effect=lambda futures, timeout: (set(), set(futures)),
+            ):
+                fallback_payload = library.list_cells(
+                    db=db,
+                    include_picker_metadata=True,
+                )[0]
+            self.assertEqual(
+                fallback_payload["last_modified_at"],
+                "2020-09-13T12:26:40+00:00",
+            )
 
     def test_library_rejects_zero_internal_test_rows_in_list_and_detail(self):
         db = self.make_session()

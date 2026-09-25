@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PlotAxisStyle } from "../src/api.ts";
-import { axisLayout, axisManualRangeShowsData } from "../src/features/analyses/editor/plotting/plotAxisLayout.ts";
+import {
+  axisLayout,
+  axisManualRangeShowsData,
+  numericTraceExtent,
+  paddedAutoRange,
+} from "../src/features/analyses/editor/plotting/plotAxisLayout.ts";
 
 const manualAxis: PlotAxisStyle = {
   mode: "manual",
@@ -20,6 +25,23 @@ test("axisManualRangeShowsData detects overlap with trace bounds", () => {
   assert.equal(axisManualRangeShowsData(manualAxis, [150, 200]), false);
   assert.equal(axisManualRangeShowsData(manualAxis, [50, 50]), true);
   assert.equal(axisManualRangeShowsData({ ...manualAxis, mode: "auto" }, [150, 200]), true);
+});
+
+test("auto range padding follows the visible data extent and handles a single value", () => {
+  assert.deepEqual(paddedAutoRange([10, 20]), [9.6, 20.4]);
+  assert.deepEqual(paddedAutoRange([5, 5]), [4.8, 5.2]);
+  assert.equal(paddedAutoRange(undefined), undefined);
+});
+
+test("visible trace extents stay scoped to the requested Plotly axes", () => {
+  const visibleTraces = [
+    { x: [1, 2, 3], y: [0.5, 1.5], xaxis: "x", yaxis: "y" },
+    { x: [100, 200], y: [20, 30], xaxis: "x2", yaxis: "y2" },
+    { x: [100, 200], y: [-4, -2], xaxis: "x2", yaxis: "y3" },
+  ] as unknown as Plotly.Data[];
+  assert.deepEqual(numericTraceExtent(visibleTraces, "x", ["x"]), [1, 3]);
+  assert.deepEqual(numericTraceExtent(visibleTraces, "y", ["y2"]), [20, 30]);
+  assert.deepEqual(numericTraceExtent(visibleTraces, "y", ["y3"]), [-4, -2]);
 });
 
 test("axisLayout falls back to auto ranges when manual window hides all data", () => {

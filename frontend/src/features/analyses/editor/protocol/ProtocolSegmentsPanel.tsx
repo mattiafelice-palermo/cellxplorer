@@ -1498,9 +1498,9 @@ function GroupedProtocolComparisonModal({
                     <Table.Thead>
                       <Table.Tr>
                         <Table.Th w={150} style={{ position: "sticky", left: 0, zIndex: 4, background: "var(--mantine-color-body)" }}>Dimension</Table.Th>
-                        <Table.Th w={205} style={{ background: "var(--mantine-primary-color-light)" }}>
+                        <Table.Th w={205} style={{ background: "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" }}>
                           <Text size="xs" fw={700}>Reference</Text>
-                          <Text size="10px" c="dimmed" fw={400} lineClamp={2}>{protocolFamilyLabel(families, reference)}</Text>
+                          <Text size="10px" c="light-dark(var(--mantine-color-black), var(--mantine-color-white))" fw={400} lineClamp={2}>{protocolFamilyLabel(families, reference)}</Text>
                         </Table.Th>
                         {candidates.map((family) => (
                           <Table.Th key={family.signature} w={190}>
@@ -1516,8 +1516,8 @@ function GroupedProtocolComparisonModal({
                           <Table.Td style={{ position: "sticky", left: 0, zIndex: 2, background: "var(--mantine-color-body)" }}>
                             <Text size="xs" fw={600}>{option.label}</Text>
                           </Table.Td>
-                          <Table.Td style={{ background: "var(--mantine-primary-color-light)" }}>
-                            <Text size="10px" c="dimmed">Baseline</Text>
+                          <Table.Td style={{ background: "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" }}>
+                            <Text size="10px" c="light-dark(var(--mantine-color-black), var(--mantine-color-white))">Baseline</Text>
                           </Table.Td>
                           {candidateResults.map(({ family, result }) => {
                             const row = result?.rows.find((item) => item.key === option.key);

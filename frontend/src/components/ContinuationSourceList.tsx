@@ -208,7 +208,7 @@ function SortableCompactSourceCard({
       style={{
         cursor: onSelect ? "pointer" : undefined,
         borderColor: selected ? "var(--mantine-primary-color-5)" : undefined,
-        background: selected ? "var(--mantine-primary-color-light)" : undefined,
+        background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
         overflow: "hidden",
         display: "flex",
         alignItems: "stretch",
@@ -244,7 +244,7 @@ function SortableCompactSourceCard({
             <ActionIcon size="sm" variant="subtle" color="red" aria-label={`Remove ${source.filename}`} disabled={disabled || canRemoveSource?.(source.key) === false} onClick={(event) => { stop(event); onRemove(source.key); }}><IconX size={13} /></ActionIcon>
           </Tooltip>}
         </Group>
-        {metaLine && <Text size="xs" c="dimmed" truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
+        {metaLine && <Text size="xs" c={selected ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
         {source.inspection_error && (
           <Text size="xs" c="red" title={source.inspection_error}>
             {source.inspection_error}

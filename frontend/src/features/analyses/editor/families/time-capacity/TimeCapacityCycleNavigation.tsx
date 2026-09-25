@@ -638,8 +638,8 @@ const CyclePositionTrigger = forwardRef<HTMLButtonElement, CyclePositionTriggerP
           "&:hover": disabled
             ? undefined
             : {
-                background: "var(--mantine-primary-color-light)",
-                color: "var(--mantine-primary-color-7)",
+                background: "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))",
+                color: "light-dark(var(--mantine-primary-color-7), var(--mantine-color-white))",
               },
           "&:focus-visible": {
             outline: "2px solid var(--mantine-primary-color-5)",
