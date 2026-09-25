@@ -1662,7 +1662,7 @@ function AddEntriesModal({
     output.push({
       type: "scatter", mode: "markers", name: "Coulombic efficiency", x,
       y: quantities.coulombic_efficiency_pct ?? [], yaxis: "y2",
-      marker: { color: PLOT_PALETTES.app[2], size: 10, symbol: "circle-open", line: { color: PLOT_PALETTES.app[2], width: 2.5 } },
+      marker: { color: PLOT_PALETTES.app[2], size: 6, opacity: 0.1, symbol: "circle-open", line: { color: PLOT_PALETTES.app[2], width: 1 } },
       hovertemplate: "Cycle %{x}<br>%{y:.3g}%<extra>Coulombic efficiency</extra>",
     });
     return output;
@@ -2283,15 +2283,19 @@ function AddEntriesModal({
       onClose={onClose}
       title="Add to plot"
       size="min(1680px, calc(100vw - 32px))"
+      styles={{
+        content: { height: "calc(100vh - 32px)", maxHeight: "calc(100vh - 32px)", display: "flex", flexDirection: "column" },
+        body: { flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" },
+      }}
       style={{
-        "--mantine-font-size-xs": "calc(0.75rem * var(--mantine-scale) + 0.4583rem)",
-        "--mantine-font-size-sm": "calc(0.875rem * var(--mantine-scale) + 0.4583rem)",
-        "--mantine-font-size-md": "calc(1rem * var(--mantine-scale) + 0.4583rem)",
-        "--mantine-font-size-lg": "calc(1.125rem * var(--mantine-scale) + 0.4583rem)",
-        "--mantine-font-size-xl": "calc(1.25rem * var(--mantine-scale) + 0.4583rem)",
+        "--mantine-font-size-xs": "calc(0.75rem * var(--mantine-scale) + 0.2917rem)",
+        "--mantine-font-size-sm": "calc(0.875rem * var(--mantine-scale) + 0.2917rem)",
+        "--mantine-font-size-md": "calc(1rem * var(--mantine-scale) + 0.2917rem)",
+        "--mantine-font-size-lg": "calc(1.125rem * var(--mantine-scale) + 0.2917rem)",
+        "--mantine-font-size-xl": "calc(1.25rem * var(--mantine-scale) + 0.2917rem)",
       } as CSSProperties}
     >
-      <Stack gap="sm">
+      <Stack gap="sm" style={{ height: "100%", minHeight: 0 }}>
         <Group justify="space-between" align="center">
           <SegmentedControl
             size="xs"
@@ -2466,11 +2470,13 @@ function AddEntriesModal({
               : "minmax(0, 1fr)",
             gap: 0,
             minWidth: 0,
+            minHeight: 0,
+            flex: "1 1 auto",
             alignItems: "stretch",
           }}
         >
-        <Box id="analysis-cell-picker-table" style={{ minWidth: 0, gridColumn: 1 }}>
-        <ScrollArea h={460} type="auto" offsetScrollbars="y" scrollbarSize={10}>
+        <Box id="analysis-cell-picker-table" style={{ minWidth: 0, minHeight: 0, height: "100%", display: "flex", flexDirection: "column", gridColumn: 1 }}>
+        <ScrollArea type="auto" offsetScrollbars="y" scrollbarSize={10} style={{ height: "100%", minHeight: 0 }}>
           <Table
             ref={cellPickerTableRef}
             highlightOnHover
@@ -2731,9 +2737,9 @@ function AddEntriesModal({
             withBorder
             radius="sm"
             p="sm"
-            style={{ minWidth: 280, gridColumn: 3, overflow: "hidden" }}
+            style={{ minWidth: 280, minHeight: 0, height: "100%", gridColumn: 3, overflow: "auto" }}
           >
-            <Stack gap="xs">
+            <Stack gap="xs" style={{ minHeight: "100%" }}>
               <div>
                 <Text size="sm" fw={700}>Cell preview</Text>
                 <Text size="xs" c="dimmed" truncate title={previewCellSummary?.name ?? ""}>
@@ -2784,19 +2790,18 @@ function AddEntriesModal({
                         autosize: true, height: 380, margin: { l: 72, r: 76, t: 8, b: 58 }, showlegend: false,
                         paper_bgcolor: previewPlotColors.background,
                         plot_bgcolor: previewPlotColors.background,
-                        font: { color: previewPlotColors.text, size: 18 },
+                        font: { family: "Arial, sans-serif", color: previewPlotColors.text, size: 17 },
                         uirevision: `cell-picker-capacity-${activePreviewCellId}-${normalizeCapacityByMass && previewActiveMassG !== null ? "mAh-per-g" : "mAh"}`,
                         transition: { duration: 180, easing: "cubic-in-out" },
-                        xaxis: { title: { text: "Cycle", font: { size: 18, color: previewPlotColors.text } }, tickfont: { size: 18, color: previewPlotColors.text }, showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1.5, showgrid: false, zeroline: false, automargin: true, anchor: "y", autorange: true },
-                        yaxis: { title: { text: `Capacity (${normalizeCapacityByMass && previewActiveMassG ? "mAh/g" : "mAh"})`, font: { size: 18, color: previewPlotColors.text } }, tickfont: { size: 18, color: previewPlotColors.text }, domain: [0, 0.72], showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1.5, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true },
-                        yaxis2: { title: { text: "CE (%)", font: { size: 18, color: previewPlotColors.text } }, tickfont: { size: 18, color: previewPlotColors.text }, domain: [0.77, 1], side: "right", showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1.5, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true, anchor: "x" },
+                        xaxis: { title: { text: "Cycle", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, showline: false, showgrid: false, zeroline: false, automargin: true, anchor: "y", autorange: true },
+                        yaxis: { title: { text: `Capacity (${normalizeCapacityByMass && previewActiveMassG ? "mAh/g" : "mAh"})`, font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0, 0.72], showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true },
+                        yaxis2: { title: { text: "CE (%)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0.77, 1], side: "right", showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true, anchor: "x" },
                         shapes: [
-                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0.77, y1: 1, line: { color: previewPlotColors.border, width: 1.5 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
-                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0, y1: 0.72, line: { color: previewPlotColors.border, width: 1.5 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
+                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0, y1: 1, line: { color: previewPlotColors.border, width: 1.5 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
                         ],
                       }}
                       config={{ responsive: true, displayModeBar: false }}
-                      style={{ width: "100%", height: 380 }}
+                      style={{ width: "100%", height: 380, fontWeight: 400 }}
                     />
                     {cyclePreviewQuery.isFetching && cyclePreviewSeries && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
                     </Box>
@@ -2812,22 +2817,21 @@ function AddEntriesModal({
                   <Plot
                     data={previewChartData as never}
                     layout={{
-                      autosize: true, height: 300, margin: { l: 58, r: 12, t: 8, b: 46 }, showlegend: false,
+                      autosize: true, height: 380, margin: { l: 58, r: 12, t: 8, b: 46 }, showlegend: false,
                       paper_bgcolor: previewPlotColors.background,
                       plot_bgcolor: previewPlotColors.background,
-                      font: { color: previewPlotColors.text, size: 14 },
+                      font: { family: "Arial, sans-serif", color: previewPlotColors.text, size: 17 },
                       uirevision: `cell-picker-voltage-${activePreviewCellId}-${previewXAxis}`,
                       transition: { duration: 180, easing: "cubic-in-out" },
-                      xaxis: { title: { text: previewXAxis === "time" ? "Time (min)" : "Capacity (mAh)", font: { size: 14, color: previewPlotColors.text } }, domain: [0, 1], tickfont: { size: 14, color: previewPlotColors.text }, showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1, showgrid: false, zeroline: false, automargin: true, anchor: "y2" },
-                      yaxis: { title: { text: "Voltage (V)", font: { size: 14, color: previewPlotColors.text } }, tickfont: { size: 14, color: previewPlotColors.text }, domain: [0.30, 1], showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true },
-                      yaxis2: { title: { text: "Current (mA)", font: { size: 14, color: previewPlotColors.text } }, tickfont: { size: 14, color: previewPlotColors.text }, domain: [0, 0.23], showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true, anchor: "x" },
+                      xaxis: { title: { text: previewXAxis === "time" ? "Time (min)" : "Capacity (mAh)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, domain: [0, 1], tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, showline: false, showgrid: false, zeroline: false, automargin: true, anchor: "y2" },
+                      yaxis: { title: { text: "Voltage (V)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0.30, 1], showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true },
+                      yaxis2: { title: { text: "Current (mA)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0, 0.23], showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true, anchor: "x" },
                       shapes: [
-                        { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0.3, y1: 1, line: { color: previewPlotColors.border, width: 1 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
-                        { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0, y1: 0.23, line: { color: previewPlotColors.border, width: 1 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
+                        { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0, y1: 1, line: { color: previewPlotColors.border, width: 1 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
                       ],
                     }}
                     config={{ responsive: true, displayModeBar: false }}
-                    style={{ width: "100%", height: 300 }}
+                    style={{ width: "100%", height: 380, fontWeight: 400 }}
                   />
                   {previewQuery.isFetching && previewTrace && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
                   </Box>
