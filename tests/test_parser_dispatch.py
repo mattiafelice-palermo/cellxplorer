@@ -172,7 +172,8 @@ class FormatRecognitionTests(unittest.TestCase):
                 for extension in descriptor.extensions
             },
         )
-        self.assertIn("BioLogic GCPL-family", parsing.SUPPORTED_SOURCE_DESCRIPTION)
+        self.assertIn("BioLogic (.mpr;", parsing.SUPPORTED_SOURCE_DESCRIPTION)
+        self.assertIn("GCPL canonical cycling", parsing.SUPPORTED_SOURCE_DESCRIPTION)
         self.assertNotIn(".mpt", parsing.SUPPORTED_SOURCE_GLOB)
 
 

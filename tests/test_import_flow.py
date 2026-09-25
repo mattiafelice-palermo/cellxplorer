@@ -275,13 +275,16 @@ class ImportFlowTests(unittest.TestCase):
                 import_inspection.inspect_file(str(wrong_container))
 
     def test_unexpected_biologic_adapter_failure_is_not_reclassified_as_bad_input(self):
-        with patch.object(
-            parsing.biologic_gcpl,
-            "read_gcpl_header_metadata",
-            side_effect=RuntimeError("adapter defect"),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "adapter defect"):
-                parsing.read_header_metadata("unexpected.mpr")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unexpected.mpr"
+            _write_importable_biologic_mpr(path)
+            with patch.object(
+                parsing.biologic_gcpl,
+                "read_gcpl_header_metadata",
+                side_effect=RuntimeError("adapter defect"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "adapter defect"):
+                    parsing.read_header_metadata(path)
 
     def test_biologic_preview_is_unavailable_for_metadata_only_mpr(self):
         with tempfile.TemporaryDirectory() as tmp:
