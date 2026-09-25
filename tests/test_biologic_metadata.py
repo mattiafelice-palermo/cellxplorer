@@ -17,6 +17,7 @@ from backend.app.services.biologic_mpr import read_mpr_header
 from tests.biologic_mpr_fixture import (
     encode_gcpl_log,
     encode_gcpl_settings,
+    write_raw_mpr_layout,
     write_gcpl_mpr,
 )
 
@@ -228,9 +229,8 @@ class BiologicMetadataTests(unittest.TestCase):
         self.assertIn("technique discriminator", metadata["error"])
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "unknown-direct.mpr", _HEADER_ROWS, settings_payload=bytes(payload))
-            with read_mpr_header(path) as document:
-                with self.assertRaisesRegex(UnsupportedBiologicGcplError, "technique discriminator"):
-                    decode_gcpl_settings(document.vmp_set)
+            with self.assertRaisesRegex(parsing.UnsupportedSourceFormatError, "technique discriminator"):
+                read_mpr_header(path)
 
     def test_header_reader_does_not_construct_record_array(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -341,6 +341,29 @@ class BiologicMetadataTests(unittest.TestCase):
                 with read_mpr_header(path) as document:
                     with self.assertRaisesRegex(UnsupportedBiologicGcplError, message):
                         decode_gcpl_settings(document.vmp_set)
+
+    def test_cp_and_ocv_headers_are_readable_metadata_only_sources(self) -> None:
+        cases = (
+            (0x19, (1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295), 49, "CP"),
+            (0x0B, (1, 3, 4, 174), 13, "OCV"),
+        )
+        for technique_id, columns, stride, technique in cases:
+            with self.subTest(technique=technique), tempfile.TemporaryDirectory() as temp:
+                path = write_raw_mpr_layout(
+                    Path(temp) / f"{technique.lower()}.mpr",
+                    technique_id=technique_id,
+                    column_ids=columns,
+                    record_stride=stride,
+                    log_payload=encode_gcpl_log(),
+                )
+                metadata = parsing.read_header_metadata(path)
+
+            self.assertEqual(metadata["technique"], technique)
+            self.assertEqual(metadata["raw"]["data"]["n_datapoints"], 2)
+            self.assertTrue(metadata["raw"]["capabilities"]["metadata_only"])
+            self.assertFalse(metadata["raw"]["capabilities"]["canonical_cycling"])
+            self.assertTrue(parsing.source_metadata_only(metadata))
+            self.assertIn(technique, parsing.source_metadata_only_message(metadata))
 
 
 if __name__ == "__main__":

@@ -159,6 +159,7 @@ def _literal_record_bytes(
 def _write_fixture(
     directory: Path,
     *,
+    settings_payload: bytes = b"\x77settings",
     data_payload: bytes | None = None,
     data_version: int = 11,
     set_version: int = 10,
@@ -174,7 +175,7 @@ def _write_fixture(
     modules = [
         _module(
             b"VMP settings",
-            b"settings",
+            settings_payload,
             version=set_version,
             old_version=set_old_version,
             short_name=b"VMP Set   ",
@@ -238,6 +239,52 @@ class BiologicMprReaderTests(unittest.TestCase):
                 self.assertEqual(document.vmp_set.long_name, "VMP settings")
                 self.assertEqual(document.vmp_data.module.short_name, "VMP data")
                 self.assertEqual(document.vmp_data.module.long_name, "VMP data")
+
+    def test_reads_verified_cp_record_layout_without_gcpl_columns(self) -> None:
+        cp_columns = (
+            1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                settings_payload=b"\x19verified CP",
+                data_payload=_data_payload(
+                    column_ids=cp_columns,
+                    record_itemsize=49,
+                ),
+            )
+            with read_mpr(path) as document:
+                self.assertEqual(document.vmp_data.column_ids, cp_columns)
+                self.assertEqual(document.vmp_data.record_itemsize, 49)
+                self.assertEqual(document.vmp_data.records.dtype.names[0], "raw_flags")
+                self.assertIn("raw_current_ma", document.vmp_data.records.dtype.names)
+                self.assertIn(
+                    "raw_context_dependent_working_potential",
+                    document.vmp_data.records.dtype.names,
+                )
+
+    def test_reads_verified_ocv_record_layout_with_minimal_packed_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(
+                Path(temp),
+                settings_payload=b"\x0bverified OCV",
+                data_payload=_data_payload(
+                    column_ids=(1, 3, 4, 174),
+                    record_itemsize=13,
+                ),
+            )
+            with read_mpr(path) as document:
+                self.assertEqual(document.vmp_data.record_itemsize, 13)
+                self.assertIn(
+                    "raw_context_dependent_working_potential",
+                    document.vmp_data.records.dtype.names,
+                )
+
+    def test_unknown_technique_is_rejected_before_gcpl_layout_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp), settings_payload=b"\x7funknown")
+            with self.assertRaisesRegex(UnsupportedMprError, "unsupported BioLogic technique"):
+                read_mpr(path)
 
     def test_log_module_is_optional_at_low_level(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -314,7 +361,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
-            first_end = 52 + MPR_MODULE_HEADER_SIZE + 8
+            first_end = 52 + MPR_MODULE_HEADER_SIZE + len(b"\x77settings")
             contents[first_end] = ord("X")
             path.write_bytes(contents)
             with self.assertRaises(InvalidMprError):
@@ -664,7 +711,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path = Path(temp) / "duplicate.mpr"
             path.write_bytes(
                 _MAGIC_HEADER
-                + _module(b"VMP settings", b"settings", version=10, short_name=b"VMP Set   ")
+                + _module(b"VMP settings", b"\x77settings", version=10, short_name=b"VMP Set   ")
                 + _module(b"VMP data", payload, version=11)
                 + _module(b"VMP data", payload, version=11)
             )

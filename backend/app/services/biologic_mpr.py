@@ -30,7 +30,7 @@ from .source_format_errors import (
 )
 
 
-MPR_READER_REVISION = 2
+MPR_READER_REVISION = 3
 MPR_INITIAL_HEADER_SIZE = 52
 MPR_MODULE_HEADER_SIZE = 65
 MPR_MODULE_MARKER = b"MODULE"
@@ -125,15 +125,31 @@ class MprStorageDefinition:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class MprTechniqueLayoutProfile:
+    """Independently observed record requirements for one MPR technique."""
+
+    name: str
+    technique_ids: frozenset[int]
+    required_flag_ids: frozenset[int]
+    required_base_ids: frozenset[int]
+
+
 MPR_RECORD_FIELD_NAMES = {
     4: "elapsed_time_s",
     5: "raw_control_v_or_mA",
     6: "raw_ewe_v",
     7: "raw_dq_mAh",
+    8: "raw_current_ma",
     9: "raw_ece_v",
     13: "raw_q_minus_q0_mAh",
+    20: "raw_current_control_ma",
     39: "raw_current_range_code",
     131: "raw_sample_index",
+    174: "raw_context_dependent_working_potential",
+    178: "raw_q_minus_q0_coulomb",
+    179: "raw_dq_coulomb",
+    185: "raw_mean_counter_potential",
     211: "raw_q_charge_discharge_mAh",
     212: "raw_half_cycle_index",
 }
@@ -419,6 +435,37 @@ _PACKED_FLAG_IDS = frozenset(definition.encoded_id for definition in MPR_FLAG_DE
 _REQUIRED_FLAG_IDS = _PACKED_FLAG_IDS
 _REQUIRED_BASE_ID_SET = frozenset(REQUIRED_GCPL_BASE_IDS)
 
+# Only independently observed settings discriminators select these bounded
+# layouts. CP/OCV describe readable measurements, not verified cycling runs.
+MPR_GCPL_TECHNIQUE_IDS = frozenset({0x04, 0x77})
+MPR_CP_TECHNIQUE_ID = 0x19
+MPR_OCV_TECHNIQUE_ID = 0x0B
+MPR_TECHNIQUE_LAYOUT_PROFILES = (
+    MprTechniqueLayoutProfile(
+        "GCPL",
+        MPR_GCPL_TECHNIQUE_IDS,
+        _REQUIRED_FLAG_IDS,
+        _REQUIRED_BASE_ID_SET,
+    ),
+    MprTechniqueLayoutProfile(
+        "CP",
+        frozenset({MPR_CP_TECHNIQUE_ID}),
+        _REQUIRED_FLAG_IDS,
+        frozenset({131, 4, 8, 20, 174, 178, 179, 185, 211, 212, 39}),
+    ),
+    MprTechniqueLayoutProfile(
+        "OCV",
+        frozenset({MPR_OCV_TECHNIQUE_ID}),
+        frozenset({1, 3}),
+        frozenset({4, 174}),
+    ),
+)
+_MPR_TECHNIQUE_LAYOUT_BY_ID = {
+    technique_id: profile
+    for profile in MPR_TECHNIQUE_LAYOUT_PROFILES
+    for technique_id in profile.technique_ids
+}
+
 
 def _record_dtype_for_columns(
     column_ids: tuple[int, ...],
@@ -442,6 +489,9 @@ def _resolve_column_layout(
     column_ids: tuple[int, ...],
     *,
     record_stride: int,
+    required_flag_ids: frozenset[int] = _REQUIRED_FLAG_IDS,
+    required_base_ids: frozenset[int] = _REQUIRED_BASE_ID_SET,
+    layout_name: str = "GCPL",
 ) -> _ResolvedMprLayout:
     """Resolve one declared column sequence without guessing unknown widths."""
 
@@ -462,7 +512,7 @@ def _resolve_column_layout(
     opaque_started = False
 
     def required_fields_located() -> bool:
-        return seen_flags == _REQUIRED_FLAG_IDS and _REQUIRED_BASE_ID_SET.issubset(seen_bases)
+        return required_flag_ids.issubset(seen_flags) and required_base_ids.issubset(seen_bases)
 
     for encoded_id in column_ids:
         if encoded_id in _PACKED_FLAG_IDS:
@@ -489,7 +539,7 @@ def _resolve_column_layout(
         base_id = int(encoded_id) % 256
         resolved_base_ids.append(base_id)
         if opaque_started:
-            if base_id in _REQUIRED_BASE_ID_SET:
+            if base_id in required_base_ids:
                 raise UnsupportedMprColumn(
                     f"required VMP base ID {base_id} appears after an opaque unknown suffix"
                 )
@@ -502,7 +552,7 @@ def _resolve_column_layout(
             if not required_fields_located():
                 raise UnsupportedMprColumn(
                     f"VMP column ID {encoded_id} resolves to unknown base ID {base_id} "
-                    "before all required GCPL fields are located"
+                    f"before all required {layout_name} fields are located"
                 )
             opaque_started = True
             opaque_trailing_column_ids.append(encoded_id)
@@ -525,15 +575,15 @@ def _resolve_column_layout(
             field_formats[storage.field_name] = storage.dtype
         cursor += storage.byte_width
 
-    missing_flags = sorted(_REQUIRED_FLAG_IDS - seen_flags)
+    missing_flags = sorted(required_flag_ids - seen_flags)
     if missing_flags:
         raise UnsupportedMprColumn(
-            f"VMP data is missing required packed GCPL flag IDs: {missing_flags}"
+            f"VMP data is missing required packed {layout_name} flag IDs: {missing_flags}"
         )
-    missing_bases = sorted(_REQUIRED_BASE_ID_SET - seen_bases)
+    missing_bases = sorted(required_base_ids - seen_bases)
     if missing_bases:
         raise UnsupportedMprColumn(
-            f"VMP data is missing required GCPL base IDs: {missing_bases}"
+            f"VMP data is missing required {layout_name} base IDs: {missing_bases}"
         )
 
     if opaque_started:
@@ -763,6 +813,39 @@ def _source_label(path: Path) -> str:
     return path.name or "<unnamed MPR>"
 
 
+def _layout_profile_for_settings(module: MprModule, path: Path) -> MprTechniqueLayoutProfile:
+    settings = module.payload
+    try:
+        if not settings:
+            raise UnsupportedMprError(
+                f"{_source_label(path)} has an empty VMP Set technique discriminator"
+            )
+        technique_id = int(settings[0])
+    finally:
+        settings.release()
+    profile = _MPR_TECHNIQUE_LAYOUT_BY_ID.get(technique_id)
+    if profile is None:
+        raise UnsupportedMprError(
+            f"{_source_label(path)} uses unsupported BioLogic technique discriminator "
+            f"0x{technique_id:02x}"
+        )
+    return profile
+
+
+def mpr_technique_id(document: MprDocument) -> int:
+    """Return the technique discriminator from a validated VMP Set module."""
+
+    settings = document.vmp_set.payload
+    try:
+        if not settings:
+            raise UnsupportedMprError(
+                f"{_source_label(document.path)} has an empty VMP Set technique discriminator"
+            )
+        return int(settings[0])
+    finally:
+        settings.release()
+
+
 def _stat_fingerprint(stat_result: object) -> tuple[int, int | None]:
     return (
         int(getattr(stat_result, "st_size")),
@@ -846,6 +929,9 @@ def _decode_vmp_data(
     path: Path,
     *,
     decode_records: bool = True,
+    required_flag_ids: frozenset[int] = _REQUIRED_FLAG_IDS,
+    required_base_ids: frozenset[int] = _REQUIRED_BASE_ID_SET,
+    layout_name: str = "GCPL",
 ) -> MprDataBlock:
     payload = module.payload
     try:
@@ -882,7 +968,13 @@ def _decode_vmp_data(
             raise InvalidMprError(
                 f"{_source_label(path)} has unsafe VMP record stride {record_stride}"
             )
-        layout = _resolve_column_layout(column_ids, record_stride=record_stride)
+        layout = _resolve_column_layout(
+            column_ids,
+            record_stride=record_stride,
+            required_flag_ids=required_flag_ids,
+            required_base_ids=required_base_ids,
+            layout_name=layout_name,
+        )
         record_dtype = layout.record_dtype
 
         records: np.ndarray | None = None
@@ -1007,6 +1099,7 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
                 f"{_source_label(source_path)} uses unsupported VMP Set version "
                 f"{set_module.version}; expected {VMP_SET_VERSION}"
             )
+        layout_profile = _layout_profile_for_settings(set_module, source_path)
 
         log_modules = [module for module in modules if module.is_vmp_log]
         if len(log_modules) > 1:
@@ -1028,6 +1121,9 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
             data_module,
             source_path,
             decode_records=decode_records,
+            required_flag_ids=layout_profile.required_flag_ids,
+            required_base_ids=layout_profile.required_base_ids,
+            layout_name=layout_profile.name,
         )
         final_stat = os.fstat(file_handle.fileno())
         if _stat_fingerprint(final_stat) != initial_fingerprint or len(mapping) != file_size:
@@ -1098,6 +1194,11 @@ __all__ = [
     "MprStorageDefinition",
     "MprModule",
     "MPR_READER_REVISION",
+    "MPR_GCPL_TECHNIQUE_IDS",
+    "MPR_CP_TECHNIQUE_ID",
+    "MPR_OCV_TECHNIQUE_ID",
+    "MPR_TECHNIQUE_LAYOUT_PROFILES",
+    "MprTechniqueLayoutProfile",
     "SUPPORTED_GCPL_COLUMN_IDS",
     "SUPPORTED_GCPL_COLUMN_ID_SET",
     "UnsupportedMprColumn",
@@ -1105,4 +1206,5 @@ __all__ = [
     "UnsupportedMprModuleVersion",
     "read_mpr",
     "read_mpr_header",
+    "mpr_technique_id",
 ]

@@ -160,13 +160,15 @@ delete the data directory. Destructive removal is an explicit, separately confir
 
 Supported source dispatch is centralized in `backend/app/services/parsing.py` (Spec 040.2): a small
 static registry of `SourceFormatDescriptor`s (`FORMAT_NEWARE_BINARY` = `.nda`/`.ndax`,
-`FORMAT_NEWARE_EXCEL` = `.xlsx`, `FORMAT_BIOLOGIC_MPR` = verified GCPL-family `.mpr`) drives one
+`FORMAT_NEWARE_EXCEL` = `.xlsx`, `FORMAT_BIOLOGIC_MPR` = verified BioLogic `.mpr` layouts) drives one
 shared extension -> format_id decision table that admission, inspection, `parse_timeseries`,
 `read_header_metadata`, scanners, pickers, and parser identity all use. `.nda`/`.ndax` use the
 shared NewareNDA boundary, structured Neware `.xlsx` files use
 `backend/app/services/neware_excel.py`, and `.mpr` uses the independently authored
-`biologic_mpr.py`/`biologic_gcpl.py` boundary. `.mpt` remains validation ground truth, not an
-admitted source format.
+`biologic_mpr.py` reader plus `biologic_gcpl.py` canonical adapter. Verified GCPL-family MPRs are
+canonical cycling sources; recognized CP and OCV layouts are accepted as metadata-only sources
+because their cycle identity is not established by the GCPL adapter. Unknown or unsupported MPR
+layouts remain rejected. `.mpt` remains validation ground truth, not an admitted source format.
 `parsing.recognize_source(path)` is the content-aware recognition function (Excel additionally
 requires `neware_excel.is_supported_workbook`'s bounded header check, so a generic `.xlsx` is never
 recognized by extension alone); `parsing.source_parser_descriptor(path)` exposes each format's
@@ -197,8 +199,9 @@ worker/result guards use stat-only checks against the established receipt (whose
 server-owned). Successes and failures are both applied only when the source path and stored
 identity still match; stale or missing results are reported as discarded rather than changing a
 newer SourceFile. The scanner carries the same immutable identity in each job and applies stale
-guards before either success or failure mutation. Recognized BioLogic `.mpr` files in the verified
-GCPL family expose bounded header/protocol metadata. When an explicit full-cycle field is absent,
+guards before either success or failure mutation. Recognized BioLogic `.mpr` files expose bounded
+header/protocol metadata; verified CP and OCV layouts remain metadata-only. Files in the verified
+GCPL family may be promoted to canonical cycling data. When an explicit full-cycle field is absent,
 `biologic_gcpl.py` may promote a source after validating a non-repeating episode or a deterministic
 protocol/observed-`Ns` loop; half-cycle progression is diagnostic-only and never supplies an
 arithmetic cycle formula. Active preconditioning, branching, contradictory directions, ambiguous

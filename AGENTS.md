@@ -4,7 +4,9 @@
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
 inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data,
-plus supported BioLogic GCPL-family `.mpr` sources. The verified MPR contract includes explicit
+plus BioLogic GCPL-family `.mpr` sources. Verified BioLogic CP and OCV variants can also be read as
+metadata-only sources; they do not claim canonical charge/discharge cycles. The verified GCPL
+contract includes explicit
 cycle identity, a bounded declared/observed-`Ns` loop reconstruction path, and source-local cycle 1
 for deterministic non-repeating episodes, including a header-proven neutral setup/control
 preamble. Ambiguous restarts, branching, unresolved controls, contradictory directions, and
@@ -156,7 +158,7 @@ production migrations. See `docs/database-migrations.md`.
   (Spec 040.1); see `docs/agent-knowledge/canonical-cycling-data.md`
 - `backend/app/services/source_format_errors.py`: format-neutral source-rejection error taxonomy
   every adapter's errors derive from (Spec 040.2)
-- `backend/app/services/biologic_mpr.py`: independent BioLogic MPR container and typed VMP data reader (Spec 041.1)
+- `backend/app/services/biologic_mpr.py`: independent BioLogic MPR reader with verified GCPL/CP/OCV layouts (Spec 041.1)
 - `backend/app/services/biologic_gcpl.py`: direct GCPL-to-canonical cycling adapter (Spec 041.2)
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
@@ -205,7 +207,7 @@ Cellxplorer/
 │           ├── time_capacity_workers.py Owner-resolved ordinary Time/Capacity execution and bounded pool (Spec 050.14)
 │           ├── time_capacity_reusable.py Bounded immutable per-Cell navigation arrays (Spec 058)
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
-│           ├── biologic_mpr.py    Independent BioLogic MPR container/data reader (Spec 041.1)
+│           ├── biologic_mpr.py    Independent BioLogic MPR reader with verified GCPL/CP/OCV layouts (Spec 041.1)
 │           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)

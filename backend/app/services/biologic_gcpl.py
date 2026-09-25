@@ -45,10 +45,10 @@ from .source_format_errors import (
 )
 
 
-# gcpl12 adds an evidence-selected ID-13 capacity-counter variant while keeping
-# the gcpl11 settings-profile and cycle/provenance contracts. Older source
-# caches must be re-inspected before they receive this parser identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl12"
+# gcpl13 admits verified CP/OCV metadata layouts at the MPR boundary and
+# allows only the measured f64 ID-13/ID-7 active-counter rounding residual.
+# Older source caches must be re-inspected before receiving this identity.
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl13"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -207,6 +207,11 @@ _SUPPORTED_MODES = frozenset(
 
 _TIME_TOLERANCE_S = 1e-6
 _CAPACITY_TOLERANCE_MAH = 1e-9
+# The verified GCPL6 ID-13 profile has an observed active increment residual
+# up to 1.7123e-9 mAh from the source's stored floating-point precision. Keep
+# the parity check profile-local and narrowly above that measured maximum;
+# cycle, direction, and boundary checks keep using the stricter base tolerance.
+_ID13_ACTIVE_INCREMENT_PARITY_TOLERANCE_MAH = 2e-9
 # GCPL6 can emit a short first interval immediately after an Ns transition.
 # In the real 21-ID/93-byte source family that interval is about 1.75e-6 mA.h
 # and is written both as the first cumulative value and as raw dQ. It is the
@@ -1572,7 +1577,7 @@ def _resolve_capacity_counter_profile(
     active_slice = slice(active_start, rest_start)
     if np.any(
         np.abs(id13_increments[active_slice] - raw_dq_mAh[active_slice])
-        > _CAPACITY_TOLERANCE_MAH
+        > _ID13_ACTIVE_INCREMENT_PARITY_TOLERANCE_MAH
     ):
         raise UnsupportedBiologicGcplError(
             "ID-13 active capacity increments do not match the ID-7 incremental counter"

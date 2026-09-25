@@ -187,8 +187,8 @@ _DIRECT_EXTENSION_FORMAT_ID = _EXTENSION_FORMAT_ID
 SUPPORTED_DIRECT_SOURCE_EXTENSIONS = SUPPORTED_SOURCE_EXTENSIONS
 
 SUPPORTED_SOURCE_DESCRIPTION = (
-    "Cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL-family "
-    "(.mpr; canonical cycling availability is verified per source)"
+    "Cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic (.mpr; GCPL "
+    "canonical cycling, verified CP/OCV metadata-only layouts)"
 )
 SUPPORTED_SOURCE_GLOB = source_glob()
 
@@ -428,9 +428,10 @@ RAW_COLUMNS = {
 # and ``gcpl8`` are also historical now: gcpl8 widened the accepted contract
 # for a header-proven neutral setup/control preamble, gcpl9 widened the
 # binary column-layout contract, gcpl10 widened logical-cycle reconstruction,
-# gcpl11 adds validated settings profiles, and gcpl12 adds evidence-selected
-# capacity-counter interpretation. Sources under each prior identity must
-# pass the current source-reading path before receiving gcpl12.
+# gcpl11 added validated settings profiles, gcpl12 added evidence-selected
+# capacity-counter interpretation, and gcpl13 adds verified CP/OCV layouts plus
+# narrow ID-13 increment precision tolerance. Sources under each prior identity
+# must pass the current source-reading path before receiving gcpl13.
 # Keep these sets explicit so a later BioLogic revision can add its own
 # bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
@@ -444,6 +445,7 @@ LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
         "bm:gcpl9:r1",
         "bm:gcpl10:r1",
         "bm:gcpl11:r1",
+        "bm:gcpl12:r1",
     }
 )
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
@@ -461,13 +463,13 @@ RETIRED_BIOLOGIC_MPR_WARNING = (
     "verified; this source is metadata-only."
 )
 BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING = (
-    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl12 "
+    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current gcpl13 "
     "identity from stored registry-resolved layout evidence; canonical "
     "cycling remains unavailable until logical cycle identity is independently "
     "verified, so this source is metadata-only."
 )
 BIOLOGIC_MPR_REINSPECTION_WARNING = (
-    "This BioLogic MPR was registered under a pre-gcpl12 parser identity, but "
+    "This BioLogic MPR was registered under a pre-gcpl13 parser identity, but "
     "its stored binary-layout evidence does not prove a safe registry-resolved "
     "layout. Re-inspect the source before using it; it remains metadata-only."
 )
@@ -1475,6 +1477,113 @@ def _read_neware_binary_header_flat(path: Path) -> dict[str, str]:
     return _flatten(NewareNDA.read_metadata(str(path)))
 
 
+def _metadata_only_biologic_header(
+    document: biologic_mpr.MprDocument,
+    *,
+    technique_id: int,
+) -> dict[str, Any]:
+    """Normalize a verified non-cycling BioLogic layout without cycle claims."""
+
+    technique = {
+        biologic_mpr.MPR_CP_TECHNIQUE_ID: "CP",
+        biologic_mpr.MPR_OCV_TECHNIQUE_ID: "OCV",
+    }[technique_id]
+    layout = next(
+        profile.name
+        for profile in biologic_mpr.MPR_TECHNIQUE_LAYOUT_PROFILES
+        if technique_id in profile.technique_ids
+    )
+    log = biologic_gcpl.decode_gcpl_log(document.vmp_log)
+    warning = (
+        f"BioLogic {technique} data is readable, but this technique does not provide a "
+        "verified charge/discharge cycle contract; no canonical cycling rows are available."
+    )
+    data = document.vmp_data
+    data_header = {
+        "n_datapoints": data.n_datapoints,
+        "n_columns": data.n_columns,
+        "column_ids": list(data.column_ids),
+        "resolved_base_ids": list(data.resolved_base_ids),
+        "record_offset": data.record_offset,
+        "record_stride": data.record_stride,
+        "record_itemsize": data.record_itemsize,
+        "field_offsets": dict(data.field_offsets),
+        "ignored_known_column_ids": list(data.ignored_known_column_ids),
+        "opaque_trailing_column_ids": list(data.opaque_trailing_column_ids),
+        "opaque_trailing_base_ids": list(data.opaque_trailing_base_ids),
+    }
+    modules = [
+        {
+            "short_name": module.short_name,
+            "long_name": module.long_name,
+            "version": module.version,
+            "old_version": module.old_version,
+            "length": module.length,
+            "date": module.date_text,
+        }
+        for module in document.modules
+    ]
+    capabilities = {
+        "cycling_rows": False,
+        "canonical_cycling": False,
+        "canonical_cycling_pending": False,
+        "canonical_cycling_verified": False,
+        "metadata_only": True,
+        "cycle_identity_source": "unresolved",
+        "absolute_timestamps": bool(log.get("absolute_timestamps")),
+        "measurement_voltage_available": 174 in data.resolved_base_id_set,
+    }
+    channel_number = log.get("channel_number")
+    device_parts: list[str] = []
+    for field, label in (
+        ("host", "host"),
+        ("address", "address"),
+        ("device_serial", "device"),
+        ("channel_serial", "channel serial"),
+    ):
+        if log.get(field) is not None:
+            device_parts.append(f"{label} {log[field]}")
+    return {
+        "source_format": FORMAT_BIOLOGIC_MPR,
+        "technique": technique,
+        "raw": {
+            "modules": modules,
+            "settings": {
+                "technique_id": technique_id,
+                "technique": technique,
+                "technique_family": technique,
+                "layout_profile": layout,
+                "settings_decoded": False,
+            },
+            "log": log,
+            "data": data_header,
+            "capabilities": capabilities,
+            "protocol_warnings": [warning],
+        },
+        "start_time": log.get("start_time"),
+        "absolute_timestamps": bool(log.get("absolute_timestamps")),
+        "timestamp_timezone": log.get("timestamp_timezone"),
+        "channel": None if channel_number is None else str(channel_number + 1),
+        "channel_number": channel_number,
+        "device_info": "; ".join(device_parts) or None,
+        "software_version": log.get("ec_lab_version"),
+        "software": {
+            key: log.get(key)
+            for key in (
+                "ec_lab_version",
+                "server_version",
+                "interpreter_version",
+            )
+            if log.get(key) is not None
+        },
+        "active_mass_mg": None,
+        "nominal_capacity_mah": None,
+        "electrode_area_cm2": None,
+        "protocol_warnings": [warning],
+        "capabilities": capabilities,
+    }
+
+
 def read_header_metadata(path: str | Path) -> dict:
     """Cheap header/metadata extraction (no full parse).
 
@@ -1491,7 +1600,17 @@ def read_header_metadata(path: str | Path) -> dict:
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix)
     try:
         if format_id == FORMAT_BIOLOGIC_MPR:
-            return biologic_gcpl.read_gcpl_header_metadata(path)
+            with biologic_mpr.read_mpr_header(path) as document:
+                technique_id = biologic_mpr.mpr_technique_id(document)
+                if technique_id in {
+                    biologic_mpr.MPR_CP_TECHNIQUE_ID,
+                    biologic_mpr.MPR_OCV_TECHNIQUE_ID,
+                }:
+                    return _metadata_only_biologic_header(
+                        document,
+                        technique_id=technique_id,
+                    )
+                return biologic_gcpl.read_gcpl_header_metadata(document)
         if format_id == FORMAT_NEWARE_EXCEL:
             meta = neware_excel.read_metadata(path)
             flat = _flatten(meta)

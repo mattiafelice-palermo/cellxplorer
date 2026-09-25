@@ -214,7 +214,7 @@ def write_gcpl_mpr(
     path: str | Path,
     rows: Sequence[Mapping[str, object]],
     *,
-    settings_payload: bytes = b"settings",
+    settings_payload: bytes = b"\x77settings",
     log_payload: bytes = b"log",
     include_log: bool = False,
     column_ids: Sequence[int] = SUPPORTED_GCPL_COLUMN_IDS,
@@ -256,9 +256,56 @@ def write_gcpl_mpr(
     return output
 
 
+def write_raw_mpr_layout(
+    path: str | Path,
+    *,
+    technique_id: int,
+    column_ids: Sequence[int],
+    record_stride: int,
+    datapoints: int = 2,
+    log_payload: bytes | None = None,
+) -> Path:
+    """Write a small structurally valid MPR for technique-layout tests."""
+
+    data_payload = (
+        struct.pack("<I", datapoints)
+        + bytes([len(column_ids)])
+        + struct.pack(f">{len(column_ids)}H", *column_ids)
+    )
+    data_payload = data_payload.ljust(VMP_DATA_RECORD_OFFSET, b"\x00")
+    data_payload += bytes(datapoints * record_stride)
+    modules = (
+        _module(
+            short_name=b"VMP Set",
+            long_name=b"VMP settings",
+            payload=bytes([technique_id]) + bytes(31),
+            version=10,
+        ),
+        _module(
+            short_name=b"VMP data",
+            long_name=b"VMP data",
+            payload=data_payload,
+            version=11,
+        ),
+    )
+    if log_payload is not None:
+        modules += (
+            _module(
+                short_name=b"VMP LOG",
+                long_name=b"VMP LOG",
+                payload=log_payload,
+                version=10,
+            ),
+        )
+    output = Path(path)
+    output.write_bytes(MPR_MAGIC + b"".join(modules))
+    return output
+
+
 __all__ = [
     "encode_gcpl_log",
     "encode_gcpl_records",
     "encode_gcpl_settings",
+    "write_raw_mpr_layout",
     "write_gcpl_mpr",
 ]

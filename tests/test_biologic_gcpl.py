@@ -270,11 +270,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl12",
+                "adapter_revision": "gcpl13",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl12:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl13:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
@@ -1168,6 +1168,17 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
         with self.assertRaisesRegex(UnsupportedBiologicGcplError, "do not match the ID-7"):
             map_gcpl_to_canonical(records)
+
+    def test_id13_active_increment_allows_binary_float_precision_residual(self) -> None:
+        records = _id13_counter_records()
+        records["raw_dq_mAh"][1] = -1.0 - 1.5e-9
+
+        frame = map_gcpl_to_canonical(records)
+
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["capacity_counter_profile"],
+            "gcpl-capacity-id13-zero-id211-v1",
+        )
 
     def test_id13_capacity_variant_rejects_large_rest_boundary_residual(self) -> None:
         records = _id13_counter_records(rest_residual_mAh=-1.1e-6)

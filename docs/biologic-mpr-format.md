@@ -1,8 +1,8 @@
 # BioLogic MPR format notebook
 
-This is CellXplorer's independent format notebook for the narrow BioLogic EC-Lab MPR layout
-supported by Spec 041. It records only facts established from the supplied project-owned sample,
-direct byte observations, and project-authored tests. It is not copied from a third-party parser.
+This is CellXplorer's independent format notebook for the verified BioLogic EC-Lab MPR layouts
+supported by the application. It records only facts established from direct byte observations and
+project-authored tests. It is not copied from a third-party parser.
 
 ## Evidence file
 
@@ -47,8 +47,8 @@ The supplied sample has exactly these modules:
 | 298,741 | `VMP LOG` | `VMP LOG` | 10 | 8,309 | 307,115 |
 
 Unknown optional modules may be retained as structural descriptors but are not interpreted by the
-reader. The supported GCPL layout requires exactly one VMP Set module and one VMP data module. The
-VMP LOG module is optional at the low-level boundary and is exposed without guessing its fields.
+reader. Recognized technique profiles require exactly one VMP Set module and one VMP data module.
+The VMP LOG module is optional at the low-level boundary and is exposed without guessing its fields.
 
 ## VMP data block
 
@@ -243,9 +243,27 @@ timezone offset. Canonical timestamps are `acquisition_start + total_time_s`. A 
 non-finite, or out-of-range OLE date leaves `absolute_timestamps` false and every canonical timestamp
 as `NaT`; file modification time is never used.
 
+## Metadata-only CP and OCV layouts
+
+The low-level reader selects record requirements by the technique byte in the VMP Set payload.
+This admission is separate from canonical cycling support. Two observed non-GCPL families are
+readable for source identity/header inspection and can be registered as metadata-only:
+
+| Technique | Byte | Verified encoded data columns | Record stride | Capability |
+|---|---:|---|---:|---|
+| CP (chronopotentiometry) | `0x19` | `1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295` | 49 | Metadata-only; no GCPL cycle identity |
+| OCV | `0x0b` | `1, 3, 4, 174` | 13 | Metadata-only; no charge/discharge cycle |
+
+Both use the same length-checked MPR modules and VMP data header as GCPL, but each has its own
+required flags and storage fields. The CP/OCV paths never call the GCPL settings or canonical-row
+mapper. They preserve readable module/data-header metadata and a clear capability warning, while
+the import flow requires its existing explicit acknowledgement for metadata-only sources. Unknown
+technique bytes and unverified column layouts remain unsupported. This boundary deliberately avoids
+inventing cycle numbers, capacity, or a charge/discharge interpretation for CP and OCV data.
+
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl12`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl13`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -278,7 +296,8 @@ arbitrary flag timing or capacity transfer remains unsupported.
 Record capacity counters use a separate evidence-selected profile registry. The ordinary profile
 continues to use ID-211 whenever it carries capacity. A bounded alternate profile uses ID-13 only
 when ID-211 is inert across the source, ID-13 starts at a source-local zero, its active increments
-match ID-7 within `1e-9 mA.h`, and the decoded execution is one active block followed by one Rest
+match ID-7 within `2e-9 mA.h` (the observed maximum float-storage residual is `1.7123e-9 mA.h`),
+and the decoded execution is one active block followed by one Rest
 block. Current direction must agree with the active ID-13 transfer. This profile permits one
 counter-only change of at most `1e-6 mA.h` on the first Rest row when that row's ID-7 increment is
 zero and the remaining Rest counter is flat. That residual is reported in adapter provenance and
@@ -287,8 +306,9 @@ is nonzero, the existing ID-211 profile remains in force. If ID-211 is inert but
 match the complete bounded shape above—including larger or repeated Rest changes or another block
 history—the source remains fail-closed. The filename is not part of profile selection.
 
-The current BioLogic parser identity is `bm:gcpl12:r1`; moving to it re-inspects sources previously
-registered under `bm:gcpl11:r1` so cached output cannot bypass the new counter-profile decision.
+The current BioLogic parser identity is `bm:gcpl13:r1`; moving to it re-inspects sources previously
+registered under `bm:gcpl12:r1` so cached output cannot bypass the current MPR and counter-profile
+contracts.
 The supplied EGG GCPL6 source also establishes one narrow reset form at an executed `Ns` boundary:
 the first active row of the new `Ns` has an ID-211 cumulative charge/discharge quantity near zero
 and an ID-7 incremental `dQ` equal to that same short origin interval (about `1.75e-6 mA.h` in the
