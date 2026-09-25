@@ -1,7 +1,9 @@
 """Optional, header-only hints for files shown in the import browser.
 
 These hints are deliberately separate from import inspection. They never hash,
-register, or fully parse a file, and a failed hint never prevents selection.
+register, or fully parse a file. For `.xlsx`, the bounded metadata read also
+reports whether the workbook matches the supported Neware parser; other hint
+failures remain non-blocking.
 """
 from __future__ import annotations
 
@@ -47,8 +49,11 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
         "supplier": None,
         "technique": None,
         "cycle_count": None,
+        "compatible": None,
+        "registered": False,
         "error": None,
     }
+    metadata: dict[str, Any] = {}
     try:
         before = path.stat()
         if not path.is_file() or not parsing.source_filename_allowed(path.name):
@@ -61,6 +66,8 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError("File changed while its header was being read.")
         ext = path.suffix.casefold()
+        if ext == ".xlsx":
+            result["compatible"] = True
         biologic = ext == ".mpr"
         result.update(
             source_format=(
@@ -74,6 +81,12 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
             cycle_count=_cycle_count_hint(metadata),
         )
     except Exception as exc:
+        # A negative compatibility result is only justified when the parser
+        # explicitly classifies the workbook as unsupported. I/O races,
+        # permissions, and malformed-but-recognized exports leave the hint
+        # unknown so an optional scan failure cannot hide a selectable file.
+        if path.suffix.casefold() == ".xlsx" and metadata.get("error_kind") == "unsupported":
+            result["compatible"] = False
         result["error"] = str(exc)[:300] or "Header metadata is unavailable."
     return result
 

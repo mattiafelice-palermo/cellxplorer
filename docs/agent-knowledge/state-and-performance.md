@@ -111,6 +111,14 @@ The MPR reader has no inner process pool; large import batches use the existing 
 policy. Keep header/full-parse timings descriptive and test the separation with synthetic files, not
 by turning header inspection into a second full parse.
 
+The filesystem import picker automatically requests compact header hints in bounded batches. It
+prioritizes the currently visible rows in the active sort/filter order, then the rest of the
+directory; scrolling or changing sort/filter reprioritizes the next batch without blocking file
+selection. The hint endpoint remains header-only: supplier, format, and extension are available
+without reading cycling rows, while protocol and cycle-count fields appear only when the format
+declares them in readable metadata. Do not turn this into a full parse on the modal's critical path.
+Exact cycle counts that are not declared in the header require an explicitly asynchronous scan.
+
 Structured Neware Excel parsing uses a reader ladder in `backend/app/services/neware_excel.py`:
 `fastexcel` performs the primary full-width columnar read, pandas' `calamine` engine is the
 validated middle fallback, and the existing read-only openpyxl path is the compatibility fallback.

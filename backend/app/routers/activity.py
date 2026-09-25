@@ -27,23 +27,46 @@ def activity_dict(event: ActivityEvent) -> dict:
 
 
 def durable_import_job_dict(submission: ImportSubmission) -> dict:
-    completed = submission.submitted_cells if submission.status == "completed" else 0
+    completed = (
+        submission.submitted_cells
+        if submission.status in {"completed", "failed_committed"}
+        else 0
+    )
+    status = (
+        "failed"
+        if submission.status in {"committed", "failed_committed"}
+        else submission.status
+    )
     return {
         "id": submission.job_id,
         "kind": "import_register",
         "token": submission.token,
         "title": "Registering imported cells",
         "description": (
-            "Cell registration was interrupted by backend shutdown"
+            "Cell registration committed; finalization was interrupted"
+            if submission.status == "committed"
+            else "Cell registration was committed but finalization failed"
+            if submission.status == "failed_committed"
+            else "Cell registration was interrupted by backend shutdown"
             if submission.status == "interrupted"
             else "Registering imported cells"
         ),
-        "status": submission.status,
+        "status": status,
+        "registration_committed": submission.status in {
+            "committed",
+            "completed",
+            "failed_committed",
+        },
         "total": submission.submitted_cells,
         "completed": completed,
         "counters": {},
         "items": [],
-        "error": submission.error,
+        "error": submission.error
+        or (
+            "Cell registration committed; return to the program and do not resubmit."
+            if submission.status in {"committed", "failed_committed"}
+            else None
+        ),
         "started_at": (submission.started_at or submission.created_at).isoformat(),
         "completed_at": submission.finished_at.isoformat() if submission.finished_at else None,
     }

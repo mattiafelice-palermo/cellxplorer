@@ -7,10 +7,10 @@ import {
   Checkbox,
   Group,
   Loader,
-  MultiSelect,
   NumberInput,
   Paper,
   Popover,
+  RangeSlider,
   ScrollArea,
   Stack,
   Text,
@@ -80,9 +80,10 @@ import {
 import {
   EMPTY_IMPORT_BROWSER_FILTERS,
   filterAndSortImportEntries,
-  importEntryFormat,
+  importEntryExtension,
   importEntrySupplier,
   nextImportBrowserSort,
+  prioritizeImportHeaderHintPaths,
   type ImportBrowserFilters,
   type ImportBrowserSort,
   type ImportBrowserSortKey,
@@ -94,11 +95,33 @@ export type ImportSourceSelection = {
   folderPaths: string[];
 };
 
-function formatBytes(n: number) {
-  if (!n) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), 3);
-  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+function formatMegabytes(bytes: number) {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(bytes / (1024 * 1024))} MB`;
+}
+
+function moveRangeHandleOnTrack(
+  event: ReactPointerEvent<HTMLDivElement>,
+  min: number,
+  max: number,
+  step: number,
+  value: [number, number],
+  onChange: (next: [number, number]) => void,
+) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || target.closest('[role="slider"]')) return;
+  const root = event.currentTarget;
+  const track = root.querySelector<HTMLElement>('[class*="trackContainer"]') ?? root;
+  const bounds = track.getBoundingClientRect();
+  if (bounds.width <= 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const ratio = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+  const stepped = min + Math.round(((min + ratio * (max - min)) - min) / step) * step;
+  const point = Math.max(min, Math.min(max, Number(stepped.toFixed(6))));
+  const handleIndex = Math.abs(point - value[0]) <= Math.abs(point - value[1]) ? 0 : 1;
+  onChange(handleIndex === 0
+    ? [Math.min(point, value[1]), value[1]]
+    : [value[0], Math.max(point, value[0])]);
 }
 
 const IMPORT_BROWSER_HEADER_HEIGHT = 38;
@@ -106,19 +129,17 @@ const IMPORT_BROWSER_ENTRY_ROW_HEIGHT = 38;
 const IMPORT_BROWSER_ROW_OVERSCAN = 8;
 const IMPORT_BROWSER_COLUMN_MIN_WIDTH: Record<ImportBrowserSortKey, number> = {
   name: 190,
-  format: 110,
+  extension: 112,
   supplier: 90,
   protocol: 95,
-  cycles: 78,
-  size: 82,
+  size: 90,
   modified: 140,
 };
 const IMPORT_BROWSER_COLUMN_LABELS: Record<ImportBrowserSortKey, string> = {
   name: "Name",
-  format: "Format",
+  extension: "Extension",
   supplier: "Supplier",
   protocol: "Protocol",
-  cycles: "Cycles*",
   size: "Size",
   modified: "Modified",
 };
@@ -156,11 +177,17 @@ export function ImportFilesystemPickerModal({
   const [fileSort, setFileSort] = useState<ImportBrowserSort>({ key: "name", direction: "asc" });
   const [headerHints, setHeaderHints] = useState<Map<string, ImportHeaderHint>>(new Map());
   const [columnWidths, setColumnWidths] = useState<Record<ImportBrowserSortKey, number>>({
-    name: 310, format: 132, supplier: 108, protocol: 112, cycles: 82, size: 90, modified: 160,
+    name: 360, extension: 120, supplier: 115, protocol: 125, size: 100, modified: 165,
   });
-  const [filtersOpened, setFiltersOpened] = useState(false);
+  const [showFolders, setShowFolders] = useState(true);
   const [headerFilter, setHeaderFilter] = useState<ImportBrowserSortKey | null>(null);
+  const [headerFilterSearch, setHeaderFilterSearch] = useState("");
+  const headerHintInFlight = useRef(new Set<string>());
+  const headerHintFailed = useRef(new Set<string>());
+  const headerHintDirectory = useRef<string | null>(null);
+  const headerHintGeneration = useRef(0);
   const tableRootRef = useRef<HTMLDivElement>(null);
+  const entryViewportRef = useRef<HTMLDivElement>(null);
   const [entryScrollTop, setEntryScrollTop] = useState(0);
   const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(() => {
     const entries = [
@@ -202,61 +229,120 @@ export function ImportFilesystemPickerModal({
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
   const headerHintMutation = useMutation({
-    mutationFn: (paths: string[]) => post<{ files: ImportHeaderHint[] }>("/api/imports/header-hints", { paths }),
-    onSuccess: ({ files }) => setHeaderHints((current) => {
+    mutationFn: ({ paths }: { paths: string[]; generation: number }) => post<{ files: ImportHeaderHint[] }>("/api/imports/header-hints", { paths }),
+    onSuccess: ({ files }, variables) => {
+      if (variables.generation !== headerHintGeneration.current) return;
+      setHeaderHints((current) => {
       const next = new Map(current);
       for (const hint of files) next.set(hint.path, hint);
       return next;
-    }),
-    onError: (error: Error) => notifications.show({ message: error.message, color: "orange" }),
+      });
+      const unavailable = new Set(files.filter((hint) => hint.registered || hint.compatible === false).map((hint) => hint.path));
+      if (unavailable.size) setSelected((current) => {
+        const next = new Map(current);
+        unavailable.forEach((path) => next.delete(path));
+        return next;
+      });
+    },
+    onError: (error: Error, variables) => {
+      if (variables.generation === headerHintGeneration.current) {
+        notifications.show({ message: `Some file headers could not be scanned: ${error.message}. Use Refresh to retry.`, color: "orange" });
+      }
+    },
   });
+  const headerHintsPending = headerHintMutation.isPending;
+  const submitHeaderHints = headerHintMutation.mutate;
   const directoryEntries = browseQuery.data?.entries ?? [];
   const visibleEntries = useMemo(
-    () => filterAndSortImportEntries(directoryEntries, headerHints, search, fileFilters, fileSort),
-    [directoryEntries, fileFilters, fileSort, headerHints, search],
+    () => filterAndSortImportEntries(directoryEntries, headerHints, search, fileFilters, fileSort, showFolders),
+    [directoryEntries, fileFilters, fileSort, headerHints, search, showFolders],
   );
-  const filesInDirectory = directoryEntries.filter((entry) => entry.kind === "file");
+  const unavailableFile = (entry: ImportBrowseEntry) => {
+    if (entry.kind !== "file") return false;
+    const hint = headerHints.get(entry.path);
+    return hint?.registered === true
+      || (importEntryExtension(entry) === ".xlsx" && hint?.compatible === false);
+  };
+  const selectableVisibleEntries = visibleEntries.filter((entry) => entry.kind === "folder" || !unavailableFile(entry));
+  const filesInDirectory = useMemo(() => directoryEntries.filter((entry) =>
+    entry.kind === "file" && !(importEntryExtension(entry) === ".xlsx" && headerHints.get(entry.path)?.compatible === false),
+  ), [directoryEntries, headerHints]);
   const availableForSupplier = filesInDirectory.filter((entry) =>
-    (!fileFilters.formats.length || fileFilters.formats.includes(importEntryFormat(entry, headerHints.get(entry.path))))
-    && (!fileFilters.protocols.length || fileFilters.protocols.includes(headerHints.get(entry.path)?.technique ?? "")),
-  );
-  const availableForFormat = filesInDirectory.filter((entry) =>
-    (!fileFilters.suppliers.length || fileFilters.suppliers.includes(importEntrySupplier(entry, headerHints.get(entry.path))))
+    (!fileFilters.extensions.length || fileFilters.extensions.includes(importEntryExtension(entry)))
     && (!fileFilters.protocols.length || fileFilters.protocols.includes(headerHints.get(entry.path)?.technique ?? "")),
   );
   const availableForProtocol = filesInDirectory.filter((entry) =>
     (!fileFilters.suppliers.length || fileFilters.suppliers.includes(importEntrySupplier(entry, headerHints.get(entry.path))))
-    && (!fileFilters.formats.length || fileFilters.formats.includes(importEntryFormat(entry, headerHints.get(entry.path)))),
+    && (!fileFilters.extensions.length || fileFilters.extensions.includes(importEntryExtension(entry))),
   );
-  const formatOptions = [...new Set(availableForFormat.map((entry) => importEntryFormat(entry, headerHints.get(entry.path))))]
-    .sort((a, b) => a.localeCompare(b));
+  const availableForExtension = filesInDirectory.filter((entry) =>
+    (!fileFilters.suppliers.length || fileFilters.suppliers.includes(importEntrySupplier(entry, headerHints.get(entry.path))))
+    && (!fileFilters.protocols.length || fileFilters.protocols.includes(headerHints.get(entry.path)?.technique ?? "")),
+  );
   const supplierOptions = [...new Set(availableForSupplier.map((entry) => importEntrySupplier(entry, headerHints.get(entry.path))))]
     .sort((a, b) => a.localeCompare(b));
   const protocolOptions = [...new Set(availableForProtocol.flatMap((entry) => {
     const technique = headerHints.get(entry.path)?.technique;
     return technique ? [technique] : [];
   }))].sort((a, b) => a.localeCompare(b));
-  const activeImportFilterCount = fileFilters.suppliers.length + fileFilters.formats.length + fileFilters.protocols.length
-    + Number(Boolean(fileFilters.minCycles || fileFilters.maxCycles))
-    + Number(Boolean(fileFilters.minSize || fileFilters.maxSize))
-    + Number(Boolean(fileFilters.modifiedAfter || fileFilters.modifiedBefore));
+  const extensionOptions = [...new Set(availableForExtension.map(importEntryExtension))]
+    .filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const sizeValuesMb = filesInDirectory.flatMap((entry) => entry.size === null ? [] : [entry.size / (1024 * 1024)]);
+  const sizeDomain = sizeValuesMb.reduce<[number, number]>(
+    ([minimum, maximum], value) => [Math.min(minimum, value), Math.max(maximum, value)],
+    [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY],
+  );
+  const sizeDomainMin = sizeValuesMb.length ? sizeDomain[0] : 0;
+  const sizeDomainMax = sizeValuesMb.length ? sizeDomain[1] : 1;
+  const sizeSliderMax = sizeDomainMax > sizeDomainMin ? sizeDomainMax : sizeDomainMin + 1;
+  const sizeSliderValue: [number, number] = [
+    fileFilters.minSize ? Math.max(sizeDomainMin, Math.min(sizeSliderMax, Number(fileFilters.minSize))) : sizeDomainMin,
+    fileFilters.maxSize ? Math.max(sizeDomainMin, Math.min(sizeSliderMax, Number(fileFilters.maxSize))) : sizeSliderMax,
+  ];
   const headerFilterIsActive = (key: ImportBrowserSortKey) => {
     if (key === "supplier") return fileFilters.suppliers.length > 0;
-    if (key === "format") return fileFilters.formats.length > 0;
+    if (key === "extension") return fileFilters.extensions.length > 0;
     if (key === "protocol") return fileFilters.protocols.length > 0;
-    if (key === "cycles") return Boolean(fileFilters.minCycles || fileFilters.maxCycles);
     if (key === "size") return Boolean(fileFilters.minSize || fileFilters.maxSize);
     if (key === "modified") return Boolean(fileFilters.modifiedAfter || fileFilters.modifiedBefore);
     return Boolean(search);
   };
+  const categoricalOptions = (key: ImportBrowserSortKey) => {
+    if (key === "supplier") return supplierOptions;
+    if (key === "extension") return extensionOptions;
+    if (key === "protocol") return protocolOptions;
+    return [];
+  };
+  const categoricalSelectionKey = (key: ImportBrowserSortKey) => {
+    if (key === "supplier") return "suppliers" as const;
+    if (key === "extension") return "extensions" as const;
+    return "protocols" as const;
+  };
+  const categoricalFilter = ["extension", "supplier", "protocol"].includes(headerFilter ?? "");
+  const visibleFilterOptions = categoricalFilter
+    ? categoricalOptions(headerFilter!).filter((option) => option.toLocaleLowerCase().includes(headerFilterSearch.trim().toLocaleLowerCase()))
+    : [];
+  const categoricalKey = categoricalFilter ? categoricalSelectionKey(headerFilter!) : null;
+  const selectedCategoricalValues = categoricalKey ? fileFilters[categoricalKey] : [];
+  const selectedVisibleOptionCount = visibleFilterOptions.filter((option) => selectedCategoricalValues.includes(option)).length;
+  const allVisibleOptionsSelected = visibleFilterOptions.length > 0 && selectedVisibleOptionCount === visibleFilterOptions.length;
+  const someVisibleOptionsSelected = selectedVisibleOptionCount > 0 && !allVisibleOptionsSelected;
 
   useEffect(() => {
     if (!opened) return;
+    entryViewportRef.current?.scrollTo({ top: 0 });
+    headerHintInFlight.current.clear();
+    headerHintFailed.current.clear();
+    headerHintGeneration.current += 1;
+    headerHintDirectory.current = null;
     setRequestedPath(mode === "folder" ? initialPath ?? null : null);
     setPathInput("");
     setPathEditing(false);
     setPendingPathEditTarget(null);
     setSearch("");
+    setShowFolders(true);
+    setHeaderFilter(null);
+    setHeaderFilterSearch("");
     setFileFilters(EMPTY_IMPORT_BROWSER_FILTERS);
     setHeaderHints(new Map());
     setEntryScrollTop(0);
@@ -271,6 +357,20 @@ export function ImportFilesystemPickerModal({
 
   useEffect(() => {
     if (browseQuery.data?.current_path) setPathInput(browseQuery.data.current_path);
+  }, [browseQuery.data?.current_path]);
+
+  useEffect(() => {
+    entryViewportRef.current?.scrollTo({ top: 0 });
+    setEntryScrollTop(0);
+  }, [fileFilters, fileSort, search, showFolders]);
+
+  useEffect(() => {
+    const path = browseQuery.data?.current_path ?? null;
+    if (headerHintDirectory.current === path) return;
+    headerHintDirectory.current = path;
+    headerHintGeneration.current += 1;
+    headerHintInFlight.current.clear();
+    headerHintFailed.current.clear();
   }, [browseQuery.data?.current_path]);
 
   useEffect(() => {
@@ -319,6 +419,10 @@ export function ImportFilesystemPickerModal({
   }, [opened]);
 
   const navigate = (path: string | null, options: { keepPathEditor?: boolean } = {}) => {
+    headerHintGeneration.current += 1;
+    headerHintInFlight.current.clear();
+    headerHintFailed.current.clear();
+    entryViewportRef.current?.scrollTo({ top: 0 });
     setRequestedPath(path);
     const reset = resetImportBrowserNavigation();
     setSearch(reset.search);
@@ -333,6 +437,15 @@ export function ImportFilesystemPickerModal({
       setPathEditing(false);
       setPendingPathEditTarget(null);
     }
+  };
+
+  const refreshFolder = () => {
+    headerHintGeneration.current += 1;
+    headerHintInFlight.current.clear();
+    headerHintFailed.current.clear();
+    const paths = new Set(directoryEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path));
+    setHeaderHints((current) => new Map([...current].filter(([path]) => !paths.has(path))));
+    void browseQuery.refetch();
   };
 
   const enterPathEdit = () => {
@@ -388,12 +501,15 @@ export function ImportFilesystemPickerModal({
   };
 
   const toggleFile = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
-    const update = toggleImportFileSelection(entry, visibleEntries, selected, lastSelectedPath, {
+    if (unavailableFile(entry)) return;
+    const update = toggleImportFileSelection(entry, selectableVisibleEntries, selected, lastSelectedPath, {
       shiftKey,
       ctrlKey,
       metaKey,
     });
-    setSelected(update.selected);
+    const safeSelection = new Map(update.selected);
+    for (const candidate of safeSelection.values()) if (unavailableFile(candidate)) safeSelection.delete(candidate.path);
+    setSelected(safeSelection);
     setLastSelectedPath(update.lastSelectedPath);
   };
 
@@ -402,6 +518,7 @@ export function ImportFilesystemPickerModal({
       navigate(entry.path);
       return;
     }
+    if (unavailableFile(entry)) return;
     toggleFile(entry, shiftKey, ctrlKey, metaKey);
   };
 
@@ -423,7 +540,7 @@ export function ImportFilesystemPickerModal({
   const folderCount = selectedEntries.filter((entry) => entry.kind === "folder").length;
   const isFolderSelectable = (entry: ImportBrowseEntry) =>
     !isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
-  const shownSelection = importShownSelectionState(visibleEntries, selected, isFolderSelectable);
+  const shownSelection = importShownSelectionState(selectableVisibleEntries, selected, isFolderSelectable);
   const allVisibleSelected = shownSelection.allSelected;
   const someVisibleSelected = shownSelection.someSelected;
   const firstRenderedEntry = Math.max(
@@ -440,6 +557,48 @@ export function ImportFilesystemPickerModal({
   const leadingSpacerHeight = firstRenderedEntry * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
   const trailingSpacerHeight =
     (visibleEntries.length - lastRenderedEntry) * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
+
+  useEffect(() => {
+    const directory = browseQuery.data?.current_path;
+    if (!opened || mode !== "files" || !directory || browseQuery.isPlaceholderData || browseQuery.isFetching || headerHintsPending) return;
+    if (headerHintDirectory.current !== directory) return;
+
+    // Start with rows currently mounted around the viewport, then continue in
+    // the active filter/sort order. Unshown directory files remain the tail of
+    // the queue so they are eventually scanned without delaying visible rows.
+    const batch = prioritizeImportHeaderHintPaths(
+      renderedEntries,
+      visibleEntries,
+      filesInDirectory,
+      new Set(headerHints.keys()),
+      headerHintInFlight.current,
+      headerHintFailed.current,
+    );
+    if (!batch.length) return;
+    batch.forEach((path) => headerHintInFlight.current.add(path));
+    const generation = headerHintGeneration.current;
+    submitHeaderHints({ paths: batch, generation }, {
+      onSettled: (_result, error) => {
+        if (generation !== headerHintGeneration.current || headerHintDirectory.current !== directory) return;
+        batch.forEach((path) => {
+          headerHintInFlight.current.delete(path);
+          if (error) headerHintFailed.current.add(path);
+        });
+      },
+    });
+  }, [
+    browseQuery.data?.current_path,
+    browseQuery.isFetching,
+    browseQuery.isPlaceholderData,
+    filesInDirectory,
+    headerHintsPending,
+    headerHints,
+    mode,
+    opened,
+    renderedEntries,
+    submitHeaderHints,
+    visibleEntries,
+  ]);
   const quickAccess = browseQuery.data?.quick_access ?? [];
   const breadcrumbs = parseImportPathBreadcrumbs(
     browseQuery.data?.current_path ?? pathInput,
@@ -465,15 +624,8 @@ export function ImportFilesystemPickerModal({
     pinnedMutation.mutate(next);
   };
   const toggleShownSelection = () => {
-    setSelected((current) => toggleImportShownSelection(current, visibleEntries, isFolderSelectable));
+    setSelected((current) => toggleImportShownSelection(current, selectableVisibleEntries, isFolderSelectable));
     setLastSelectedPath(null);
-  };
-  const scanDirectoryHeaders = () => {
-    const paths = filesInDirectory
-      .filter((entry) => !headerHints.has(entry.path))
-      .slice(0, 512)
-      .map((entry) => entry.path);
-    if (paths.length) headerHintMutation.mutate(paths);
   };
   const resizeFileColumn = (key: ImportBrowserSortKey, event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -501,68 +653,123 @@ export function ImportFilesystemPickerModal({
     window.addEventListener("pointerup", onStop);
     window.addEventListener("pointercancel", onStop);
   };
-  const gridTemplateColumns = `40px ${["name", "format", "supplier", "protocol", "cycles", "size", "modified"]
+  const gridTemplateColumns = `40px ${["name", "extension", "supplier", "protocol", "size", "modified"]
     .map((key) => `var(--import-${key}-width, ${columnWidths[key as ImportBrowserSortKey]}px)`).join(" ")}`;
   const browserGridStyle = {
     gridTemplateColumns,
     "--import-name-width": `${columnWidths.name}px`,
-    "--import-format-width": `${columnWidths.format}px`,
+    "--import-extension-width": `${columnWidths.extension}px`,
     "--import-supplier-width": `${columnWidths.supplier}px`,
     "--import-protocol-width": `${columnWidths.protocol}px`,
-    "--import-cycles-width": `${columnWidths.cycles}px`,
     "--import-size-width": `${columnWidths.size}px`,
     "--import-modified-width": `${columnWidths.modified}px`,
   } as CSSProperties;
-  const renderHeaderCell = (key: ImportBrowserSortKey) => (
-    <Box key={key} pos="relative" style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: key === "size" || key === "cycles" ? "flex-end" : "flex-start" }}>
-      <UnstyledButton
-        type="button"
-        aria-label={`Sort by ${IMPORT_BROWSER_COLUMN_LABELS[key]}`}
-        onClick={() => setFileSort((current) => nextImportBrowserSort(current, key))}
-        style={{ fontSize: "var(--mantine-font-size-xs)", fontWeight: 700, color: "var(--mantine-color-dimmed)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-      >
-        {IMPORT_BROWSER_COLUMN_LABELS[key]} {fileSort.key === key ? (fileSort.direction === "asc" ? "↑" : "↓") : "↕"}
-      </UnstyledButton>
-      <Popover opened={headerFilter === key} onChange={(openedNow) => setHeaderFilter(openedNow ? key : null)} position="bottom-end" shadow="md" withinPortal>
-        <Popover.Target>
-          <ActionIcon
-            size="xs"
-            variant={headerFilter === key || headerFilterIsActive(key) ? "light" : "subtle"}
-            color={headerFilter === key || headerFilterIsActive(key) ? "green" : "gray"}
-            aria-label={`Filter ${IMPORT_BROWSER_COLUMN_LABELS[key]}`}
-            onClick={(event) => { event.stopPropagation(); setHeaderFilter((current) => current === key ? null : key); }}
-          ><IconFilter size={13} /></ActionIcon>
-        </Popover.Target>
-        <Popover.Dropdown w={key === "modified" ? 300 : 260} onClick={(event) => event.stopPropagation()}>
-          <Stack gap="xs">
-            {key === "name" && <TextInput label="Name contains" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />}
-            {key === "supplier" && <MultiSelect label="Supplier" data={supplierOptions} value={fileFilters.suppliers} onChange={(suppliers) => setFileFilters((current) => ({ ...current, suppliers }))} searchable clearable />}
-            {key === "format" && <MultiSelect label="Format" data={formatOptions} value={fileFilters.formats} onChange={(formats) => setFileFilters((current) => ({ ...current, formats }))} searchable clearable />}
-            {key === "protocol" && <MultiSelect label="Protocol" data={protocolOptions} value={fileFilters.protocols} onChange={(protocols) => setFileFilters((current) => ({ ...current, protocols }))} searchable clearable disabled={protocolOptions.length === 0} />}
-            {key === "cycles" && <Group grow><NumberInput label="At least" min={0} value={fileFilters.minCycles} onChange={(value) => setFileFilters((current) => ({ ...current, minCycles: String(value) }))} /><NumberInput label="At most" min={0} value={fileFilters.maxCycles} onChange={(value) => setFileFilters((current) => ({ ...current, maxCycles: String(value) }))} /></Group>}
-            {key === "size" && <Group grow><NumberInput label="Bytes from" min={0} value={fileFilters.minSize} onChange={(value) => setFileFilters((current) => ({ ...current, minSize: String(value) }))} /><NumberInput label="Bytes to" min={0} value={fileFilters.maxSize} onChange={(value) => setFileFilters((current) => ({ ...current, maxSize: String(value) }))} /></Group>}
-            {key === "modified" && <><TextInput type="date" label="Modified after" value={fileFilters.modifiedAfter} onChange={(event) => setFileFilters((current) => ({ ...current, modifiedAfter: event.currentTarget.value }))} /><TextInput type="date" label="Modified before" value={fileFilters.modifiedBefore} onChange={(event) => setFileFilters((current) => ({ ...current, modifiedBefore: event.currentTarget.value }))} /></>}
-            <Button variant="subtle" size="compact-sm" onClick={() => {
-              if (key === "name") setSearch("");
-              if (key === "supplier") setFileFilters((current) => ({ ...current, suppliers: [] }));
-              if (key === "format") setFileFilters((current) => ({ ...current, formats: [] }));
-              if (key === "protocol") setFileFilters((current) => ({ ...current, protocols: [] }));
-              if (key === "cycles") setFileFilters((current) => ({ ...current, minCycles: "", maxCycles: "" }));
-              if (key === "size") setFileFilters((current) => ({ ...current, minSize: "", maxSize: "" }));
-              if (key === "modified") setFileFilters((current) => ({ ...current, modifiedAfter: "", modifiedBefore: "" }));
-            }}>Clear this filter</Button>
-          </Stack>
-        </Popover.Dropdown>
-      </Popover>
-      <Box
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={`Resize ${IMPORT_BROWSER_COLUMN_LABELS[key]} column`}
-        onPointerDown={(event) => resizeFileColumn(key, event)}
-        style={{ position: "absolute", zIndex: 2, top: -5, bottom: -5, right: -5, width: 10, cursor: "col-resize", touchAction: "none" }}
-      />
-    </Box>
-  );
+  const renderHeaderCell = (key: ImportBrowserSortKey) => {
+    const isCategorical = key === "extension" || key === "supplier" || key === "protocol";
+    const selectionKey = isCategorical ? categoricalSelectionKey(key) : null;
+    const selectedValues = selectionKey ? fileFilters[selectionKey] : [];
+    const options = isCategorical ? categoricalOptions(key) : [];
+    const filteredOptions = options.filter((option) => option.toLocaleLowerCase().includes(headerFilterSearch.trim().toLocaleLowerCase()));
+    const selectedCount = filteredOptions.filter((option) => selectedValues.includes(option)).length;
+    const allSelected = filteredOptions.length > 0 && selectedCount === filteredOptions.length;
+    const partiallySelected = selectedCount > 0 && !allSelected;
+    const updateSelectedValues = (nextValues: string[]) => {
+      if (!selectionKey) return;
+      setFileFilters((current) => ({ ...current, [selectionKey]: nextValues }));
+    };
+    const clearFilter = () => {
+      if (key === "name") setSearch("");
+      if (selectionKey) updateSelectedValues([]);
+      if (key === "size") setFileFilters((current) => ({ ...current, minSize: "", maxSize: "" }));
+      if (key === "modified") setFileFilters((current) => ({ ...current, modifiedAfter: "", modifiedBefore: "" }));
+    };
+    return (
+        <Box key={key} pos="relative" style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: key === "size" ? "flex-end" : "flex-start", borderLeft: key === "name" ? undefined : "1px solid color-mix(in srgb, var(--mantine-color-default-border) 55%, transparent)", paddingLeft: key === "name" ? 0 : 8, boxSizing: "border-box", ...(key === "name" ? { position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" } : {}) }}>
+        <UnstyledButton
+          type="button"
+          aria-label={`Sort by ${IMPORT_BROWSER_COLUMN_LABELS[key]}`}
+          onClick={() => setFileSort((current) => nextImportBrowserSort(current, key))}
+          style={{ fontSize: "var(--mantine-font-size-xs)", fontWeight: 700, color: "var(--mantine-color-dimmed)", minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}
+        >
+          {IMPORT_BROWSER_COLUMN_LABELS[key]} {fileSort.key === key ? (fileSort.direction === "asc" ? "↑" : "↓") : "↕"}
+        </UnstyledButton>
+        <Popover
+          opened={headerFilter === key}
+          onChange={(openedNow) => { setHeaderFilter(openedNow ? key : null); if (!openedNow) setHeaderFilterSearch(""); }}
+          position="bottom-end"
+          shadow="md"
+          withinPortal
+        >
+          <Popover.Target>
+            <ActionIcon
+              size="xs"
+              variant={headerFilter === key || headerFilterIsActive(key) ? "light" : "subtle"}
+              color={headerFilter === key || headerFilterIsActive(key) ? "green" : "gray"}
+              aria-label={`Filter ${IMPORT_BROWSER_COLUMN_LABELS[key]}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setHeaderFilter((current) => current === key ? null : key);
+                setHeaderFilterSearch("");
+              }}
+            ><IconFilter size={13} /></ActionIcon>
+          </Popover.Target>
+          <Popover.Dropdown w={isCategorical ? 260 : key === "modified" ? 300 : 310} onClick={(event) => event.stopPropagation()}>
+            <Stack gap="xs">
+              <Group justify="space-between" align="center" gap="md">
+                <Text size="sm" fw={600}>{IMPORT_BROWSER_COLUMN_LABELS[key]} filter</Text>
+                <ActionIcon aria-label={`Close ${IMPORT_BROWSER_COLUMN_LABELS[key]} filter`} variant="subtle" size="sm" onClick={() => { setHeaderFilter(null); setHeaderFilterSearch(""); }}><IconX size={15} /></ActionIcon>
+              </Group>
+              {key === "name" && <TextInput label="Name contains" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />}
+              {isCategorical && <>
+                <TextInput aria-label={`Search ${IMPORT_BROWSER_COLUMN_LABELS[key]} options`} placeholder={`Search ${IMPORT_BROWSER_COLUMN_LABELS[key].toLocaleLowerCase()}`} value={headerFilterSearch} onChange={(event) => setHeaderFilterSearch(event.currentTarget.value)} />
+                <Checkbox
+                  label={allSelected ? "Deselect all shown" : "Select all shown"}
+                  checked={allSelected}
+                  indeterminate={partiallySelected}
+                  disabled={filteredOptions.length === 0}
+                  onChange={() => {
+                    const shown = new Set(filteredOptions);
+                    updateSelectedValues(allSelected
+                      ? selectedValues.filter((value) => !shown.has(value))
+                      : [...new Set([...selectedValues, ...filteredOptions])]);
+                  }}
+                />
+                <ScrollArea h={180} type="auto" offsetScrollbars="y">
+                  {filteredOptions.length ? <Stack gap={4}>{filteredOptions.map((option) => (
+                    <Checkbox key={option} label={option} checked={selectedValues.includes(option)} onChange={() => updateSelectedValues(
+                      selectedValues.includes(option)
+                        ? selectedValues.filter((value) => value !== option)
+                        : [...selectedValues, option],
+                    )} />
+                  ))}</Stack> : <Text size="sm" c="dimmed">{key === "protocol" ? "Protocol hints are still being scanned." : "No options in this folder."}</Text>}
+                </ScrollArea>
+              </>}
+              {key === "size" && <>
+                <Box onPointerDownCapture={(event) => moveRangeHandleOnTrack(event, sizeDomainMin, sizeSliderMax, 0.0001, sizeSliderValue, ([minSize, maxSize]) => setFileFilters((current) => ({ ...current, minSize: String(minSize), maxSize: String(maxSize) })))}>
+                  <RangeSlider aria-label="File size range in megabytes" min={sizeDomainMin} max={sizeSliderMax} minRange={0} step={0.0001} value={sizeSliderValue} onChange={([minSize, maxSize]) => setFileFilters((current) => ({ ...current, minSize: String(minSize), maxSize: String(maxSize) }))} />
+                </Box>
+                <Group grow>
+                  <NumberInput label="Size from (MB)" min={0} step={0.0001} decimalScale={4} value={fileFilters.minSize} onChange={(value) => setFileFilters((current) => ({ ...current, minSize: value === "" ? "" : String(value) }))} />
+                  <NumberInput label="Size to (MB)" min={0} step={0.0001} decimalScale={4} value={fileFilters.maxSize} onChange={(value) => setFileFilters((current) => ({ ...current, maxSize: value === "" ? "" : String(value) }))} />
+                </Group>
+              </>}
+              {key === "modified" && <><TextInput type="date" label="Modified after" value={fileFilters.modifiedAfter} onChange={(event) => setFileFilters((current) => ({ ...current, modifiedAfter: event.currentTarget.value }))} /><TextInput type="date" label="Modified before" value={fileFilters.modifiedBefore} onChange={(event) => setFileFilters((current) => ({ ...current, modifiedBefore: event.currentTarget.value }))} /></>}
+              <Button variant="subtle" size="compact-sm" leftSection={key === "size" ? <IconRefresh size={13} /> : undefined} onClick={clearFilter}>
+                {key === "size" ? "Reset range" : "Clear this filter"}
+              </Button>
+            </Stack>
+          </Popover.Dropdown>
+        </Popover>
+        <Box
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${IMPORT_BROWSER_COLUMN_LABELS[key]} column`}
+          onPointerDown={(event) => resizeFileColumn(key, event)}
+          style={{ position: "absolute", zIndex: 4, top: -5, bottom: -5, right: 0, width: 8, transform: "translateX(50%)", cursor: "col-resize", touchAction: "none" }}
+        />
+      </Box>
+    );
+  };
 
   return (
     <ImportModalShell
@@ -724,57 +931,20 @@ export function ImportFilesystemPickerModal({
                 </Box>
                 <Button variant="subtle" color="gray" size="compact-sm" leftSection={<IconEdit size={15} />} aria-label="Edit path" onClick={enterPathEdit}>Edit path</Button>
               </>}
-              <ActionIcon variant="default" size="lg" aria-label="Refresh folder" onClick={() => void browseQuery.refetch()}><IconRefresh size={17} /></ActionIcon>
+              <ActionIcon variant="default" size="lg" aria-label="Refresh folder" onClick={refreshFolder}><IconRefresh size={17} /></ActionIcon>
             </Group>
             <Group gap="xs" wrap="nowrap">
               <TextInput placeholder="Search this folder" leftSection={<IconSearch size={15} />} value={search} onChange={(event) => setSearch(event.currentTarget.value)} style={{ flex: 1, minWidth: 0 }} />
-              <Popover opened={filtersOpened} onChange={setFiltersOpened} position="bottom-end" shadow="md" withinPortal>
-                <Popover.Target>
-                  <Button
-                    variant="default"
-                    leftSection={<IconFilter size={15} />}
-                    aria-label="Filter import files"
-                    onClick={() => setFiltersOpened((openedNow) => !openedNow)}
-                  >
-                    Filters{activeImportFilterCount > 0 ? ` (${activeImportFilterCount})` : ""}
-                  </Button>
-                </Popover.Target>
-                <Popover.Dropdown w={560}>
-                  <Stack gap="sm">
-                    <Group grow align="flex-start">
-                      <MultiSelect label="Supplier" data={supplierOptions} value={fileFilters.suppliers} onChange={(suppliers) => setFileFilters((current) => ({ ...current, suppliers }))} searchable clearable />
-                      <MultiSelect label="Format" data={formatOptions} value={fileFilters.formats} onChange={(formats) => setFileFilters((current) => ({ ...current, formats }))} searchable clearable />
-                      <MultiSelect label="Protocol" data={protocolOptions} value={fileFilters.protocols} onChange={(protocols) => setFileFilters((current) => ({ ...current, protocols }))} searchable clearable disabled={protocolOptions.length === 0} />
-                    </Group>
-                    <Group align="flex-end">
-                      <NumberInput label="Cycles from" min={0} value={fileFilters.minCycles} onChange={(value) => setFileFilters((current) => ({ ...current, minCycles: String(value) }))} style={{ flex: 1 }} />
-                      <NumberInput label="Cycles to" min={0} value={fileFilters.maxCycles} onChange={(value) => setFileFilters((current) => ({ ...current, maxCycles: String(value) }))} style={{ flex: 1 }} />
-                    </Group>
-                    <Group align="flex-end">
-                      <NumberInput label="Size from (bytes)" min={0} value={fileFilters.minSize} onChange={(value) => setFileFilters((current) => ({ ...current, minSize: String(value) }))} style={{ flex: 1 }} />
-                      <NumberInput label="Size to (bytes)" min={0} value={fileFilters.maxSize} onChange={(value) => setFileFilters((current) => ({ ...current, maxSize: String(value) }))} style={{ flex: 1 }} />
-                    </Group>
-                    <Group align="flex-end">
-                      <TextInput type="date" label="Modified after" value={fileFilters.modifiedAfter} onChange={(event) => setFileFilters((current) => ({ ...current, modifiedAfter: event.currentTarget.value }))} style={{ flex: 1 }} />
-                      <TextInput type="date" label="Modified before" value={fileFilters.modifiedBefore} onChange={(event) => setFileFilters((current) => ({ ...current, modifiedBefore: event.currentTarget.value }))} style={{ flex: 1 }} />
-                      <Button variant="default" onClick={() => setFileFilters(EMPTY_IMPORT_BROWSER_FILTERS)}>Clear all</Button>
-                    </Group>
-                    <Group justify="space-between" align="center">
-                      <Text size="xs" c="dimmed">Format and supplier come from extensions. *Protocol and cycle hints require this optional scan; unavailable cycle counts stay blank.</Text>
-                      <Button variant="subtle" size="compact-sm" loading={headerHintMutation.isPending} disabled={!filesInDirectory.length || headerHintMutation.isPending} onClick={scanDirectoryHeaders}>
-                        {headerHintMutation.isPending ? "Scanning headers" : `Scan headers${filesInDirectory.length > 512 ? " (first 512)" : ""}`}
-                      </Button>
-                    </Group>
-                  </Stack>
-                </Popover.Dropdown>
-              </Popover>
+              {mode === "files" && <Button variant={showFolders ? "default" : "light"} aria-pressed={!showFolders} onClick={() => setShowFolders((current) => !current)}>
+                {showFolders ? "Hide folders" : "Show folders"}
+              </Button>}
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
-              <Paper withBorder p={0}>
-              {browseQuery.isPending && !browseQuery.data ? <Center h={360}><Loader /></Center> : browseQuery.isError ? <Center h={360} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={360} type="auto" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + var(--import-name-width) + var(--import-format-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-cycles-width) + var(--import-size-width) + var(--import-modified-width))", ...browserGridStyle }}><Stack gap={0}>
+                <Paper withBorder p={0}>
+              {browseQuery.isPending && !browseQuery.data ? <Center h={360}><Loader /></Center> : browseQuery.isError ? <Center h={360} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} h={360} type="auto" offsetScrollbars="y" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
-                  <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} />
-                  {(["name", "format", "supplier", "protocol", "cycles", "size", "modified"] as const).map(renderHeaderCell)}
+                  <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
+                  {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}
                 </Box>
                 {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or supported cycler files here.</Text></Center> : <>
                   <Box h={leadingSpacerHeight} aria-hidden="true" />
@@ -784,15 +954,28 @@ export function ImportFilesystemPickerModal({
                   const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
                   const rowSelected = selected.has(entry.path) || folderState !== "none";
                   const selectedForeground = "light-dark(var(--mantine-color-black), var(--mantine-color-white))";
+                  const rowBackground = selected.has(entry.path) || folderState === "some"
+                    ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
+                    : "var(--mantine-color-body)";
+                  const disabledFile = unavailableFile(entry);
                   const metadataColor = rowSelected ? selectedForeground : "dimmed";
                   const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
                   const cellStyle: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", alignSelf: "center" };
-                  return <Box key={entry.path} px="sm" role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : "default", borderBottom: "1px solid var(--mantine-color-default-border)", background: selected.has(entry.path) || folderState === "some" ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
+                  const disabledReason = hint?.registered
+                    ? "Already registered in CellXplorer."
+                    : hint?.compatible === false
+                      ? "This workbook is not supported by the Neware Excel parser."
+                      : hint?.error
+                        ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
+                        : null;
+                  const headerScanPending = headerHintInFlight.current.has(entry.path);
+                  return <Box key={entry.path} px="sm" role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-disabled={!isFolder && disabledFile} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : headerScanPending ? "Header details are being scanned; you can still select this file." : undefined} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : disabledFile ? "not-allowed" : "default", opacity: disabledFile ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
                     <Checkbox
                       aria-label={isFolder ? `Select all importable files in ${entry.name}` : `Select ${entry.name}`}
                       checked={isFolder ? folderState === "all" : selected.has(entry.path)}
                       indeterminate={isFolder && folderState === "some"}
-                      disabled={isFolder ? folderCheckboxDisabled : false}
+                      disabled={isFolder ? folderCheckboxDisabled : disabledFile}
+                      style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 2, background: rowBackground }}
                       onClick={(event) => event.stopPropagation()}
                       onChange={(event) => {
                         if (isFolder) {
@@ -803,15 +986,14 @@ export function ImportFilesystemPickerModal({
                         toggleFile(entry, native.shiftKey, native.ctrlKey, native.metaKey);
                       }}
                     />
-                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, minWidth: 0, background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
                       <Text size="sm" truncate title={entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
                     </Group>
-                    <Text size="xs" c={metadataColor} truncate title={isFolder ? undefined : importEntryFormat(entry, hint)} style={cellStyle}>{isFolder ? "" : importEntryFormat(entry, hint)}</Text>
+                    <Text size="xs" c={metadataColor} truncate title={isFolder ? undefined : importEntryExtension(entry)} style={cellStyle}>{isFolder ? "" : importEntryExtension(entry)}</Text>
                     <Text size="xs" c={metadataColor} truncate title={isFolder ? undefined : importEntrySupplier(entry, hint)} style={cellStyle}>{isFolder ? "" : importEntrySupplier(entry, hint)}</Text>
-                    <Text size="xs" c={metadataColor} truncate title={hint?.error ?? hint?.technique ?? undefined} style={cellStyle}>{isFolder ? "" : hint?.technique ?? (headerHintMutation.isPending ? "…" : "—")}</Text>
-                    <Text size="xs" c={metadataColor} ta="right" title={isFolder ? undefined : hint?.error ?? (hint?.cycle_count == null ? "Not declared in the quick file header; cycling rows are not scanned." : `${hint.cycle_count} cycles declared in the file header.`)} style={cellStyle}>{isFolder ? "" : hint?.cycle_count ?? "—"}</Text>
-                    <Text size="xs" c={metadataColor} ta="right" style={cellStyle}>{entry.size === null ? "" : formatBytes(entry.size)}</Text>
+                    <Text size="xs" c={metadataColor} truncate title={hint?.error ?? hint?.technique ?? undefined} style={cellStyle}>{isFolder ? "" : hint?.technique ?? (headerHintsPending ? "…" : "—")}</Text>
+                    <Text size="xs" c={metadataColor} ta="right" style={cellStyle}>{entry.size === null ? "" : formatMegabytes(entry.size)}</Text>
                     <Text size="xs" c={metadataColor} truncate title={entry.modified_at ?? undefined} style={cellStyle}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
                   </Box>;
                   })}

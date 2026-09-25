@@ -6,15 +6,16 @@ export type ImportHeaderHint = {
   supplier: string | null;
   technique: string | null;
   cycle_count: number | null;
+  compatible?: boolean | null;
+  registered?: boolean;
   error: string | null;
 };
 
 export type ImportBrowserSortKey =
   | "name"
-  | "format"
+  | "extension"
   | "supplier"
   | "protocol"
-  | "cycles"
   | "size"
   | "modified";
 
@@ -25,10 +26,8 @@ export type ImportBrowserSort = {
 
 export type ImportBrowserFilters = {
   suppliers: string[];
-  formats: string[];
+  extensions: string[];
   protocols: string[];
-  minCycles: string;
-  maxCycles: string;
   minSize: string;
   maxSize: string;
   modifiedAfter: string;
@@ -37,10 +36,8 @@ export type ImportBrowserFilters = {
 
 export const EMPTY_IMPORT_BROWSER_FILTERS: ImportBrowserFilters = {
   suppliers: [],
-  formats: [],
+  extensions: [],
   protocols: [],
-  minCycles: "",
-  maxCycles: "",
   minSize: "",
   maxSize: "",
   modifiedAfter: "",
@@ -62,37 +59,58 @@ export function importEntrySupplier(entry: ImportBrowseEntry, hint?: ImportHeade
   return entry.name.toLowerCase().endsWith(".mpr") ? "BioLogic" : "Neware";
 }
 
+export function importEntryExtension(entry: ImportBrowseEntry): string {
+  return entry.name.match(/\.[^.]+$/)?.[0].toLocaleLowerCase() ?? "";
+}
+
+export function prioritizeImportHeaderHintPaths(
+  viewportEntries: readonly ImportBrowseEntry[],
+  orderedVisibleEntries: readonly ImportBrowseEntry[],
+  directoryEntries: readonly ImportBrowseEntry[],
+  knownPaths: ReadonlySet<string>,
+  inFlightPaths: ReadonlySet<string>,
+  failedPaths: ReadonlySet<string>,
+  limit = 32,
+): string[] {
+  const seen = new Set<string>();
+  const pending: string[] = [];
+  for (const entry of [...viewportEntries, ...orderedVisibleEntries, ...directoryEntries]) {
+    if (entry.kind !== "file" || seen.has(entry.path)) continue;
+    seen.add(entry.path);
+    if (knownPaths.has(entry.path) || inFlightPaths.has(entry.path) || failedPaths.has(entry.path)) continue;
+    pending.push(entry.path);
+    if (pending.length >= limit) break;
+  }
+  return pending;
+}
+
 export function filterAndSortImportEntries(
   entries: readonly ImportBrowseEntry[],
   hints: ReadonlyMap<string, ImportHeaderHint>,
   search: string,
   filters: ImportBrowserFilters,
   sort: ImportBrowserSort,
+  showFolders = true,
 ): ImportBrowseEntry[] {
   const query = search.trim().toLocaleLowerCase();
-  const minCycles = filters.minCycles.trim() === "" ? null : Number(filters.minCycles);
-  const maxCycles = filters.maxCycles.trim() === "" ? null : Number(filters.maxCycles);
   const minSize = filters.minSize.trim() === "" ? null : Number(filters.minSize);
   const maxSize = filters.maxSize.trim() === "" ? null : Number(filters.maxSize);
   const modifiedAfter = filters.modifiedAfter ? Date.parse(`${filters.modifiedAfter}T00:00:00`) : null;
   const modifiedBefore = filters.modifiedBefore ? Date.parse(`${filters.modifiedBefore}T23:59:59.999`) : null;
   const selectedSuppliers = new Set(filters.suppliers);
-  const selectedFormats = new Set(filters.formats);
+  const selectedExtensions = new Set(filters.extensions);
   const selectedProtocols = new Set(filters.protocols);
   const filtered = entries.filter((entry) => {
     if (query && !entry.name.toLocaleLowerCase().includes(query)) return false;
-    if (entry.kind === "folder") return true;
+    if (entry.kind === "folder") return showFolders;
     const hint = hints.get(entry.path);
-    const format = importEntryFormat(entry, hint);
+    if (importEntryExtension(entry) === ".xlsx" && hint?.compatible === false) return false;
     const supplier = importEntrySupplier(entry, hint);
-    const cycles = hint?.cycle_count ?? null;
-    const size = entry.size;
+    const size = entry.size === null ? null : entry.size / (1024 * 1024);
     const modified = entry.modified_at ? Date.parse(entry.modified_at) : null;
     if (selectedSuppliers.size && !selectedSuppliers.has(supplier)) return false;
-    if (selectedFormats.size && !selectedFormats.has(format)) return false;
+    if (selectedExtensions.size && !selectedExtensions.has(importEntryExtension(entry))) return false;
     if (selectedProtocols.size && !selectedProtocols.has(hint?.technique ?? "")) return false;
-    if (minCycles !== null && (!Number.isFinite(minCycles) || cycles === null || cycles < minCycles)) return false;
-    if (maxCycles !== null && (!Number.isFinite(maxCycles) || cycles === null || cycles > maxCycles)) return false;
     if (minSize !== null && (!Number.isFinite(minSize) || size === null || size < minSize)) return false;
     if (maxSize !== null && (!Number.isFinite(maxSize) || size === null || size > maxSize)) return false;
     if (modifiedAfter !== null && (!Number.isFinite(modifiedAfter) || modified === null || modified < modifiedAfter)) return false;
@@ -109,10 +127,9 @@ export function filterAndSortImportEntries(
     let rightValue: number | string | null;
     switch (sort.key) {
       case "name": leftValue = left.name; rightValue = right.name; break;
-      case "format": leftValue = importEntryFormat(left, leftHint); rightValue = importEntryFormat(right, rightHint); break;
+      case "extension": leftValue = importEntryExtension(left); rightValue = importEntryExtension(right); break;
       case "supplier": leftValue = importEntrySupplier(left, leftHint); rightValue = importEntrySupplier(right, rightHint); break;
       case "protocol": leftValue = leftHint?.technique ?? null; rightValue = rightHint?.technique ?? null; break;
-      case "cycles": leftValue = leftHint?.cycle_count ?? null; rightValue = rightHint?.cycle_count ?? null; break;
       case "size": leftValue = left.size; rightValue = right.size; break;
       case "modified":
         leftValue = left.modified_at ? Date.parse(left.modified_at) : null;

@@ -65,6 +65,27 @@ class StitchServiceTests(unittest.TestCase):
         ):
             return stitch.stitch_raw(self._refs(ordered))
 
+    def test_cp_summary_probe_skips_non_biologic_parser_identities(self):
+        with patch(
+            "app.services.stitch.cache.load_biologic_cp_half_cycle_summary",
+            side_effect=AssertionError("non-BioLogic source was probed"),
+        ):
+            self.assertIsNone(stitch._cached_cp_half_cycle_summary(_hash("m"), "nb:v1:r1"))
+
+    def test_validated_index_negative_cp_summary_is_memoized(self):
+        stitch._memoized_indexed_cp_half_cycle_summary.cache_clear()
+        try:
+            with (
+                patch("app.services.stitch.cache.raw_path", return_value=Path(__file__)),
+                patch("app.services.stitch.cache.try_load_raw_layout_index", return_value={"stable": True}),
+                patch("app.services.stitch.cache.load_biologic_cp_half_cycle_summary", return_value=None) as load_summary,
+            ):
+                self.assertIsNone(stitch._cached_cp_half_cycle_summary(_hash("n"), "bm:gcpl:r1"))
+                self.assertIsNone(stitch._cached_cp_half_cycle_summary(_hash("n"), "bm:gcpl:r1"))
+                self.assertEqual(load_summary.call_count, 1)
+        finally:
+            stitch._memoized_indexed_cp_half_cycle_summary.cache_clear()
+
     def test_two_sources_map_to_dense_global_cycles(self):
         hash_a = _hash("a")
         hash_b = _hash("b")
@@ -164,6 +185,132 @@ class StitchServiceTests(unittest.TestCase):
         self.assertEqual(segments[0]["cycle_start"], None)
         self.assertEqual(segments[0]["display_only_source_cycles"], [1])
         self.assertEqual(segments[1]["cycle_start"], 1)
+
+    @staticmethod
+    def _cp_half(current: float, file_hash: str) -> pd.DataFrame:
+        direction = "CC_Chg" if current > 0 else "CC_DChg"
+        return pd.DataFrame(
+            {
+                "record_index": [1, 2],
+                "cycle": [1, 1],
+                "step": [1, 1],
+                "status": [direction, direction],
+                "current_ma": [current, current],
+                "voltage_v": [1.0, 1.1],
+                "charge_capacity_mah": [0.0, 1.0] if current > 0 else [0.0, 0.0],
+                "discharge_capacity_mah": [0.0, 0.0] if current > 0 else [0.0, 1.0],
+                "cycle_complete": [False, False],
+                "measurement_type": ["biologic_cp", "biologic_cp"],
+            }
+        )
+
+    def test_adjacent_opposite_cp_halves_complete_one_cycle(self):
+        charge_hash, discharge_hash = _hash("c"), _hash("d")
+        raw_frames = {
+            charge_hash: self._cp_half(15.0, charge_hash),
+            discharge_hash: self._cp_half(-15.0, discharge_hash),
+        }
+        with (
+            patch("app.services.stitch.cache.load_cycles", return_value=pd.DataFrame(columns=["cycle"])),
+            patch("app.services.stitch.cache.load_raw", side_effect=lambda h, _p: raw_frames[h]),
+            patch("app.services.stitch._has_adjacent_opposite_cp_halves", return_value=True),
+        ):
+            result, segments, missing = stitch.stitch_cycles(
+                self._refs([charge_hash, discharge_hash]), self.CALC
+            )
+
+        self.assertEqual(missing, [])
+        self.assertEqual(result["cycle"].tolist(), [1])
+        self.assertGreater(result.loc[0, "charge_capacity_mah"], 0)
+        self.assertGreater(result.loc[0, "discharge_capacity_mah"], 0)
+        self.assertEqual([item["cycle_start"] for item in segments], [1, 1])
+        self.assertEqual([item["cycle_end"] for item in segments], [1, 1])
+
+    def test_cp_pair_is_added_after_existing_cached_cycles(self):
+        existing_hash, charge_hash, discharge_hash = _hash("g"), _hash("h"), _hash("i")
+        raw_frames = {
+            existing_hash: pd.DataFrame(
+                {
+                    "record_index": [1, 2],
+                    "cycle": [1, 1],
+                    "status": ["CC_DChg", "CC_DChg"],
+                    "measurement_type": ["neware", "neware"],
+                    "discharge_capacity_mah": [0.0, 8.0],
+                }
+            ),
+            charge_hash: self._cp_half(15.0, charge_hash),
+            discharge_hash: self._cp_half(-15.0, discharge_hash),
+        }
+        cycle_frames = {
+            existing_hash: pd.DataFrame({"cycle": [1], "discharge_capacity_mah": [9.0]}),
+            charge_hash: pd.DataFrame(columns=["cycle"]),
+            discharge_hash: pd.DataFrame(columns=["cycle"]),
+        }
+        with (
+            patch("app.services.stitch.cache.load_cycles", side_effect=lambda h, _p, _c: cycle_frames[h]),
+            patch("app.services.stitch.cache.load_raw", side_effect=lambda h, _p: raw_frames[h]),
+            patch("app.services.stitch._has_adjacent_opposite_cp_halves", return_value=True),
+        ):
+            result, segments, missing = stitch.stitch_cycles(
+                self._refs([existing_hash, charge_hash, discharge_hash]), self.CALC
+            )
+
+        self.assertEqual(missing, [])
+        self.assertEqual(result["cycle"].tolist(), [1, 2])
+        # Preserve the existing cycle-cache result and append the independently
+        # inferred cross-source CP summary under its dense global identity.
+        self.assertEqual(result.loc[0, "discharge_capacity_mah"], 9.0)
+        self.assertGreater(result.loc[1, "charge_capacity_mah"], 0)
+        self.assertGreater(result.loc[1, "discharge_capacity_mah"], 0)
+        self.assertEqual([item["cycle_start"] for item in segments], [1, 2, 2])
+
+    def test_cp_pair_before_existing_cached_cycles_shifts_cached_global_cycle(self):
+        charge_hash, discharge_hash, existing_hash = _hash("j"), _hash("k"), _hash("l")
+        raw_frames = {
+            charge_hash: self._cp_half(15.0, charge_hash),
+            discharge_hash: self._cp_half(-15.0, discharge_hash),
+            existing_hash: pd.DataFrame(
+                {
+                    "record_index": [1, 2],
+                    "cycle": [1, 1],
+                    "source_cycle": [1, 1],
+                    "status": ["CC_DChg", "CC_DChg"],
+                    "measurement_type": ["neware", "neware"],
+                    "discharge_capacity_mah": [0.0, 8.0],
+                }
+            ),
+        }
+        cycle_frames = {
+            charge_hash: pd.DataFrame(columns=["cycle"]),
+            discharge_hash: pd.DataFrame(columns=["cycle"]),
+            existing_hash: pd.DataFrame(
+                {"cycle": [1], "discharge_capacity_mah": [9.0]}
+            ),
+        }
+        with (
+            patch("app.services.stitch.cache.load_cycles", side_effect=lambda h, _p, _c: cycle_frames[h]),
+            patch("app.services.stitch.cache.load_raw", side_effect=lambda h, _p: raw_frames[h]),
+            patch("app.services.stitch._has_adjacent_opposite_cp_halves", return_value=True),
+        ):
+            result, segments, missing = stitch.stitch_cycles(
+                self._refs([charge_hash, discharge_hash, existing_hash]), self.CALC
+            )
+
+        self.assertEqual(missing, [])
+        self.assertEqual(result["cycle"].tolist(), [1, 2])
+        self.assertGreater(result.loc[0, "charge_capacity_mah"], 0)
+        self.assertEqual(result.loc[1, "discharge_capacity_mah"], 9.0)
+        self.assertEqual([item["cycle_start"] for item in segments], [1, 1, 2])
+
+    def test_same_direction_cp_halves_do_not_complete_a_cycle(self):
+        first, second = _hash("e"), _hash("f")
+        result, _, missing = self._stitch_raw(
+            [first, second],
+            {first: self._cp_half(10.0, first), second: self._cp_half(12.0, second)},
+        )
+        self.assertEqual(missing, [])
+        self.assertTrue(result["cycle"].eq(0).all())
+        self.assertTrue(result["display_only_cycle"].all())
 
     def test_incomplete_final_raw_cycle_stays_separate_global_cycle(self):
         hash_a = _hash("x")

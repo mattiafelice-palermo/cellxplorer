@@ -493,6 +493,8 @@ class TimeCapacityRefinementRequest(BaseModel):
     viewport_width: int = Field(default=1200, ge=240, le=10000)
     cycle_start: int = Field(ge=1, le=10_000_000)
     cycle_end: int = Field(ge=1, le=10_000_000)
+    origin_cycle_start: int | None = Field(default=None, ge=1, le=10_000_000)
+    origin_cycle_end: int | None = Field(default=None, ge=1, le=10_000_000)
     request_generation: str = Field(min_length=1, max_length=200)
 
 
@@ -1860,6 +1862,10 @@ def refine_time_capacity_analysis(
         raise HTTPException(422, "viewport_x_max must be greater than viewport_x_min")
     if req.cycle_end < req.cycle_start:
         raise HTTPException(422, "cycle_end must be greater than or equal to cycle_start")
+    capacity_origin_cycle_start = req.origin_cycle_start or req.cycle_start
+    capacity_origin_cycle_end = req.origin_cycle_end or req.cycle_end
+    if capacity_origin_cycle_end < capacity_origin_cycle_start:
+        raise HTTPException(422, "origin_cycle_end must be greater than or equal to origin_cycle_start")
 
     spec = deepcopy(req.spec)
     settings = engine.time_capacity_settings(spec.get("computation", {}))
@@ -1899,8 +1905,8 @@ def refine_time_capacity_analysis(
             # later Cell to zero or blocking refinement for other Cells.
             display_origin_capacity_by_cell = _capacity_refinement_origins(
                 overview,
-                req.cycle_start,
-                req.cycle_end,
+                capacity_origin_cycle_start,
+                capacity_origin_cycle_end,
             )
         if display_origin_capacity_by_cell is None and overview is not None:
             raise HTTPException(

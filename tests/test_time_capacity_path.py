@@ -265,6 +265,20 @@ class TimeCapacityPathTests(unittest.TestCase):
             {cycling.file_hash},
         )
 
+    def test_adjacent_opposite_cp_halves_use_chain_aware_raw_mapping(self) -> None:
+        first = self._publish("a" * 64, "parser-a", [1], complete_labels=set())
+        second = self._publish("b" * 64, "parser-b", [1], complete_labels=set())
+        with patch.object(stitch, "_has_adjacent_opposite_cp_halves", return_value=True):
+            plan = time_capacity_path.build_time_capacity_stitch_plan([first, second])
+
+        self.assertEqual(plan.path, "legacy")
+        self.assertEqual(
+            plan.fallback_reason,
+            "cross_source_cp_pair_requires_raw_cycle_mapping",
+        )
+        self.assertEqual(plan.sources, ())
+        self.assertIsNone(time_capacity_path.load_indexed_time_capacity_raw(plan, [1]))
+
     def test_narrow_cycle_request_omits_display_only_sources(self) -> None:
         curve = self._publish("d" * 64, "parser-a", [1], complete_labels=set())
         cycling = self._publish("c" * 64, "parser-b", [4, 7, 9], complete_labels={4, 7, 9})

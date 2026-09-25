@@ -19,6 +19,7 @@ from ..services import import_file_hints
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -3776,10 +3777,22 @@ def browse_import_source_paths(req: ImportBrowseRequest, db: Session = Depends(g
 
 
 @router.post("/imports/header-hints")
-def inspect_import_header_hints(req: ImportHeaderHintsRequest):
+def inspect_import_header_hints(
+    req: ImportHeaderHintsRequest,
+    db: Session = Depends(get_db),
+):
     """Return optional file metadata without delaying the import browser."""
     try:
-        return {"files": import_file_hints.inspect_header_hints(req.paths)}
+        files = import_file_hints.inspect_header_hints(req.paths)
+        requested = {str(Path(path).expanduser().resolve()).casefold() for path in req.paths}
+        if requested:
+            registered_paths = {
+                str(Path(path).expanduser()).casefold()
+                for (path,) in db.query(SourceFile.path).filter(func.lower(SourceFile.path).in_(requested)).all()
+            }
+            for item in files:
+                item["registered"] = str(Path(str(item["path"])).expanduser()).casefold() in registered_paths
+        return {"files": files}
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -3933,9 +3946,12 @@ def _create_imported_cells_impl(
     db: Session,
     *,
     job_id: int | None = None,
+    submission_id: int | None = None,
 ):
     try:
-        return _create_imported_cells_impl_raw(req, db, job_id=job_id)
+        return _create_imported_cells_impl_raw(
+            req, db, job_id=job_id, submission_id=submission_id
+        )
     except IntegrityError as exc:
         raise _translate_import_integrity_error(req, db, exc) from exc
 
@@ -3945,6 +3961,7 @@ def _create_imported_cells_impl_raw(
     db: Session,
     *,
     job_id: int | None = None,
+    submission_id: int | None = None,
 ):
     if not req.cells:
         raise HTTPException(400, "No files selected")
@@ -4332,7 +4349,17 @@ def _create_imported_cells_impl_raw(
         },
     )
     _validate_prepared_source_fingerprints(prepared_sources_by_staged_name)
+    if submission_id is not None:
+        submission = db.get(ImportSubmission, submission_id)
+        if submission is not None:
+            # This durable marker commits atomically with the Cell rows. If
+            # later job bookkeeping fails, the retry path can still tell that
+            # registration already happened.
+            submission.status = "committed"
+            submission.error = None
     db.commit()
+    if job_id is not None:
+        background_jobs.update_job(job_id, registration_committed=True)
     if job_id is not None:
         for draft_index in range(len(req.cells)):
             background_jobs.record_result(
@@ -4368,13 +4395,20 @@ def _import_submission_response(
     fallback_status: str | None = None,
 ) -> dict:
     live_job = background_jobs.get_job(submission.job_id) if submission.job_id is not None else None
+    status = (live_job or {}).get("status") or submission.status or fallback_status or "accepted"
+    if status in {"committed", "failed_committed"}:
+        status = "failed"
     return {
         "accepted": True,
         "job_id": submission.job_id,
         "job_token": submission.token,
         "submitted_cells": submission.submitted_cells,
         "submitted_sources": submission.submitted_sources,
-        "status": (live_job or {}).get("status") or submission.status or fallback_status or "accepted",
+        "status": status,
+        "registration_committed": bool(
+            (live_job or {}).get("registration_committed")
+            or submission.status in {"committed", "completed", "failed_committed"}
+        ),
     }
 
 
@@ -4409,7 +4443,12 @@ def run_import_registration_job(
                 submission.status = "running"
                 submission.started_at = datetime.now(timezone.utc)
         db.commit()
-        result = _create_imported_cells_impl(req, db, job_id=background_job_id)
+        result = _create_imported_cells_impl(
+            req,
+            db,
+            job_id=background_job_id,
+            submission_id=submission_id,
+        )
         record_activity(
             db,
             category="import",
@@ -4446,11 +4485,17 @@ def run_import_registration_job(
         failure_detail = getattr(failure, "detail", None)
         if db is not None and failure is exc:
             db.rollback()
+        registration_committed = False
         try:
             if submission_id is not None and db is not None:
                 submission = db.get(ImportSubmission, submission_id)
                 if submission is not None:
-                    submission.status = "failed"
+                    registration_committed = submission.status in {
+                        "committed",
+                        "completed",
+                        "failed_committed",
+                    }
+                    submission.status = "failed_committed" if registration_committed else "failed"
                     submission.error = _import_job_error(failure)
                     submission.finished_at = datetime.now(timezone.utc)
             if db is not None:
@@ -4478,6 +4523,7 @@ def run_import_registration_job(
         background_jobs.update_job(
             background_job_id,
             status="failed",
+            registration_committed=registration_committed,
             error=_import_job_error(failure),
             error_code=failure_detail.get("code") if isinstance(failure_detail, dict) else None,
             error_details=failure_detail if isinstance(failure_detail, dict) else None,

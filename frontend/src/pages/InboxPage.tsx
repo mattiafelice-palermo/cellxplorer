@@ -1098,9 +1098,11 @@ function ImportModal({
   const [closingBranch, setClosingBranch] = useState<"done" | "continue" | null>(null);
   const [doneCountdown, setDoneCountdown] = useState<number | null>(null);
   const autoCloseFired = useRef(false);
+  const handoffStarted = useRef(false);
   const [loadedFilesScrollTop, setLoadedFilesScrollTop] = useState(0);
   const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
   const registerStartedAt = useRef<number | null>(null);
+  const continuedSubmissionLocked = useRef(false);
   const [continuedCellDraft, setContinuedCellDraft] = useState<ContinuedCellDraft>(() => continuedCellDraftFrom(drafts[0]));
   const [continuedSubmissionState, setContinuedSubmissionState] = useState<ContinuedImportSubmissionState>({
     canSubmit: false,
@@ -1156,6 +1158,8 @@ function ImportModal({
       setFolderWatch(null);
       setFolderTrackingSettingsOpen(false);
       setRegistrationAccepted(false);
+      continuedSubmissionLocked.current = false;
+      handoffStarted.current = false;
       setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
       setContinuedSubmissionState({
@@ -1178,6 +1182,8 @@ function ImportModal({
       setRawLoading(false);
       setRawError(null);
       setRegistrationAccepted(false);
+      continuedSubmissionLocked.current = false;
+      handoffStarted.current = false;
       setRegisterToken(null);
       setDoneCountdown(null);
       autoCloseFired.current = false;
@@ -1276,7 +1282,10 @@ function ImportModal({
   };
 
   const submitContinuedImport = () => {
-    if (!continuedSubmissionState.canSubmit) return;
+    if (!continuedSubmissionState.canSubmit || continuedSubmissionLocked.current || save.isPending || registrationAccepted) return;
+    // Guard synchronously because a second click can arrive before React has
+    // rendered the mutation's pending state.
+    continuedSubmissionLocked.current = true;
     const jobToken = newImportJobToken();
     registerStartedAt.current = Date.now();
     setRegistrationAccepted(false);
@@ -1503,6 +1512,7 @@ function ImportModal({
     },
     onError: (e: Error, variables) => {
       if (variables?.mode === "continued") {
+        continuedSubmissionLocked.current = false;
         void qc.invalidateQueries({ queryKey: ["continued-import-inspection"] });
       }
       notifications.show({ message: e.message, color: "red" });
@@ -1511,6 +1521,18 @@ function ImportModal({
   const registerProgress = useImportJobProgress(registerToken, Boolean(registerToken));
 
   const registrationStatus = registerProgress.data?.status;
+  const registrationCommitted = Boolean(registerProgress.data?.registration_committed);
+  const committedRegistrationFailure =
+    registrationAccepted && registrationStatus === "failed" && registrationCommitted;
+  useEffect(() => {
+    if (registrationAccepted && registrationStatus === "failed" && !registrationCommitted) {
+      // A server-side registration failure has not created the Cell; return
+      // the user to the editable retry path.
+      continuedSubmissionLocked.current = false;
+      setRegistrationAccepted(false);
+      setRegisterToken(null);
+    }
+  }, [registrationAccepted, registrationCommitted, registrationStatus]);
   const cachePreparationActive = (backgroundJobs.data ?? []).some(
     (job) => job.kind === "import_cache" && (job.status === "running" || job.status === "paused"),
   );
@@ -1518,12 +1540,16 @@ function ImportModal({
     registrationAccepted,
     registrationStatus,
     save.isPending,
-    Boolean(registerProgress.data?.registration_committed),
+    registrationCommitted,
     cachePreparationActive,
   );
+  const effectiveRegistrationUi = committedRegistrationFailure
+    ? { ...registrationUi, editingLocked: true }
+    : registrationUi;
 
   const continueInBackground = useCallback(() => {
-    if (handoffPending) return;
+    if (handoffStarted.current || handoffPending) return;
+    handoffStarted.current = true;
     setClosingBranch(registrationUi.showDone ? "done" : "continue");
     setHandoffPending(true);
     // The registration job exposes its commit boundary before the modal can
@@ -1568,7 +1594,7 @@ function ImportModal({
   // the footer and button would flash the pre-save review state for a moment before closing.
   const shouldShowDone = registrationUi.showDone || closingBranch === "done";
   const shouldShowContinue =
-    !shouldShowDone && (registrationUi.showContinue || closingBranch === "continue");
+    !shouldShowDone && (registrationUi.showContinue || committedRegistrationFailure || closingBranch === "continue");
 
   // Start/cancel the countdown purely from the policy flag (registrationUi.showDone).
   useEffect(() => {
@@ -1646,13 +1672,18 @@ function ImportModal({
       <ImportModalShell
         opened={opened}
         onClose={handleClose}
-        closeDisabled={registrationUi.closeLocked}
+        closeDisabled={effectiveRegistrationUi.closeLocked}
         title="Import cells"
         step={3}
         fill
         notice={
-          duplicateCount > 0 || hasCellNameConflicts ? (
+          duplicateCount > 0 || hasCellNameConflicts || committedRegistrationFailure ? (
             <Stack gap="xs">
+              {committedRegistrationFailure && (
+                <Alert color="orange" icon={<IconAlertTriangle size={16} />} p="xs">
+                  Cell registration committed, but its background handoff reported a failure. Return to the program to inspect the import job; do not resubmit these sources.
+                </Alert>
+              )}
               {duplicateCount > 0 && (
                 <Alert color="orange" icon={<IconAlertTriangle size={16} />} p="xs">
                   {duplicateCount} already imported — will be skipped. They remain visible until removed.
@@ -1732,7 +1763,7 @@ function ImportModal({
                   disabled={handoffPending || closingBranch !== null}
                   onClick={() => void continueInBackground()}
                 >
-                  Continue in background
+                  {committedRegistrationFailure ? "Return to program" : "Continue in background"}
                 </Button>
               ) : (
                 <>
@@ -1742,11 +1773,11 @@ function ImportModal({
                   {continuedMode ? (
                     <Button
                       leftSection={<IconDeviceFloppy size={16} />}
-                      disabled={!continuedSubmissionState.canSubmit}
+                      disabled={!continuedSubmissionState.canSubmit || continuedSubmissionLocked.current || registrationAccepted || save.isPending}
                       loading={save.isPending}
                       onClick={submitContinuedImport}
                     >
-                      Import one continued cell
+                      {registrationAccepted ? "Import accepted" : "Import one continued cell"}
                     </Button>
                   ) : (
                     <Button
@@ -1772,7 +1803,7 @@ function ImportModal({
       >
         {draft && (
           <fieldset
-            disabled={registrationUi.editingLocked}
+            disabled={effectiveRegistrationUi.editingLocked}
             style={{
               border: 0,
               margin: 0,

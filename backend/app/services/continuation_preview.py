@@ -13,6 +13,8 @@ from collections.abc import Sequence
 
 import pandas as pd
 
+from . import canonical_cycling
+
 
 def _phase(status: object) -> str | None:
     if status is None or (not isinstance(status, str) and pd.isna(status)):
@@ -132,6 +134,52 @@ def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
     if "status" not in merged.columns:
         raise ValueError("The raw source chain has no status column to infer cycles.")
     merged["cycle"] = infer_contiguous_cycle_ids(merged["status"])
+    if {"segment", "measurement_type", "cycle_complete", "current_ma"}.issubset(merged.columns):
+        candidates: dict[int, tuple[pd.Index, str]] = {}
+        for segment, rows in merged.groupby("segment", sort=True):
+            if rows["measurement_type"].dropna().astype(str).unique().tolist() != ["biologic_cp"]:
+                continue
+            if rows["cycle_complete"].fillna(False).astype(bool).any():
+                continue
+            local_cycles, errors = canonical_cycling.observed_cycle_labels(rows["source_cycle"])
+            if errors or len(local_cycles) != 1:
+                continue
+            current = pd.to_numeric(rows["current_ma"], errors="coerce")
+            if current.isna().any():
+                continue
+            positive = bool((current > 1e-6).any())
+            negative = bool((current < -1e-6).any())
+            if positive == negative:
+                continue
+            candidates[int(segment)] = (rows.index, "charge" if positive else "discharge")
+
+        completed_pair = False
+        paired_segments: set[int] = set()
+        segments = sorted(candidates)
+        for left_segment, right_segment in zip(segments, segments[1:]):
+            if (
+                right_segment != left_segment + 1
+                or left_segment in paired_segments
+                or right_segment in paired_segments
+            ):
+                continue
+            left_rows, left_direction = candidates[left_segment]
+            right_rows, right_direction = candidates[right_segment]
+            if left_direction == right_direction:
+                continue
+            left_cycle = int(merged.loc[left_rows, "cycle"].iloc[0])
+            merged.loc[right_rows, "cycle"] = left_cycle
+            merged.loc[left_rows, "cycle_complete"] = True
+            merged.loc[right_rows, "cycle_complete"] = True
+            paired_segments.update((left_segment, right_segment))
+            completed_pair = True
+
+        if completed_pair:
+            # Collapse inferred cycle labels after each completed split-CP
+            # pair, preserving ordered, dense labels for later cycles.
+            ordered_labels = list(pd.unique(merged["cycle"]))
+            label_map = {old: new for new, old in enumerate(ordered_labels, start=1)}
+            merged["cycle"] = merged["cycle"].map(label_map).astype("int64")
     return merged
 
 

@@ -13,6 +13,25 @@ from backend.app.services.continuation_preview import (
 
 
 class ContinuationPreviewServiceTests(unittest.TestCase):
+    @staticmethod
+    def _cp_half(current: float) -> pd.DataFrame:
+        charge = current > 0
+        return pd.DataFrame(
+            {
+                "record_index": [1, 2],
+                "cycle": [1, 1],
+                "step": [1, 1],
+                "status": ["CC_Chg" if charge else "CC_DChg"] * 2,
+                "total_time_s": [0.0, 1.0],
+                "voltage_v": [1.0, 1.1],
+                "current_ma": [current, current],
+                "charge_capacity_mah": [0.0, 1.0] if charge else [0.0, 0.0],
+                "discharge_capacity_mah": [0.0, 0.0] if charge else [0.0, 1.0],
+                "cycle_complete": [False, False],
+                "measurement_type": ["biologic_cp", "biologic_cp"],
+            }
+        )
+
     def test_discharge_fragments_across_sources_remain_one_cycle(self):
         statuses = pd.Series(["Rest", "CC DChg", "CC DChg", "Rest", "CC DChg"])
 
@@ -22,6 +41,22 @@ class ContinuationPreviewServiceTests(unittest.TestCase):
         statuses = pd.Series(["CC DChg", "Rest", "CC Chg", "CC Chg", "CC DChg"])
 
         self.assertEqual(infer_contiguous_cycle_ids(statuses).tolist(), [1, 1, 2, 2, 2])
+
+    def test_opposite_cp_halves_preview_as_one_complete_capacity_cycle(self):
+        merged = prepare_stitched_raw([self._cp_half(-10.0), self._cp_half(10.0)])
+
+        self.assertEqual(merged["cycle"].unique().tolist(), [1])
+        self.assertTrue(merged["cycle_complete"].all())
+        cycles = calc.per_cycle(merged)
+        self.assertEqual(cycles["cycle"].tolist(), [1])
+        self.assertGreater(float(cycles.loc[0, "charge_capacity_mah"]), 0)
+        self.assertGreater(float(cycles.loc[0, "discharge_capacity_mah"]), 0)
+
+    def test_same_direction_cp_halves_stay_incomplete_in_preview(self):
+        merged = prepare_stitched_raw([self._cp_half(10.0), self._cp_half(12.0)])
+
+        self.assertFalse(merged["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(merged).empty)
 
     def test_stitched_raw_preserves_file_segments_and_uses_source_local_steps(self):
         first = pd.DataFrame(

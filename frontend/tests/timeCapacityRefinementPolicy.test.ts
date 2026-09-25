@@ -5,6 +5,8 @@ import type { TimeCapacityRefinementResult, TimeCapacityResult } from "../src/ap
 import { TimeCapacityRefinementLifecycle } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementLifecycle.ts";
 import {
   timeCapacityCycleRangeForViewport,
+  timeCapacityRefinementChunks,
+  mergeTimeCapacityRefinementChunks,
   timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
   timeCapacityRefinementDisplayIsCompatible,
@@ -298,4 +300,64 @@ test("tab-change generation invalidates a pending in-flight response", () => {
   // cancelRefinement advances the generation when the keep-mounted card goes
   // inactive; a late response from the old timer/request cannot replace it.
   assert.equal(timeCapacityRefinementRequestIsCurrent(response, current, "g2"), false);
+});
+
+test("refinement windows publish a small first chunk and merge row-aligned data", () => {
+  assert.deepEqual(timeCapacityRefinementChunks({ start: 210, end: 229 }), [
+    { start: 210, end: 213 },
+    { start: 214, end: 221 },
+    { start: 222, end: 229 },
+  ]);
+  const base = result();
+  const makeChunk = (cycle: number, x: number, generation: string, source: { position: number; filename: string; hash: string }) => ({
+    ...base,
+    request_generation: generation,
+    overview_data_signature: "overview",
+    cell_traces: [{
+      ...base.cell_traces[0],
+      cycle: [cycle], display_x: [x], time_s: [x], capacity_mah: [x],
+      capacity_mah_g: [x], voltage_v: [3.5], current_ma: [1], phase: ["charge"],
+      derivative_x: [], derivative_y: [], source_boundary_indices: [],
+      sources: [source], source_index: [0], source_hash: [source.hash],
+    }],
+  }) as TimeCapacityRefinementResult;
+  const sourceA = { position: 0, filename: "first.ndax", hash: "hash-a" };
+  const sourceB = { position: 1, filename: "second.ndax", hash: "hash-b" };
+  const merged = mergeTimeCapacityRefinementChunks([
+    makeChunk(1, 10, "g", sourceA),
+    { ...makeChunk(2, 20, "g", sourceB), cell_traces: [{
+      ...makeChunk(2, 20, "g", sourceB).cell_traces[0], source_boundary_indices: [0],
+    }] },
+  ]);
+  assert.deepEqual(merged?.cell_traces[0].cycle, [1, 2]);
+  assert.deepEqual(merged?.cell_traces[0].display_x, [10, 20]);
+  assert.deepEqual(merged?.cell_traces[0].source_boundary_indices, [1]);
+  assert.deepEqual(merged?.cell_traces[0].sources, [sourceA, sourceB]);
+  assert.deepEqual(merged?.cell_traces[0].source_index, [0, 1]);
+});
+
+test("optional display-only markers stay aligned when only some batches contain them", () => {
+  const base = result();
+  const makeChunk = (cycle: number, displayOnly?: boolean[]) => ({
+    ...base,
+    cell_traces: [{
+      ...base.cell_traces[0],
+      cycle: [cycle], display_x: [cycle], time_s: [cycle], capacity_mah: [cycle],
+      capacity_mah_g: [cycle], voltage_v: [3.5], current_ma: [1], phase: ["charge"],
+      derivative_x: [], derivative_y: [],
+      ...(displayOnly ? { display_only_cycle: displayOnly } : {}),
+    }],
+  }) as TimeCapacityRefinementResult;
+
+  const markerInLaterChunk = mergeTimeCapacityRefinementChunks([
+    makeChunk(1),
+    makeChunk(2, [true]),
+  ]);
+  assert.deepEqual(markerInLaterChunk?.cell_traces[0].display_only_cycle, [false, true]);
+
+  const markerInEarlierChunk = mergeTimeCapacityRefinementChunks([
+    makeChunk(1, [true]),
+    makeChunk(2),
+  ]);
+  assert.deepEqual(markerInEarlierChunk?.cell_traces[0].display_only_cycle, [true, false]);
 });

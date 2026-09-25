@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import threading
+from functools import lru_cache
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -483,7 +484,7 @@ def cell_capacity_totals(cell: Cell) -> dict:
             "total_discharge_capacity_mah": None,
             "max_discharge_capacity_mah": None,
         }
-    return {
+    totals = {
         "total_charge_capacity_mah": _finite_sum(
             sf.total_charge_capacity_mah for sf in source_files
         ),
@@ -494,6 +495,17 @@ def cell_capacity_totals(cell: Cell) -> dict:
             sf.max_discharge_capacity_mah for sf in source_files
         ),
     }
+    paired = _cp_pair_capacity_totals(
+        [_source_file_cp_half_summary(source_file) for source_file in source_files]
+    )
+    for key in ("total_charge_capacity_mah", "total_discharge_capacity_mah"):
+        if paired[key] is not None:
+            totals[key] = round((totals[key] or 0.0) + paired[key], 6)
+    if paired["max_discharge_capacity_mah"] is not None:
+        totals["max_discharge_capacity_mah"] = _finite_max(
+            [totals["max_discharge_capacity_mah"], paired["max_discharge_capacity_mah"]]
+        )
+    return totals
 
 
 SCIENTIFIC_OVERRIDE_KEYS = {
@@ -654,6 +666,94 @@ def _require_valid_cell_test_rows(db: Session, cell_ids: list[int]) -> None:
         raise analysis_svc.CellSourceChainInvariantError(cell, int(count))
 
 
+class _CpHalfSummaryUnavailable(Exception):
+    """A transient cache miss that should be retried on the next request."""
+
+
+@lru_cache(maxsize=2048)
+def _memoized_cp_half_cycle_summary(file_hash: str, parser_version: str) -> dict:
+    summary = cache.load_biologic_cp_half_cycle_summary(file_hash, parser_version)
+    if summary is None:
+        raise _CpHalfSummaryUnavailable
+    return summary
+
+
+def _cached_cp_half_cycle_summary(file_hash: str, parser_version: str) -> dict | None:
+    try:
+        return _memoized_cp_half_cycle_summary(file_hash, parser_version)
+    except _CpHalfSummaryUnavailable:
+        return None
+
+
+def _source_file_cp_half_summary(source_file: SourceFile) -> dict | None:
+    header = source_file.header_meta or {}
+    if not isinstance(header, dict):
+        return None
+    settings = header.get("settings")
+    protocol = header.get("protocol")
+    technique = settings.get("technique") if isinstance(settings, dict) else None
+    technique = technique or header.get("technique") or header.get("technique_family")
+    if not technique and isinstance(protocol, dict):
+        technique = protocol.get("technique") or protocol.get("name")
+    if (
+        str(source_file.ext or "").casefold().lstrip(".") != "mpr"
+        or str(technique or "").strip().casefold() != "cp"
+        or not source_file.hash
+        or not source_file.parser_version
+    ):
+        return None
+    raw_path = cache.raw_path(source_file.hash, source_file.parser_version)
+    if not raw_path.is_file():
+        return None
+    return _cached_cp_half_cycle_summary(source_file.hash, source_file.parser_version)
+
+
+def _cp_pair_capacity_totals(summaries: list[dict | None]) -> dict[str, float | int | None]:
+    count = 0
+    charge = 0.0
+    discharge = 0.0
+    charge_found = False
+    discharge_found = False
+    max_discharge: float | None = None
+    index = 0
+    while index + 1 < len(summaries):
+        left, right = summaries[index], summaries[index + 1]
+        if (
+            left is not None
+            and right is not None
+            and left.get("direction") != right.get("direction")
+        ):
+            count += 1
+            pair = (left, right)
+            for source in pair:
+                charge_value = source.get("charge_capacity_mah")
+                discharge_value = source.get("discharge_capacity_mah")
+                if charge_value is not None:
+                    charge += float(charge_value)
+                    charge_found = True
+                if discharge_value is not None:
+                    discharge += float(discharge_value)
+                    discharge_found = True
+                    max_discharge = (
+                        float(discharge_value)
+                        if max_discharge is None
+                        else max(max_discharge, float(discharge_value))
+                    )
+            index += 2
+        else:
+            index += 1
+    return {
+        "count": count,
+        "total_charge_capacity_mah": round(charge, 6) if charge_found else None,
+        "total_discharge_capacity_mah": round(discharge, 6) if discharge_found else None,
+        "max_discharge_capacity_mah": round(max_discharge, 6) if max_discharge is not None else None,
+    }
+
+
+def _count_non_overlapping_cp_pairs(summaries: list[dict | None]) -> int:
+    return int(_cp_pair_capacity_totals(summaries)["count"] or 0)
+
+
 def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
     """Build library-row file summaries without materializing ORM graphs."""
     if not cell_ids:
@@ -774,7 +874,119 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
             "has_summary_pending": bool(row.has_summary_pending),
             "has_summary_error": bool(row.has_summary_error),
         }
+    _add_cross_source_cp_cycles(db, summaries, cell_ids)
     return summaries
+
+
+def _add_cross_source_cp_cycles(
+    db: Session, summaries: dict[int, dict], cell_ids: list[int]
+) -> None:
+    """Add proven split-CP cycle pairs to ready Cell-level cycle counts.
+
+    Per-source cycle counts correctly remain zero for an unmatched CP half.
+    For ready Cells containing at least two CP MPR sources, consult compact
+    raw-cache index summaries so opposite-polarity adjacent halves are
+    reflected in the Cell total. Large raw frames are never loaded here.
+    """
+    ready_ids = [
+        cell_id for cell_id, summary in summaries.items() if summary["cycle_count_ready"]
+    ]
+    if not ready_ids:
+        return
+    technique = func.coalesce(
+        func.json_extract(SourceFile.header_meta, "$.settings.technique"),
+        func.json_extract(SourceFile.header_meta, "$.technique"),
+        func.json_extract(SourceFile.header_meta, "$.technique_family"),
+        func.json_extract(SourceFile.header_meta, "$.protocol.technique"),
+        func.json_extract(SourceFile.header_meta, "$.protocol.name"),
+    )
+    candidate_rows = (
+        db.query(Test.cell_id)
+        .join(TestFile, TestFile.test_id == Test.id)
+        .join(SourceFile, SourceFile.id == TestFile.file_id)
+        .filter(
+            Test.cell_id.in_(ready_ids),
+            func.lower(SourceFile.ext).in_(("mpr", ".mpr")),
+            func.lower(technique) == "cp",
+        )
+        .group_by(Test.cell_id)
+        .having(
+            func.count(SourceFile.id) >= 2,
+            func.sum(case((SourceFile.cycle_count == 0, 1), else_=0)) > 0,
+        )
+        .all()
+    )
+    candidate_ids = [int(row.cell_id) for row in candidate_rows]
+    if not candidate_ids:
+        return
+    rows = (
+        db.query(
+            Test.cell_id.label("cell_id"),
+            TestFile.position.label("position"),
+            SourceFile.hash.label("file_hash"),
+            SourceFile.parser_version.label("parser_version"),
+            SourceFile.ext.label("extension"),
+            SourceFile.cycle_count.label("cycle_count"),
+            technique.label("technique"),
+        )
+        .join(TestFile, TestFile.test_id == Test.id)
+        .join(SourceFile, SourceFile.id == TestFile.file_id)
+        .filter(Test.cell_id.in_(candidate_ids))
+        .order_by(Test.cell_id, TestFile.position)
+        .all()
+    )
+    by_cell: dict[int, list] = {}
+    for row in rows:
+        by_cell.setdefault(int(row.cell_id), []).append(row)
+
+    for cell_id, source_rows in by_cell.items():
+        source_summaries: list[dict | None] = []
+        for row in source_rows:
+            extension = str(row.extension or "").casefold().lstrip(".")
+            raw_technique = row.technique
+            if isinstance(raw_technique, str) and raw_technique.startswith(("{", "[")):
+                try:
+                    decoded = json.loads(raw_technique)
+                except (TypeError, ValueError):
+                    decoded = None
+                if isinstance(decoded, dict):
+                    raw_technique = (
+                        decoded.get("technique")
+                        or decoded.get("technique_family")
+                        or decoded.get("name")
+                        or decoded.get("type")
+                    )
+            is_cp = extension == "mpr" and str(raw_technique or "").strip().casefold() == "cp"
+            if is_cp and row.file_hash and row.parser_version:
+                raw_path = cache.raw_path(str(row.file_hash), str(row.parser_version))
+                if raw_path.is_file():
+                    source_summaries.append(
+                        _cached_cp_half_cycle_summary(
+                            str(row.file_hash), str(row.parser_version)
+                        )
+                    )
+                else:
+                    source_summaries.append(None)
+            else:
+                source_summaries.append(None)
+        if not any(value is not None for value in source_summaries):
+            continue
+        paired = _cp_pair_capacity_totals(source_summaries)
+        summaries[cell_id]["total_cycles"] += int(paired["count"] or 0)
+        if not summaries[cell_id]["summary_ready"]:
+            continue
+        for key in ("total_charge_capacity_mah", "total_discharge_capacity_mah"):
+            value = paired[key]
+            if value is not None:
+                summaries[cell_id][key] = round(
+                    float(summaries[cell_id][key] or 0.0) + float(value), 6
+                )
+        paired_max = paired["max_discharge_capacity_mah"]
+        if paired_max is not None:
+            current_max = summaries[cell_id]["max_discharge_capacity_mah"]
+            summaries[cell_id]["max_discharge_capacity_mah"] = round(
+                max(float(current_max or 0.0), float(paired_max)), 6
+            )
 
 
 _CELL_PICKER_STAT_TIMEOUT_SECONDS = 0.75
@@ -998,6 +1210,9 @@ def cell_dict(
             cycles += source_file.cycle_count or 0
         statuses.add(source_file.location_status)
         statuses.add(source_file.parse_status)
+    cycles += _count_non_overlapping_cp_pairs(
+        [_source_file_cp_half_summary(source_file) for source_file in source_files]
+    )
     totals = cell_capacity_totals(cell)
     cell.total_charge_capacity_mah = totals["total_charge_capacity_mah"]
     cell.total_discharge_capacity_mah = totals["total_discharge_capacity_mah"]

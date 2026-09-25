@@ -64,18 +64,22 @@ export function CellQuickPlot({ cellId, cellName }: { cellId: number; cellName: 
             x: rows.map((r) => r.cycle as number),
             y: rows.map((r) => r[qty] as number | null),
             type: "scatter",
-            mode: "lines+markers",
-            marker: { size: 4, color: "#12b886" },
-            line: { color: "#12b886" },
+            mode: qty === "coulombic_efficiency_pct" ? "markers" : "lines+markers",
+            marker: qty === "coulombic_efficiency_pct"
+              ? { size: 7, color: "#12b886", symbol: "circle-open", opacity: 0.2 }
+              : { size: 4, color: "#12b886" },
+            ...(qty === "coulombic_efficiency_pct" ? {} : { line: { color: "#12b886" } }),
             name: cellName,
           },
         ]}
         layout={{
           height: 260,
           margin: { l: 55, r: 10, t: 10, b: 40 },
-          xaxis: { title: { text: "Cycle" } },
+          xaxis: { title: { text: "Cycle" }, showline: true, mirror: "all" },
           yaxis: {
             title: { text: QUICK_QUANTITIES.find((q) => q.value === qty)?.label ?? qty },
+            showline: true,
+            mirror: "all",
           },
           showlegend: false,
         }}

@@ -5,7 +5,7 @@ import { ReactNode } from "react";
 import styles from "./ImportModalShell.module.css";
 
 /** Width shared by every import step so advancing never resizes the dialog. */
-export const IMPORT_MODAL_WIDTH = "78rem";
+export const IMPORT_MODAL_WIDTH = "84rem";
 
 /**
  * The common shell for the three import steps.

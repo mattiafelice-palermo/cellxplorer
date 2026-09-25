@@ -74,15 +74,15 @@ export function FilePreviewModal({
                 yaxis: "y2",
                 type: "scatter",
                 mode: "markers",
-                marker: { size: 3 },
+                marker: { size: 7, symbol: "circle-open", opacity: 0.2 },
               },
             ]}
             layout={{
               height: 380,
               margin: { l: 60, r: 60, t: 10, b: 40 },
-              xaxis: { title: { text: "Cycle" } },
-              yaxis: { title: { text: "Discharge capacity (mAh)" } },
-              yaxis2: { title: { text: "CE (%)" }, overlaying: "y", side: "right" },
+              xaxis: { title: { text: "Cycle" }, showline: true, mirror: "all" },
+              yaxis: { title: { text: "Discharge capacity (mAh)" }, showline: true, mirror: "all" },
+              yaxis2: { title: { text: "CE (%)" }, overlaying: "y", side: "right", showline: true, mirror: "all" },
               legend: { orientation: "h" },
             }}
             config={{ displaylogo: false, responsive: true }}
@@ -111,9 +111,9 @@ export function FilePreviewModal({
             layout={{
               height: 380,
               margin: { l: 60, r: 60, t: 10, b: 40 },
-              xaxis: { title: { text: "Time (s)" } },
-              yaxis: { title: { text: "Voltage (V)" } },
-              yaxis2: { title: { text: "Current (mA)" }, overlaying: "y", side: "right" },
+              xaxis: { title: { text: "Time (s)" }, showline: true, mirror: "all" },
+              yaxis: { title: { text: "Voltage (V)" }, showline: true, mirror: "all" },
+              yaxis2: { title: { text: "Current (mA)" }, overlaying: "y", side: "right", showline: true, mirror: "all" },
               legend: { orientation: "h" },
             }}
             config={{ displaylogo: false, responsive: true }}

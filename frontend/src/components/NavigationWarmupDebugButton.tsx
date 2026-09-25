@@ -1,15 +1,22 @@
 import { Button, Modal, Progress, Stack, Text } from "@mantine/core";
 import { IconActivity } from "@tabler/icons-react";
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { APP_BRANDING } from "../appChannel";
-import { readWarmupDebug, subscribeWarmupDebug } from "../features/analyses/editor/families/time-capacity/timeCapacityWarmupDebug";
+import { readWarmupDebug, readWarmupIndicatorEnabled, subscribeWarmupDebug, WARMUP_INDICATOR_CHANGE_EVENT } from "../features/analyses/editor/families/time-capacity/timeCapacityWarmupDebug";
 
 /** Temporary diagnostic UI; keep separate from ordinary background Activity. */
 export function NavigationWarmupDebugButton() {
   const [opened, setOpened] = useState(false);
+  const [showIndicator, setShowIndicator] = useState(readWarmupIndicatorEnabled);
   const status = useSyncExternalStore(subscribeWarmupDebug, readWarmupDebug);
+  useEffect(() => {
+    const update = () => setShowIndicator(readWarmupIndicatorEnabled());
+    window.addEventListener(WARMUP_INDICATOR_CHANGE_EVENT, update);
+    return () => window.removeEventListener(WARMUP_INDICATOR_CHANGE_EVENT, update);
+  }, []);
   const percent = status.total ? 100 * status.completed / status.total : 0;
   const color = status.state === "Error" ? "red" : APP_BRANDING.primaryColor;
+  if (!showIndicator) return null;
   return <>
     <Button variant="subtle" size="compact-sm" color={color}
       leftSection={<IconActivity size={14} />} onClick={() => setOpened(true)}

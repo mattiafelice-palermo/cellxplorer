@@ -275,6 +275,20 @@ available in `source_cycle` and `display_only_source_cycles` provenance. The ind
 `complete_source_cycles` alongside every observed raw source label so selective readers and full
 stitch fallbacks apply the same rule.
 
+One narrow Cell-level exception completes a BioLogic CP cycle across two adjacent sources: each
+source must contain exactly one incomplete local cycle, all rows must be `biologic_cp`, each source
+must have one unambiguous non-zero current polarity, and the polarities must be opposite. The
+ordered pair then shares one dense global cycle and enters cycle summaries. This does not merge
+same-direction CP fragments, does not cross OCV/other-source boundaries, and does not change the
+preview-only contiguous-phase interpretation. It is evaluated only when at least one source has an
+empty per-source cycle summary; inferred pair summaries are appended to any existing cached cycle
+summaries, preserving their values and dense global ordering. The preview applies the same narrow
+opposite-polarity rule before computing charge/discharge capacity summaries. The raw-cache layout
+index stores a compact CP-half eligibility and polarity summary at cache build time. Cell list,
+detail, and analysis-picker counts use that summary instead of loading whole raw frames; legacy
+indexes fall back to a four-column projected read memoized by immutable source identity. Cycle
+summaries are loaded only when an adjacent opposite-polarity pair is proven.
+
 The decoded half-cycle field is diagnostic-only for this reconstruction. It must be a finite,
 integer, non-negative value, but its starting value, parity, progression, and resets are never
 converted with `floor`, parity, or another arithmetic formula and are not a sole executed-step or

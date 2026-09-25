@@ -603,6 +603,70 @@ class ImportFlowTests(unittest.TestCase):
         db.rollback.assert_called_once()
         background_jobs.clear_jobs()
 
+    def test_post_commit_registration_failure_cannot_unlock_duplicate_retry(self):
+        background_jobs.clear_jobs()
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = Path(tmp) / "committed-import.db"
+            engine = create_engine(
+                f"sqlite:///{database_path.as_posix()}",
+                connect_args={"check_same_thread": False},
+            )
+            Base.metadata.create_all(engine)
+            factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            db = factory()
+            request = files.ImportCellsRequest(
+                cells=[files.ImportCellDraft(staged_name="x.mpr", filename="x.mpr", cell_name="Committed")],
+                job_token="committed-failure-test",
+            )
+            submission = ImportSubmission(
+                token=request.job_token,
+                fingerprint="c" * 64,
+                submitted_cells=1,
+                submitted_sources=1,
+                status="accepted",
+            )
+            db.add(submission)
+            db.commit()
+            job_id = background_jobs.create_job(
+                kind="import_register",
+                title="Registering imported cells",
+                description="Validating and registering Cells",
+                total=1,
+                token=request.job_token,
+                fingerprint="c" * 64,
+            )
+            submission.job_id = job_id
+            db.commit()
+            submission_id = submission.id
+            db.close()
+
+            def commit_then_fail(_request, worker_db, *, job_id, submission_id):
+                worker_db.add(Cell(name="Committed despite finalization failure"))
+                worker_db.get(ImportSubmission, submission_id).status = "committed"
+                worker_db.commit()
+                raise RuntimeError("post-commit bookkeeping failed")
+
+            with patch.object(files, "SessionLocal", side_effect=factory), patch.object(
+                files, "_create_imported_cells_impl", side_effect=commit_then_fail
+            ):
+                files.run_import_registration_job(request, job_id, submission_id)
+
+            observer = factory()
+            try:
+                self.assertEqual(observer.query(Cell).count(), 1)
+                stored = observer.get(ImportSubmission, submission_id)
+                self.assertEqual(stored.status, "failed_committed")
+                durable = files._import_submission_response(stored)
+                self.assertEqual(durable["status"], "failed")
+                self.assertTrue(durable["registration_committed"])
+            finally:
+                observer.close()
+                engine.dispose()
+        live_job = background_jobs.get_job(job_id)
+        self.assertEqual(live_job["status"], "failed")
+        self.assertTrue(live_job["registration_committed"])
+        background_jobs.clear_jobs()
+
     def test_duplicate_cell_names_are_rejected_before_parsing_or_continuation_checks(self):
         db = self.make_session()
         request = files.ImportCellsRequest(

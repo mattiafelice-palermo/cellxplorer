@@ -2,10 +2,166 @@ import type {
   AnalysisSpec,
   TimeCapacityRefinementResult,
   TimeCapacityResult,
+  TimeCapacityTrace,
 } from "../../../../../api";
 
 export type TimeCapacityViewport = { min: number; max: number };
 export type TimeCapacityCycleRange = { start: number; end: number };
+
+/** Publish the first few cycles quickly, then use at most four follow-up batches. */
+export function timeCapacityRefinementChunks(range: TimeCapacityCycleRange): TimeCapacityCycleRange[] {
+  const chunks: TimeCapacityCycleRange[] = [];
+  let start = range.start;
+  const firstEnd = Math.min(range.end, start + 3);
+  chunks.push({ start, end: firstEnd });
+  start = firstEnd + 1;
+  const remaining = Math.max(0, range.end - start + 1);
+  const chunkSize = Math.max(8, Math.ceil(remaining / 4));
+  while (start <= range.end) {
+    const end = Math.min(range.end, start + chunkSize - 1);
+    chunks.push({ start, end });
+    start = end + 1;
+  }
+  return chunks;
+}
+
+function traceIdentity(trace: TimeCapacityTrace): string {
+  return `${trace.cell_id}:${trace.group_id ?? ""}:${trace.label}`;
+}
+
+/** Merge successive cycle batches without changing the plotted overview axes. */
+export function mergeTimeCapacityRefinementChunks(
+  chunks: readonly TimeCapacityRefinementResult[],
+): TimeCapacityRefinementResult | null {
+  if (!chunks.length) return null;
+  const base = chunks[0];
+  const traces = new Map(base.cell_traces.map((trace) => [traceIdentity(trace), { ...trace }]));
+  for (const part of chunks.slice(1)) {
+    for (const incoming of part.cell_traces) {
+      const key = traceIdentity(incoming);
+      const current = traces.get(key);
+      if (!current) { traces.set(key, { ...incoming }); continue; }
+      const rowOffset = current.cycle.length;
+      const merged = { ...current } as TimeCapacityTrace & Record<string, unknown>;
+      const sources = [...(current.sources ?? [])];
+      const sourceIndexes = new Map(sources.map((source, index) => [source.hash, index]));
+      for (const source of incoming.sources ?? []) {
+        if (sourceIndexes.has(source.hash)) continue;
+        sourceIndexes.set(source.hash, sources.length);
+        sources.push(source);
+      }
+      for (const [field, value] of Object.entries(incoming)) {
+        if (field === "segments" || field === "source_descriptors" || field === "sources") continue;
+        if (field === "source_index" && Array.isArray(value)) {
+          const incomingSources = incoming.sources ?? [];
+          merged.source_index = value.map((sourceIndex) => {
+            if (typeof sourceIndex !== "number" || !Number.isInteger(sourceIndex)) return null;
+            const source = incomingSources[sourceIndex];
+            if (!source) return null;
+            return sourceIndexes.get(source.hash) ?? null;
+          });
+          merged.source_index = [
+            ...(current.source_index ?? []),
+            ...merged.source_index,
+          ];
+        } else if (field === "source_boundary_indices" && Array.isArray(value)) {
+          merged.source_boundary_indices = [
+            ...(current.source_boundary_indices ?? []),
+            ...value.map((index) => Number(index) + rowOffset),
+          ];
+        } else if (field === "voltage_v_by_channel" && value && typeof value === "object") {
+          const left = current.voltage_v_by_channel ?? {};
+          const right = value as NonNullable<TimeCapacityTrace["voltage_v_by_channel"]>;
+          merged.voltage_v_by_channel = Object.fromEntries(
+            [...new Set([...Object.keys(left), ...Object.keys(right)])].map((channel) => [channel, [
+              ...((left as Record<string, (number | null)[]>)[channel] ?? []),
+              ...((right as Record<string, (number | null)[]>)[channel] ?? []),
+            ]]),
+          ) as TimeCapacityTrace["voltage_v_by_channel"];
+        } else if (field === "display_only_cycle") {
+          const currentValues = (current as Record<string, unknown>).display_only_cycle;
+          const incomingValues = value;
+          (merged as Record<string, unknown>).display_only_cycle = [
+            ...(Array.isArray(currentValues)
+              ? currentValues
+              : Array.from({ length: rowOffset }, () => false)),
+            ...(Array.isArray(incomingValues)
+              ? incomingValues
+              : Array.from({ length: incoming.cycle.length }, () => false)),
+          ];
+        } else if (Array.isArray(value)) {
+          (merged as Record<string, unknown>)[field] = [
+            ...(Array.isArray((current as Record<string, unknown>)[field])
+              ? (current as Record<string, unknown>)[field] as unknown[] : []),
+            ...value,
+          ];
+        } else if (field === "display_x_cycle_origins" && value && typeof value === "object") {
+          (merged as Record<string, unknown>)[field] = {
+            ...(((current as Record<string, unknown>)[field] as Record<string, unknown> | undefined) ?? {}),
+            ...(value as Record<string, unknown>),
+          };
+        }
+      }
+      // The backend omits this optional marker array when a batch has no
+      // display-only rows. Keep omitted batches row-aligned as explicit false.
+      if (!Object.prototype.hasOwnProperty.call(incoming, "display_only_cycle")) {
+        const currentValues = (current as Record<string, unknown>).display_only_cycle;
+        if (Array.isArray(currentValues)) {
+          (merged as Record<string, unknown>).display_only_cycle = [
+            ...currentValues,
+            ...Array.from({ length: incoming.cycle.length }, () => false),
+          ];
+        }
+      }
+      if (incoming.segments?.length) {
+        const segments = new Map((current.segments ?? []).map((segment) => [`${segment.file_hash}:${segment.segment}`, { ...segment }]));
+        for (const segment of incoming.segments) {
+          const segmentKey = `${segment.file_hash}:${segment.segment}`;
+          const previous = segments.get(segmentKey);
+          if (!previous) segments.set(segmentKey, { ...segment });
+          else segments.set(segmentKey, {
+            ...previous,
+            cycle_start: previous.cycle_start === null ? segment.cycle_start : segment.cycle_start === null ? previous.cycle_start : Math.min(previous.cycle_start, segment.cycle_start),
+            cycle_end: previous.cycle_end === null ? segment.cycle_end : segment.cycle_end === null ? previous.cycle_end : Math.max(previous.cycle_end, segment.cycle_end),
+            display_only_source_cycles: [...new Set([...(previous.display_only_source_cycles ?? []), ...(segment.display_only_source_cycles ?? [])])],
+          });
+        }
+        merged.segments = [...segments.values()];
+      }
+      if (incoming.source_descriptors?.length) {
+        const descriptors = new Map((current.source_descriptors ?? []).map((item) => [item.source_hash, item]));
+        incoming.source_descriptors.forEach((item) => {
+          const previous = descriptors.get(item.source_hash);
+          if (!previous) descriptors.set(item.source_hash, item);
+          else descriptors.set(item.source_hash, {
+            ...previous,
+            local_cycle_start: previous.local_cycle_start === null ? item.local_cycle_start : item.local_cycle_start === null ? previous.local_cycle_start : Math.min(previous.local_cycle_start, item.local_cycle_start),
+            local_cycle_end: previous.local_cycle_end === null ? item.local_cycle_end : item.local_cycle_end === null ? previous.local_cycle_end : Math.max(previous.local_cycle_end, item.local_cycle_end),
+            global_cycle_start: previous.global_cycle_start === null ? item.global_cycle_start : item.global_cycle_start === null ? previous.global_cycle_start : Math.min(previous.global_cycle_start, item.global_cycle_start),
+            global_cycle_end: previous.global_cycle_end === null ? item.global_cycle_end : item.global_cycle_end === null ? previous.global_cycle_end : Math.max(previous.global_cycle_end, item.global_cycle_end),
+            display_only_source_cycles: [...new Set([...(previous.display_only_source_cycles ?? []), ...(item.display_only_source_cycles ?? [])])],
+          });
+        });
+        merged.source_descriptors = [...descriptors.values()];
+      }
+      if (sources.length) merged.sources = sources;
+      traces.set(key, merged);
+    }
+  }
+  const latest = chunks[chunks.length - 1];
+  const merged: TimeCapacityRefinementResult = {
+    ...base,
+    ...latest,
+    cell_traces: [...traces.values()],
+  };
+  if (latest.rendering) {
+    merged.rendering = {
+      ...latest.rendering,
+      total_points: chunks.reduce((total, chunk) => total + (chunk.rendering?.total_points ?? 0), 0),
+    };
+  }
+  return merged;
+}
 
 export const TIME_CAPACITY_REFINEMENT_TRANSITION_MS = 140;
 

@@ -39,6 +39,34 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertEqual(result["error"], "bad header")
         self.assertIsNone(result["supplier"])
 
+    def test_excel_hint_reports_parser_compatibility_without_blocking_other_formats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook = Path(directory) / "neware.xlsx"
+            workbook.write_bytes(b"workbook")
+            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={"technique": "GCPL"}):
+                accepted = import_file_hints.inspect_header_hint(str(workbook))
+            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
+                "error": "unrecognized workbook", "error_kind": "unsupported",
+                "error_message": "Not a supported Neware export."
+            }):
+                rejected = import_file_hints.inspect_header_hint(str(workbook))
+            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
+                "error": "I/O error", "error_kind": None, "error_message": "Temporary read failure."
+            }):
+                transient = import_file_hints.inspect_header_hint(str(workbook))
+            with patch.object(import_file_hints.parsing, "read_header_metadata", side_effect=OSError("sharing violation")):
+                failed_read = import_file_hints.inspect_header_hint(str(workbook))
+            binary = Path(directory) / "neware.ndax"
+            binary.write_bytes(b"binary")
+            with patch.object(import_file_hints.parsing, "read_header_metadata", side_effect=ValueError("hint unavailable")):
+                unavailable_hint = import_file_hints.inspect_header_hint(str(binary))
+        self.assertIs(accepted["compatible"], True)
+        self.assertIs(rejected["compatible"], False)
+        self.assertIsNone(transient["compatible"])
+        self.assertIsNone(failed_read["compatible"])
+        self.assertIsNone(unavailable_hint["compatible"])
+        self.assertFalse(accepted["registered"])
+
     def test_normalized_header_error_is_not_reported_as_a_successful_scan(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "unsupported.mpr"

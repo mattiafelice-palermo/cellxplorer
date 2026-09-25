@@ -134,6 +134,35 @@ class RawCacheLayoutTests(unittest.TestCase):
             [2],
         )
 
+    def test_index_caches_opposite_polarity_candidate_summary_for_cp_half(self) -> None:
+        frame = canonical_frame().iloc[:2].copy()
+        frame["cycle"] = [1, 1]
+        frame["cycle_complete"] = [False, False]
+        frame["measurement_type"] = ["biologic_cp", "biologic_cp"]
+        frame["current_ma"] = [-2.0, -2.0]
+        frame["step"] = [1, 1]
+        frame["discharge_capacity_mah"] = [0.0, 3.0]
+        index = self._indexed(frame)
+
+        self.assertEqual(
+            index["biologic_cp_half_cycle"],
+            {
+                "source_cycle": 1,
+                "direction": "discharge",
+                "charge_capacity_mah": None,
+                "discharge_capacity_mah": 3.0,
+            },
+        )
+        self.assertEqual(
+            cache.load_biologic_cp_half_cycle_summary(self.FILE_HASH, self.PARSER),
+            {
+                "source_cycle": 1,
+                "direction": "discharge",
+                "charge_capacity_mah": None,
+                "discharge_capacity_mah": 3.0,
+            },
+        )
+
     def test_new_cache_build_writes_indexed_raw_without_changing_calc_content(self) -> None:
         frame = canonical_frame()
         identity = parsing.parser_identity("prepared.ndax")

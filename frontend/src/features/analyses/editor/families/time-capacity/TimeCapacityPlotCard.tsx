@@ -144,6 +144,8 @@ import {
 } from "./timeCapacityDataExport";
 import {
   timeCapacityCycleRangeForViewport,
+  timeCapacityRefinementChunks,
+  mergeTimeCapacityRefinementChunks,
   timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
   timeCapacityRefinementDisplayIsCompatible,
@@ -3193,60 +3195,78 @@ function TimeCapacityPlotCardView({
             refinementTimerRef.current = null;
             const controller = new AbortController();
             refinementAbortRef.current = controller;
-            void post<TimeCapacityRefinementResult>(
-              `/api/analyses/${analysisId}/time-capacity/refine`,
-              {
-                // Refinement is another scientific Time/Capacity boundary.
-                // Analysis-sample eyes remain live render state and must not
-                // alter the cells read by this ephemeral high-resolution path.
-                spec: scientificRenderSpec,
-                viewport_x_min: viewport.min,
-                viewport_x_max: viewport.max,
-                viewport_width: viewportWidth,
-                cycle_start: cycleRange.start,
-                cycle_end: cycleRange.end,
-                request_generation: generation,
-              },
-              { signal: controller.signal },
-            )
-              .then((response) => {
-                if (refinementLifecycle.acceptResponse(
-                  response,
-                  currentResultRef.current,
-                  generation,
-                  viewport,
-                  compatibilitySignature,
-                )) {
-                  const previousDisplayedResult = activeRefinedResult ?? currentResultRef.current;
-                  const transitionDuration = timeCapacityRefinementTransitionDuration(
-                    prefersReducedMotion(),
+            void (async () => {
+              const received: TimeCapacityRefinementResult[] = [];
+              const chunks = timeCapacityRefinementChunks(cycleRange);
+              try {
+                for (let index = 0; index < chunks.length; index += 1) {
+                  if (controller.signal.aborted) break;
+                  const chunk = chunks[index];
+                  const response = await post<TimeCapacityRefinementResult>(
+                    `/api/analyses/${analysisId}/time-capacity/refine`,
+                    {
+                      // Fetch the first few cycles as soon as possible, then
+                      // append larger adjacent windows while holding the axes.
+                      // Analysis-sample visibility remains live render state.
+                      spec: scientificRenderSpec,
+                      viewport_x_min: viewport.min,
+                      viewport_x_max: viewport.max,
+                      viewport_width: viewportWidth,
+                      cycle_start: chunk.start,
+                      cycle_end: chunk.end,
+                      origin_cycle_start: cycleRange.start,
+                      origin_cycle_end: cycleRange.end,
+                      request_generation: generation,
+                    },
+                    { signal: controller.signal },
                   );
-                  const fromTraces = previousDisplayedResult
-                    ? refinementTransitionTraces(previousDisplayedResult, scientificRenderSpec)
-                    : [];
-                  const toTraces = refinementTransitionTraces(response, scientificRenderSpec);
-                  if (
-                    previousDisplayedResult &&
-                    transitionDuration > 0 &&
-                    refinementTransitionCanReveal(fromTraces, toTraces)
-                  ) {
-                    setRefinementTransitionProgress(0);
-                    setRefinementTransition({
-                      from: fromTraces,
-                      to: toTraces,
-                    });
-                  } else {
-                    cancelRefinementTransition();
-                  }
-                  setRefinedResult(response);
+                  received.push(response);
+                  const streamed = mergeTimeCapacityRefinementChunks(received);
+                  if (!streamed) continue;
+                  streamed.settings = {
+                    ...streamed.settings,
+                    cycle_start: cycleRange.start,
+                    cycle_end: cycleRange.end,
+                  };
+                  if (!refinementLifecycle.acceptResponse(
+                    streamed,
+                    currentResultRef.current,
+                    generation,
+                    viewport,
+                    compatibilitySignature,
+                  )) continue;
+                  if (index === 0) {
+                    const previousDisplayedResult = activeRefinedResult ?? currentResultRef.current;
+                    const transitionDuration = timeCapacityRefinementTransitionDuration(prefersReducedMotion());
+                    const fromTraces = previousDisplayedResult
+                      ? refinementTransitionTraces(previousDisplayedResult, scientificRenderSpec)
+                      : [];
+                    const toTraces = refinementTransitionTraces(streamed, scientificRenderSpec);
+                    if (previousDisplayedResult && transitionDuration > 0 && refinementTransitionCanReveal(fromTraces, toTraces)) {
+                      setRefinementTransitionProgress(0);
+                      setRefinementTransition({ from: fromTraces, to: toTraces });
+                    } else cancelRefinementTransition();
+                  } else cancelRefinementTransition();
+                  setRefinedResult(streamed);
                 }
-              })
-              .catch(() => {
-                // Refinement is opportunistic; the stable overview remains
-                // visible when a request is aborted or unavailable.
-              }).finally(() => {
+              } catch {
+                // An incomplete batch sequence cannot stand in for the full
+                // requested viewport. Fall back to the overview if we had
+                // already published a partial result; the viewport's request
+                // identity remains recorded so failures do not trigger a tight
+                // automatic retry loop.
+                if (
+                  !controller.signal.aborted &&
+                  received.length > 0 &&
+                  refinementLifecycle.generation === generation
+                ) {
+                  cancelRefinementTransition();
+                  clearDisplayedRefinement();
+                }
+              } finally {
                 if (refinementAbortRef.current === controller) refinementAbortRef.current = null;
-              });
+              }
+            })();
           }, 150);
         }
         }

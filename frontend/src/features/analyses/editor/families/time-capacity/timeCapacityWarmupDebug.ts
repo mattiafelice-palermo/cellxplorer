@@ -20,6 +20,17 @@ export const EMPTY_WARMUP_DEBUG: WarmupDebug = {
   analysisId: null, plot: "", completed: 0, total: 0, hits: 0, misses: 0, skipped: 0,
   request: "—", lastMs: null, inFlight: false, running: 0,
 };
+const WARMUP_INDICATOR_SETTING = "cellxplorer.debug.timeCapacityWarmupIndicator";
+export const WARMUP_INDICATOR_CHANGE_EVENT = "cellxplorer:time-capacity-warmup-indicator";
+export function readWarmupIndicatorEnabled(): boolean {
+  try { return window.localStorage.getItem(WARMUP_INDICATOR_SETTING) === "true"; }
+  catch { return false; }
+}
+export function setWarmupIndicatorEnabled(enabled: boolean): void {
+  try { window.localStorage.setItem(WARMUP_INDICATOR_SETTING, String(enabled)); }
+  catch { /* Debug preference is optional when storage is unavailable. */ }
+  window.dispatchEvent(new Event(WARMUP_INDICATOR_CHANGE_EVENT));
+}
 const owners = new Map<symbol, WarmupDebug>();
 const listeners = new Set<() => void>();
 let snapshot = EMPTY_WARMUP_DEBUG;

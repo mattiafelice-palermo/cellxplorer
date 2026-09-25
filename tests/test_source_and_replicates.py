@@ -34,6 +34,42 @@ class SourceAndReplicateTests(unittest.TestCase):
         Base.metadata.create_all(engine)
         return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
 
+    def test_split_cp_pair_count_does_not_reuse_a_half(self):
+        summary = lambda direction: {"source_cycle": 1, "direction": direction}
+
+        self.assertEqual(
+            library._count_non_overlapping_cp_pairs(
+                [summary("charge"), summary("discharge"), summary("charge")]
+            ),
+            1,
+        )
+        self.assertEqual(
+            library._count_non_overlapping_cp_pairs(
+                [
+                    summary("charge"),
+                    summary("discharge"),
+                    summary("charge"),
+                    summary("discharge"),
+                ]
+            ),
+            2,
+        )
+
+    def test_cp_summary_cache_retries_transient_misses(self):
+        key = ("transient-cp-summary-test", "parser-1")
+        library._memoized_cp_half_cycle_summary.cache_clear()
+        with patch.object(
+            library.cache,
+            "load_biologic_cp_half_cycle_summary",
+            side_effect=[None, {"source_cycle": 1, "direction": "charge"}],
+        ):
+            self.assertIsNone(library._cached_cp_half_cycle_summary(*key))
+            self.assertEqual(
+                library._cached_cp_half_cycle_summary(*key),
+                {"source_cycle": 1, "direction": "charge"},
+            )
+        library._memoized_cp_half_cycle_summary.cache_clear()
+
     def test_update_source_file_from_path_replaces_hash_metadata_and_cache_counts(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1102,6 +1138,74 @@ class SourceAndReplicateTests(unittest.TestCase):
                 fallback_payload["last_modified_at"],
                 "2020-09-13T12:26:40+00:00",
             )
+
+    def test_cell_cycle_count_includes_opposite_cp_halves_on_all_library_surfaces(self):
+        db = self.make_session()
+        cell = Cell(name="Split CP cycle")
+        charge = SourceFile(
+            hash="split-cp-charge",
+            path="C:/data/charge.mpr",
+            filename="charge.mpr",
+            size=10,
+            ext="mpr",
+            parser_version="cp-parser-1",
+            parse_status="parsed",
+            cycle_count=0,
+            capacity_summary_status="ready",
+            header_meta={"settings": {"technique": "CP"}},
+        )
+        discharge = SourceFile(
+            hash="split-cp-discharge",
+            path="C:/data/discharge.mpr",
+            filename="discharge.mpr",
+            size=10,
+            ext="mpr",
+            parser_version="cp-parser-1",
+            parse_status="parsed",
+            cycle_count=0,
+            capacity_summary_status="ready",
+            header_meta={"settings": {"technique": "CP"}},
+        )
+        cell.tests = [Test(name="Imported file", file_links=[
+            TestFile(file=charge, position=0),
+            TestFile(file=discharge, position=1),
+        ])]
+        db.add(cell)
+        db.commit()
+        with tempfile.TemporaryDirectory() as temporary:
+            cache_dir = Path(temporary)
+            (cache_dir / "split-cp-charge").touch()
+            (cache_dir / "split-cp-discharge").touch()
+
+            def source_cache_path(file_hash, parser_version):
+                return cache_dir / file_hash
+
+            def half_summary(file_hash, parser_version):
+                return {
+                    "source_cycle": 1,
+                    "direction": "charge"
+                    if file_hash == "split-cp-charge"
+                    else "discharge",
+                    "charge_capacity_mah": 10.0 if file_hash == "split-cp-charge" else None,
+                    "discharge_capacity_mah": 9.5 if file_hash == "split-cp-discharge" else None,
+                }
+
+            with (
+                patch.object(library.cache, "raw_path", side_effect=source_cache_path),
+                patch.object(library, "_cached_cp_half_cycle_summary", side_effect=half_summary),
+            ):
+                payload = library.list_cells(db=db, include_picker_metadata=True)[0]
+                ordinary_payload = library.list_cells(db=db)[0]
+                detail = library.get_cell(cell.id, db=db)
+
+        self.assertEqual(payload["total_cycles"], 1)
+        self.assertEqual(ordinary_payload["total_cycles"], 1)
+        self.assertEqual(detail["total_cycles"], 1)
+        self.assertTrue(payload["cycle_count_ready"])
+        self.assertEqual(payload["total_charge_capacity_mah"], 10.0)
+        self.assertEqual(payload["total_discharge_capacity_mah"], 9.5)
+        self.assertEqual(detail["total_charge_capacity_mah"], 10.0)
+        self.assertEqual(detail["total_discharge_capacity_mah"], 9.5)
 
     def test_library_rejects_zero_internal_test_rows_in_list_and_detail(self):
         db = self.make_session()

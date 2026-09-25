@@ -808,6 +808,7 @@ def _build_raw_layout_index(
             raw_file_size=raw_file_size,
         ),
     }
+    result["biologic_cp_half_cycle"] = _biologic_cp_half_cycle_summary(frame)
     biologic_attrs = frame.attrs.get("biologic_gcpl") if hasattr(frame, "attrs") else None
     biologic_cycle_source = (
         str(biologic_attrs.get("cycle_source"))
@@ -856,6 +857,99 @@ def _build_raw_layout_index(
             }
         )
     return result
+
+
+def _biologic_cp_half_cycle_summary(frame: pd.DataFrame) -> dict[str, Any] | None:
+    """Summarize a single incomplete, single-polarity BioLogic CP source."""
+    required = {"cycle", "cycle_complete", "measurement_type", "current_ma"}
+    if frame.empty or not required.issubset(frame.columns):
+        return None
+    if frame["measurement_type"].dropna().astype(str).unique().tolist() != ["biologic_cp"]:
+        return None
+    if frame["cycle_complete"].fillna(False).astype(bool).any():
+        return None
+    cycles, errors = canonical_cycling.observed_cycle_labels(frame["cycle"])
+    if errors or len(cycles) != 1:
+        return None
+    current = pd.to_numeric(frame["current_ma"], errors="coerce")
+    if current.isna().any():
+        return None
+    positive = bool((current > 1e-6).any())
+    negative = bool((current < -1e-6).any())
+    if positive == negative:
+        return None
+    direction = "charge" if positive else "discharge"
+
+    def phase_capacity(column: str) -> float | None:
+        if column not in frame.columns:
+            return None
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if values.isna().all():
+            return None
+        if "step" in frame.columns:
+            steps = frame.loc[:, ["step"]].copy()
+            steps["capacity"] = values
+            steps = steps.dropna(subset=["step", "capacity"])
+            if steps.empty:
+                return None
+            grouped = steps.groupby("step", sort=False)["capacity"]
+            delivered = (grouped.max() - grouped.min()).clip(lower=0).sum()
+            return float(delivered) if math.isfinite(float(delivered)) else None
+        capacity = float(values.max())
+        return capacity if math.isfinite(capacity) else None
+
+    return {
+        "source_cycle": int(cycles[0]),
+        "direction": direction,
+        "charge_capacity_mah": phase_capacity("charge_capacity_mah") if positive else None,
+        "discharge_capacity_mah": phase_capacity("discharge_capacity_mah") if negative else None,
+    }
+
+
+def load_biologic_cp_half_cycle_summary(
+    file_hash: str, parser_version: str
+) -> dict[str, Any] | None:
+    """Read CP half-cycle identity from the raw index, falling back to 4 columns.
+
+    The fallback supports raw indexes written before the CP summary was added;
+    the caller should memoize it by immutable source identity.
+    """
+    try:
+        index = try_load_raw_layout_index(file_hash, parser_version)
+    except (OSError, RawLayoutError, ValueError):
+        index = None
+    if index is not None and "biologic_cp_half_cycle" in index:
+        value = index.get("biologic_cp_half_cycle")
+        if not isinstance(value, dict):
+            return None
+        if {"charge_capacity_mah", "discharge_capacity_mah"}.issubset(value):
+            return dict(value)
+    columns = ["cycle", "cycle_complete", "measurement_type", "current_ma"]
+    if index is not None:
+        available = set(index.get("raw_column_names", []))
+    else:
+        # The compatibility cache may predate its JSON index, or the index can
+        # be temporarily unavailable while another worker publishes it. Read
+        # the Parquet schema only to discover optional capacity columns; the
+        # actual fallback still selects just the compact columns below.
+        try:
+            import pyarrow.parquet as pq
+
+            available = set(pq.ParquetFile(raw_path(file_hash, parser_version)).schema.names)
+        except (ImportError, OSError, ValueError):
+            available = set()
+    if available:
+        columns.extend(
+            column
+            for column in ("step", "charge_capacity_mah", "discharge_capacity_mah")
+            if column in available
+        )
+    frame = load_raw_columns(
+        file_hash,
+        parser_version,
+        columns,
+    )
+    return _biologic_cp_half_cycle_summary(frame) if frame is not None else None
 
 
 def _coerce_index_cycle(value: object, name: str) -> int:
@@ -1074,10 +1168,6 @@ def _validate_raw_layout_index(
     if set(complete_cycles) != row_group_complete_cycles:
         raise RawLayoutError("raw layout index complete cycles disagree with row groups")
 
-    consecutive_time_value = index.get("consecutive_time")
-    if not isinstance(consecutive_time_value, dict):
-        raise RawLayoutError("raw layout index has invalid consecutive-time metadata")
-
     def finite_index_float(value: object, name: str, *, allow_none: bool = True) -> float | None:
         if value is None and allow_none:
             return None
@@ -1090,6 +1180,43 @@ def _validate_raw_layout_index(
         if not math.isfinite(numeric):
             raise RawLayoutError(f"raw layout index {name} contains a non-finite time value")
         return numeric
+
+    cp_half_value = index.get("biologic_cp_half_cycle")
+    if "biologic_cp_half_cycle" in index and cp_half_value is not None:
+        if not isinstance(cp_half_value, dict) or set(cp_half_value) not in (
+            {"source_cycle", "direction"},
+            {"source_cycle", "direction", "charge_capacity_mah", "discharge_capacity_mah"},
+        ):
+            raise RawLayoutError("raw layout index has invalid BioLogic CP half-cycle metadata")
+        cp_cycle = _coerce_index_cycle(
+            cp_half_value.get("source_cycle"), "biologic_cp_half_cycle.source_cycle"
+        )
+        if (
+            cp_cycle not in observed_cycles
+            or len(observed_cycles) != 1
+            or complete_cycles
+            or cp_half_value.get("direction") not in {"charge", "discharge"}
+            or not {"measurement_type", "current_ma", "cycle_complete"}.issubset(column_names)
+        ):
+            raise RawLayoutError("raw layout index BioLogic CP half-cycle metadata is inconsistent")
+        cp_half_value = {"source_cycle": cp_cycle, "direction": cp_half_value["direction"]}
+        if "charge_capacity_mah" in index.get("biologic_cp_half_cycle", {}):
+            cp_half_value.update(
+                {
+                    "charge_capacity_mah": finite_index_float(
+                        index["biologic_cp_half_cycle"].get("charge_capacity_mah"),
+                        "biologic_cp_half_cycle.charge_capacity_mah",
+                    ),
+                    "discharge_capacity_mah": finite_index_float(
+                        index["biologic_cp_half_cycle"].get("discharge_capacity_mah"),
+                        "biologic_cp_half_cycle.discharge_capacity_mah",
+                    ),
+                }
+            )
+
+    consecutive_time_value = index.get("consecutive_time")
+    if not isinstance(consecutive_time_value, dict):
+        raise RawLayoutError("raw layout index has invalid consecutive-time metadata")
 
     cycle_starts_value = consecutive_time_value.get("cycle_starts")
     if not isinstance(cycle_starts_value, dict):
@@ -1206,6 +1333,8 @@ def _validate_raw_layout_index(
     normalized["complete_source_cycles"] = complete_cycles
     normalized["cycle_to_row_groups"] = cycle_mapping
     normalized["consecutive_time"] = consecutive_time
+    if "biologic_cp_half_cycle" in index:
+        normalized["biologic_cp_half_cycle"] = cp_half_value
     if step_detail is not None:
         normalized.update(step_detail)
     return normalized

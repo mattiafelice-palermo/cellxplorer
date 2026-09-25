@@ -10,6 +10,7 @@ import {
   ScrollArea,
   SimpleGrid,
   Stack,
+  Switch,
   Table,
   Tabs,
   Text,
@@ -38,6 +39,7 @@ import {
   type DiagnosticsResources,
 } from "../api";
 import { saveDownload } from "../downloads";
+import { readWarmupIndicatorEnabled, setWarmupIndicatorEnabled } from "../features/analyses/editor/families/time-capacity/timeCapacityWarmupDebug";
 import {
   startTimeCapacityRecording,
   stopTimeCapacityRecording,
@@ -76,6 +78,7 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
     timeCapacityPerformanceProfiler.getSnapshot,
   );
   const [exportingPerformanceProfile, setExportingPerformanceProfile] = useState(false);
+  const [warmupIndicatorEnabled, setWarmupIndicatorEnabledState] = useState(readWarmupIndicatorEnabled);
   const health = useQuery({
     queryKey: ["diagnostics-health"],
     queryFn: () => get<DiagnosticsHealth>("/api/diagnostics/health"),
@@ -173,6 +176,17 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
 
   return (
     <Modal opened={opened} onClose={onClose} title="Diagnostics" size="xl">
+      <Paper withBorder p="sm" mb="sm">
+        <Switch
+          label="Show Time/Capacity warmup indicator in the app header"
+          checked={warmupIndicatorEnabled}
+          onChange={(event) => {
+            const enabled = event.currentTarget.checked;
+            setWarmupIndicatorEnabledState(enabled);
+            setWarmupIndicatorEnabled(enabled);
+          }}
+        />
+      </Paper>
       <Tabs defaultValue="health">
         <Tabs.List>
           <Tabs.Tab value="health" leftSection={<IconHeartbeat size={15} />}>Health</Tabs.Tab>

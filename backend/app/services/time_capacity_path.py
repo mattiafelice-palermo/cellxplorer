@@ -372,6 +372,19 @@ def build_time_capacity_stitch_plan(
         selected_rows=0,
         source_reads=[],
     )
+    # Adjacent, opposite-polarity BioLogic CP halves acquire their cycle
+    # identity only from the ordered source chain. The lightweight indexed
+    # per-source maps cannot represent that shared identity, so use the
+    # established raw stitch path for these chains to keep Time/Capacity cycle
+    # numbering consistent with Cycles and Library.
+    if len(ordered_refs) > 1 and stitch._has_adjacent_opposite_cp_halves(list(ordered_refs)):
+        return _fallback_plan(
+            ordered_refs,
+            indexed_sources=(),
+            reason="cross_source_cp_pair_requires_raw_cycle_mapping",
+            diagnostics=diagnostics,
+        )
+
     sources: list[IndexedSourcePlan] = []
     segments: list[dict[str, Any]] = []
     source_facts: dict[str, dict[str, Any]] = {}
