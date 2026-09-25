@@ -59,6 +59,7 @@ import {
   IconFilter,
   IconFolder,
   IconGauge,
+  IconGripVertical,
   IconInfoCircle,
   IconLayersIntersect,
   IconPlus,
@@ -1192,18 +1193,18 @@ type CellPickerColumnWidths = Record<CellPickerSortKey, number>;
 
 const CELL_PICKER_SELECTION_COLUMN_WIDTH = 42;
 const CELL_PICKER_INITIAL_COLUMN_WIDTHS: CellPickerColumnWidths = {
-  name: 520,
-  cycle_count: 104,
-  max_specific_discharge_capacity_mah_g: 148,
-  created_at: 138,
-  last_modified_at: 142,
+  name: 460,
+  cycle_count: 142,
+  max_specific_discharge_capacity_mah_g: 184,
+  created_at: 158,
+  last_modified_at: 182,
 };
 
 function minCellPickerColumnWidth(key: CellPickerSortKey): number {
-  if (key === "name") return 180;
-  if (key === "cycle_count") return 72;
-  if (key === "max_specific_discharge_capacity_mah_g") return 112;
-  return 112;
+  if (key === "name") return 220;
+  if (key === "cycle_count") return 116;
+  if (key === "max_specific_discharge_capacity_mah_g") return 152;
+  return 136;
 }
 
 function AddEntriesModal({
@@ -1239,20 +1240,32 @@ function AddEntriesModal({
   const [previewVoltageXAxis, setPreviewVoltageXAxis] = useState<"time" | "capacity">("time");
   const [previewCycleStart, setPreviewCycleStart] = useState(1);
   const [previewCycleEnd, setPreviewCycleEnd] = useState(20);
+  const [capacityCycleStart, setCapacityCycleStart] = useState(1);
+  const [capacityCycleEnd, setCapacityCycleEnd] = useState(1);
+  const [normalizeCapacityByMass, setNormalizeCapacityByMass] = useState(true);
+  const [cellPickerTableShare, setCellPickerTableShare] = useState(68);
+  const [isResizingCellPickerSplit, setIsResizingCellPickerSplit] = useState(false);
+  const [cellPickerSplitWidth, setCellPickerSplitWidth] = useState(0);
+  const [cellPickerSplitElement, setCellPickerSplitElement] = useState<HTMLDivElement | null>(null);
+  const cellPickerSplitRef = useRef<HTMLDivElement | null>(null);
+  const setCellPickerSplitRef = useCallback((element: HTMLDivElement | null) => {
+    cellPickerSplitRef.current = element;
+    setCellPickerSplitElement(element);
+  }, []);
   const computedColorScheme = useComputedColorScheme("light");
   const theme = useMantineTheme();
   const previewPlotColors = computedColorScheme === "dark"
     ? {
-        background: theme.colors.dark[5],
-        text: theme.colors.dark[0],
-        border: theme.colors.dark[4],
-        grid: theme.colors.dark[4],
+        background: theme.colors.dark[4],
+        text: theme.colors.gray[0],
+        border: theme.colors.dark[1],
+        grid: theme.colors.dark[3],
       }
     : {
-        background: theme.white,
+        background: theme.colors.gray[0],
         text: theme.black,
-        border: theme.colors.gray[4],
-        grid: theme.colors.gray[2],
+        border: theme.colors.gray[5],
+        grid: theme.colors.gray[3],
       };
   const [showPreviewCharge, setShowPreviewCharge] = useState(true);
   const [showPreviewDischarge, setShowPreviewDischarge] = useState(true);
@@ -1268,10 +1281,30 @@ function AddEntriesModal({
     created_at: null,
     last_modified_at: null,
   });
+  const splitResizeFrame = useRef<number | null>(null);
+  const pendingSplitClientX = useRef<number | null>(null);
   useEffect(() => {
     if (opened) setMode("cell");
   }, [opened]);
   useEffect(() => () => columnResizeCleanup.current?.(), []);
+  useEffect(() => () => {
+    if (splitResizeFrame.current !== null) cancelAnimationFrame(splitResizeFrame.current);
+  }, []);
+  useEffect(() => {
+    const element = cellPickerSplitElement;
+    if (!opened || mode !== "cell" || !element) return;
+    const measure = () => {
+      const width = element.getBoundingClientRect().width;
+      const minShare = width > 0 ? Math.max(30, Math.min(72, (460 / width) * 100)) : 30;
+      const maxShare = width > 0 ? Math.max(minShare, Math.min(82, 100 - (320 / width) * 100)) : 82;
+      setCellPickerSplitWidth(width);
+      setCellPickerTableShare((current) => Math.max(minShare, Math.min(maxShare, current)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [opened, mode, cellPickerSplitElement]);
   useEffect(() => {
     if (!opened) columnResizeCleanup.current?.();
   }, [opened]);
@@ -1438,6 +1471,10 @@ function AddEntriesModal({
     ? undefined
     : cellSummariesById.get(activePreviewCellId);
   const previewCycleCount = previewCellSummary?.cycle_count_ready ? previewCellSummary.total_cycles : 0;
+  const previewActiveMassMg = previewCellSummary?.scientific_metadata.active_mass_mg.effective_value ?? null;
+  const previewActiveMassG = previewActiveMassMg !== null && Number.isFinite(previewActiveMassMg) && previewActiveMassMg > 0
+    ? previewActiveMassMg / 1000
+    : null;
   const previewHasVerifiedCycles = previewCycleCount > 0;
   const previewIsOcvOnly = Boolean(
     previewCellSummary?.source_facets?.length
@@ -1450,14 +1487,24 @@ function AddEntriesModal({
   const resolvedPreviewCycleEnd = previewCycleCount > 0
     ? Math.max(resolvedPreviewCycleStart, Math.min(previewCycleEnd, previewCycleCount))
     : 0;
+  const resolvedCapacityCycleStart = previewCycleCount > 0
+    ? Math.max(1, Math.min(capacityCycleStart, previewCycleCount))
+    : 0;
+  const resolvedCapacityCycleEnd = previewCycleCount > 0
+    ? Math.max(resolvedCapacityCycleStart, Math.min(capacityCycleEnd, previewCycleCount))
+    : 0;
   useEffect(() => {
+    if (!opened) return;
     const end = previewCycleCount;
     setPreviewCycleEnd(end);
     setPreviewCycleStart(end > 0 ? Math.max(1, end - 19) : 0);
+    setCapacityCycleStart(end > 0 ? 1 : 0);
+    setCapacityCycleEnd(end);
+    setNormalizeCapacityByMass(previewActiveMassG !== null);
     setPreviewTab("voltage");
     setPreviewVoltageXAxis("time");
     if (previewIsOcvOnly) setPreviewVoltageXAxis("time");
-  }, [activePreviewCellId, previewCycleCount, previewIsOcvOnly]);
+  }, [opened, activePreviewCellId, previewActiveMassG, previewCycleCount, previewIsOcvOnly]);
   const previewSpec = useMemo<AnalysisSpec | null>(() => {
     if (activePreviewCellId === null) return null;
     return {
@@ -1539,14 +1586,14 @@ function AddEntriesModal({
       },
       computation: {
         ...analysisSpec.computation,
-        cycle_range: { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd },
+        cycle_range: { start: resolvedCapacityCycleStart, end: resolvedCapacityCycleEnd },
         exclude_check_cycles_every_n: 0,
         protocol_filter: { excluded_segment_ids: [], only_segment_ids: [] },
       },
     };
-  }, [activePreviewCellId, analysisSpec, previewHasVerifiedCycles, resolvedPreviewCycleEnd, resolvedPreviewCycleStart]);
+  }, [activePreviewCellId, analysisSpec, previewHasVerifiedCycles, resolvedCapacityCycleEnd, resolvedCapacityCycleStart]);
   const cyclePreviewQuery = useQuery({
-    queryKey: ["analysis-cell-picker-cycle-preview", analysisId, activePreviewCellId, resolvedPreviewCycleStart, resolvedPreviewCycleEnd],
+    queryKey: ["analysis-cell-picker-cycle-preview", analysisId, activePreviewCellId, resolvedCapacityCycleStart, resolvedCapacityCycleEnd],
     queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
       spec: cyclePreviewSpec,
       cache_only: false,
@@ -1595,27 +1642,31 @@ function AddEntriesModal({
     if (!cyclePreviewSeries) return [];
     const x = cyclePreviewSeries.x;
     const quantities = cyclePreviewSeries.quantities;
+    const massInGrams = normalizeCapacityByMass ? previewActiveMassG : null;
+    const capacityUnit = massInGrams ? "mAh/g" : "mAh";
+    const capacityValues = (values: (number | null)[] | undefined) =>
+      (values ?? []).map((value) => value === null || !massInGrams ? value : value / massInGrams);
     const output = [];
     if (showPreviewCharge) output.push({
       type: "scatter", mode: "markers", name: "Charge capacity", x,
-      y: quantities.charge_capacity_mah ?? [], yaxis: "y",
-      marker: { color: PLOT_PALETTES.app[0], size: 6, symbol: "circle" },
-      hovertemplate: "Cycle %{x}<br>%{y:.4g} mAh<extra>Charge capacity</extra>",
+      y: capacityValues(quantities.charge_capacity_mah), yaxis: "y",
+      marker: { color: PLOT_PALETTES.app[0], size: 9, symbol: "circle" },
+      hovertemplate: `Cycle %{x}<br>%{y:.4g} ${capacityUnit}<extra>Charge capacity</extra>`,
     });
     if (showPreviewDischarge) output.push({
       type: "scatter", mode: "markers", name: "Discharge capacity", x,
-      y: quantities.discharge_capacity_mah ?? [], yaxis: "y",
-      marker: { color: PLOT_PALETTES.app[1], size: 6, symbol: "circle" },
-      hovertemplate: "Cycle %{x}<br>%{y:.4g} mAh<extra>Discharge capacity</extra>",
+      y: capacityValues(quantities.discharge_capacity_mah), yaxis: "y",
+      marker: { color: PLOT_PALETTES.app[1], size: 9, symbol: "square" },
+      hovertemplate: `Cycle %{x}<br>%{y:.4g} ${capacityUnit}<extra>Discharge capacity</extra>`,
     });
     output.push({
       type: "scatter", mode: "markers", name: "Coulombic efficiency", x,
       y: quantities.coulombic_efficiency_pct ?? [], yaxis: "y2",
-      marker: { color: PLOT_PALETTES.app[2], size: 7, symbol: "circle-open", opacity: 0.2 },
+      marker: { color: PLOT_PALETTES.app[2], size: 10, symbol: "circle-open", line: { color: PLOT_PALETTES.app[2], width: 2.5 } },
       hovertemplate: "Cycle %{x}<br>%{y:.3g}%<extra>Coulombic efficiency</extra>",
     });
     return output;
-  }, [cyclePreviewSeries, showPreviewCharge, showPreviewDischarge]);
+  }, [cyclePreviewSeries, normalizeCapacityByMass, previewActiveMassG, previewPlotColors.text, showPreviewCharge, showPreviewDischarge]);
   const unfiledGroups = (groups.data ?? []).filter(
     (group) => !filedGroupIds.has(group.id) && matches(group.name)
   );
@@ -1635,6 +1686,26 @@ function AddEntriesModal({
       ...current,
       [key]: Math.max(minCellPickerColumnWidth(key), current[key] + delta),
     }));
+  };
+  const cellPickerSplitShareForX = (clientX: number) => {
+    const bounds = cellPickerSplitRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0) return cellPickerTableShare;
+    const minShare = Math.max(30, Math.min(72, (460 / bounds.width) * 100));
+    const maxShare = Math.max(minShare, Math.min(82, 100 - (320 / bounds.width) * 100));
+    return Math.max(minShare, Math.min(maxShare, ((clientX - bounds.left) / bounds.width) * 100));
+  };
+  const cellPickerSplitLimitsForWidth = (width: number) => {
+    const minShare = width > 0 ? Math.max(30, Math.min(72, (460 / width) * 100)) : 30;
+    const maxShare = width > 0 ? Math.max(minShare, Math.min(82, 100 - (320 / width) * 100)) : 82;
+    return { minShare, maxShare };
+  };
+  const cellPickerSplitLimits = () => {
+    const bounds = cellPickerSplitRef.current?.getBoundingClientRect();
+    return cellPickerSplitLimitsForWidth(bounds?.width ?? cellPickerSplitWidth);
+  };
+  const adjustCellPickerSplit = (delta: number) => {
+    const { minShare, maxShare } = cellPickerSplitLimits();
+    setCellPickerTableShare((current) => Math.max(minShare, Math.min(maxShare, current + delta)));
   };
   const startCellColumnResize = (key: CellPickerSortKey, event: ReactPointerEvent) => {
     event.preventDefault();
@@ -2213,11 +2284,11 @@ function AddEntriesModal({
       title="Add to plot"
       size="min(1680px, calc(100vw - 32px))"
       style={{
-        "--mantine-font-size-xs": "calc(0.75rem * var(--mantine-scale) + 0.125rem)",
-        "--mantine-font-size-sm": "calc(0.875rem * var(--mantine-scale) + 0.125rem)",
-        "--mantine-font-size-md": "calc(1rem * var(--mantine-scale) + 0.125rem)",
-        "--mantine-font-size-lg": "calc(1.125rem * var(--mantine-scale) + 0.125rem)",
-        "--mantine-font-size-xl": "calc(1.25rem * var(--mantine-scale) + 0.125rem)",
+        "--mantine-font-size-xs": "calc(0.75rem * var(--mantine-scale) + 0.4583rem)",
+        "--mantine-font-size-sm": "calc(0.875rem * var(--mantine-scale) + 0.4583rem)",
+        "--mantine-font-size-md": "calc(1rem * var(--mantine-scale) + 0.4583rem)",
+        "--mantine-font-size-lg": "calc(1.125rem * var(--mantine-scale) + 0.4583rem)",
+        "--mantine-font-size-xl": "calc(1.25rem * var(--mantine-scale) + 0.4583rem)",
       } as CSSProperties}
     >
       <Stack gap="sm">
@@ -2386,8 +2457,19 @@ function AddEntriesModal({
             </Group>
           )}
         </Group>
-        <Group align="stretch" gap="md" wrap="nowrap" style={{ minWidth: 0 }}>
-        <Box style={{ flex: "1 1 0%", minWidth: 0 }}>
+        <Box
+          ref={setCellPickerSplitRef}
+          style={{
+            display: "grid",
+            gridTemplateColumns: mode === "cell"
+              ? `minmax(0, ${cellPickerTableShare}fr) 12px minmax(280px, ${100 - cellPickerTableShare}fr)`
+              : "minmax(0, 1fr)",
+            gap: 0,
+            minWidth: 0,
+            alignItems: "stretch",
+          }}
+        >
+        <Box id="analysis-cell-picker-table" style={{ minWidth: 0, gridColumn: 1 }}>
         <ScrollArea h={460} type="auto" offsetScrollbars="y" scrollbarSize={10}>
           <Table
             ref={cellPickerTableRef}
@@ -2575,11 +2657,81 @@ function AddEntriesModal({
         </ScrollArea>
         </Box>
         {mode === "cell" && (
+          <Box
+            role="separator"
+            aria-label="Resize cell table and preview"
+            aria-orientation="vertical"
+            aria-valuemin={Math.round(cellPickerSplitLimits().minShare)}
+            aria-valuemax={Math.round(cellPickerSplitLimits().maxShare)}
+            aria-valuenow={Math.round(cellPickerTableShare)}
+            aria-controls="analysis-cell-picker-table analysis-cell-picker-preview"
+            tabIndex={0}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              setIsResizingCellPickerSplit(true);
+            }}
+            onPointerMove={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+              pendingSplitClientX.current = event.clientX;
+              if (splitResizeFrame.current !== null) return;
+              splitResizeFrame.current = requestAnimationFrame(() => {
+                splitResizeFrame.current = null;
+                if (pendingSplitClientX.current !== null) {
+                  setCellPickerTableShare(cellPickerSplitShareForX(pendingSplitClientX.current));
+                }
+              });
+            }}
+            onPointerUp={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+              if (splitResizeFrame.current !== null) cancelAnimationFrame(splitResizeFrame.current);
+              splitResizeFrame.current = null;
+              setCellPickerTableShare(cellPickerSplitShareForX(event.clientX));
+              setIsResizingCellPickerSplit(false);
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onPointerCancel={() => setIsResizingCellPickerSplit(false)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                adjustCellPickerSplit(-2);
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                adjustCellPickerSplit(2);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                setCellPickerTableShare(cellPickerSplitLimits().minShare);
+              } else if (event.key === "End") {
+                event.preventDefault();
+                setCellPickerTableShare(cellPickerSplitLimits().maxShare);
+              }
+            }}
+            title="Drag to resize the file table and cell preview"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderLeft: "1px solid var(--mantine-color-default-border)",
+              borderRight: "1px solid var(--mantine-color-default-border)",
+              cursor: "col-resize",
+              touchAction: "none",
+              userSelect: "none",
+              color: isResizingCellPickerSplit ? "var(--mantine-primary-color-6)" : "var(--mantine-color-dimmed)",
+              borderRadius: "var(--mantine-radius-sm)",
+              background: isResizingCellPickerSplit ? "var(--mantine-primary-color-light)" : "transparent",
+              transition: "background-color 120ms ease, color 120ms ease",
+            }}
+          >
+              <IconGripVertical size={20} aria-hidden="true" />
+          </Box>
+        )}
+        {mode === "cell" && (
           <Paper
+            id="analysis-cell-picker-preview"
             withBorder
             radius="sm"
             p="sm"
-            style={{ flex: "0 0 390px", minWidth: 330, maxWidth: 420 }}
+            style={{ minWidth: 280, gridColumn: 3, overflow: "hidden" }}
           >
             <Stack gap="xs">
               <div>
@@ -2613,30 +2765,38 @@ function AddEntriesModal({
                   <Alert color="yellow" title="Cycle preview unavailable">Cycle capacities could not be loaded for this cell.</Alert>
                 ) : cyclePreviewSeries && previewCycleChartData.length ? (
                   <>
-                    <Group gap="md" justify="center">
+                    <Group gap="md" justify="center" wrap="wrap">
                       <Checkbox label="Charge capacity" checked={showPreviewCharge} onChange={(event) => setShowPreviewCharge(event.currentTarget.checked)} />
                       <Checkbox label="Discharge capacity" checked={showPreviewDischarge} onChange={(event) => setShowPreviewDischarge(event.currentTarget.checked)} />
+                      <Tooltip label={previewActiveMassG ? `Divide capacity by ${previewActiveMassG} g active material` : "An active-material mass is needed to normalize capacity"}>
+                        <Switch
+                          label="Normalize by mass (mAh/g)"
+                          checked={previewActiveMassG !== null && normalizeCapacityByMass}
+                          disabled={previewActiveMassG === null}
+                          onChange={(event) => setNormalizeCapacityByMass(event.currentTarget.checked)}
+                        />
+                      </Tooltip>
                     </Group>
                     <Box style={{ position: "relative" }}>
                     <Plot
                       data={previewCycleChartData as never}
                       layout={{
-                        autosize: true, height: 320, margin: { l: 62, r: 18, t: 8, b: 48 }, showlegend: false,
+                        autosize: true, height: 380, margin: { l: 72, r: 76, t: 8, b: 58 }, showlegend: false,
                         paper_bgcolor: previewPlotColors.background,
                         plot_bgcolor: previewPlotColors.background,
-                        font: { color: previewPlotColors.text, size: 14 },
-                        uirevision: `cell-picker-capacity-${activePreviewCellId}`,
+                        font: { color: previewPlotColors.text, size: 18 },
+                        uirevision: `cell-picker-capacity-${activePreviewCellId}-${normalizeCapacityByMass && previewActiveMassG !== null ? "mAh-per-g" : "mAh"}`,
                         transition: { duration: 180, easing: "cubic-in-out" },
-                        xaxis: { title: { text: "Cycle", font: { size: 14 } }, tickfont: { size: 14, color: previewPlotColors.text }, showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1, showgrid: false, zeroline: false, automargin: true, anchor: "y" },
-                        yaxis: { title: { text: "Capacity (mAh)", font: { size: 14, color: previewPlotColors.text } }, tickfont: { size: 14, color: previewPlotColors.text }, domain: [0, 0.72], showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true },
-                        yaxis2: { title: { text: "CE (%)", font: { size: 14, color: previewPlotColors.text } }, tickfont: { size: 14, color: previewPlotColors.text }, domain: [0.75, 1], showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true, anchor: "x" },
+                        xaxis: { title: { text: "Cycle", font: { size: 18, color: previewPlotColors.text } }, tickfont: { size: 18, color: previewPlotColors.text }, showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1.5, showgrid: false, zeroline: false, automargin: true, anchor: "y", autorange: true },
+                        yaxis: { title: { text: `Capacity (${normalizeCapacityByMass && previewActiveMassG ? "mAh/g" : "mAh"})`, font: { size: 18, color: previewPlotColors.text } }, tickfont: { size: 18, color: previewPlotColors.text }, domain: [0, 0.72], showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1.5, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true },
+                        yaxis2: { title: { text: "CE (%)", font: { size: 18, color: previewPlotColors.text } }, tickfont: { size: 18, color: previewPlotColors.text }, domain: [0.77, 1], side: "right", showline: true, mirror: true, linecolor: previewPlotColors.border, linewidth: 1.5, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true, anchor: "x" },
                         shapes: [
-                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0.75, y1: 1, line: { color: previewPlotColors.border, width: 1 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
-                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0, y1: 0.72, line: { color: previewPlotColors.border, width: 1 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
+                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0.77, y1: 1, line: { color: previewPlotColors.border, width: 1.5 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
+                          { type: "rect", xref: "paper", yref: "paper", x0: 0, x1: 1, y0: 0, y1: 0.72, line: { color: previewPlotColors.border, width: 1.5 }, fillcolor: "rgba(0,0,0,0)", layer: "above" },
                         ],
                       }}
                       config={{ responsive: true, displayModeBar: false }}
-                      style={{ width: "100%", height: 320 }}
+                      style={{ width: "100%", height: 380 }}
                     />
                     {cyclePreviewQuery.isFetching && cyclePreviewSeries && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
                     </Box>
@@ -2682,44 +2842,63 @@ function AddEntriesModal({
               )}
               <Group gap="xs" justify="center" align="flex-end">
                 <Tooltip label="Move the selected cycle window left">
-                  <ActionIcon variant="default" aria-label="Previous cycle window" disabled={!previewHasVerifiedCycles || resolvedPreviewCycleStart <= 1} onClick={() => {
+                  <ActionIcon variant="default" aria-label="Previous cycle window" disabled={!previewHasVerifiedCycles || (previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart) <= 1} onClick={() => {
+                    const currentStart = previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart;
+                    const currentEnd = previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd;
                     const shifted = shiftPreviewCycleWindow(
-                      { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd },
+                      { start: currentStart, end: currentEnd },
                       previewCycleCount,
                       -1,
                     );
-                    setPreviewCycleStart(shifted.start);
-                    setPreviewCycleEnd(shifted.end);
+                    if (previewTab === "capacity") {
+                      setCapacityCycleStart(shifted.start);
+                      setCapacityCycleEnd(shifted.end);
+                    } else {
+                      setPreviewCycleStart(shifted.start);
+                      setPreviewCycleEnd(shifted.end);
+                    }
                   }}><IconChevronRight size={15} style={{ transform: "rotate(180deg)" }} /></ActionIcon>
                 </Tooltip>
-                <NumberInput aria-label="First preview cycle" min={1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? resolvedPreviewCycleStart : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
+                <NumberInput aria-label={previewTab === "capacity" ? "First capacity preview cycle" : "First preview cycle"} min={1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? (previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart) : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
                   const next = Number(value);
                   if (!Number.isFinite(next)) return;
-                  const start = Math.max(1, Math.min(Math.trunc(next), resolvedPreviewCycleEnd));
-                  setPreviewCycleStart(start);
+                  const end = previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd;
+                  const start = Math.max(1, Math.min(Math.trunc(next), end));
+                  if (previewTab === "capacity") setCapacityCycleStart(start);
+                  else setPreviewCycleStart(start);
                 }} w={78} />
                 <Text size="sm" c="dimmed">–</Text>
-                <NumberInput aria-label="Last preview cycle" min={previewHasVerifiedCycles ? resolvedPreviewCycleStart : 1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? resolvedPreviewCycleEnd : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
+                <NumberInput aria-label={previewTab === "capacity" ? "Last capacity preview cycle" : "Last preview cycle"} min={previewHasVerifiedCycles ? (previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart) : 1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? (previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd) : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
                   const next = Number(value);
                   if (!Number.isFinite(next)) return;
-                  setPreviewCycleEnd(Math.max(resolvedPreviewCycleStart, Math.min(Math.trunc(next), previewCycleCount)));
+                  const start = previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart;
+                  const end = Math.max(start, Math.min(Math.trunc(next), previewCycleCount));
+                  if (previewTab === "capacity") setCapacityCycleEnd(end);
+                  else setPreviewCycleEnd(end);
                 }} w={78} />
                 <Tooltip label="Move the selected cycle window right">
-                  <ActionIcon variant="default" aria-label="Next cycle window" disabled={!previewHasVerifiedCycles || resolvedPreviewCycleEnd >= previewCycleCount} onClick={() => {
+                  <ActionIcon variant="default" aria-label="Next cycle window" disabled={!previewHasVerifiedCycles || (previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd) >= previewCycleCount} onClick={() => {
+                    const currentStart = previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart;
+                    const currentEnd = previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd;
                     const shifted = shiftPreviewCycleWindow(
-                      { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd },
+                      { start: currentStart, end: currentEnd },
                       previewCycleCount,
                       1,
                     );
-                    setPreviewCycleStart(shifted.start);
-                    setPreviewCycleEnd(shifted.end);
+                    if (previewTab === "capacity") {
+                      setCapacityCycleStart(shifted.start);
+                      setCapacityCycleEnd(shifted.end);
+                    } else {
+                      setPreviewCycleStart(shifted.start);
+                      setPreviewCycleEnd(shifted.end);
+                    }
                   }}><IconChevronRight size={15} /></ActionIcon>
                 </Tooltip>
               </Group>
             </Stack>
           </Paper>
         )}
-        </Group>
+        </Box>
         <Group justify="space-between">
           <Text size="sm" c="dimmed">
             {selectedEntries.length} selected
