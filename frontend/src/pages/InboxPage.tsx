@@ -124,6 +124,7 @@ import {
   type ImportPreviewState,
 } from "../importPreviewPolicy";
 import {
+  countNewImportableInspectionFiles,
   importInspectionCandidateMatchesSearch,
   importInspectionFailurePathSet,
   importSelectableInspectionPaths,
@@ -595,7 +596,7 @@ function FolderImportSelectionModal({
     ),
     [selectionSummary.fileCount, selectionSummary.totalBytes],
   );
-  const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : selectionSummary.roots.slice(0, 5);
+  const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : [];
   return (
     <ImportModalShell
       opened={opened}
@@ -612,6 +613,7 @@ function FolderImportSelectionModal({
         </Alert>
       ) : null}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
+      fill
       actions={
         <>
           <Button variant="default" disabled={loading} onClick={onClose}>
@@ -638,7 +640,7 @@ function FolderImportSelectionModal({
         </>
       }
     >
-      <Stack gap="sm">
+      <Stack gap="sm" style={{ height: "100%", minHeight: 0 }}>
         <Group justify="space-between">
           <TextInput
             placeholder="Search paths"
@@ -673,60 +675,61 @@ function FolderImportSelectionModal({
           </Button>
         </Group>
         {selectionSummary.fileCount > 0 && (
-          <Stack gap={"xs"}>
-            {selectionSummary.isLarge ? (
-              <Alert
-                color="orange"
-                icon={<IconAlertTriangle size={17} />}
-                title={`Large import: ${selectionSummary.fileCount} files`}
-              >
-                <Text size="sm">
-                  You are selecting {selectionSummary.fileCount} files ({formatImportBytes(selectionSummary.totalBytes)}) from {selectionSummary.roots.length} location{selectionSummary.roots.length === 1 ? "" : "s"}.
-                  Make sure this is intentional before continuing.
-                </Text>
-              </Alert>
-            ) : (
-              <Text size="sm" c="dimmed">
-                Selecting {selectionSummary.fileCount} file{selectionSummary.fileCount === 1 ? "" : "s"} ({formatImportBytes(selectionSummary.totalBytes)}) from {selectionSummary.roots.length} location{selectionSummary.roots.length === 1 ? "" : "s"}.
-              </Text>
-            )}
-            <Group gap="xs" align="center">
-              <IconInfoCircle size={15} aria-hidden="true" />
-              <Text size="xs" c="dimmed">
-                {timingEstimate
-                  ? `Estimated time to register the cells: approximately ${timingEstimate.minimumLabel}–${timingEstimate.maximumLabel}. Scientific data preparation continues in the background afterward.`
-                  : "The estimate appears after at least two successful local import samples."}
-              </Text>
-            </Group>
-            <Stack gap={2} pl="sm">
-              {visibleRootSummaries.map((root) => (
-                <Group key={root.key} justify="space-between" gap="xs" wrap="nowrap">
-                  <Tooltip label={root.path ?? root.label} disabled={!root.path}>
-                    <Text size="xs" truncate style={{ flex: 1 }}>
-                      {root.label}
+          <Stack gap={4} style={{ flex: "none" }}>
+            <Group justify="space-between" align="center" wrap="nowrap">
+              {selectionSummary.isLarge ? (
+                <Alert color="orange" p="xs" style={{ flex: 1, minWidth: 0 }}>
+                  <Group gap="xs" wrap="nowrap">
+                    <IconAlertTriangle size={16} />
+                    <Text size="sm" fw={700} style={{ flex: "none" }}>Large import · {selectionSummary.fileCount} files</Text>
+                    <Text size="xs" c="dimmed" truncate>
+                      {formatImportBytes(selectionSummary.totalBytes)} · {selectionSummary.roots.length} locations · {timingEstimate
+                        ? `estimated ${timingEstimate.minimumLabel}–${timingEstimate.maximumLabel}`
+                        : "estimate available after two local imports"}
                     </Text>
-                  </Tooltip>
-                  <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
-                    {root.fileCount} file{root.fileCount === 1 ? "" : "s"} · {formatImportBytes(root.totalBytes)}
+                  </Group>
+                </Alert>
+              ) : (
+                <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={600}>{selectionSummary.fileCount} files · {formatImportBytes(selectionSummary.totalBytes)}</Text>
+                  <Text size="xs" c="dimmed" truncate>
+                    {selectionSummary.roots.length} locations · {timingEstimate
+                      ? `estimated ${timingEstimate.minimumLabel}–${timingEstimate.maximumLabel}`
+                      : "estimate appears after two local imports"}
                   </Text>
                 </Group>
-              ))}
-              {selectionSummary.roots.length > 5 && (
-                <Button
-                  variant="subtle"
-                  size="compact-xs"
-                  onClick={() => setRootsExpanded((current) => !current)}
-                  aria-expanded={rootsExpanded}
-                >
-                  {rootsExpanded ? "Show fewer locations" : `Show all ${selectionSummary.roots.length} locations`}
-                </Button>
               )}
-            </Stack>
+              <Button
+                size="compact-sm"
+                variant="default"
+                rightSection={rootsExpanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+                onClick={() => setRootsExpanded((current) => !current)}
+                aria-expanded={rootsExpanded}
+              >
+                Locations
+              </Button>
+            </Group>
+            <Collapse in={rootsExpanded}>
+              <Paper withBorder p="xs" style={{ maxHeight: 104, overflowY: "auto" }}>
+                <Box style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: "2px 12px" }}>
+                  {visibleRootSummaries.map((root) => (
+                    <Group key={root.key} justify="space-between" gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                      <Tooltip label={root.path ?? root.label} disabled={!root.path}>
+                        <Text size="xs" truncate style={{ flex: 1, minWidth: 0 }}>{root.label}</Text>
+                      </Tooltip>
+                      <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+                        {root.fileCount} file{root.fileCount === 1 ? "" : "s"} · {formatImportBytes(root.totalBytes)}
+                      </Text>
+                    </Group>
+                  ))}
+                </Box>
+              </Paper>
+            </Collapse>
           </Stack>
         )}
-        <Group align="stretch" gap="sm" wrap="nowrap">
-          <Paper withBorder p="xs" style={{ flex: 1, minWidth: 0 }}>
-            <ScrollArea h={500} type="auto" onScrollPositionChange={({ y }) => setTreeScrollTop(y)}>
+        <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
+          <Paper withBorder p="xs" style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" onScrollPositionChange={({ y }) => setTreeScrollTop(y)}>
               <Stack gap={0}>
                 <Box h={leadingSpacerHeight} aria-hidden="true" />
                 {renderedRows.map((row) => {
@@ -834,7 +837,7 @@ function FolderImportSelectionModal({
               </Stack>
             </ScrollArea>
           </Paper>
-          <Paper withBorder p="sm" w={360}>
+          <Paper withBorder p="sm" w={400} style={{ flex: "none", minHeight: 0, display: "flex", flexDirection: "column" }}>
             {!focusedCandidate ? (
               <Center h={476}>
                 <Text size="sm" c="dimmed">
@@ -842,7 +845,7 @@ function FolderImportSelectionModal({
                 </Text>
               </Center>
             ) : (
-              <Stack gap="xs">
+              <Stack gap="xs" style={{ minHeight: 0, overflowY: "auto" }}>
                 <div>
                   <Text fw={700} size="sm" truncate>
                     {focusedCandidate.filename}
@@ -882,6 +885,36 @@ function FolderImportSelectionModal({
         </Group>
       </Stack>
     </ImportModalShell>
+  );
+}
+
+function NoImportableSourcesModal({
+  opened,
+  registeredCount,
+  rejectedCount,
+  onBack,
+}: {
+  opened: boolean;
+  registeredCount: number | null;
+  rejectedCount: number | null;
+  onBack: () => void;
+}) {
+  return (
+    <Modal opened={opened} onClose={() => undefined} title="No importable files found" centered size="md" withCloseButton={false} closeOnClickOutside={false} closeOnEscape={false}>
+      <Stack gap="md">
+        <Alert color="orange" icon={<IconAlertTriangle size={18} />}>
+          <Text size="sm">
+            None of the selected folders contains a new supported file that can be added to this import. Files already selected, already registered, unsupported, or unreadable are excluded.
+            {registeredCount !== null ? ` ${registeredCount} file${registeredCount === 1 ? " is" : "s are"} already registered.` : " The folders may contain files that are already registered."}
+            {rejectedCount !== null && rejectedCount > 0 ? ` ${rejectedCount} file${rejectedCount === 1 ? " was" : "s were"} unsupported or could not be read.` : " Unsupported files are also excluded."}
+          </Text>
+        </Alert>
+        <Text size="sm" c="dimmed">Go back to file selection and choose different files or folders.</Text>
+        <Group justify="flex-end">
+          <Button color="orange" onClick={onBack}>Back to file selection</Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
 
@@ -1876,7 +1909,7 @@ function ImportModal({
                 withBorder
                 p="xs"
                 w={250}
-                style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}
+                style={{ flex: "0 1 250px", minWidth: 190, display: "flex", flexDirection: "column", minHeight: 0 }}
               >
                 <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
                   <Group justify="space-between" wrap="nowrap">
@@ -2001,7 +2034,7 @@ function ImportModal({
                 withBorder
                 p="xs"
                 w={330}
-                style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}
+                style={{ flex: "0 1 330px", minWidth: 240, display: "flex", flexDirection: "column", minHeight: 0 }}
               >
                 <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
                   <Group justify="space-between" wrap="nowrap" style={{ flex: "none" }}>
@@ -2146,7 +2179,7 @@ function ImportModal({
               <Paper
                 withBorder
                 p="xs"
-                style={{ flex: "1 1 0", minWidth: 360, maxWidth: 470, display: "flex", flexDirection: "column", minHeight: 0 }}
+                style={{ flex: "1 1 0", minWidth: 300, maxWidth: 470, display: "flex", flexDirection: "column", minHeight: 0 }}
               >
               <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="md" pr="xs">
@@ -2455,8 +2488,8 @@ function ImportModal({
             <Paper
               withBorder
               p="xs"
-              w={410}
-              style={{ flex: "0 0 410px", minWidth: 370, display: "flex", flexDirection: "column", minHeight: 0 }}
+              w={450}
+              style={{ flex: "0 1 450px", minWidth: 320, display: "flex", flexDirection: "column", minHeight: 0 }}
             >
               <Stack gap="xs" style={{ minHeight: 0, flex: 1 }}>
                 <div>
@@ -2474,6 +2507,7 @@ function ImportModal({
                   <ImportSourcePreview
                     source={draft}
                     activeMassMgOverride={draft.active_mass_mg_override}
+                    plotHeight={392}
                   />
                 </Box>
               </Stack>
@@ -2605,6 +2639,7 @@ export function ImportCellsLauncher({
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderReviewRequired, setFolderReviewRequired] = useState(false);
+  const [noImportableCounts, setNoImportableCounts] = useState<{ registered: number | null; rejected: number | null } | null>(null);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
   const [folderSelectedPaths, setFolderSelectedPaths] = useState<string[] | null>(null);
@@ -2654,6 +2689,13 @@ export function ImportCellsLauncher({
         result.failures,
       );
       setInspectionFailures(accumulatedFailures);
+      const newImportableCount = countNewImportableInspectionFiles(result.files, drafts, append);
+      if (folderReviewRequired && newImportableCount === 0) {
+        const registered = result.files.filter(isRegisteredExactDuplicate).length;
+        setNoImportableCounts({ registered: registered > 0 ? registered : null, rejected: result.failures.length });
+        setFolderModalOpen(false);
+        return;
+      }
       if (result.failures.length > 0) {
         setFolderModalOpen(true);
       } else {
@@ -2686,7 +2728,12 @@ export function ImportCellsLauncher({
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
-        notifications.show({ message: "No supported cycler files were found.", color: "gray" });
+        if (folderPaths.length > 0) {
+          setNoImportableCounts({ registered: null, rejected: 0 });
+          setSourcePickerOpen(false);
+        } else {
+          notifications.show({ message: "No supported cycler files were found.", color: "gray" });
+        }
         return;
       }
       setSourceAppend(append);
@@ -2715,6 +2762,7 @@ export function ImportCellsLauncher({
   });
 
   const startSourceSelection = (append: boolean) => {
+    setNoImportableCounts(null);
     setSourceAppend(append);
     setSourceSelection(null);
     setSourcePickerKey((current) => current + 1);
@@ -2806,6 +2854,15 @@ export function ImportCellsLauncher({
         }}
         onConfirm={confirmFolderSelection}
       />
+      <NoImportableSourcesModal
+        opened={noImportableCounts !== null}
+        registeredCount={noImportableCounts?.registered ?? null}
+        rejectedCount={noImportableCounts?.rejected ?? null}
+        onBack={() => {
+          setNoImportableCounts(null);
+          startSourceSelection(sourceAppend);
+        }}
+      />
       <ImportModal
         drafts={drafts}
         active={active}
@@ -2866,6 +2923,7 @@ export function InboxPage() {
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderReviewRequired, setFolderReviewRequired] = useState(false);
+  const [noImportableCounts, setNoImportableCounts] = useState<{ registered: number | null; rejected: number | null } | null>(null);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
   const [folderSelectedPaths, setFolderSelectedPaths] = useState<string[] | null>(null);
@@ -2928,6 +2986,13 @@ export function InboxPage() {
         result.failures,
       );
       setInspectionFailures(accumulatedFailures);
+      const newImportableCount = countNewImportableInspectionFiles(result.files, drafts, append);
+      if (folderReviewRequired && newImportableCount === 0) {
+        const registered = result.files.filter(isRegisteredExactDuplicate).length;
+        setNoImportableCounts({ registered: registered > 0 ? registered : null, rejected: result.failures.length });
+        setFolderModalOpen(false);
+        return;
+      }
       if (result.failures.length > 0) {
         setFolderModalOpen(true);
       } else {
@@ -2960,7 +3025,12 @@ export function InboxPage() {
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
-        notifications.show({ message: "No supported cycler files were found.", color: "gray" });
+        if (folderPaths.length > 0) {
+          setNoImportableCounts({ registered: null, rejected: 0 });
+          setSourcePickerOpen(false);
+        } else {
+          notifications.show({ message: "No supported cycler files were found.", color: "gray" });
+        }
         return;
       }
       setSourceAppend(append);
@@ -2988,6 +3058,7 @@ export function InboxPage() {
   });
 
   const startSourceSelection = (append: boolean) => {
+    setNoImportableCounts(null);
     setSourceAppend(append);
     setSourceSelection(null);
     setSourcePickerKey((current) => current + 1);
@@ -3089,6 +3160,15 @@ export function InboxPage() {
           setInspectionFailures([]);
         }}
         onConfirm={confirmFolderSelection}
+      />
+      <NoImportableSourcesModal
+        opened={noImportableCounts !== null}
+        registeredCount={noImportableCounts?.registered ?? null}
+        rejectedCount={noImportableCounts?.rejected ?? null}
+        onBack={() => {
+          setNoImportableCounts(null);
+          startSourceSelection(sourceAppend);
+        }}
       />
 
       {targetFolderId !== null && (

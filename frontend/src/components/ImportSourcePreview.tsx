@@ -1,4 +1,5 @@
 import { ActionIcon, Alert, Box, Center, Group, Loader, NumberInput, SegmentedControl, Stack, Switch, Tabs, Text, Tooltip, useComputedColorScheme, useMantineTheme } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -14,7 +15,7 @@ import {
   type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
 import { shiftPreviewCycleWindow } from "../analysisCellPreviewPolicy";
-import { CellPreviewPlot, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
+import { CellPreviewPlot, CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
 import {
   cellPreviewCapacityLayout,
   cellPreviewCapacityTraces,
@@ -25,14 +26,28 @@ import {
 } from "./cellPreviewPlotModel";
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 
-type PreviewView = "voltage" | "cycles";
-type VoltageXAxis = "time" | "capacity";
-type CapacityView = "discharge" | "both" | "charge";
+export type ImportPreviewView = "voltage" | "cycles";
+export type ImportPreviewVoltageXAxis = "time" | "capacity";
+export type ImportPreviewCapacityView = "discharge" | "both" | "charge";
+
+export type ImportSourcePreviewPreferences = {
+  view: ImportPreviewView;
+  voltageXAxis: ImportPreviewVoltageXAxis;
+  capacityView: ImportPreviewCapacityView;
+  surfaceMode: CellPreviewSurfaceMode;
+};
+
+export const DEFAULT_IMPORT_SOURCE_PREVIEW_PREFERENCES: ImportSourcePreviewPreferences = {
+  view: "voltage",
+  voltageXAxis: "time",
+  capacityView: "both",
+  surfaceMode: "theme",
+};
 
 function requestFor(
   source: ImportPreview,
   quantity: ContinuationPreviewQuantity,
-  voltageXAxis: VoltageXAxis,
+  voltageXAxis: ImportPreviewVoltageXAxis,
   cycleRange?: { start: number; end: number } | null,
 ) {
   return {
@@ -55,14 +70,27 @@ function requestFor(
 export function ImportSourcePreview({
   source,
   activeMassMgOverride,
+  plotHeight = 352,
+  preferences,
+  onPreferencesChange,
 }: {
   source: ImportPreview;
   activeMassMgOverride?: number | null;
+  plotHeight?: number;
+  preferences?: ImportSourcePreviewPreferences;
+  onPreferencesChange?: (update: Partial<ImportSourcePreviewPreferences>) => void;
 }) {
-  const [view, setView] = useState<PreviewView>("voltage");
-  const [voltageXAxis, setVoltageXAxis] = useState<VoltageXAxis>("time");
-  const [capacityView, setCapacityView] = useState<CapacityView>("both");
-  const [surfaceMode, setSurfaceMode] = useState<CellPreviewSurfaceMode>("theme");
+  const [localPreferences, setLocalPreferences] = useState(DEFAULT_IMPORT_SOURCE_PREVIEW_PREFERENCES);
+  const currentPreferences = preferences ?? localPreferences;
+  const { view, voltageXAxis, capacityView, surfaceMode } = currentPreferences;
+  const updatePreferences = (update: Partial<ImportSourcePreviewPreferences>) => {
+    if (!preferences) setLocalPreferences((current) => ({ ...current, ...update }));
+    onPreferencesChange?.(update);
+  };
+  const setView = (value: ImportPreviewView) => updatePreferences({ view: value });
+  const setVoltageXAxis = (value: ImportPreviewVoltageXAxis) => updatePreferences({ voltageXAxis: value });
+  const setCapacityView = (value: ImportPreviewCapacityView) => updatePreferences({ capacityView: value });
+  const setSurfaceMode = (value: CellPreviewSurfaceMode) => updatePreferences({ surfaceMode: value });
   const scheme = useComputedColorScheme("light");
   const theme = useMantineTheme();
   const plotColors = useMemo(() => surfaceMode === "theme"
@@ -80,12 +108,17 @@ export function ImportSourcePreview({
   const [normalizeByMass, setNormalizeByMass] = useState(activeMassG !== null);
   const [cycleRange, setCycleRange] = useState<{ start: number; end: number } | null>(null);
   const [voltageCycleRange, setVoltageCycleRange] = useState<{ start: number; end: number } | null>(null);
+  const { ref: plotSurfaceRef, width: plotSurfaceWidth } = useElementSize();
+  const responsivePlotHeight = plotSurfaceWidth > 0
+    ? Math.max(240, Math.min(plotHeight, Math.round(plotSurfaceWidth - 34)))
+    : plotHeight;
+  const plotStackHeight = responsivePlotHeight + 20;
   useEffect(() => {
     setNormalizeByMass(activeMassG !== null);
   }, [source.staged_name, source.hash, activeMassG]);
   useEffect(() => {
-    setSurfaceMode("theme");
-  }, [source.staged_name, source.hash]);
+    if (!preferences) setSurfaceMode("theme");
+  }, [source.staged_name, source.hash, preferences]);
   const inspectRequest = {
     sources: [{
       staged_name: source.staged_name,
@@ -264,15 +297,19 @@ export function ImportSourcePreview({
   const voltagePlot: ReactNode = voltageHasPoints && voltagePreview ? (
     <CellPreviewPlot
       data={voltageTraces as never}
-      layout={cellPreviewVoltageLayout(
-        plotColors,
-        voltagePreview.x_label ?? (voltageXAxis === "time" ? "Time (minutes)" : "Capacity (mAh)"),
-        `import-preview-voltage-${voltageXAxis}`,
-      )}
+      layout={{
+        ...cellPreviewVoltageLayout(
+          plotColors,
+          voltagePreview.x_label ?? (voltageXAxis === "time" ? "Time (minutes)" : "Capacity (mAh)"),
+          `import-preview-voltage-${voltageXAxis}`,
+        ),
+        height: responsivePlotHeight,
+      }}
       config={{ displayModeBar: false, responsive: true }}
-      style={{ width: "100%", height: 352, fontWeight: 400 }}
+      style={{ width: "100%", height: responsivePlotHeight, fontWeight: 400 }}
       surfaceMode={surfaceMode}
       onSurfaceModeChange={setSurfaceMode}
+      showToolbar={false}
       legend={voltageTraces.some((trace) => trace.name.startsWith("Current"))
         ? [{ name: "Voltage", color: "#12b886" }, { name: "Current", color: "#2E86AB" }]
         : []}
@@ -281,16 +318,20 @@ export function ImportSourcePreview({
   const capacityPlot: ReactNode = displayedCapacityTraces.length > 0 ? (
     <CellPreviewPlot
       data={displayedCapacityTraces as never}
-      layout={cellPreviewCapacityLayout(
-        plotColors,
-        `Capacity (${normalizeByMass && activeMassG ? "mAh/g" : "mAh"})`,
-        efficiencyRange,
-        `import-preview-cycles-${normalizeByMass && activeMassG !== null ? "mAh-per-g" : "mAh"}`,
-      )}
+      layout={{
+        ...cellPreviewCapacityLayout(
+          plotColors,
+          `Capacity (${normalizeByMass && activeMassG ? "mAh/g" : "mAh"})`,
+          efficiencyRange,
+          `import-preview-cycles-${normalizeByMass && activeMassG !== null ? "mAh-per-g" : "mAh"}`,
+        ),
+        height: responsivePlotHeight,
+      }}
       config={{ displayModeBar: false, responsive: true }}
-      style={{ width: "100%", height: 352, fontWeight: 400 }}
+      style={{ width: "100%", height: responsivePlotHeight, fontWeight: 400 }}
       surfaceMode={surfaceMode}
       onSurfaceModeChange={setSurfaceMode}
+      showToolbar={false}
     />
   ) : null;
   const [retainedPlot, setRetainedPlot] = useState<ReactNode>(null);
@@ -318,90 +359,109 @@ export function ImportSourcePreview({
     plotColors.grid,
     plotColors.border,
     surfaceMode,
+    responsivePlotHeight,
   ]);
+
+  const capacitySelector = (
+    <SegmentedControl
+      size="sm"
+      aria-label="Capacity series to show"
+      value={capacityView}
+      onChange={(value) => setCapacityView(value as ImportPreviewCapacityView)}
+      data={[
+        { value: "discharge", label: "Dchg" },
+        { value: "both", label: "Both" },
+        { value: "charge", label: "Chg" },
+      ]}
+    />
+  );
+  const normalizeSwitch = (
+    <Switch
+      size="sm"
+      label="Normalize by mass"
+      checked={activeMassG !== null && normalizeByMass}
+      disabled={activeMassG === null}
+      onChange={(event) => setNormalizeByMass(event.currentTarget.checked)}
+    />
+  );
+  const toolbarContent = view === "voltage" ? (
+    <Group justify="center" gap="xs" wrap="nowrap">
+      <Text size="sm" c={voltageXAxis === "time" ? undefined : "dimmed"}>Time</Text>
+      <Switch
+        aria-label="Voltage x-axis: time or capacity"
+        checked={voltageXAxis === "capacity"}
+        disabled={!hasNavigableCycles}
+        onChange={(event) => setVoltageXAxis(event.currentTarget.checked ? "capacity" : "time")}
+      />
+      <Text size="sm" c={voltageXAxis === "capacity" ? undefined : "dimmed"}>Capacity</Text>
+    </Group>
+  ) : (
+    <Group gap="xs" justify="center" wrap="nowrap">
+      {capacitySelector}
+      {normalizeSwitch}
+    </Group>
+  );
+  const compactToolbarChildren = view === "cycles" ? capacitySelector : toolbarContent;
+  const compactToolbarSecondaryContent = view === "cycles" ? normalizeSwitch : undefined;
 
   return (
     <Stack gap="xs">
-      <Tabs value={view} onChange={(value) => value && setView(value as PreviewView)} keepMounted>
+      <Tabs value={view} onChange={(value) => value && setView(value as ImportPreviewView)} keepMounted>
         <Tabs.List grow>
           <Tabs.Tab value="voltage">Voltage</Tabs.Tab>
           <Tabs.Tab value="cycles" disabled={!hasNavigableCycles}>Cycles</Tabs.Tab>
         </Tabs.List>
       </Tabs>
-      <Box h={58} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-      {view === "voltage" ? (
-        <Group justify="center" gap="xs">
-          <Text size="sm" c={voltageXAxis === "time" ? undefined : "dimmed"}>Time</Text>
-          <Switch
-            aria-label="Voltage x-axis: time or capacity"
-            checked={voltageXAxis === "capacity"}
-            disabled={!hasNavigableCycles}
-            onChange={(event) => setVoltageXAxis(event.currentTarget.checked ? "capacity" : "time")}
-          />
-          <Text size="sm" c={voltageXAxis === "capacity" ? undefined : "dimmed"}>Capacity</Text>
-        </Group>
-      ) : (
-        <Group gap="md" justify="center" wrap="nowrap">
-          <SegmentedControl
-            aria-label="Capacity series to show"
-            value={capacityView}
-            onChange={(value) => setCapacityView(value as CapacityView)}
-            data={[
-              { value: "discharge", label: "Dchg" },
-              { value: "both", label: "Both" },
-              { value: "charge", label: "Chg" },
-            ]}
-          />
-          <Switch
-            size="sm"
-            label="Normalize by mass"
-            checked={activeMassG !== null && normalizeByMass}
-            disabled={activeMassG === null}
-            onChange={(event) => setNormalizeByMass(event.currentTarget.checked)}
-          />
-        </Group>
-      )}
-      </Box>
-      <Box h={404} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {view === "voltage" ? (
-          voltageReady && voltagePlot ? (
-            <Box w="100%">{voltagePlot}</Box>
+      <Box ref={plotSurfaceRef} className="preview-plot-surface" style={{ position: "relative" }}>
+        <CellPreviewToolbar
+          surfaceMode={surfaceMode}
+          onSurfaceModeChange={setSurfaceMode}
+          compactChildren={compactToolbarChildren}
+          compactSecondaryContent={compactToolbarSecondaryContent}
+        >
+          {toolbarContent}
+        </CellPreviewToolbar>
+        <Box h={plotStackHeight} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {view === "voltage" ? (
+            voltageReady && voltagePlot ? (
+              <Box w="100%">{voltagePlot}</Box>
+            ) : inspectionQuery.isError ? (
+              <Alert color="orange" title="Voltage preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
+            ) : inspectionFailure ? (
+              <Alert color="orange" title="Voltage preview unavailable">{inspectionFailureMessage}</Alert>
+            ) : retainedPlot && (inspectionQuery.isPending || inspectionQuery.isFetching || voltageQuery.isPending || voltageQuery.isFetching || voltageQuery.isPlaceholderData) ? (
+              <Box w="100%" h={plotStackHeight} style={{ position: "relative" }}>
+                <Box style={{ opacity: 0.48, transition: "opacity 100ms linear" }}>{retainedPlot}</Box>
+                <Text size="xs" c="dimmed" style={{ position: "absolute", top: 30, right: 8, pointerEvents: "none" }}>Updating preview…</Text>
+              </Box>
+            ) : !continuationReady || voltageQuery.isPending ? (
+              <Center h={plotStackHeight}><Loader size="sm" /></Center>
+            ) : voltageQuery.isError ? (
+              <Alert color="orange" title="Voltage preview unavailable">{voltageError}</Alert>
+            ) : (
+              <Alert color="gray">No voltage points were found for this source.</Alert>
+            )
+          ) : source.metadata_only ? (
+            <Alert color="gray">Cycle preview is unavailable for this metadata-only source.</Alert>
+          ) : capacityReady && capacityPlot ? (
+            <Box w="100%">{capacityPlot}</Box>
           ) : inspectionQuery.isError ? (
-            <Alert color="orange" title="Voltage preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
+            <Alert color="orange" title="Cycle preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
           ) : inspectionFailure ? (
-            <Alert color="orange" title="Voltage preview unavailable">{inspectionFailureMessage}</Alert>
-          ) : retainedPlot && (inspectionQuery.isPending || inspectionQuery.isFetching || voltageQuery.isPending || voltageQuery.isFetching || voltageQuery.isPlaceholderData) ? (
-            <Box w="100%" h={404} style={{ position: "relative" }}>
+            <Alert color="orange" title="Cycle preview unavailable">{inspectionFailureMessage}</Alert>
+          ) : retainedPlot && (inspectionQuery.isPending || inspectionQuery.isFetching || isCapacityLoading || capacityQueries.some((query) => query.isPlaceholderData)) ? (
+            <Box w="100%" h={plotStackHeight} style={{ position: "relative" }}>
               <Box style={{ opacity: 0.48, transition: "opacity 100ms linear" }}>{retainedPlot}</Box>
               <Text size="xs" c="dimmed" style={{ position: "absolute", top: 30, right: 8, pointerEvents: "none" }}>Updating preview…</Text>
             </Box>
-          ) : !continuationReady || voltageQuery.isPending ? (
-            <Center h={404}><Loader size="sm" /></Center>
-          ) : voltageQuery.isError ? (
-            <Alert color="orange" title="Voltage preview unavailable">{voltageError}</Alert>
+          ) : isCapacityLoading ? (
+            <Center h={plotStackHeight}><Loader size="sm" /></Center>
           ) : (
-            <Alert color="gray">No voltage points were found for this source.</Alert>
-          )
-        ) : source.metadata_only ? (
-          <Alert color="gray">Cycle preview is unavailable for this metadata-only source.</Alert>
-        ) : capacityReady && capacityPlot ? (
-          <Box w="100%">{capacityPlot}</Box>
-        ) : inspectionQuery.isError ? (
-          <Alert color="orange" title="Cycle preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
-        ) : inspectionFailure ? (
-          <Alert color="orange" title="Cycle preview unavailable">{inspectionFailureMessage}</Alert>
-        ) : retainedPlot && (inspectionQuery.isPending || inspectionQuery.isFetching || isCapacityLoading || capacityQueries.some((query) => query.isPlaceholderData)) ? (
-          <Box w="100%" h={350} style={{ position: "relative" }}>
-            <Box style={{ opacity: 0.48, transition: "opacity 100ms linear" }}>{retainedPlot}</Box>
-            <Text size="xs" c="dimmed" style={{ position: "absolute", top: 30, right: 8, pointerEvents: "none" }}>Updating preview…</Text>
-          </Box>
-        ) : isCapacityLoading ? (
-          <Center h={404}><Loader size="sm" /></Center>
-        ) : (
-          <Alert color={capacityError ? "orange" : "gray"} title="Cycle preview unavailable">
-            {capacityError instanceof Error ? capacityError.message : "No charge or discharge capacity points were found."}
-          </Alert>
-        )}
+            <Alert color={capacityError ? "orange" : "gray"} title="Cycle preview unavailable">
+              {capacityError instanceof Error ? capacityError.message : "No charge or discharge capacity points were found."}
+            </Alert>
+          )}
+        </Box>
       </Box>
       <Group gap="xs" justify="center" wrap="nowrap" h={40}>
         <Tooltip label="Previous cycle window"><ActionIcon variant="default" aria-label="Previous cycle window" disabled={!hasNavigableCycles || !activeCycleRange || activeCycleRange.start <= 1} onClick={() => shiftCycleRange(-1)}><IconChevronLeft size={15} /></ActionIcon></Tooltip>

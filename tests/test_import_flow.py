@@ -2253,6 +2253,29 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(raised.exception.detail["code"], "continuation_preview_unavailable")
         self.assertIn("inspect continuity again", raised.exception.detail["message"])
 
+    def test_stitched_preview_construction_failure_returns_a_bounded_recovery_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "preview-failure.ndax"
+            path.write_bytes(b"stitched preview failure source")
+            base_request = _continuation_preview_request([path])
+            request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="voltage",
+                interpretation="stitched",
+            )
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files, "_build_stitched_continuation_preview", side_effect=RuntimeError("mock stitch failure")):
+                with self.assertRaises(files.HTTPException) as raised:
+                    files.preview_continuation_sources(request)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail["code"], "continuation_preview_failed")
+        self.assertIn("switch off continuous cycles", raised.exception.detail["message"])
+        self.assertEqual(len(raised.exception.detail["sources"]), 1)
+
     def test_continuation_preview_rejects_metadata_only_sources_without_science(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "metadata-only.ndax"

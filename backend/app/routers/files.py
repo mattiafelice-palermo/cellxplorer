@@ -3867,22 +3867,43 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             sources=unavailable,
             status_code=422 if metadata_only else 409,
         )
-    if req.interpretation == "stitched":
-        return _build_stitched_continuation_preview(
+    try:
+        if req.interpretation == "stitched":
+            return _build_stitched_continuation_preview(
+                ordered_sources,
+                quantity=req.quantity,
+                voltage_x_axis=req.voltage_x_axis,
+                cycle_start=req.cycle_start,
+                cycle_end=req.cycle_end,
+            )
+        return _build_continuation_preview(
             ordered_sources,
             quantity=req.quantity,
+            interpretation=req.interpretation,
             voltage_x_axis=req.voltage_x_axis,
             cycle_start=req.cycle_start,
             cycle_end=req.cycle_end,
         )
-    return _build_continuation_preview(
-        ordered_sources,
-        quantity=req.quantity,
-        interpretation=req.interpretation,
-        voltage_x_axis=req.voltage_x_axis,
-        cycle_start=req.cycle_start,
-        cycle_end=req.cycle_end,
-    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Continuation preview construction failed")
+        raise _continuation_preview_unavailable(
+            code="continuation_preview_failed",
+            message=(
+                "The combined preview could not be assembled. Review the source order, "
+                "or switch off continuous cycles to preview each file independently."
+            ),
+            sources=[
+                {
+                    "source_key": "combined-preview",
+                    "filename": "Combined preview",
+                    "kind": "preview_build_failed",
+                    "reason": "Preview construction failed; use per-source cycle numbering or review the source order.",
+                }
+            ],
+            status_code=422,
+        ) from exc
 
 
 @router.post("/cells/{cell_id}/continuations/inspect")

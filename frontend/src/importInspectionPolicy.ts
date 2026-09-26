@@ -1,8 +1,53 @@
+import type { ImportPreview } from "./api";
+
 export type ImportInspectionFailure = {
   path: string;
   filename: string;
   error: string;
 };
+
+type ImportInspectionIdentity = Pick<ImportPreview, "hash" | "source_path" | "import_match">;
+
+function normalizeInspectionPath(path: string): string {
+  return path.replaceAll("/", "\\").replace(/\\+$/, "").toLocaleLowerCase();
+}
+
+/** Count only eligible identities introduced by this inspection batch. */
+export function countNewImportableInspectionFiles(
+  files: readonly ImportInspectionIdentity[],
+  existing: readonly ImportInspectionIdentity[],
+  append: boolean,
+): number {
+  const existingHashes = new Set(
+    (append ? existing : []).map((file) => file.hash.toLowerCase()).filter(Boolean),
+  );
+  const existingPaths = new Set(
+    (append ? existing : [])
+      .map((file) => file.source_path?.trim())
+      .filter((path): path is string => Boolean(path))
+      .map(normalizeInspectionPath)
+  );
+  const batchHashes = new Set<string>();
+  const batchPaths = new Set<string>();
+  let count = 0;
+
+  for (const file of files) {
+    const hash = file.hash.toLowerCase();
+    const path = file.source_path?.trim() ? normalizeInspectionPath(file.source_path.trim()) : "";
+    if (
+      (hash && (existingHashes.has(hash) || batchHashes.has(hash)))
+      || (path && (existingPaths.has(path) || batchPaths.has(path)))
+    ) continue;
+
+    if (hash) batchHashes.add(hash);
+    if (path) batchPaths.add(path);
+    if (!(file.import_match?.kind === "exact_duplicate" && file.import_match.registered === true)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
 
 export function importInspectionFailurePathSet(
   failures: readonly ImportInspectionFailure[],

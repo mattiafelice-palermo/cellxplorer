@@ -8,6 +8,7 @@ import {
   Group,
   Loader,
   MultiSelect,
+  Modal,
   NumberInput,
   Paper,
   ScrollArea,
@@ -72,7 +73,7 @@ import {
 } from "../continuedImportPreviewPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationSourceList } from "./ContinuationSourceList";
-import { CellPreviewPlot, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
+import { CellPreviewPlot, CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
 import {
   cellPreviewCapacityLayout,
   cellPreviewCapacityTraces,
@@ -216,6 +217,7 @@ export function ContinuedImportEditor({
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
   const [colors, setColors] = useState<SourceColorAssignments>({});
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
+  const [findingDialog, setFindingDialog] = useState<"warnings" | "errors" | null>(null);
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
   const [previewSurfaceMode, setPreviewSurfaceMode] = useState<CellPreviewSurfaceMode>("theme");
   const scheme = useComputedColorScheme("light");
@@ -246,6 +248,7 @@ export function ContinuedImportEditor({
     else setPreviewCapacityCycleRange(next);
   };
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
+  const [userChosePreviewInterpretation, setUserChosePreviewInterpretation] = useState(false);
   const previousOrderRef = useRef<string[]>(order);
   const userReorderedRef = useRef(false);
 
@@ -282,6 +285,12 @@ export function ContinuedImportEditor({
   );
   const allOcvSources = orderedDrafts.length >= 1
     && orderedDrafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV");
+  const inspectedRowCount = result?.sources.reduce((sum, source) => sum + (source.row_count ?? 0), 0) ?? 0;
+  const timestampOverlapCount = result?.findings.filter((finding) => finding.code === "timestamp_overlap").length ?? 0;
+  const automaticSourceChainPreview = !userChosePreviewInterpretation
+    && Boolean(result?.inspection_complete)
+    && (orderedDrafts.length >= 12 || inspectedRowCount >= 300_000 || timestampOverlapCount > 0);
+  const effectivePreviewInterpretation = automaticSourceChainPreview ? "source_chain" : previewInterpretation;
   useEffect(() => {
     if (allOcvSources) setPreviewQuantity("voltage");
   }, [allOcvSources]);
@@ -292,7 +301,7 @@ export function ContinuedImportEditor({
         orderedDrafts,
         inspectionQuery.dataUpdatedAt,
         previewQuantity,
-        previewInterpretation,
+        effectivePreviewInterpretation,
       ),
       previewVoltageXAxis,
       previewQuantity === "voltage" ? previewVoltageCycleRange?.start ?? null : null,
@@ -301,7 +310,7 @@ export function ContinuedImportEditor({
       previewQuantity === "voltage" ? null : previewCapacityCycleRange?.end ?? null,
     ],
     queryFn: ({ signal }) => previewContinuationSources({
-      ...continuationPreviewRequest(orderedDrafts, order, previewQuantity, previewInterpretation),
+      ...continuationPreviewRequest(orderedDrafts, order, previewQuantity, effectivePreviewInterpretation),
       voltage_x_axis: previewVoltageXAxis,
       ...(previewQuantity === "voltage" && previewVoltageCycleRange
         ? { cycle_start: previewVoltageCycleRange.start, cycle_end: previewVoltageCycleRange.end }
@@ -325,14 +334,14 @@ export function ContinuedImportEditor({
         orderedDrafts,
         inspectionQuery.dataUpdatedAt,
         "charge_capacity_mah",
-        previewInterpretation,
+        effectivePreviewInterpretation,
       ),
       previewCapacityCycleRange?.start ?? null,
       previewCapacityCycleRange?.end ?? null,
     ],
     queryFn: ({ signal }) => previewContinuationSources(
       {
-        ...continuationPreviewRequest(orderedDrafts, order, "charge_capacity_mah", previewInterpretation),
+        ...continuationPreviewRequest(orderedDrafts, order, "charge_capacity_mah", effectivePreviewInterpretation),
         ...(previewCapacityCycleRange
           ? { cycle_start: previewCapacityCycleRange.start, cycle_end: previewCapacityCycleRange.end }
           : {}),
@@ -366,7 +375,7 @@ export function ContinuedImportEditor({
     const massMg = cellDraft.active_mass_mg_override ?? draft.active_mass_mg;
     return massMg !== null && massMg !== undefined && massMg > 0;
   });
-  const inspectedCycleExtent = previewInterpretation === "stitched"
+  const inspectedCycleExtent = effectivePreviewInterpretation === "stitched"
     ? (result?.sources.reduce((sum, source) => sum + (source.local_cycle_count ?? 0), 0) ?? 0)
     : Math.max(0, ...(result?.sources.map((source) => source.local_cycle_count ?? 0) ?? []));
   const previewCycleExtent = Math.max(
@@ -391,7 +400,7 @@ export function ContinuedImportEditor({
     setPreviewCapacityCycleRange(combinedCycleCount > 0
       ? { start: 1, end: combinedCycleCount }
       : null);
-  }, [order.join("\u0000"), previewInterpretation, combinedCycleCount]);
+  }, [order.join("\u0000"), effectivePreviewInterpretation, combinedCycleCount]);
   useEffect(() => {
     if (!normalizableByMass) setPreviewNormalizeByMass(false);
   }, [normalizableByMass]);
@@ -535,6 +544,7 @@ export function ContinuedImportEditor({
       style={{ width: "100%", height: 352, fontWeight: 400 }}
       surfaceMode={previewSurfaceMode}
       onSurfaceModeChange={setPreviewSurfaceMode}
+      showToolbar={false}
       legend={previewQuantity === "voltage" && combinedVoltageTraces.some((trace) => trace.name.startsWith("Current"))
         ? [{ name: "Voltage", color: "#12b886" }, { name: "Current", color: "#2E86AB" }]
         : []}
@@ -557,6 +567,67 @@ export function ContinuedImportEditor({
       <Tooltip label="Next cycle window"><Button variant="default" size="compact-sm" aria-label="Next cycle window" disabled={!previewCycleRange || previewCycleRange.end >= combinedCycleCount} onClick={() => previewCycleRange && setPreviewCycleRange(shiftPreviewCycleWindow(previewCycleRange, combinedCycleCount, 1))}><IconChevronRight size={15} /></Button></Tooltip>
     </Group>
   );
+  const combinedCapacitySelector = (
+    <SegmentedControl
+      size="sm"
+      aria-label="Capacity series to show"
+      value={previewCapacityView}
+      onChange={(value) => setPreviewCapacityView(value as "discharge" | "both" | "charge")}
+      data={[
+        { value: "discharge", label: "Dchg" },
+        { value: "both", label: "Both" },
+        { value: "charge", label: "Chg" },
+      ]}
+    />
+  );
+  const combinedNormalizeSwitch = (
+    <Switch
+      size="sm"
+      label="Normalize by mass"
+      checked={normalizableByMass && previewNormalizeByMass}
+      disabled={!normalizableByMass}
+      onChange={(event) => setPreviewNormalizeByMass(event.currentTarget.checked)}
+    />
+  );
+  const combinedToolbarContent = previewQuantity === "voltage" ? (
+    <Group justify="center" gap="xs" wrap="nowrap">
+      <Text size="sm" c={previewVoltageXAxis === "time" ? undefined : "dimmed"}>Time</Text>
+      <Switch
+        aria-label="Voltage x-axis: time or capacity"
+        checked={previewVoltageXAxis === "capacity"}
+        disabled={allOcvSources}
+        onChange={(event) => setPreviewVoltageXAxis(event.currentTarget.checked ? "capacity" : "time")}
+      />
+      <Text size="sm" c={previewVoltageXAxis === "capacity" ? undefined : "dimmed"}>Capacity</Text>
+    </Group>
+  ) : (
+    <Group justify="center" gap="xs" wrap="nowrap">
+      {combinedCapacitySelector}
+      {combinedNormalizeSwitch}
+    </Group>
+  );
+  const compactCombinedToolbarChildren = previewQuantity !== "voltage"
+    ? combinedCapacitySelector
+    : combinedToolbarContent;
+  const compactCombinedSecondaryContent = previewQuantity !== "voltage"
+    ? combinedNormalizeSwitch
+    : undefined;
+  const renderCombinedPlotPanel = (content: ReactNode) => (
+    <Paper withBorder p="xs">
+      <Box className="preview-plot-surface" style={{ position: "relative" }}>
+        <CellPreviewToolbar
+          surfaceMode={previewSurfaceMode}
+          onSurfaceModeChange={setPreviewSurfaceMode}
+          compactChildren={compactCombinedToolbarChildren}
+          compactSecondaryContent={compactCombinedSecondaryContent}
+        >
+          {combinedToolbarContent}
+        </CellPreviewToolbar>
+        <Box h={372} style={{ position: "relative" }}>{content}</Box>
+      </Box>
+      {combinedCycleNavigator}
+    </Paper>
+  );
   const [retainedCombinedPlot, setRetainedCombinedPlot] = useState<ReactNode>(null);
   useEffect(() => {
     if (combinedPlotReady && combinedPlotElement) setRetainedCombinedPlot(combinedPlotElement);
@@ -565,7 +636,7 @@ export function ContinuedImportEditor({
     previewQuantity,
     previewCapacityView,
     previewVoltageXAxis,
-    previewInterpretation,
+    effectivePreviewInterpretation,
     previewNormalizeByMass,
     previewCycleRange?.start,
     previewCycleRange?.end,
@@ -584,18 +655,15 @@ export function ContinuedImportEditor({
     previewColors.grid,
     previewColors.border,
   ]);
-  const combinedPreviewUpdatingPanel = (
-    <Paper withBorder p="xs">
-      <Box h={404} style={{ position: "relative" }}>
-        {retainedCombinedPlot ? (
-          <Box style={{ opacity: 0.46, transition: "opacity 100ms linear" }}>{retainedCombinedPlot}</Box>
-        ) : (
-          <Center h={404}><Loader size="sm" /></Center>
-        )}
-        {retainedCombinedPlot && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
-      </Box>
-      {combinedCycleNavigator}
-    </Paper>
+  const combinedPreviewUpdatingPanel = renderCombinedPlotPanel(
+    <>
+      {retainedCombinedPlot ? (
+        <Box style={{ opacity: 0.46, transition: "opacity 100ms linear" }}>{retainedCombinedPlot}</Box>
+      ) : (
+        <Center h={372}><Loader size="sm" /></Center>
+      )}
+      {retainedCombinedPlot && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
+    </>,
   );
   const orderedSources = useMemo(
     () => result?.sources.length
@@ -648,6 +716,7 @@ export function ContinuedImportEditor({
   useEffect(() => {
     if (!opened) {
       userReorderedRef.current = false;
+      setUserChosePreviewInterpretation(false);
       setPreviewMode("combined");
       setPreviewQuantity(drafts.length > 0 && drafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV")
         ? "voltage"
@@ -690,14 +759,53 @@ export function ContinuedImportEditor({
     });
   };
   const visibleFindings = orderNeedsAutomaticCorrection ? [] : result?.findings;
-  const warningFindings = visibleFindings?.filter(
-    (finding) => finding.severity === "warning" || finding.severity === "confirmation",
-  ) ?? [];
   const orderCouldNotBeVerified = Boolean(
     result?.inspection_complete
     && orderedDrafts.length > 1
     && result.suggested_order_basis === "selection_order",
   );
+  const combinedPreviewFailureSources = activeCombinedQuery.isError
+    ? continuationPreviewFailureSources(
+      activeCombinedQuery.error instanceof ApiError ? activeCombinedQuery.error.detail : null,
+    )
+    : [];
+  const warningFindings = visibleFindings?.filter(
+    (finding) => finding.severity === "warning" || finding.severity === "confirmation",
+  ) ?? [];
+  const warningSummaries = [
+    ...warningFindings.map((finding) => ({
+      id: finding.id,
+      title: finding.title,
+      message: inlineFindingLabel(finding, result?.sources ?? []),
+    })),
+    ...(orderCouldNotBeVerified ? [{
+      id: "unverified-order",
+      title: "Source order could not be verified",
+      message: "Recorded times do not establish a unique source order. Review the sequence before importing.",
+    }] : []),
+  ];
+  const errorSummaries = [
+    ...(visibleFindings?.filter((finding) => finding.severity === "blocking").map((finding) => ({
+      id: finding.id,
+      title: finding.title,
+      message: inlineFindingLabel(finding, result?.sources ?? []),
+    })) ?? []),
+    ...(inspectionQuery.isError ? [{
+      id: "continuation-inspection-error",
+      title: "Continuity inspection failed",
+      message: inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Continuity inspection failed.",
+    }] : []),
+    ...(combinedPreviewError ? [{
+      id: "combined-preview-error",
+      title: activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated",
+      message: activeCombinedQuery.error instanceof Error ? activeCombinedQuery.error.message : "The combined preview is unavailable.",
+    }] : []),
+    ...combinedPreviewFailureSources.map((source, index) => ({
+      id: `combined-preview-source-${source.filename}-${index}`,
+      title: source.filename,
+      message: source.reason,
+    })),
+  ];
   const selectedDraft = byKey.get(selectedSourceKey) ?? orderedDrafts[0];
   const selectedSource = orderedSources.find((source) => source.key === selectedSourceKey) ?? orderedSources[0];
   const selectedRawDataAvailable = Boolean(
@@ -711,11 +819,6 @@ export function ContinuedImportEditor({
       rawDataAvailable: selectedRawDataAvailable,
     }),
   );
-  const combinedPreviewFailureSources = activeCombinedQuery.isError
-    ? continuationPreviewFailureSources(
-      activeCombinedQuery.error instanceof ApiError ? activeCombinedQuery.error.detail : null,
-    )
-    : [];
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
     onCellDraftChange({ ...cellDraft, ...patch });
 
@@ -738,6 +841,7 @@ export function ContinuedImportEditor({
   ];
 
   return (
+    <>
     <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
       <Group justify="space-between" align="center" gap="sm" wrap="wrap" style={{ flex: "none" }}>
         <Group gap="xs" align="center" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
@@ -774,11 +878,6 @@ export function ContinuedImportEditor({
         <Group gap="xs" justify="flex-end" align="center">
           {inspectionQuery.isFetching && (
             <Text size="xs" c="dimmed">Preparing merged preview…</Text>
-          )}
-          {inspectionQuery.isError && (
-            <Text size="xs" c="red">
-              {inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Continuation inspection failed."}
-            </Text>
           )}
           {(sourceInspectionFailed || inspectionQuery.isError) && (
             <Button
@@ -898,9 +997,8 @@ export function ContinuedImportEditor({
               </Tooltip>
             </Group>
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
-              <Stack gap="md" pr="xs">
+              <Stack gap="xs" pr="xs">
                 {previewMode === "combined" && (
-                  <Stack gap="xs">
                     <Tabs
                       value={previewQuantity === "voltage" ? "voltage" : "cycles"}
                       onChange={(value) => {
@@ -915,70 +1013,26 @@ export function ContinuedImportEditor({
                         <Tabs.Tab value="cycles" disabled={allOcvSources}>Cycles</Tabs.Tab>
                       </Tabs.List>
                     </Tabs>
-                    {previewQuantity === "voltage" ? (
-                      <Group justify="center" gap="xs" h={58}>
-                        <Text size="sm" c={previewVoltageXAxis === "time" ? undefined : "dimmed"}>Time</Text>
-                        <Switch
-                          aria-label="Voltage x-axis: time or capacity"
-                          checked={previewVoltageXAxis === "capacity"}
-                          disabled={allOcvSources}
-                          onChange={(event) => setPreviewVoltageXAxis(event.currentTarget.checked ? "capacity" : "time")}
-                        />
-                        <Text size="sm" c={previewVoltageXAxis === "capacity" ? undefined : "dimmed"}>Capacity</Text>
-                      </Group>
-                    ) : (
-                      <Group justify="center" gap="md" wrap="nowrap" h={58}>
-                        <SegmentedControl
-                          aria-label="Capacity series to show"
-                          value={previewCapacityView}
-                          onChange={(value) => setPreviewCapacityView(value as "discharge" | "both" | "charge")}
-                          data={[
-                            { value: "discharge", label: "Dchg" },
-                            { value: "both", label: "Both" },
-                            { value: "charge", label: "Chg" },
-                          ]}
-                        />
-                        <Switch
-                          size="sm"
-                          label="Normalize by mass"
-                          checked={normalizableByMass && previewNormalizeByMass}
-                          disabled={!normalizableByMass}
-                          onChange={(event) => setPreviewNormalizeByMass(event.currentTarget.checked)}
-                        />
-                      </Group>
-                    )}
-                  </Stack>
                 )}
                 {previewMode === "combined" ? (
-                  sourceInspectionFailed ? (
-                    <Text size="sm" c="red">Continuity inspection failed. Review the source error before retrying.</Text>
+                sourceInspectionFailed ? (
+                    <Text size="sm" c="dimmed">Continuity inspection failed. Open Errors below for details.</Text>
                   ) : inspectionQuery.isError ? (
-                    <Text size="sm" c="red">The merged preview is waiting for a successful continuity inspection.</Text>
+                    <Text size="sm" c="dimmed">The combined preview is unavailable. Open Errors below for details.</Text>
                   ) : !result?.inspection_complete || inspectionQuery.isFetching || orderNeedsAutomaticCorrection ? (
                     combinedPreviewUpdatingPanel
                   ) : combinedPreviewLoading ? (
                     combinedPreviewUpdatingPanel
                   ) : combinedPreviewError ? (
                     <Alert
-                      color={activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 422 ? "gray" : "orange"}
+                      color="gray"
                       title={activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
                     >
                       <Group justify="space-between" align="start" gap="xs" wrap="nowrap">
                         <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
                           <Text size="sm">
-                            {activeCombinedQuery.error instanceof Error
-                              ? activeCombinedQuery.error.message
-                              : "The combined preview is unavailable."}
+                            Open the Errors summary below to review the details.
                           </Text>
-                          {combinedPreviewFailureSources.length > 0 && (
-                            <Stack gap={2} mt={2} style={{ maxHeight: 96, overflowY: "auto" }}>
-                              {combinedPreviewFailureSources.map((source, index) => (
-                                <Text key={`${source.filename}-${index}`} size="xs" c="dimmed">
-                                  {source.filename}: {source.reason}
-                                </Text>
-                              ))}
-                            </Stack>
-                          )}
                         </Stack>
                         {!(activeCombinedQuery.error instanceof ApiError && (activeCombinedQuery.error.status === 409 || activeCombinedQuery.error.status === 422)) && (
                           <Button
@@ -995,10 +1049,7 @@ export function ContinuedImportEditor({
                       </Group>
                     </Alert>
                   ) : combinedPlotReady && combinedPlotElement ? (
-                    <Paper withBorder p="xs">
-                      <Box h={300}>{combinedPlotElement}</Box>
-                      {combinedCycleNavigator}
-                    </Paper>
+                    renderCombinedPlotPanel(combinedPlotElement)
                   ) : (
                     <Alert color="gray">
                       No {previewQuantity === "voltage" ? "voltage" : "capacity"} preview points were found for this chain.
@@ -1015,14 +1066,17 @@ export function ContinuedImportEditor({
                     size="sm"
                     label="Continuous cycles"
                     description={
-                      previewInterpretation === "stitched"
+                      automaticSourceChainPreview
+                        ? "This large or discontinuous chain is shown per source first to keep the preview responsive. Turn on to infer one continuous cycle sequence."
+                        : effectivePreviewInterpretation === "stitched"
                         ? "Interpret ordered files as one continuous cycle sequence"
                         : "Keep each file's cycle numbering in the source chain"
                     }
-                    checked={previewInterpretation === "stitched"}
-                    onChange={(event) => setPreviewInterpretation(
-                      event.currentTarget.checked ? "stitched" : "source_chain",
-                    )}
+                    checked={effectivePreviewInterpretation === "stitched"}
+                    onChange={(event) => {
+                      setUserChosePreviewInterpretation(true);
+                      setPreviewInterpretation(event.currentTarget.checked ? "stitched" : "source_chain");
+                    }}
                   />
                 )}
 
@@ -1069,20 +1123,52 @@ export function ContinuedImportEditor({
         </Paper>
       </Group>
 
-      {(orderCouldNotBeVerified || warningFindings.length > 0) && result && (
-        <Stack gap={2} style={{ flex: "none" }}>
-          {orderCouldNotBeVerified && (
-            <Text size="xs" c="orange">
-              Recorded times do not establish a unique source order. Review the sequence before importing.
-            </Text>
+      {(warningSummaries.length > 0 || errorSummaries.length > 0) && (
+        <Group gap="xs" justify="flex-end" style={{ flex: "none" }}>
+          {warningSummaries.length > 0 && (
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="orange"
+              onClick={() => setFindingDialog("warnings")}
+            >
+              Warnings · {warningSummaries.length}
+            </Button>
           )}
-          {warningFindings.map((finding) => (
-            <Text key={finding.id} size="xs" c="orange">
-              {inlineFindingLabel(finding, result.sources)}
-            </Text>
-          ))}
-        </Stack>
+          {errorSummaries.length > 0 && (
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="red"
+              onClick={() => setFindingDialog("errors")}
+            >
+              Errors · {errorSummaries.length}
+            </Button>
+          )}
+        </Group>
       )}
     </Stack>
+    <Modal
+      opened={findingDialog !== null}
+      onClose={() => setFindingDialog(null)}
+      title={findingDialog === "warnings" ? `Warnings (${warningSummaries.length})` : `Errors (${errorSummaries.length})`}
+      centered
+      size="lg"
+    >
+      <ScrollArea style={{ maxHeight: "min(65vh, 600px)" }} type="auto" offsetScrollbars>
+        <Stack gap="xs" pr="xs">
+          {(findingDialog === "warnings" ? warningSummaries : errorSummaries).map((item) => (
+            <Paper key={item.id} withBorder p="xs">
+              <Text size="sm" fw={600}>{item.title}</Text>
+              <Text size="xs" c="dimmed" mt={2}>{item.message}</Text>
+            </Paper>
+          ))}
+          {(findingDialog === "warnings" ? warningSummaries : errorSummaries).length === 0 && (
+            <Text size="sm" c="dimmed">No items to show.</Text>
+          )}
+        </Stack>
+      </ScrollArea>
+    </Modal>
+    </>
   );
 }

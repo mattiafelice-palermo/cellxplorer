@@ -24,6 +24,8 @@ import {
   IconArrowDown,
   IconArrowUp,
   IconAlertTriangle,
+  IconChevronDown,
+  IconChevronRight,
   IconClock,
   IconDeviceDesktop,
   IconFile,
@@ -51,11 +53,18 @@ import {
   ImportBrowseEntry,
   ImportBrowseResult,
   ImportQuickAccessItem,
+  ImportInspectResult,
+  ImportPreview,
   get,
   post,
   put,
 } from "../api";
 import { ImportModalPrimaryActions, ImportModalShell } from "./ImportModalShell";
+import {
+  DEFAULT_IMPORT_SOURCE_PREVIEW_PREFERENCES,
+  ImportSourcePreview,
+  type ImportSourcePreviewPreferences,
+} from "./ImportSourcePreview";
 import {
   folderSelectionState,
   clampImportBrowserLeftPaneWidth,
@@ -69,7 +78,6 @@ import {
   toggleImportFolderSelection,
   IMPORT_BROWSER_LEFT_PANE_MAX,
   IMPORT_BROWSER_LEFT_PANE_MIN,
-  IMPORT_BROWSER_RIGHT_PANE_MIN,
 } from "../importBrowserSelection";
 import {
   importPathEditAction,
@@ -217,6 +225,10 @@ export function ImportFilesystemPickerModal({
     ];
     return new Map(entries.map((entry) => [entry.path, entry]));
   });
+  const [selectedSearch, setSelectedSearch] = useState("");
+  const [selectedPreviewPath, setSelectedPreviewPath] = useState<string | null>(null);
+  const [previewCollapsed, setPreviewCollapsed] = useState(false);
+  const [previewPreferences, setPreviewPreferences] = useState<ImportSourcePreviewPreferences>(DEFAULT_IMPORT_SOURCE_PREVIEW_PREFERENCES);
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
   const [knownFolderImportability, setKnownFolderImportability] = useState<Map<string, boolean>>(new Map());
   const [leftPaneWidth, setLeftPaneWidth] = useState(235);
@@ -231,6 +243,30 @@ export function ImportFilesystemPickerModal({
     enabled: opened,
     placeholderData: (previous) => previous,
   });
+  const selectedPreviewEntry = selectedPreviewPath ? selected.get(selectedPreviewPath) ?? null : null;
+  const selectedPreviewQuery = useQuery<ImportPreview>({
+    queryKey: ["import-picker-selected-preview", selectedPreviewEntry?.path],
+    queryFn: async ({ signal }) => {
+      const path = selectedPreviewEntry?.path;
+      if (!path) throw new Error("Select a file to preview it.");
+      const result = await post<ImportInspectResult>("/api/imports/inspect-paths", {
+        paths: [path],
+      }, { signal });
+      const preview = result.files[0];
+      if (!preview) {
+        throw new Error(result.failures[0]?.error ?? "This file could not be inspected for preview.");
+      }
+      return preview;
+    },
+    enabled: opened && mode === "files" && !previewCollapsed && selectedPreviewEntry?.kind === "file",
+    staleTime: Infinity,
+    retry: false,
+  });
+  const previewMatchesSelection = Boolean(
+    selectedPreviewEntry?.kind === "file"
+    && selectedPreviewQuery.data?.source_path
+    && importPathsEqual(selectedPreviewQuery.data.source_path, selectedPreviewEntry.path),
+  );
   const pinnedMutation = useMutation({
     mutationFn: (paths: string[]) =>
       put<{ items: ImportQuickAccessItem[] }>("/api/imports/quick-access/pinned", { paths }),
@@ -370,6 +406,8 @@ export function ImportFilesystemPickerModal({
       setSelected(new Map());
       setLastSelectedPath(null);
     }
+    setSelectedSearch("");
+    setPreviewCollapsed(false);
     setKnownFolderImportability(new Map());
   }, [mode, opened, selectionKey]);
 
@@ -537,6 +575,7 @@ export function ImportFilesystemPickerModal({
     for (const candidate of safeSelection.values()) if (unavailableFile(candidate)) safeSelection.delete(candidate.path);
     setSelected(safeSelection);
     setLastSelectedPath(update.lastSelectedPath);
+    if (safeSelection.has(entry.path)) setSelectedPreviewPath(entry.path);
   };
 
   const activateRow = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
@@ -562,6 +601,14 @@ export function ImportFilesystemPickerModal({
   };
 
   const selectedEntries = [...selected.values()];
+  const visibleSelectedEntries = selectedEntries.filter((entry) =>
+    `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(selectedSearch.trim().toLocaleLowerCase()),
+  );
+  useEffect(() => {
+    if (selectedPreviewPath && selected.get(selectedPreviewPath)?.kind === "file") return;
+    const nextPreview = [...selected.values()].reverse().find((entry) => entry.kind === "file");
+    setSelectedPreviewPath(nextPreview?.path ?? null);
+  }, [selected, selectedPreviewPath]);
   const selectedFileResolutionPending = selectedEntries.some((entry) =>
     entry.kind === "file"
     && !headerHints.has(entry.path)
@@ -813,6 +860,7 @@ export function ImportFilesystemPickerModal({
         ? "Choose the folder to monitor. The watcher checks source files directly in this folder."
         : "Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL, CP, or OCV (.mpr) data, plus folders. Click a folder row to open it; use its checkbox to select the folder."}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
+      fill={mode === "files"}
       actions={
         <>
           <Text size="sm" c="dimmed">
@@ -851,8 +899,8 @@ export function ImportFilesystemPickerModal({
         </>
       }
     >
-      <Stack gap="sm">
-        <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap">
+      <Stack gap="sm" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0 } : undefined}>
+        <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0 } : undefined}>
           <Paper
             p="xs"
             withBorder
@@ -861,9 +909,10 @@ export function ImportFilesystemPickerModal({
               minWidth: IMPORT_BROWSER_LEFT_PANE_MIN,
               maxWidth: IMPORT_BROWSER_LEFT_PANE_MAX,
               flexShrink: 0,
+              ...(mode === "files" ? { display: "flex", flexDirection: "column", minHeight: 0 } : {}),
             }}
           >
-            <ScrollArea h={560} type="auto">
+            <ScrollArea h={mode === "files" ? "100%" : 560} style={mode === "files" ? { flex: 1, minHeight: 0 } : undefined} type="auto">
               <Box pr={8}>
                 <Stack gap="md">
                 {(["quick", "pinned", "recent"] as const).map((section) => {
@@ -946,7 +995,7 @@ export function ImportFilesystemPickerModal({
               ))}
             </Group>
           </Box>
-          <Stack gap="sm" style={{ flex: "1 1 0", minWidth: IMPORT_BROWSER_RIGHT_PANE_MIN, overflow: "hidden" }}>
+          <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, overflow: "hidden" }}>
             <Group gap="xs" wrap="nowrap">
               <ActionIcon variant="default" size="lg" aria-label="Go to parent folder" disabled={!browseQuery.data?.parent_path} onClick={() => navigate(browseQuery.data?.parent_path ?? null)}><IconArrowUp size={18} /></ActionIcon>
               <Paper
@@ -995,8 +1044,9 @@ export function ImportFilesystemPickerModal({
               </Button>}
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
-                <Paper withBorder p={0}>
-              {browseQuery.isPending && !browseQuery.data ? <Center h={IMPORT_BROWSER_VIEWPORT_HEIGHT}><Loader /></Center> : browseQuery.isError ? <Center h={IMPORT_BROWSER_VIEWPORT_HEIGHT} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={IMPORT_BROWSER_VIEWPORT_HEIGHT} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", ...browserGridStyle }}><Stack gap={0}>
+            <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
+            <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
+              {browseQuery.isPending && !browseQuery.data ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%" } : undefined} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
                   <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
                   {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}
@@ -1059,26 +1109,103 @@ export function ImportFilesystemPickerModal({
                 </>}
               </Stack></Box></ScrollArea>}
             </Paper>
-            {/* Always mounted with a fixed height: revealing it on first
-                selection used to shrink the file browser above it. */}
-            <Paper withBorder p="xs" style={{ flex: "none" }}>
+            {mode === "files" && (
+              <Paper withBorder p="xs" style={{ width: previewCollapsed ? 44 : "clamp(280px, 28vw, 390px)", flex: "0 0 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <Group justify={previewCollapsed ? "center" : "space-between"} wrap="nowrap" mb={previewCollapsed ? 0 : "xs"}>
+                  {!previewCollapsed && <Text size="sm" fw={700}>Preview</Text>}
+                  <ActionIcon
+                    size="sm"
+                    variant="default"
+                    aria-label={previewCollapsed ? "Expand selected source preview" : "Collapse selected source preview"}
+                    title={previewCollapsed ? "Expand preview" : "Collapse preview"}
+                    onClick={() => setPreviewCollapsed((current) => !current)}
+                  >{previewCollapsed ? <IconChevronRight size={15} /> : <IconChevronDown size={15} />}</ActionIcon>
+                </Group>
+                {!previewCollapsed && (
+                  <Stack gap="xs" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                    {selectedPreviewEntry ? (
+                      <>
+                        <Tooltip label={selectedPreviewEntry.path} withArrow>
+                          <Text size="xs" c="dimmed" truncate>{selectedPreviewEntry.name}</Text>
+                        </Tooltip>
+                        {previewMatchesSelection ? (
+                          <ImportSourcePreview
+                            source={selectedPreviewQuery.data!}
+                            plotHeight={310}
+                            preferences={previewPreferences}
+                            onPreferencesChange={(update) => setPreviewPreferences((current) => ({ ...current, ...update }))}
+                          />
+                        ) : selectedPreviewQuery.isError ? (
+                          <Alert color="orange">{selectedPreviewQuery.error instanceof Error ? selectedPreviewQuery.error.message : "Preview could not be generated."}</Alert>
+                        ) : (
+                          <Center style={{ flex: 1, minHeight: 240 }}>
+                            <Stack gap="xs" align="center">
+                              <Loader size="sm" />
+                              <Text size="xs" c="dimmed">Preparing preview for this file…</Text>
+                            </Stack>
+                          </Center>
+                        )}
+                      </>
+                    ) : (
+                      <Center style={{ flex: 1, minHeight: 240 }} px="sm">
+                        <Text size="sm" c="dimmed" ta="center">Select a supported file to preview voltage, capacity, and cycles.</Text>
+                      </Center>
+                    )}
+                  </Stack>
+                )}
+              </Paper>
+            )}
+            </Group>
+            {/* A dedicated summary area stays clear of the browser scrollbar and
+                gives long selections their own search and multi-column list. */}
+            <Paper withBorder p="xs" style={{ flex: "0 0 clamp(132px, 19vh, 190px)", minHeight: 132, display: "flex", flexDirection: "column", minWidth: 0 }}>
               <Group justify="space-between" mb={4}>
-                <Text size="sm" fw={700}>Selected sources</Text>
+                <Group gap="xs">
+                  <Text size="sm" fw={700}>Selected sources</Text>
+                  <Text size="xs" c="dimmed">{selectedEntries.length}</Text>
+                </Group>
                 <Button
                   size="compact-sm"
                   variant="subtle"
                   color="gray"
                   disabled={selectedEntries.length === 0}
-                  onClick={() => setSelected(new Map())}
+                  onClick={() => { setSelected(new Map()); setSelectedPreviewPath(null); }}
                 >
                   Clear all
                 </Button>
               </Group>
-              <ScrollArea h={96} type="auto">
+              <TextInput
+                size="xs"
+                placeholder="Search selected sources"
+                aria-label="Search selected sources"
+                leftSection={<IconSearch size={14} />}
+                value={selectedSearch}
+                onChange={(event) => setSelectedSearch(event.currentTarget.value)}
+                mb={4}
+              />
+              <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbarSize={10} offsetScrollbars="y" type="auto" styles={{ viewport: { paddingRight: 10 } }}>
                 {selectedEntries.length === 0 ? (
                   <Text size="sm" c="dimmed">Nothing selected yet.</Text>
+                ) : visibleSelectedEntries.length === 0 ? (
+                  <Text size="sm" c="dimmed">No selected sources match this search.</Text>
                 ) : (
-                  <Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="sm" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack>
+                  <Box style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 390px), 1fr))", gap: "4px 12px", paddingRight: 6 }}>
+                    {visibleSelectedEntries.map((entry) => (
+                      <Group
+                        key={entry.path}
+                        gap="xs"
+                        wrap="nowrap"
+                        pr="xs"
+                        bg={entry.path === selectedPreviewPath ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
+                        style={{ minWidth: 0, cursor: entry.kind === "file" ? "pointer" : undefined, borderRadius: 4 }}
+                        onClick={() => { if (entry.kind === "file") setSelectedPreviewPath(entry.path); }}
+                      >
+                        {entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}
+                        <Text size="sm" truncate title={entry.path} style={{ flex: 1, minWidth: 0 }}>{entry.path}</Text>
+                        <ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={(event) => { event.stopPropagation(); setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; }); }}><IconX size={12} /></ActionIcon>
+                      </Group>
+                    ))}
+                  </Box>
                 )}
               </ScrollArea>
             </Paper>

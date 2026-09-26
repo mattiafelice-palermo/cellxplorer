@@ -2,11 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  countNewImportableInspectionFiles,
   importInspectionCandidateMatchesSearch,
   importInspectionFailurePathSet,
   mergeImportInspectionFailures,
   importSelectableInspectionPaths,
 } from "../src/importInspectionPolicy.ts";
+
+test("folder gate counts only newly importable identities in the current inspection batch", () => {
+  const existing = [{ hash: "staged-hash", source_path: "C:\\data\\staged.ndax", import_match: null }];
+  const registered = {
+    hash: "registered-hash",
+    source_path: "C:\\data\\registered.ndax",
+    import_match: { kind: "exact_duplicate" as const, registered: true },
+  };
+  const stagedAgain = { hash: "different-hash", source_path: "c:/DATA/STAGED.ndax", import_match: null };
+
+  assert.equal(countNewImportableInspectionFiles([registered], existing, true), 0);
+  assert.equal(countNewImportableInspectionFiles([stagedAgain, registered], existing, true), 0);
+  assert.equal(countNewImportableInspectionFiles([stagedAgain], existing, true), 0);
+  assert.equal(countNewImportableInspectionFiles([stagedAgain], existing, false), 1);
+  assert.equal(countNewImportableInspectionFiles([stagedAgain, { ...stagedAgain, source_path: "C:\\DATA\\STAGED.ndax" }], [], false), 1);
+});
 
 const failures = [{ path: "C:/data/Broken.xlsx", filename: "Broken.xlsx", error: "Unreadable" }];
 
