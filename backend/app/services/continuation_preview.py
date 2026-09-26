@@ -13,6 +13,12 @@ from collections.abc import Sequence
 
 import pandas as pd
 
+from .time_capacity_derived import (
+    consecutive_capacity_display,
+    phase_capacity,
+    phase_from_raw,
+)
+
 from . import canonical_cycling
 
 
@@ -187,8 +193,11 @@ def voltage_preview_from_raw(
     frame: pd.DataFrame,
     *,
     max_points: int | None = None,
+    x_axis: str = "time",
+    cycle_start: int | None = None,
+    cycle_end: int | None = None,
 ) -> dict[str, object]:
-    """Build bounded raw voltage-over-time points without changing a cache."""
+    """Build bounded raw voltage points over time or capacity without changing a cache."""
 
     empty = {
         "x": [],
@@ -200,25 +209,55 @@ def voltage_preview_from_raw(
     }
     if frame.empty or "voltage_v" not in frame.columns:
         return empty
-    time_column = next(
-        (
-            column
-            for column in ("preview_time_s", "total_time_s", "time_s", "record_index", "cycle")
-            if column in frame.columns
-        ),
-        None,
-    )
-    if time_column is None:
+    if (cycle_start is not None or cycle_end is not None) and "cycle" in frame.columns:
+        local_cycles = pd.to_numeric(frame["cycle"], errors="coerce")
+        labels = list(pd.unique(local_cycles.dropna()))
+        cycle_positions = {label: index for index, label in enumerate(labels, start=1)}
+        cycle_ordinals = local_cycles.map(cycle_positions)
+        start = max(1, int(cycle_start or 1))
+        end = max(start, int(cycle_end or start))
+        frame = frame.loc[cycle_ordinals.between(start, end)]
+        if frame.empty:
+            return empty
+    if x_axis == "capacity":
+        if {"charge_capacity_mah", "discharge_capacity_mah"}.issubset(frame.columns):
+            phases = phase_from_raw(frame)
+            phase_values = phase_capacity(frame, phases)
+            reset_ids = frame["cycle"].to_numpy() if "cycle" in frame.columns else None
+            x_values = pd.Series(
+                consecutive_capacity_display(phase_values, phases, reset_ids=reset_ids),
+                index=frame.index,
+            )
+        elif "capacity_mah" in frame.columns:
+            x_values = pd.to_numeric(frame["capacity_mah"], errors="coerce")
+        else:
+            x_values = None
+        x_column = None
+    else:
+        x_column = next(
+            (
+                column
+                for column in ("preview_time_s", "total_time_s", "time_s", "record_index", "cycle")
+                if column in frame.columns
+            ),
+            None,
+        )
+        x_values = pd.to_numeric(frame[x_column], errors="coerce") if x_column is not None else None
+    if x_values is None:
         return empty
     rows = pd.DataFrame(
         {
-            "x": pd.to_numeric(frame[time_column], errors="coerce"),
+            "x": x_values,
             "y": pd.to_numeric(frame["voltage_v"], errors="coerce"),
         }
     ).dropna()
+    if "current_ma" in frame.columns:
+        rows["current_ma"] = pd.to_numeric(frame["current_ma"], errors="coerce")
     if rows.empty:
         return empty
-    rows = rows.sort_values("x", kind="stable").reset_index(drop=True)
+    if x_axis != "capacity":
+        rows = rows.sort_values("x", kind="stable")
+    rows = rows.reset_index(drop=True)
     if max_points is not None and max_points > 0 and len(rows) > max_points:
         if max_points == 1:
             rows = rows.iloc[[0]]
@@ -229,6 +268,7 @@ def voltage_preview_from_raw(
     return {
         "x": [float(value) for value in rows["x"]],
         "y": [float(value) for value in rows["y"]],
+        **({"current_ma": [None if pd.isna(value) else float(value) for value in rows["current_ma"]]} if "current_ma" in rows.columns else {}),
         "quantity": "voltage",
         "label": "Voltage (V)",
         "x_start": float(rows["x"].iloc[0]),

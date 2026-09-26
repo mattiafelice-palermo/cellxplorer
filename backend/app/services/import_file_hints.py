@@ -40,7 +40,11 @@ def _cycle_count_hint(metadata: dict[str, Any]) -> int | None:
     return None
 
 
-def inspect_header_hint(path_string: str) -> dict[str, object]:
+def inspect_header_hint(
+    path_string: str,
+    *,
+    hash_if_size_matches: set[int] | None = None,
+) -> dict[str, object]:
     """Read normalized header metadata only; return a safe per-file outcome."""
     path = Path(path_string).expanduser()
     result: dict[str, object] = {
@@ -65,6 +69,8 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError("File changed while its header was being read.")
+        if hash_if_size_matches and before.st_size in hash_if_size_matches:
+            result["_hash"] = parsing.compute_hash(path).lower()
         ext = path.suffix.casefold()
         if ext in {".xlsx", ".mpr"}:
             result["compatible"] = True
@@ -91,7 +97,11 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
     return result
 
 
-def inspect_header_hints(paths: list[str]) -> list[dict[str, object]]:
+def inspect_header_hints(
+    paths: list[str],
+    *,
+    hash_sizes: set[int] | None = None,
+) -> list[dict[str, object]]:
     """Inspect a bounded set of paths concurrently while preserving input order."""
     unique_paths = list(dict.fromkeys(paths))
     if len(unique_paths) > MAX_HINT_PATHS:
@@ -99,4 +109,9 @@ def inspect_header_hints(paths: list[str]) -> list[dict[str, object]]:
     if not unique_paths:
         return []
     with ThreadPoolExecutor(max_workers=min(MAX_HINT_WORKERS, len(unique_paths))) as pool:
-        return list(pool.map(inspect_header_hint, unique_paths))
+        if not hash_sizes:
+            return list(pool.map(inspect_header_hint, unique_paths))
+        return list(pool.map(
+            lambda path: inspect_header_hint(path, hash_if_size_matches=hash_sizes),
+            unique_paths,
+        ))

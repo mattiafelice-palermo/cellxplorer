@@ -100,41 +100,35 @@ export function continuationPreviewRequest(
   };
 }
 
-/** Choose a human-scale voltage time unit from the visible elapsed-time span. */
+/** Match the Analysis cell picker: show a selected-range-relative time axis in minutes. */
 export function continuationPreviewTimeAxis(
   preview: ContinuationPreviewResult,
 ): ContinuationPreviewTimeAxis | null {
   if (preview.quantity !== "voltage") return null;
-  const points = preview.segments.flatMap((segment) => [
-    ...segment.x,
-    segment.display_x_start ?? Number.NaN,
-    segment.display_x_end ?? Number.NaN,
-  ]).filter((value) => Number.isFinite(value));
-  const span = points.length > 0 ? Math.max(...points.map((value) => Math.abs(value))) : 0;
-  if (span >= 86_400) return { unit: "days", divisor: 86_400, label: "Time (days)" };
-  if (span >= 3_600) return { unit: "hours", divisor: 3_600, label: "Time (hours)" };
-  if (span >= 60) return { unit: "minutes", divisor: 60, label: "Time (minutes)" };
-  return { unit: "seconds", divisor: 1, label: "Time (seconds)" };
+  return { unit: "minutes", divisor: 60, label: "Time (min)" };
 }
 
-/** Scale only the display copy of a voltage preview; scientific/cache values stay in seconds. */
+/** Rebase and scale only the display copy; scientific/cache values stay in seconds. */
 export function scaleContinuationPreviewTimeAxis(
   preview: ContinuationPreviewResult,
 ): ContinuationPreviewResult {
   const axis = continuationPreviewTimeAxis(preview);
-  if (!axis || axis.divisor === 1) {
-    return axis && !preview.x_label ? { ...preview, x_label: axis.label } : preview;
-  }
+  if (!axis) return preview;
+  // Only plotted coordinates are valid time values. Empty voltage segments
+  // can carry cycle-range metadata, which must not be mistaken for seconds.
+  const coordinates = preview.segments.flatMap((segment) => segment.x)
+    .filter((value) => Number.isFinite(value));
+  const origin = coordinates.length ? Math.min(...coordinates) : 0;
   const scale = (value: number | null | undefined) =>
-    typeof value === "number" && Number.isFinite(value) ? value / axis.divisor : value;
+    typeof value === "number" && Number.isFinite(value) ? (value - origin) / axis.divisor : value;
   return {
     ...preview,
     x_label: axis.label,
     segments: preview.segments.map((segment) => ({
       ...segment,
-      x: segment.x.map((value) => value / axis.divisor),
-      display_x_start: scale(segment.display_x_start),
-      display_x_end: scale(segment.display_x_end),
+      x: segment.x.map((value) => (value - origin) / axis.divisor),
+      display_x_start: segment.x.length ? scale(segment.display_x_start) : null,
+      display_x_end: segment.x.length ? scale(segment.display_x_end) : null,
     })),
   };
 }

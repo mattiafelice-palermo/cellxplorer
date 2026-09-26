@@ -126,6 +126,11 @@ function moveRangeHandleOnTrack(
 
 const IMPORT_BROWSER_HEADER_HEIGHT = 38;
 const IMPORT_BROWSER_ENTRY_ROW_HEIGHT = 38;
+const IMPORT_BROWSER_SCROLLBAR_SIZE = 12;
+const IMPORT_BROWSER_VISIBLE_ROWS = 8;
+const IMPORT_BROWSER_VIEWPORT_HEIGHT = IMPORT_BROWSER_HEADER_HEIGHT
+  + IMPORT_BROWSER_ENTRY_ROW_HEIGHT * IMPORT_BROWSER_VISIBLE_ROWS
+  + IMPORT_BROWSER_SCROLLBAR_SIZE;
 const IMPORT_BROWSER_ROW_OVERSCAN = 8;
 const IMPORT_LAST_FOLDER_STORAGE_KEY = "cellxplorer-import-last-folder";
 const IMPORT_BROWSER_COLUMN_MIN_WIDTH: Record<ImportBrowserSortKey, number> = {
@@ -234,8 +239,7 @@ export function ImportFilesystemPickerModal({
   });
   const headerHintMutation = useMutation({
     mutationFn: ({ paths }: { paths: string[]; generation: number }) => post<{ files: ImportHeaderHint[] }>("/api/imports/header-hints", { paths }),
-    onSuccess: ({ files }, variables) => {
-      if (variables.generation !== headerHintGeneration.current) return;
+    onSuccess: ({ files }) => {
       setHeaderHints((current) => {
       const next = new Map(current);
       for (const hint of files) next.set(hint.path, hint);
@@ -264,7 +268,9 @@ export function ImportFilesystemPickerModal({
   const unavailableFile = (entry: ImportBrowseEntry) => {
     if (entry.kind !== "file") return false;
     const hint = headerHints.get(entry.path);
-    return hint?.registered === true
+    return headerHintInFlight.current.has(entry.path)
+      || (!hint && !headerHintFailed.current.has(entry.path))
+      || hint?.registered === true
       || hint?.compatible === false;
   };
   const displayedEntries = useMemo(() => hideUnavailable
@@ -440,13 +446,14 @@ export function ImportFilesystemPickerModal({
   const navigate = (path: string | null, options: { keepPathEditor?: boolean } = {}) => {
     headerHintGeneration.current += 1;
     headerHintInFlight.current.clear();
-    headerHintFailed.current.clear();
     entryViewportRef.current?.scrollTo({ top: 0, left: 0 });
     setRequestedPath(path);
     const reset = resetImportBrowserNavigation();
     setSearch(reset.search);
     setFileFilters(EMPTY_IMPORT_BROWSER_FILTERS);
-    setHeaderHints(new Map());
+    // Keep resolved hints for already-selected files in other folders. Their
+    // paths are stable identities, and Continue requires each selected file
+    // to have a completed compatibility result before submission.
     setEntryScrollTop(0);
     setLastSelectedPath(reset.lastSelectedPath);
     if (options.keepPathEditor) {
@@ -555,6 +562,11 @@ export function ImportFilesystemPickerModal({
   };
 
   const selectedEntries = [...selected.values()];
+  const selectedFileResolutionPending = selectedEntries.some((entry) =>
+    entry.kind === "file"
+    && !headerHints.has(entry.path)
+    && !headerHintFailed.current.has(entry.path),
+  );
   const fileCount = selectedEntries.filter((entry) => entry.kind === "file").length;
   const folderCount = selectedEntries.filter((entry) => entry.kind === "folder").length;
   const isFolderSelectable = (entry: ImportBrowseEntry) =>
@@ -596,9 +608,8 @@ export function ImportFilesystemPickerModal({
     if (!batch.length) return;
     batch.forEach((path) => headerHintInFlight.current.add(path));
     const generation = headerHintGeneration.current;
-    submitHeaderHints({ paths: batch, generation }, {
+      submitHeaderHints({ paths: batch, generation }, {
       onSettled: (_result, error) => {
-        if (generation !== headerHintGeneration.current || headerHintDirectory.current !== directory) return;
         batch.forEach((path) => {
           headerHintInFlight.current.delete(path);
           if (error) headerHintFailed.current.add(path);
@@ -827,7 +838,7 @@ export function ImportFilesystemPickerModal({
             ) : (
               <Button
                 loading={loading}
-                disabled={selectedEntries.length === 0}
+                disabled={selectedEntries.length === 0 || selectedFileResolutionPending}
                 onClick={() => onConfirm?.({
                   filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
                   folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path),
@@ -985,7 +996,7 @@ export function ImportFilesystemPickerModal({
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
                 <Paper withBorder p={0}>
-              {browseQuery.isPending && !browseQuery.data ? <Center h={360}><Loader /></Center> : browseQuery.isError ? <Center h={360} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} h={360} type="auto" offsetScrollbars="y" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", ...browserGridStyle }}><Stack gap={0}>
+              {browseQuery.isPending && !browseQuery.data ? <Center h={IMPORT_BROWSER_VIEWPORT_HEIGHT}><Loader /></Center> : browseQuery.isError ? <Center h={IMPORT_BROWSER_VIEWPORT_HEIGHT} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={IMPORT_BROWSER_VIEWPORT_HEIGHT} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
                   <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
                   {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}
@@ -1005,6 +1016,7 @@ export function ImportFilesystemPickerModal({
                   const metadataColor = rowSelected ? selectedForeground : "dimmed";
                   const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
                   const cellStyle: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", alignSelf: "center" };
+                  const headerScanPending = !hint && !headerHintFailed.current.has(entry.path);
                   const disabledReason = hint?.registered
                     ? "Already registered in CellXplorer."
                     : hint?.compatible === false
@@ -1013,9 +1025,8 @@ export function ImportFilesystemPickerModal({
                         : "This workbook is not supported by the Neware Excel parser."
                       : hint?.error
                         ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
-                        : null;
-                  const headerScanPending = headerHintInFlight.current.has(entry.path);
-                  return <Box key={entry.path} px="sm" role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-disabled={!isFolder && disabledFile} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : headerScanPending ? "Header details are being scanned; you can still select this file." : undefined} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : disabledFile ? "not-allowed" : "default", opacity: disabledFile ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
+                        : headerScanPending ? "Checking whether this file can be imported…" : null;
+                  return <Box key={entry.path} px="sm" role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-disabled={!isFolder && disabledFile} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : undefined} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : disabledFile ? "not-allowed" : "default", opacity: disabledFile ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
                     <Checkbox
                       aria-label={isFolder ? `Select all importable files in ${entry.name}` : `Select ${entry.name}`}
                       checked={isFolder ? folderState === "all" : selected.has(entry.path)}

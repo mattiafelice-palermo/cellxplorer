@@ -1765,6 +1765,21 @@ class ImportFlowTests(unittest.TestCase):
             },
         )
 
+    def test_capacity_efficiency_preview_preserves_global_extrema_when_downsampled(self):
+        cycles = pd.DataFrame(
+            {
+                "cycle": list(range(1, 11)),
+                "coulombic_efficiency_pct": [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0, 93.0, 92.0, 101.0],
+            }
+        )
+
+        preview = files.capacity_efficiency_preview_from_cycles(cycles, max_points=3)
+
+        self.assertEqual(preview["x"][0], 1)
+        self.assertEqual(preview["x"][-1], 10)
+        self.assertIn(101.0, preview["y"])
+        self.assertIn(92.0, preview["y"])
+
     def test_continuation_preview_stitches_ordered_segments_with_source_parser_identities(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1785,12 +1800,14 @@ class ImportFlowTests(unittest.TestCase):
                     {
                         "cycle": [1, 3, 7],
                         "discharge_capacity_mah": [1.2, 1.1, 1.0],
+                        "coulombic_efficiency_pct": [100.0, 98.0, 96.0],
                     }
                 ),
                 (fingerprints[second.name], "parser-b"): pd.DataFrame(
                     {
                         "cycle": [2, 4],
                         "discharge_capacity_mah": [2.2, 2.1],
+                        "coulombic_efficiency_pct": [101.0, 99.0],
                     }
                 ),
             }
@@ -1812,9 +1829,20 @@ class ImportFlowTests(unittest.TestCase):
                 patch.object(files.cache, "has_cycles", return_value=True), \
                 patch.object(files.cache, "load_cycles", side_effect=load_cycles):
                 response = files.preview_continuation_sources(request)
+                filtered_response = files.preview_continuation_sources(
+                    files.ContinuationPreviewRequest(
+                        sources=request.sources,
+                        proposed_order=request.proposed_order,
+                        quantity=request.quantity,
+                        interpretation=request.interpretation,
+                        cycle_start=3,
+                        cycle_end=4,
+                    )
+                )
 
         self.assertEqual([segment["source_key"] for segment in response["segments"]], [second.name, first.name])
         self.assertEqual(response["quantity"], "discharge_capacity_mah")
+        self.assertEqual(response["cycle_count"], 5)
         self.assertEqual(response["segments"][0]["x"], [1, 2])
         self.assertEqual(response["segments"][0]["y"], [2.2, 2.1])
         self.assertEqual(response["segments"][0]["global_cycle_start"], 1)
@@ -1827,8 +1855,16 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["segments"][1]["global_cycle_end"], 5)
         self.assertEqual(response["segments"][1]["source_cycle_start"], 1)
         self.assertEqual(response["segments"][1]["source_cycle_end"], 7)
-        self.assertEqual(parser_calls, [second.name, first.name])
-        self.assertEqual([call[1] for call in cache_load_calls], ["parser-b", "parser-a"])
+        self.assertEqual(response["segments"][0]["coulombic_efficiency_x"], [1, 2])
+        self.assertEqual(response["segments"][0]["coulombic_efficiency_pct"], [101.0, 99.0])
+        self.assertEqual(response["segments"][1]["coulombic_efficiency_x"], [3, 4, 5])
+        self.assertEqual(response["segments"][1]["coulombic_efficiency_pct"], [100.0, 98.0, 96.0])
+        self.assertEqual(parser_calls, [second.name, first.name, second.name, first.name])
+        self.assertEqual([call[1] for call in cache_load_calls], ["parser-b", "parser-a", "parser-b", "parser-a"])
+        self.assertEqual([segment["x"] for segment in filtered_response["segments"]], [[], [3, 4]])
+        self.assertEqual([segment["y"] for segment in filtered_response["segments"]], [[], [1.2, 1.1]])
+        self.assertEqual(filtered_response["cycle_count"], 5)
+        self.assertEqual([segment["coulombic_efficiency_x"] for segment in filtered_response["segments"]], [[], [3, 4]])
 
     def test_continuation_preview_stitched_interpretation_infers_contiguous_file_fragments(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1881,9 +1917,20 @@ class ImportFlowTests(unittest.TestCase):
                 patch.object(files.cache, "has_cycles", return_value=True), \
                 patch.object(files.cache, "load_raw", side_effect=load_raw):
                 response = files.preview_continuation_sources(request)
+                filtered_response = files.preview_continuation_sources(
+                    files.ContinuationPreviewRequest(
+                        sources=request.sources,
+                        proposed_order=request.proposed_order,
+                        quantity=request.quantity,
+                        interpretation=request.interpretation,
+                        cycle_start=2,
+                        cycle_end=2,
+                    )
+                )
 
         self.assertEqual(response["interpretation"], "stitched")
         self.assertEqual(response["quantity"], "discharge_capacity_mah")
+        self.assertEqual(response["cycle_count"], 1)
         # infer_contiguous_cycle_ids assigns one cycle id (1) across the file
         # join, so the aggregated cycle is attributed once, to the segment
         # that holds its first row (segment 0). It carries the whole cycle's
@@ -1892,6 +1939,9 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual([segment["x"] for segment in response["segments"]], [[1], []])
         self.assertEqual([segment["y"] for segment in response["segments"]], [[3.0], []])
         self.assertEqual([segment["global_cycle_start"] for segment in response["segments"]], [1, 1])
+        self.assertEqual([segment["x"] for segment in filtered_response["segments"]], [[], []])
+        self.assertEqual([segment["y"] for segment in filtered_response["segments"]], [[], []])
+        self.assertEqual(filtered_response["cycle_count"], 1)
 
     def test_continuation_preview_stitched_interpretation_attributes_boundary_cycle_to_one_segment(self):
         """R11 regression: a cycle that charges in file A and discharges in file B.
@@ -2020,6 +2070,91 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["segments"][1]["y"], [3.6, 3.4])
         self.assertEqual(response["segments"][0]["display_x_start"], 0.0)
         self.assertEqual(response["segments"][1]["display_x_end"], 25.0)
+
+    def test_stitched_voltage_cycle_extent_stays_full_for_a_bounded_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stitched-voltage.ndax"
+            path.write_bytes(b"stitched voltage source with three cycles")
+            base_request = _continuation_preview_request([path])
+            request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="voltage",
+                interpretation="stitched",
+            )
+            bounded_request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="voltage",
+                interpretation="stitched",
+                cycle_start=2,
+                cycle_end=2,
+            )
+            source_hash = parsing.capture_source_fingerprint(path).hash
+            raw = pd.DataFrame(
+                {
+                    "record_index": [1, 2, 3, 4, 5, 6],
+                    "cycle": [1, 1, 2, 2, 3, 3],
+                    "status": ["CC Chg", "CC DChg", "CC Chg", "CC DChg", "CC Chg", "CC DChg"],
+                    "total_time_s": [0, 1, 2, 3, 4, 5],
+                    "voltage_v": [3.0, 2.9, 3.1, 2.8, 3.2, 2.7],
+                }
+            )
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "load_raw", return_value=raw):
+                full = files.preview_continuation_sources(request)
+                bounded = files.preview_continuation_sources(bounded_request)
+
+        self.assertEqual(full["cycle_count"], 3)
+        self.assertEqual(bounded["cycle_count"], 3)
+        self.assertEqual(full["segments"][0]["global_cycle_end"], 3)
+        self.assertEqual(bounded["segments"][0]["global_cycle_end"], 3)
+        self.assertEqual(len(full["segments"][0]["x"]), 6)
+        self.assertEqual(len(bounded["segments"][0]["x"]), 2)
+
+    def test_empty_stitched_voltage_segment_has_no_cycle_numbers_as_time_bounds(self):
+        sources = [
+            {"hash": "a" * 64, "parser_version": "parser", "source_key": "part-a", "filename": "part-a.ndax"},
+            {"hash": "b" * 64, "parser_version": "parser", "source_key": "part-b", "filename": "part-b.ndax"},
+        ]
+        frames = [
+            pd.DataFrame(
+                {
+                    "record_index": [1, 2],
+                    "cycle": [1, 1],
+                    "status": ["CC Chg", "CC DChg"],
+                    "total_time_s": [0.0, 10.0],
+                    "voltage_v": [3.1, 2.9],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "record_index": [1, 2],
+                    "cycle": [1, 1],
+                    "status": ["CC Chg", "CC DChg"],
+                    "total_time_s": [0.0, 10.0],
+                    "voltage_v": [3.2, 2.8],
+                }
+            ),
+        ]
+
+        with patch.object(files.cache, "load_raw", side_effect=frames):
+            response = files._build_stitched_continuation_preview(
+                sources,
+                quantity="voltage",
+                voltage_x_axis="time",
+                cycle_start=2,
+                cycle_end=2,
+            )
+
+        self.assertEqual(response["cycle_count"], 2)
+        self.assertEqual(response["segments"][0]["x"], [])
+        self.assertIsNone(response["segments"][0]["display_x_start"])
+        self.assertIsNone(response["segments"][0]["display_x_end"])
+        self.assertEqual(response["segments"][1]["x"], [10.0, 20.0])
 
     def test_voltage_preview_remains_available_for_metadata_only_raw_source(self):
         with tempfile.TemporaryDirectory() as tmp:

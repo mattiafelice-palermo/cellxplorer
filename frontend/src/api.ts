@@ -2173,6 +2173,9 @@ export interface ContinuationPreviewRequest {
   proposed_order: string[];
   quantity?: "voltage" | "discharge_capacity_mah" | "charge_capacity_mah" | null;
   interpretation?: "source_chain" | "stitched";
+  voltage_x_axis?: "time" | "capacity";
+  cycle_start?: number;
+  cycle_end?: number;
 }
 
 export interface ContinuationPreviewSegment {
@@ -2180,8 +2183,11 @@ export interface ContinuationPreviewSegment {
   filename: string;
   x: number[];
   y: number[];
+  current_ma?: (number | null)[];
   display_x_start?: number | null;
   display_x_end?: number | null;
+  coulombic_efficiency_x?: number[];
+  coulombic_efficiency_pct?: number[];
   global_cycle_start: number | null;
   global_cycle_end: number | null;
   source_cycle_start: number | null;
@@ -2194,6 +2200,7 @@ export interface ContinuationPreviewResult {
   label: string;
   x_label?: string;
   interpretation?: "source_chain" | "stitched";
+  cycle_count?: number | null;
   segments: ContinuationPreviewSegment[];
 }
 

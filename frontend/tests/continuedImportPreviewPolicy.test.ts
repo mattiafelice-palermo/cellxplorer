@@ -100,37 +100,55 @@ test("combined preview query identity changes for order or an inspected source i
   assert.notDeepEqual(differentMetric, original);
 });
 
-test("voltage preview chooses a readable time unit and scales only display values", () => {
+test("voltage preview uses Analysis-picker minutes and rebases to the selected range", () => {
   const voltage = {
     ...preview(),
     quantity: "voltage",
     label: "Voltage (V)",
     x: undefined,
-    segments: preview().segments.map((segment) => ({
-      ...segment,
-      x: segment.x.map((value) => value * 1000),
-      display_x_start: segment.display_x_start ?? 0,
-      display_x_end: segment.display_x_end ?? 120_000,
-    })),
+    segments: [
+      { ...preview().segments[0]!, x: [1000, 2000], display_x_start: 1000, display_x_end: 2000 },
+      { ...preview().segments[1]!, x: [3000, 4000], display_x_start: 3000, display_x_end: 4000 },
+    ],
   } as ContinuationPreviewResult;
   assert.deepEqual(continuationPreviewTimeAxis(voltage), {
-    unit: "days",
-    divisor: 86_400,
-    label: "Time (days)",
+    unit: "minutes",
+    divisor: 60,
+    label: "Time (min)",
   });
   const scaled = scaleContinuationPreviewTimeAxis(voltage);
-  assert.equal(scaled.x_label, "Time (days)");
-  assert.deepEqual(scaled.segments[0]?.x, [1000 / 86_400, 2000 / 86_400]);
+  assert.equal(scaled.x_label, "Time (min)");
+  assert.deepEqual(scaled.segments[0]?.x, [0, 1000 / 60]);
+  assert.deepEqual(scaled.segments[1]?.x, [2000 / 60, 3000 / 60]);
   assert.deepEqual(voltage.segments[0]?.x, [1000, 2000]);
 });
 
-test("voltage time-axis helper uses seconds for short traces and ignores capacity previews", () => {
+test("voltage time-axis helper keeps minutes for short traces and ignores capacity previews", () => {
   assert.deepEqual(continuationPreviewTimeAxis({ ...preview(), quantity: "voltage", segments: [{ ...preview().segments[0]!, x: [0, 45] }] }), {
-    unit: "seconds",
-    divisor: 1,
-    label: "Time (seconds)",
+    unit: "minutes",
+    divisor: 60,
+    label: "Time (min)",
   });
+  assert.deepEqual(scaleContinuationPreviewTimeAxis({ ...preview(), quantity: "voltage", segments: [{ ...preview().segments[0]!, x: [10, 55] }] }).segments[0]?.x, [0, 0.75]);
   assert.equal(continuationPreviewTimeAxis(preview()), null);
+});
+
+test("empty voltage segments cannot shift the selected time origin with cycle metadata", () => {
+  const voltage = {
+    ...preview(),
+    quantity: "voltage",
+    segments: [
+      { ...preview().segments[0]!, x: [], y: [], display_x_start: 1, display_x_end: 1 },
+      { ...preview().segments[1]!, x: [1200, 1800], display_x_start: 2, display_x_end: 2 },
+    ],
+  } as ContinuationPreviewResult;
+
+  const scaled = scaleContinuationPreviewTimeAxis(voltage);
+
+  assert.deepEqual(scaled.segments[0]?.x, []);
+  assert.equal(scaled.segments[0]?.display_x_start, null);
+  assert.equal(scaled.segments[0]?.display_x_end, null);
+  assert.deepEqual(scaled.segments[1]?.x, [0, 10]);
 });
 
 test("combined preview failure details retain usable affected-source reasons", () => {

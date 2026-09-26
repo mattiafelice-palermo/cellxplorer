@@ -232,6 +232,9 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
+│   │   │   ├── CellPreviewPlot.tsx Shared controls, legend, and Plotly surface for cell previews
+│   │   │   ├── cellPreviewPlotModel.ts Shared voltage/capacity layouts, traces, and CE range
+│   │   │   ├── ImportSourcePreview.tsx Staged source voltage and cycle preview
 │   │   │   ├── NavigationWarmupDebugButton.tsx Temporary Cell-preparation progress/debug panel
 │   │   │   ├── DestructiveImpactModal.tsx
 │   │   │   ├── FolderTree.tsx

@@ -687,6 +687,39 @@ def capacity_preview_from_cycles(
     }
 
 
+def capacity_efficiency_preview_from_cycles(cycles, *, max_points: int | None = None) -> dict[str, list]:
+    """Return bounded cycle/CE points from the authoritative cycle summary."""
+
+    required = {"cycle", "coulombic_efficiency_pct"}
+    if cycles.empty or not required.issubset(cycles.columns):
+        return {"x": [], "y": []}
+    rows = cycles[["cycle", "coulombic_efficiency_pct"]].copy()
+    rows["cycle"] = pd.to_numeric(rows["cycle"], errors="coerce")
+    rows["coulombic_efficiency_pct"] = pd.to_numeric(
+        rows["coulombic_efficiency_pct"], errors="coerce"
+    )
+    rows = rows.dropna()
+    rows = rows[
+        np.isfinite(rows["cycle"])
+        & np.isfinite(rows["coulombic_efficiency_pct"])
+    ]
+    if max_points is not None and max_points > 0 and len(rows) > max_points:
+        sampled = _sample_preview_rows(rows, max_points)
+        # Keep the true extrema in the preview so the padded CE axis remains
+        # faithful even when a long sequence is downsampled for display.
+        extrema = rows.loc[[
+            rows["coulombic_efficiency_pct"].idxmin(),
+            rows["coulombic_efficiency_pct"].idxmax(),
+        ]]
+        rows = pd.concat([sampled, extrema]).drop_duplicates(subset=["cycle"]).sort_values("cycle")
+    else:
+        rows = _sample_preview_rows(rows, max_points)
+    return {
+        "x": [int(value) for value in rows["cycle"]],
+        "y": [float(value) for value in rows["coulombic_efficiency_pct"]],
+    }
+
+
 def build_capacity_preview(
     path: Path,
     file_hash: str | None = None,
@@ -1611,6 +1644,9 @@ class ContinuationPreviewRequest(BaseModel):
     sources: list[ContinuationInspectSourceRequest]
     proposed_order: list[str]
     quantity: Literal["voltage", "discharge_capacity_mah", "charge_capacity_mah"] | None = None
+    voltage_x_axis: Literal["time", "capacity"] = "time"
+    cycle_start: int | None = Field(default=None, ge=1)
+    cycle_end: int | None = Field(default=None, ge=1)
     # Keep the legacy source-chain interpretation as the API compatibility
     # default.  The continued-import UI sends "stitched" explicitly because
     # that is its user-facing default.
@@ -2779,6 +2815,9 @@ def _build_continuation_preview(
     *,
     quantity: str | None = None,
     interpretation: Literal["source_chain", "stitched"] = "source_chain",
+    voltage_x_axis: Literal["time", "capacity"] = "time",
+    cycle_start: int | None = None,
+    cycle_end: int | None = None,
 ) -> dict:
     """Build bounded source-segmented display points from prepared caches.
 
@@ -2835,6 +2874,12 @@ def _build_continuation_preview(
 
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
+    requested_start = max(1, int(cycle_start or 1))
+    requested_end = max(requested_start, int(cycle_end or requested_start))
+    cycle_count: int | None = None
+    if quantity != "voltage" and "cycle" in cycles.columns and not cycles.empty:
+        full_cycle_ids = pd.to_numeric(cycles["cycle"], errors="coerce").dropna()
+        cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
 
     if quantity == "voltage":
         raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
@@ -2862,6 +2907,39 @@ def _build_continuation_preview(
             segment_index: prepared_raw[prepared_raw["segment"] == segment_index]
             for segment_index in range(len(ordered_sources))
         }
+        global_cycle_sources: dict[int, set[int]] = {}
+        raw_cycle_extent = sum(
+            pd.to_numeric(frame.get("source_cycle", pd.Series(dtype="float64")), errors="coerce").nunique()
+            for frame in raw_by_segment.values()
+        )
+        try:
+            full_cycle_rows, _full_cycle_segments, missing_cycle_sources = stitch.stitch_cycles(refs, CALC_VERSION)
+            if not missing_cycle_sources and not full_cycle_rows.empty and "cycle" in full_cycle_rows.columns:
+                full_cycle_ids = pd.to_numeric(full_cycle_rows["cycle"], errors="coerce").dropna()
+                cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
+        except Exception:
+            # Raw voltage previews are intentionally available before cycle
+            # caches are ready. The inspection cycle count remains a UI fallback.
+            cycle_count = None
+        if cycle_count is None and raw_cycle_extent > 0:
+            cycle_count = int(raw_cycle_extent)
+        if (cycle_start is not None or cycle_end is not None) and not (
+            requested_start <= 1 and requested_end >= raw_cycle_extent
+        ):
+            try:
+                cycle_rows, _cycle_metadata, missing_cycle_sources = stitch.stitch_cycles(refs, CALC_VERSION)
+                if not missing_cycle_sources and {"segment", "source_cycle", "cycle"}.issubset(cycle_rows.columns):
+                    selected_cycles = cycle_rows[
+                        pd.to_numeric(cycle_rows["cycle"], errors="coerce").between(requested_start, requested_end)
+                    ]
+                    global_cycle_sources = {
+                        int(segment): set(pd.to_numeric(rows["source_cycle"], errors="coerce").dropna().astype(int))
+                        for segment, rows in selected_cycles.groupby("segment", sort=False)
+                    }
+            except Exception:
+                # The raw voltage plot remains useful when no canonical cycle
+                # cache can provide the source-local to global cycle mapping.
+                global_cycle_sources = {}
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
         selected_quantity, label = _capacity_quantity_and_label(cycles, quantity)
@@ -2893,30 +2971,51 @@ def _build_continuation_preview(
                 status_code=409,
             )
         if selected_quantity == "voltage":
+            segment_raw = raw_by_segment.get(segment_index, pd.DataFrame())
+            if global_cycle_sources and "source_cycle" in segment_raw.columns:
+                segment_raw = segment_raw[
+                    pd.to_numeric(segment_raw["source_cycle"], errors="coerce")
+                    .isin(global_cycle_sources.get(segment_index, set()))
+                ]
             segment_preview = continuation_preview.voltage_preview_from_raw(
-                raw_by_segment.get(segment_index, pd.DataFrame()),
+                segment_raw,
                 max_points=segment_limit,
+                x_axis=voltage_x_axis,
             )
+            efficiency_preview = {"x": [], "y": []}
         else:
             segment_frame = cycles[cycles["segment"] == segment_index]
+            if (cycle_start is not None or cycle_end is not None) and "cycle" in segment_frame.columns:
+                segment_frame = segment_frame[
+                    pd.to_numeric(segment_frame["cycle"], errors="coerce").between(requested_start, requested_end)
+                ]
             segment_preview = capacity_preview_from_cycles(
                 segment_frame,
                 max_points=segment_limit,
                 quantity=selected_quantity,
             )
+            efficiency_preview = capacity_efficiency_preview_from_cycles(
+                segment_frame,
+                max_points=segment_limit,
+            )
         segment_points = segment_preview.get("x") or []
         display_x_start = segment_preview.get("x_start")
         display_x_end = segment_preview.get("x_end")
         if display_x_start is None:
-            display_x_start = segment_points[0] if segment_points else metadata["cycle_start"]
+            display_x_start = segment_points[0] if segment_points else (
+                metadata["cycle_start"] if selected_quantity != "voltage" else None
+            )
         if display_x_end is None:
-            display_x_end = segment_points[-1] if segment_points else metadata["cycle_end"]
+            display_x_end = segment_points[-1] if segment_points else (
+                metadata["cycle_end"] if selected_quantity != "voltage" else None
+            )
         response_segments.append(
             {
                 "source_key": source["source_key"],
                 "filename": source["filename"],
                 "x": segment_preview["x"],
                 "y": segment_preview["y"],
+                **({"current_ma": segment_preview["current_ma"]} if "current_ma" in segment_preview else {}),
                 "global_cycle_start": metadata["cycle_start"],
                 "global_cycle_end": metadata["cycle_end"],
                 "source_cycle_start": metadata["source_cycle_start"],
@@ -2924,13 +3023,17 @@ def _build_continuation_preview(
                 "source_cycle_count": metadata["source_cycle_count"],
                 "display_x_start": display_x_start,
                 "display_x_end": display_x_end,
+                "coulombic_efficiency_x": efficiency_preview["x"],
+                "coulombic_efficiency_pct": efficiency_preview["y"],
             }
         )
     return {
         "quantity": selected_quantity,
         "label": label,
+        "cycle_count": cycle_count,
         "x_label": (
-            "Time (s)"
+            "Capacity (mAh)" if selected_quantity == "voltage" and voltage_x_axis == "capacity"
+            else "Time (s)"
             if selected_quantity == "voltage"
             else f"Cycle number ({interpretation})"
         ),
@@ -2943,6 +3046,9 @@ def _build_stitched_continuation_preview(
     ordered_sources: list[dict[str, str]],
     *,
     quantity: str | None,
+    voltage_x_axis: Literal["time", "capacity"] = "time",
+    cycle_start: int | None = None,
+    cycle_end: int | None = None,
 ) -> dict:
     """Build the explicit preview-only contiguous-cycle interpretation."""
 
@@ -2974,11 +3080,17 @@ def _build_stitched_continuation_preview(
 
     try:
         prepared_frames = [frame for frame in raw_frames if frame is not None]
-        merged = (
-            continuation_preview.prepare_segmented_raw(prepared_frames)
-            if quantity == "voltage"
-            else continuation_preview.prepare_stitched_raw(prepared_frames)
-        )
+        voltage_cycle_identity_available = True
+        if quantity == "voltage":
+            try:
+                merged = continuation_preview.prepare_stitched_raw(prepared_frames)
+            except ValueError:
+                # Preserve voltage preview for sources whose rows do not carry
+                # enough status information for preview-only cycle inference.
+                merged = continuation_preview.prepare_segmented_raw(prepared_frames)
+                voltage_cycle_identity_available = False
+        else:
+            merged = continuation_preview.prepare_stitched_raw(prepared_frames)
     except ValueError as exc:
         raise _continuation_preview_unavailable(
             code="continuation_cycle_inference_unavailable",
@@ -3005,6 +3117,19 @@ def _build_stitched_continuation_preview(
     # that cycle's first merged row -- so it contributes one point, with the
     # value it would have if the chain were a single file.
     merged_cycles = pd.DataFrame() if quantity == "voltage" else calc.per_cycle(merged)
+    if quantity == "voltage" and voltage_cycle_identity_available and "cycle" in merged.columns:
+        full_cycle_ids = pd.to_numeric(merged["cycle"], errors="coerce").dropna()
+        cycle_count: int | None = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
+    elif quantity != "voltage" and "cycle" in merged_cycles.columns and not merged_cycles.empty:
+        full_cycle_ids = pd.to_numeric(merged_cycles["cycle"], errors="coerce").dropna()
+        cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
+    else:
+        cycle_count = sum(
+            len(stitch.observed_local_cycles(
+                raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
+            )[0])
+            for raw_frame in raw_frames
+        )
     if quantity == "voltage":
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
@@ -3018,24 +3143,37 @@ def _build_stitched_continuation_preview(
             merged_cycles = merged_cycles.assign(
                 segment=merged_cycles["cycle"].map(cycle_owner)
             )
+    requested_start = max(1, int(cycle_start or 1))
+    requested_end = max(requested_start, int(cycle_end or requested_start))
+    if (cycle_start is not None or cycle_end is not None) and quantity != "voltage" and "cycle" in merged_cycles.columns:
+        merged_cycles = merged_cycles[
+            pd.to_numeric(merged_cycles["cycle"], errors="coerce").between(requested_start, requested_end)
+        ]
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     response_segments = []
 
     for segment_index, (source, raw_frame) in enumerate(zip(ordered_sources, raw_frames)):
-        segment_frame = merged[merged["segment"] == segment_index]
+        full_segment_frame = merged[merged["segment"] == segment_index]
+        segment_frame = full_segment_frame
+        if (cycle_start is not None or cycle_end is not None) and selected_quantity == "voltage" and voltage_cycle_identity_available and "cycle" in segment_frame.columns:
+            segment_frame = segment_frame[
+                pd.to_numeric(segment_frame["cycle"], errors="coerce").between(requested_start, requested_end)
+            ]
         local_labels, _ = stitch.observed_local_cycles(
             raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
         )
         global_cycles = (
-            pd.to_numeric(segment_frame["cycle"], errors="coerce").dropna()
-            if "cycle" in segment_frame.columns
+            pd.to_numeric(full_segment_frame["cycle"], errors="coerce").dropna()
+            if "cycle" in full_segment_frame.columns
             else pd.Series(dtype="float64")
         )
         if selected_quantity == "voltage":
             segment_preview = continuation_preview.voltage_preview_from_raw(
                 segment_frame,
                 max_points=segment_limit,
+                x_axis=voltage_x_axis,
             )
+            efficiency_preview = {"x": [], "y": []}
         else:
             if merged_cycles.empty or "segment" not in merged_cycles.columns:
                 segment_cycles = merged_cycles
@@ -3046,16 +3184,20 @@ def _build_stitched_continuation_preview(
                 max_points=segment_limit,
                 quantity=selected_quantity,
             )
+            efficiency_preview = capacity_efficiency_preview_from_cycles(
+                segment_cycles,
+                max_points=segment_limit,
+            )
         segment_points = segment_preview.get("x") or []
         display_x_start = segment_preview.get("x_start")
         display_x_end = segment_preview.get("x_end")
         if display_x_start is None:
             display_x_start = segment_points[0] if segment_points else (
-                int(global_cycles.min()) if not global_cycles.empty else None
+                int(global_cycles.min()) if not global_cycles.empty and selected_quantity != "voltage" else None
             )
         if display_x_end is None:
             display_x_end = segment_points[-1] if segment_points else (
-                int(global_cycles.max()) if not global_cycles.empty else None
+                int(global_cycles.max()) if not global_cycles.empty and selected_quantity != "voltage" else None
             )
         response_segments.append(
             {
@@ -3063,6 +3205,7 @@ def _build_stitched_continuation_preview(
                 "filename": source["filename"],
                 "x": segment_preview["x"],
                 "y": segment_preview["y"],
+                **({"current_ma": segment_preview["current_ma"]} if "current_ma" in segment_preview else {}),
                 "global_cycle_start": int(global_cycles.min()) if not global_cycles.empty else None,
                 "global_cycle_end": int(global_cycles.max()) if not global_cycles.empty else None,
                 "source_cycle_start": local_labels[0] if local_labels else None,
@@ -3070,12 +3213,19 @@ def _build_stitched_continuation_preview(
                 "source_cycle_count": len(local_labels),
                 "display_x_start": display_x_start,
                 "display_x_end": display_x_end,
+                "coulombic_efficiency_x": efficiency_preview["x"],
+                "coulombic_efficiency_pct": efficiency_preview["y"],
             }
         )
     return {
         "quantity": selected_quantity,
         "label": label,
-        "x_label": "Time (s)" if selected_quantity == "voltage" else "Cycle number (stitched)",
+        "cycle_count": cycle_count,
+        "x_label": (
+            "Capacity (mAh)" if selected_quantity == "voltage" and voltage_x_axis == "capacity"
+            else "Time (s)" if selected_quantity == "voltage"
+            else "Cycle number (stitched)"
+        ),
         "interpretation": "stitched",
         "segments": response_segments,
     }
@@ -3721,11 +3871,17 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
         return _build_stitched_continuation_preview(
             ordered_sources,
             quantity=req.quantity,
+            voltage_x_axis=req.voltage_x_axis,
+            cycle_start=req.cycle_start,
+            cycle_end=req.cycle_end,
         )
     return _build_continuation_preview(
         ordered_sources,
         quantity=req.quantity,
         interpretation=req.interpretation,
+        voltage_x_axis=req.voltage_x_axis,
+        cycle_start=req.cycle_start,
+        cycle_end=req.cycle_end,
     )
 
 
@@ -3783,7 +3939,19 @@ def inspect_import_header_hints(
 ):
     """Return optional file metadata without delaying the import browser."""
     try:
-        files = import_file_hints.inspect_header_hints(req.paths)
+        candidate_sizes = set()
+        for value in req.paths:
+            try:
+                candidate_sizes.add(Path(value).expanduser().stat().st_size)
+            except OSError:
+                continue
+        registered_rows = db.query(SourceFile.size, SourceFile.hash).filter(
+            SourceFile.size.in_(candidate_sizes)
+        ).all() if candidate_sizes else []
+        hashes_by_size: dict[int, set[str]] = {}
+        for size, file_hash in registered_rows:
+            hashes_by_size.setdefault(int(size), set()).add(str(file_hash).lower())
+        files = import_file_hints.inspect_header_hints(req.paths, hash_sizes=set(hashes_by_size))
         requested = {str(Path(path).expanduser().resolve()).casefold() for path in req.paths}
         if requested:
             registered_paths = {
@@ -3791,7 +3959,15 @@ def inspect_import_header_hints(
                 for (path,) in db.query(SourceFile.path).filter(func.lower(SourceFile.path).in_(requested)).all()
             }
             for item in files:
-                item["registered"] = str(Path(str(item["path"])).expanduser()).casefold() in registered_paths
+                item_hash = item.pop("_hash", None)
+                try:
+                    size = Path(str(item["path"])).expanduser().stat().st_size
+                except OSError:
+                    size = -1
+                item["registered"] = (
+                    str(Path(str(item["path"])).expanduser()).casefold() in registered_paths
+                    or (isinstance(item_hash, str) and item_hash.lower() in hashes_by_size.get(size, set()))
+                )
         return {"files": files}
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

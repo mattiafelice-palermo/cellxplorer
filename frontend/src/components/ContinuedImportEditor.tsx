@@ -1,7 +1,9 @@
 import {
   Alert,
   Badge,
+  Box,
   Button,
+  Center,
   Divider,
   Group,
   Loader,
@@ -9,6 +11,7 @@ import {
   NumberInput,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Select,
   Stack,
   Switch,
@@ -17,10 +20,13 @@ import {
   Textarea,
   TextInput,
   Tooltip,
+  useComputedColorScheme,
+  useMantineTheme,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import { IconPlus, IconRefresh } from "@tabler/icons-react";
+import { IconChevronLeft, IconChevronRight, IconPlus, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import {
   ActiveMaterialPresetSettings,
@@ -55,7 +61,6 @@ import {
   type ImportPreviewDraftState,
 } from "../importPreviewPolicy";
 import {
-  buildContinuationPreviewTraces,
   buildContinuationPreviewProvenanceLayout,
   continuationPreviewHasPoints,
   continuationPreviewFailureSources,
@@ -67,7 +72,17 @@ import {
 } from "../continuedImportPreviewPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationSourceList } from "./ContinuationSourceList";
-import Plot from "./Plot";
+import { CellPreviewPlot, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
+import {
+  cellPreviewCapacityLayout,
+  cellPreviewCapacityTraces,
+  cellPreviewVoltageLayout,
+  cellPreviewVoltageTraces,
+  paddedEfficiencyRange,
+  type CellPreviewCycleSeries,
+} from "./cellPreviewPlotModel";
+import { ImportSourcePreview } from "./ImportSourcePreview";
+import { shiftPreviewCycleWindow } from "../analysisCellPreviewPolicy";
 
 export type ContinuedCellDraft = {
   cell_name: string;
@@ -202,11 +217,34 @@ export function ContinuedImportEditor({
   const [colors, setColors] = useState<SourceColorAssignments>({});
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
+  const [previewSurfaceMode, setPreviewSurfaceMode] = useState<CellPreviewSurfaceMode>("theme");
+  const scheme = useComputedColorScheme("light");
+  const theme = useMantineTheme();
+  const previewColors = useMemo(() => previewSurfaceMode === "theme"
+    ? scheme === "dark"
+      ? { background: theme.colors.dark[7], text: theme.colors.gray[0], border: theme.colors.dark[3], grid: theme.colors.dark[5] }
+      : { background: theme.white, text: theme.black, border: theme.colors.gray[5], grid: theme.colors.gray[3] }
+    : previewSurfaceMode === "sun"
+      ? { background: theme.white, text: theme.black, border: theme.colors.gray[5], grid: theme.colors.gray[3] }
+      : previewSurfaceMode === "moon"
+        ? { background: scheme === "dark" ? theme.colors.dark[7] : "#000000", text: theme.colors.gray[0], border: scheme === "dark" ? theme.colors.dark[3] : theme.colors.dark[1], grid: scheme === "dark" ? theme.colors.dark[5] : theme.colors.dark[3] }
+        : { background: theme.colors.dark[4], text: theme.colors.gray[0], border: theme.colors.dark[1], grid: theme.colors.dark[3] },
+  [previewSurfaceMode, scheme, theme]);
   const [previewQuantity, setPreviewQuantity] = useState<ContinuationPreviewQuantity>(() =>
     drafts.length > 0 && drafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV")
       ? "voltage"
       : "discharge_capacity_mah",
   );
+  const [previewCapacityView, setPreviewCapacityView] = useState<"discharge" | "both" | "charge">("both");
+  const [previewVoltageXAxis, setPreviewVoltageXAxis] = useState<"time" | "capacity">("time");
+  const [previewNormalizeByMass, setPreviewNormalizeByMass] = useState(true);
+  const [previewVoltageCycleRange, setPreviewVoltageCycleRange] = useState<{ start: number; end: number } | null>(null);
+  const [previewCapacityCycleRange, setPreviewCapacityCycleRange] = useState<{ start: number; end: number } | null>(null);
+  const previewCycleRange = previewQuantity === "voltage" ? previewVoltageCycleRange : previewCapacityCycleRange;
+  const setPreviewCycleRange = (next: { start: number; end: number } | null) => {
+    if (previewQuantity === "voltage") setPreviewVoltageCycleRange(next);
+    else setPreviewCapacityCycleRange(next);
+  };
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
   const previousOrderRef = useRef<string[]>(order);
   const userReorderedRef = useRef(false);
@@ -242,35 +280,322 @@ export function ContinuedImportEditor({
     order,
     userReorderedRef.current,
   );
-  const allOcvSources = orderedDrafts.length >= 2
+  const allOcvSources = orderedDrafts.length >= 1
     && orderedDrafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV");
   useEffect(() => {
     if (allOcvSources) setPreviewQuantity("voltage");
   }, [allOcvSources]);
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
-    queryKey: continuationPreviewQueryKey(
-      order,
-      orderedDrafts,
-      allOcvSources ? 0 : inspectionQuery.dataUpdatedAt,
-      previewQuantity,
-      previewInterpretation,
-    ),
+    queryKey: [
+      ...continuationPreviewQueryKey(
+        order,
+        orderedDrafts,
+        inspectionQuery.dataUpdatedAt,
+        previewQuantity,
+        previewInterpretation,
+      ),
+      previewVoltageXAxis,
+      previewQuantity === "voltage" ? previewVoltageCycleRange?.start ?? null : null,
+      previewQuantity === "voltage" ? previewVoltageCycleRange?.end ?? null : null,
+      previewQuantity === "voltage" ? null : previewCapacityCycleRange?.start ?? null,
+      previewQuantity === "voltage" ? null : previewCapacityCycleRange?.end ?? null,
+    ],
+    queryFn: ({ signal }) => previewContinuationSources({
+      ...continuationPreviewRequest(orderedDrafts, order, previewQuantity, previewInterpretation),
+      voltage_x_axis: previewVoltageXAxis,
+      ...(previewQuantity === "voltage" && previewVoltageCycleRange
+        ? { cycle_start: previewVoltageCycleRange.start, cycle_end: previewVoltageCycleRange.end }
+        : previewQuantity !== "voltage" && previewCapacityCycleRange
+          ? { cycle_start: previewCapacityCycleRange.start, cycle_end: previewCapacityCycleRange.end }
+        : {}),
+    }, { signal }),
+    enabled: opened
+      && previewMode === "combined"
+      && Boolean(result?.inspection_complete)
+      && !sourceInspectionFailed
+      && !orderNeedsAutomaticCorrection
+      && orderedDrafts.length >= 1,
+    staleTime: Infinity,
+    placeholderData: (previous) => previous,
+  });
+  const chargePreviewQuery = useQuery<ContinuationPreviewResult>({
+    queryKey: [
+      ...continuationPreviewQueryKey(
+        order,
+        orderedDrafts,
+        inspectionQuery.dataUpdatedAt,
+        "charge_capacity_mah",
+        previewInterpretation,
+      ),
+      previewCapacityCycleRange?.start ?? null,
+      previewCapacityCycleRange?.end ?? null,
+    ],
     queryFn: ({ signal }) => previewContinuationSources(
-      continuationPreviewRequest(orderedDrafts, order, previewQuantity, previewInterpretation),
+      {
+        ...continuationPreviewRequest(orderedDrafts, order, "charge_capacity_mah", previewInterpretation),
+        ...(previewCapacityCycleRange
+          ? { cycle_start: previewCapacityCycleRange.start, cycle_end: previewCapacityCycleRange.end }
+          : {}),
+      },
       { signal },
     ),
     enabled: opened
       && previewMode === "combined"
-      && (Boolean(result?.inspection_complete) || (allOcvSources && previewQuantity === "voltage"))
-      && (allOcvSources || !orderNeedsAutomaticCorrection)
-      && orderedDrafts.length >= 2,
+      && previewQuantity !== "voltage"
+      && previewCapacityView !== "discharge"
+      && Boolean(result?.inspection_complete)
+      && !sourceInspectionFailed
+      && !orderNeedsAutomaticCorrection
+      && orderedDrafts.length >= 1,
     staleTime: Infinity,
+    placeholderData: (previous) => previous,
   });
+  const activeCombinedQuery = previewQuantity === "voltage"
+    ? combinedPreviewQuery
+    : previewCapacityView === "charge" ? chargePreviewQuery : combinedPreviewQuery;
   const displayCombinedPreview = useMemo(
-    () => combinedPreviewQuery.data
-      ? scaleContinuationPreviewTimeAxis(combinedPreviewQuery.data)
+    () => activeCombinedQuery.data
+      ? previewQuantity === "voltage" && previewVoltageXAxis === "time"
+        ? scaleContinuationPreviewTimeAxis(activeCombinedQuery.data)
+        : activeCombinedQuery.data
       : undefined,
-    [combinedPreviewQuery.data],
+    [activeCombinedQuery.data, previewQuantity, previewVoltageXAxis],
+  );
+  const displayChargePreview = chargePreviewQuery.data;
+  const normalizableByMass = orderedDrafts.length > 0 && orderedDrafts.every((draft) => {
+    const massMg = cellDraft.active_mass_mg_override ?? draft.active_mass_mg;
+    return massMg !== null && massMg !== undefined && massMg > 0;
+  });
+  const inspectedCycleExtent = previewInterpretation === "stitched"
+    ? (result?.sources.reduce((sum, source) => sum + (source.local_cycle_count ?? 0), 0) ?? 0)
+    : Math.max(0, ...(result?.sources.map((source) => source.local_cycle_count ?? 0) ?? []));
+  const previewCycleExtent = Math.max(
+    0,
+    displayCombinedPreview?.cycle_count ?? 0,
+    displayChargePreview?.cycle_count ?? 0,
+    ...(displayCombinedPreview?.segments.map((segment) => segment.global_cycle_end ?? 0) ?? []),
+    ...(displayChargePreview?.segments.map((segment) => segment.global_cycle_end ?? 0) ?? []),
+  );
+  const combinedCycleCount = previewCycleExtent || inspectedCycleExtent;
+  const combinedPreviewLoading = activeCombinedQuery.isPending
+    || (activeCombinedQuery.isFetching && !activeCombinedQuery.data)
+    || activeCombinedQuery.isPlaceholderData
+    || (previewQuantity !== "voltage" && previewCapacityView !== "discharge"
+      && (chargePreviewQuery.isPending || (chargePreviewQuery.isFetching && !chargePreviewQuery.data) || chargePreviewQuery.isPlaceholderData));
+  const combinedPreviewError = activeCombinedQuery.isError
+    || (previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isError);
+  useEffect(() => {
+    setPreviewVoltageCycleRange(combinedCycleCount > 0
+      ? { start: Math.max(1, combinedCycleCount - 19), end: combinedCycleCount }
+      : null);
+    setPreviewCapacityCycleRange(combinedCycleCount > 0
+      ? { start: 1, end: combinedCycleCount }
+      : null);
+  }, [order.join("\u0000"), previewInterpretation, combinedCycleCount]);
+  useEffect(() => {
+    if (!normalizableByMass) setPreviewNormalizeByMass(false);
+  }, [normalizableByMass]);
+  useEffect(() => {
+    if (allOcvSources) {
+      setPreviewQuantity("voltage");
+      setPreviewVoltageXAxis("time");
+      setPreviewVoltageCycleRange(null);
+      setPreviewCapacityCycleRange(null);
+    }
+  }, [allOcvSources]);
+  const combinedCapacitySeries = useMemo<CellPreviewCycleSeries[]>(() => {
+    if (previewQuantity === "voltage") return [];
+    const dischargePreview = previewCapacityView === "charge"
+      ? undefined
+      : displayCombinedPreview?.quantity === "discharge_capacity_mah" ? displayCombinedPreview : undefined;
+    const chargePreview = displayChargePreview?.quantity === "charge_capacity_mah"
+      ? displayChargePreview
+      : previewCapacityView === "charge" && displayCombinedPreview?.quantity === "charge_capacity_mah"
+        ? displayCombinedPreview
+        : undefined;
+    const keys = new Set([
+      ...(dischargePreview?.segments.map((segment) => segment.source_key) ?? []),
+      ...(chargePreview?.segments.map((segment) => segment.source_key) ?? []),
+    ]);
+    const inRange = (cycle: number | null) => cycle !== null
+      && (!previewCycleRange || (cycle >= previewCycleRange.start && cycle <= previewCycleRange.end));
+    return [...keys].map((key) => {
+      const discharge = dischargePreview?.segments.find((segment) => segment.source_key === key);
+      const charge = chargePreview?.segments.find((segment) => segment.source_key === key);
+      const efficiency = [discharge, charge].find((segment) =>
+        segment?.coulombic_efficiency_x?.length && segment.coulombic_efficiency_pct?.length,
+      );
+      const dischargeX = discharge?.x ?? [];
+      const chargeX = charge?.x ?? [];
+      const efficiencyX = efficiency?.coulombic_efficiency_x ?? [];
+      const efficiencyPct = efficiency?.coulombic_efficiency_pct ?? [];
+      const draft = orderedDrafts.find((item) => item.staged_name === key);
+      const massMg = cellDraft.active_mass_mg_override ?? draft?.active_mass_mg;
+      const massG = massMg && massMg > 0 ? massMg / 1000 : null;
+      const sourceColor = colors[key] ?? "#12b886";
+      return {
+        x: [],
+        sourceKey: key,
+        name: discharge?.filename ?? charge?.filename ?? key,
+        dischargeX: dischargeX.filter(inRange),
+        dischargeCapacityMah: discharge?.y.filter((_, index) => inRange(dischargeX[index])) ?? [],
+        chargeX: chargeX.filter(inRange),
+        chargeCapacityMah: charge?.y.filter((_, index) => inRange(chargeX[index])) ?? [],
+        efficiencyX: efficiencyX.filter(inRange),
+        efficiencyPct: efficiencyPct.filter((_, index) => inRange(efficiencyX[index] ?? null)),
+        massG,
+        chargeColor: sourceColor,
+        dischargeColor: sourceColor,
+        capacityOpacity: key === selectedSourceKey ? 1 : 0.62,
+      };
+    });
+  }, [
+    previewQuantity,
+    previewCapacityView,
+    displayCombinedPreview,
+    displayChargePreview,
+    previewCycleRange?.start,
+    previewCycleRange?.end,
+    orderedDrafts,
+    cellDraft.active_mass_mg_override,
+    colors,
+    selectedSourceKey,
+  ]);
+  const combinedCapacityTraces = useMemo(
+    () => cellPreviewCapacityTraces(combinedCapacitySeries, previewCapacityView, previewNormalizeByMass),
+    [combinedCapacitySeries, previewCapacityView, previewNormalizeByMass],
+  );
+  const combinedEfficiencyRange = useMemo(
+    () => paddedEfficiencyRange(combinedCapacitySeries.flatMap((series) => series.efficiencyPct ?? [])),
+    [combinedCapacitySeries],
+  );
+  const combinedPlotPreview = displayCombinedPreview ?? displayChargePreview;
+  const combinedVoltageTraces = useMemo(() => displayCombinedPreview?.quantity === "voltage"
+    ? cellPreviewVoltageTraces(displayCombinedPreview.segments.map((segment) => ({
+        x: segment.x,
+        voltage: segment.y,
+        current: segment.current_ma,
+        name: segment.filename,
+        voltageColor: colors[segment.source_key] ?? "#12b886",
+        opacity: segment.source_key === selectedSourceKey ? 1 : 0.62,
+      })))
+    : [], [displayCombinedPreview, colors, selectedSourceKey]);
+  const combinedPlotData = previewQuantity === "voltage"
+    ? displayCombinedPreview && continuationPreviewHasPoints(displayCombinedPreview) ? combinedVoltageTraces : []
+    : combinedCapacityTraces;
+  const combinedPlotLayout = useMemo(() => {
+    if (!combinedPlotPreview) return {};
+    const base = previewQuantity === "voltage"
+      ? cellPreviewVoltageLayout(
+          previewColors,
+          combinedPlotPreview.x_label
+            ?? (previewVoltageXAxis === "time" ? "Time (minutes)" : "Capacity (mAh)"),
+          `continued-preview-voltage-${previewVoltageXAxis}`,
+        )
+      : cellPreviewCapacityLayout(
+          previewColors,
+          `Capacity (${previewNormalizeByMass && normalizableByMass ? "mAh/g" : "mAh"})`,
+          combinedEfficiencyRange,
+          `continued-preview-cycles-${previewNormalizeByMass && normalizableByMass ? "mAh-per-g" : "mAh"}`,
+        );
+    if (previewQuantity !== "voltage") return base;
+    const provenance = buildContinuationPreviewProvenanceLayout(combinedPlotPreview, colors);
+    return {
+      ...base,
+      ...provenance,
+      shapes: [...base.shapes, ...(provenance.shapes ?? [])],
+    };
+  }, [
+    combinedPlotPreview,
+    previewQuantity,
+    previewVoltageXAxis,
+    previewColors,
+    previewNormalizeByMass,
+    normalizableByMass,
+    combinedEfficiencyRange,
+    colors,
+  ]);
+  const combinedPlotReady = Boolean(
+    result?.inspection_complete
+    && !sourceInspectionFailed
+    && !inspectionQuery.isFetching
+    && !orderNeedsAutomaticCorrection
+    && !combinedPreviewLoading
+    && !combinedPreviewError
+    && !activeCombinedQuery.isPlaceholderData
+    && !(previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isPlaceholderData)
+    && combinedPlotData.length > 0
+    && combinedPlotPreview,
+  );
+  const combinedPlotElement: ReactNode = combinedPlotPreview && combinedPlotData.length > 0 ? (
+    <CellPreviewPlot
+      data={combinedPlotData}
+      layout={combinedPlotLayout}
+      config={{ displayModeBar: false, responsive: true }}
+      style={{ width: "100%", height: 352, fontWeight: 400 }}
+      surfaceMode={previewSurfaceMode}
+      onSurfaceModeChange={setPreviewSurfaceMode}
+      legend={previewQuantity === "voltage" && combinedVoltageTraces.some((trace) => trace.name.startsWith("Current"))
+        ? [{ name: "Voltage", color: "#12b886" }, { name: "Current", color: "#2E86AB" }]
+        : []}
+      updating={activeCombinedQuery.isFetching && Boolean(activeCombinedQuery.data)
+        || (previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isFetching && Boolean(chargePreviewQuery.data))}
+    />
+  ) : null;
+  const combinedCycleNavigator = (
+    <Group gap="xs" justify="center" wrap="nowrap" mt="xs" h={40}>
+      <Tooltip label="Previous cycle window"><Button variant="default" size="compact-sm" aria-label="Previous cycle window" disabled={!previewCycleRange || previewCycleRange.start <= 1} onClick={() => previewCycleRange && setPreviewCycleRange(shiftPreviewCycleWindow(previewCycleRange, combinedCycleCount, -1))}><IconChevronLeft size={15} /></Button></Tooltip>
+      <NumberInput aria-label="First preview cycle" min={1} max={combinedCycleCount || undefined} value={previewCycleRange?.start ?? ""} disabled={combinedCycleCount === 0} onChange={(value) => {
+        const start = Math.max(1, Math.min(Math.trunc(Number(value) || 1), previewCycleRange?.end ?? combinedCycleCount));
+        setPreviewCycleRange({ start, end: previewCycleRange?.end ?? combinedCycleCount });
+      }} w={86} />
+      <Text size="sm" c="dimmed">–</Text>
+      <NumberInput aria-label="Last preview cycle" min={previewCycleRange?.start ?? 1} max={combinedCycleCount || undefined} value={previewCycleRange?.end ?? ""} disabled={combinedCycleCount === 0} onChange={(value) => {
+        const end = Math.max(previewCycleRange?.start ?? 1, Math.min(Math.trunc(Number(value) || 1), combinedCycleCount));
+        setPreviewCycleRange({ start: previewCycleRange?.start ?? 1, end });
+      }} w={86} />
+      <Tooltip label="Next cycle window"><Button variant="default" size="compact-sm" aria-label="Next cycle window" disabled={!previewCycleRange || previewCycleRange.end >= combinedCycleCount} onClick={() => previewCycleRange && setPreviewCycleRange(shiftPreviewCycleWindow(previewCycleRange, combinedCycleCount, 1))}><IconChevronRight size={15} /></Button></Tooltip>
+    </Group>
+  );
+  const [retainedCombinedPlot, setRetainedCombinedPlot] = useState<ReactNode>(null);
+  useEffect(() => {
+    if (combinedPlotReady && combinedPlotElement) setRetainedCombinedPlot(combinedPlotElement);
+  }, [
+    previewMode,
+    previewQuantity,
+    previewCapacityView,
+    previewVoltageXAxis,
+    previewInterpretation,
+    previewNormalizeByMass,
+    previewCycleRange?.start,
+    previewCycleRange?.end,
+    previewSurfaceMode,
+    combinedPlotReady,
+    activeCombinedQuery.data,
+    activeCombinedQuery.isPlaceholderData,
+    chargePreviewQuery.data,
+    chargePreviewQuery.isPlaceholderData,
+    combinedCapacityTraces,
+    cellDraft.active_mass_mg_override,
+    colors,
+    selectedSourceKey,
+    previewColors.background,
+    previewColors.text,
+    previewColors.grid,
+    previewColors.border,
+  ]);
+  const combinedPreviewUpdatingPanel = (
+    <Paper withBorder p="xs">
+      <Box h={404} style={{ position: "relative" }}>
+        {retainedCombinedPlot ? (
+          <Box style={{ opacity: 0.46, transition: "opacity 100ms linear" }}>{retainedCombinedPlot}</Box>
+        ) : (
+          <Center h={404}><Loader size="sm" /></Center>
+        )}
+        {retainedCombinedPlot && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
+      </Box>
+      {combinedCycleNavigator}
+    </Paper>
   );
   const orderedSources = useMemo(
     () => result?.sources.length
@@ -386,9 +711,9 @@ export function ContinuedImportEditor({
       rawDataAvailable: selectedRawDataAvailable,
     }),
   );
-  const combinedPreviewFailureSources = combinedPreviewQuery.isError
+  const combinedPreviewFailureSources = activeCombinedQuery.isError
     ? continuationPreviewFailureSources(
-      combinedPreviewQuery.error instanceof ApiError ? combinedPreviewQuery.error.detail : null,
+      activeCombinedQuery.error instanceof ApiError ? activeCombinedQuery.error.detail : null,
     )
     : [];
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
@@ -447,15 +772,15 @@ export function ContinuedImportEditor({
           )}
         </Group>
         <Group gap="xs" justify="flex-end" align="center">
-          {inspectionQuery.isFetching && !allOcvSources && (
+          {inspectionQuery.isFetching && (
             <Text size="xs" c="dimmed">Preparing merged preview…</Text>
           )}
-          {inspectionQuery.isError && !allOcvSources && (
+          {inspectionQuery.isError && (
             <Text size="xs" c="red">
               {inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Continuation inspection failed."}
             </Text>
           )}
-          {(sourceInspectionFailed || inspectionQuery.isError) && !allOcvSources && (
+          {(sourceInspectionFailed || inspectionQuery.isError) && (
             <Button
               size="compact-sm"
               variant="subtle"
@@ -577,61 +902,72 @@ export function ContinuedImportEditor({
                 {previewMode === "combined" && (
                   <Stack gap="xs">
                     <Tabs
-                      value={previewQuantity}
+                      value={previewQuantity === "voltage" ? "voltage" : "cycles"}
                       onChange={(value) => {
-                        if (value === "voltage" || value === "discharge_capacity_mah" || value === "charge_capacity_mah") {
-                          setPreviewQuantity(value);
-                        }
+                        if (value === "voltage") setPreviewQuantity("voltage");
+                        else if (value === "cycles") setPreviewQuantity("discharge_capacity_mah");
                       }}
                       variant="default"
                       keepMounted={false}
                     >
                       <Tabs.List grow>
                         <Tabs.Tab value="voltage">Voltage</Tabs.Tab>
-                        <Tabs.Tab value="discharge_capacity_mah" disabled={allOcvSources}>Discharge capacity</Tabs.Tab>
-                        <Tabs.Tab value="charge_capacity_mah" disabled={allOcvSources}>Charge capacity</Tabs.Tab>
+                        <Tabs.Tab value="cycles" disabled={allOcvSources}>Cycles</Tabs.Tab>
                       </Tabs.List>
                     </Tabs>
+                    {previewQuantity === "voltage" ? (
+                      <Group justify="center" gap="xs" h={58}>
+                        <Text size="sm" c={previewVoltageXAxis === "time" ? undefined : "dimmed"}>Time</Text>
+                        <Switch
+                          aria-label="Voltage x-axis: time or capacity"
+                          checked={previewVoltageXAxis === "capacity"}
+                          disabled={allOcvSources}
+                          onChange={(event) => setPreviewVoltageXAxis(event.currentTarget.checked ? "capacity" : "time")}
+                        />
+                        <Text size="sm" c={previewVoltageXAxis === "capacity" ? undefined : "dimmed"}>Capacity</Text>
+                      </Group>
+                    ) : (
+                      <Group justify="center" gap="md" wrap="nowrap" h={58}>
+                        <SegmentedControl
+                          aria-label="Capacity series to show"
+                          value={previewCapacityView}
+                          onChange={(value) => setPreviewCapacityView(value as "discharge" | "both" | "charge")}
+                          data={[
+                            { value: "discharge", label: "Dchg" },
+                            { value: "both", label: "Both" },
+                            { value: "charge", label: "Chg" },
+                          ]}
+                        />
+                        <Switch
+                          size="sm"
+                          label="Normalize by mass"
+                          checked={normalizableByMass && previewNormalizeByMass}
+                          disabled={!normalizableByMass}
+                          onChange={(event) => setPreviewNormalizeByMass(event.currentTarget.checked)}
+                        />
+                      </Group>
+                    )}
                   </Stack>
                 )}
                 {previewMode === "combined" ? (
-                  sourceInspectionFailed && !allOcvSources ? (
+                  sourceInspectionFailed ? (
                     <Text size="sm" c="red">Continuity inspection failed. Review the source error before retrying.</Text>
-                  ) : inspectionQuery.isError && !allOcvSources ? (
+                  ) : inspectionQuery.isError ? (
                     <Text size="sm" c="red">The merged preview is waiting for a successful continuity inspection.</Text>
-                  ) : !result?.inspection_complete && !allOcvSources ? (
-                    <Alert color="gray">
-                      <Group gap="xs" align="center">
-                        <Loader size="sm" />
-                        <Text size="sm">Preparing continuity inspection…</Text>
-                      </Group>
-                    </Alert>
-                  ) : inspectionQuery.isFetching && !allOcvSources ? (
-                    <Alert color="gray">Waiting for continuity inspection…</Alert>
-                  ) : orderNeedsAutomaticCorrection && !allOcvSources ? (
-                    <Alert color="gray">Ordering sources by their available timestamps…</Alert>
-                  ) : orderedDrafts.length < 2 ? (
-                    <Alert color="gray">
-                      This source is ready. The merged preview will appear when another source is added.
-                    </Alert>
-                  ) : combinedPreviewQuery.isPending
-                    || (combinedPreviewQuery.isFetching && !combinedPreviewQuery.data) ? (
-                    <Alert color="gray">
-                      <Group gap="xs" align="center">
-                        <Loader size="sm" />
-                        <Text size="sm">Preparing merged preview…</Text>
-                      </Group>
-                    </Alert>
-                  ) : combinedPreviewQuery.isError ? (
+                  ) : !result?.inspection_complete || inspectionQuery.isFetching || orderNeedsAutomaticCorrection ? (
+                    combinedPreviewUpdatingPanel
+                  ) : combinedPreviewLoading ? (
+                    combinedPreviewUpdatingPanel
+                  ) : combinedPreviewError ? (
                     <Alert
-                      color={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 422 ? "gray" : "orange"}
-                      title={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
+                      color={activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 422 ? "gray" : "orange"}
+                      title={activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
                     >
                       <Group justify="space-between" align="start" gap="xs" wrap="nowrap">
                         <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
                           <Text size="sm">
-                            {combinedPreviewQuery.error instanceof Error
-                              ? combinedPreviewQuery.error.message
+                            {activeCombinedQuery.error instanceof Error
+                              ? activeCombinedQuery.error.message
                               : "The combined preview is unavailable."}
                           </Text>
                           {combinedPreviewFailureSources.length > 0 && (
@@ -644,119 +980,32 @@ export function ContinuedImportEditor({
                             </Stack>
                           )}
                         </Stack>
-                        {!(combinedPreviewQuery.error instanceof ApiError && (combinedPreviewQuery.error.status === 409 || combinedPreviewQuery.error.status === 422)) && (
+                        {!(activeCombinedQuery.error instanceof ApiError && (activeCombinedQuery.error.status === 409 || activeCombinedQuery.error.status === 422)) && (
                           <Button
                             size="compact-sm"
                             variant="default"
-                            onClick={() => void combinedPreviewQuery.refetch()}
+                            onClick={() => {
+                              void activeCombinedQuery.refetch();
+                              if (previewQuantity !== "voltage" && previewCapacityView !== "discharge") void chargePreviewQuery.refetch();
+                            }}
                           >
                             Retry
                           </Button>
                         )}
                       </Group>
                     </Alert>
-                  ) : displayCombinedPreview && continuationPreviewHasPoints(displayCombinedPreview) ? (
+                  ) : combinedPlotReady && combinedPlotElement ? (
                     <Paper withBorder p="xs">
-                      <Plot
-                        data={buildContinuationPreviewTraces(
-                          displayCombinedPreview,
-                          colors,
-                          selectedSourceKey,
-                        )}
-                        layout={{
-                          height: 240,
-                          margin: { l: 58, r: 16, t: 48, b: 48 },
-                          xaxis: {
-                            title: {
-                              text: displayCombinedPreview.x_label
-                                ?? (displayCombinedPreview.quantity === "voltage"
-                                  ? "Time (s)"
-                                  : previewInterpretation === "stitched"
-                                    ? "Cycle number (stitched)"
-                                    : "Cycle number (source chain)"),
-                            },
-                            gridcolor: "#e5e7eb",
-                            zerolinecolor: "#cbd5e1",
-                            showline: true,
-                            linecolor: "#94a3b8",
-                            linewidth: 1,
-                          },
-                          yaxis: {
-                            title: { text: combinedPreviewQuery.data.label },
-                            showline: true,
-                            linecolor: "#94a3b8",
-                            linewidth: 1,
-                            zerolinecolor: "#cbd5e1",
-                          },
-                          showlegend: false,
-                          paper_bgcolor: "#ffffff",
-                          plot_bgcolor: "#ffffff",
-                          font: { color: "#1f2937" },
-                          ...buildContinuationPreviewProvenanceLayout(displayCombinedPreview, colors),
-                        }}
-                        config={{ displayModeBar: false, responsive: true }}
-                        style={{ width: "100%" }}
-                      />
+                      <Box h={300}>{combinedPlotElement}</Box>
+                      {combinedCycleNavigator}
                     </Paper>
                   ) : (
                     <Alert color="gray">
-                      No {previewQuantity === "voltage" ? "voltage" : previewQuantity === "charge_capacity_mah" ? "charge capacity" : "discharge capacity"} preview points were found for this chain.
+                      No {previewQuantity === "voltage" ? "voltage" : "capacity"} preview points were found for this chain.
                     </Alert>
                   )
                 ) : selectedDraft ? (
-                  selectedDraft.metadata_only ? (
-                    <Alert color="gray" title="Cycle preview unavailable">
-                      The canonical cycle summary is not available for this source yet. Its raw
-                      measurements remain available through the Raw data button.
-                    </Alert>
-                  ) : selectedDraft.preview_state.status === "loading" ? (
-                    <Alert color="gray">Generating capacity preview…</Alert>
-                  ) : selectedDraft.preview_state.status === "error" ? (
-                    <Alert color="orange" title="Preview could not be generated">
-                      <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
-                        <Text size="sm">{selectedDraft.preview_state.message}</Text>
-                        <Button
-                          size="compact-sm"
-                          variant="default"
-                          onClick={() => onPreviewRequested?.(selectedDraft, true)}
-                        >
-                          Retry
-                        </Button>
-                      </Group>
-                    </Alert>
-                  ) : selectedDraft.preview_state.status === "ready"
-                    && selectedDraft.capacity_preview
-                    && selectedDraft.capacity_preview.x.length > 0 ? (
-                    <Paper withBorder p="xs">
-                      <Plot
-                        data={[{
-                          x: selectedDraft.capacity_preview.x,
-                          y: selectedDraft.capacity_preview.y,
-                          type: "scatter",
-                          mode: "markers",
-                          marker: { size: 5, color: colors[selectedDraft.staged_name] ?? "#12b886" },
-                          name: selectedDraft.capacity_preview.label,
-                        }]}
-                        layout={{
-                          height: 220,
-                          margin: { l: 54, r: 16, t: 12, b: 42 },
-                          xaxis: { title: { text: "Cycle" } },
-                          yaxis: { title: { text: selectedDraft.capacity_preview.label } },
-                          showlegend: false,
-                          paper_bgcolor: "rgba(0,0,0,0)",
-                          plot_bgcolor: "rgba(0,0,0,0)",
-                        }}
-                        config={{ displayModeBar: false, responsive: true }}
-                        style={{ width: "100%" }}
-                      />
-                    </Paper>
-                  ) : (
-                    <Alert color="gray">
-                      {selectedDraft.preview_state.status === "idle"
-                        ? "Preview is available when this source is selected."
-                        : "No capacity preview points were found in this file."}
-                    </Alert>
-                  )
+                  <ImportSourcePreview source={selectedDraft} />
                 ) : (
                   <Text size="sm" c="dimmed">Select a source to preview it.</Text>
                 )}

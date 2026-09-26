@@ -287,6 +287,29 @@ keeps manual ranges, tick modes, title standoffs, legend placement, dynamic marg
 saved previews on the same path. Numeric X controls should be hidden when a family deliberately
 uses categorical X positions.
 
+### Cell preview figures
+
+The Analysis sample picker and import previews share `components/CellPreviewPlot.tsx` for the
+surface controls and `components/cellPreviewPlotModel.ts` for figure geometry and trace conventions.
+Keep these previews on the same layout path rather than copying Plotly options into each screen.
+The explicit cell-preview background default follows the current UI theme, as chosen by the user;
+the light, gray, and dark surface buttons remain available for inspection.
+
+The shared figure is 352 px high with margins `{ l: 76, r: 24, t: 8, b: 58 }` and 17 px axis/tick
+typography. Voltage and Current use y-domains `[0.30, 1]` and `[0, 0.23]`, with a 0.07 gap. Capacity
+and CE use `[0, 0.72]` and `[0.77, 1]`, with CE on the left. Both figures use one four-sided outer
+frame; capacity/CE also draws the CE lower edge. Hide x-axis grids and zero lines, retain horizontal
+y grids, and suppress Plotly's individual axis frames. Place the cycle range inputs below the
+figure; default Voltage to the last 20 cycles and Cycles to the full range. When a surface supports
+both views, retain a fixed-height control slot and independent ranges so switching views does not
+shift the plot or change the other view's selection.
+
+Capacity traces use filled circles for Charge and filled squares for Discharge; CE is a filled red
+circle at 4.5 px and 30% opacity with 15% padding around its finite min/max. Mass normalization
+changes only capacity values and its axis label. The external voltage/current legend stays in its
+reserved row below the figure. Use `paddedEfficiencyRange` and the shared trace/layout builders so
+preview surfaces preserve the same axes, borders, spacing, markers, and CE behavior.
+
 ## Feedback and state
 
 ### Loading

@@ -59,12 +59,12 @@ import {
 import { useSearchParams } from "react-router-dom";
 
 import {
-  ImportInspectResult,
   ActiveMaterialPresetSettings,
   ElectrodeAreaPresetSettings,
   ImportFolderFile,
   ImportFolderSelectionResult,
   ImportPreview,
+  ImportInspectResult,
   ImportFolderWatchDraft,
   ImportPreviewResult,
   ImportRawDataResult,
@@ -74,6 +74,7 @@ import {
   Tree,
 } from "../api";
 import Plot from "../components/Plot";
+import { ImportSourcePreview } from "../components/ImportSourcePreview";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { FolderTrackingSettingsModal } from "../components/FolderTrackingSettingsModal";
 import type { ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
@@ -147,50 +148,6 @@ export type ImportDraft = ImportPreview & {
   electrode_area_preset_id: string | null;
   electrode_area_preset_name: string | null;
 };
-
-function importSourceFormatLabel(value: string | null): string | null {
-  if (!value) return null;
-  return value === "biologic_mpr" ? "BioLogic EC-Lab" : value;
-}
-
-function importVoltageCapabilitySummary(
-  value: ImportPreview["voltage_capabilities"] | null | undefined,
-): string | null {
-  const capabilities = value?.capabilities;
-  if (!capabilities) return null;
-  const roleLabel = (role: string | undefined, fallback: string) => {
-    if (role === "cell") return "Cell";
-    if (role === "working_vs_reference") return `Working vs ${value?.reference_electrode || "ref"}`;
-    if (role === "counter_vs_reference") return `Counter vs ${value?.reference_electrode || "ref"}`;
-    if (role === "mixed") return "Voltage role ambiguous";
-    return fallback;
-  };
-  const roles = value?.voltage_roles;
-  const labels = [
-    capabilities.primary_voltage
-      ? roles?.voltage_v === "mixed"
-        ? "Voltage role ambiguous"
-        : roleLabel(roles?.voltage_v, "Cell")
-      : null,
-    capabilities.working_potential
-      ? roleLabel(roles?.working_potential_v, "Working vs ref")
-      : null,
-    capabilities.counter_potential
-      ? roleLabel(roles?.counter_potential_v, "Counter vs ref")
-      : null,
-  ].filter((item): item is string => item !== null);
-  return labels.length ? labels.join(" + ") : null;
-}
-
-function importVoltageOriginLabel(
-  value: ImportPreview["voltage_capabilities"] | null | undefined,
-): string | null {
-  if (value?.voltage_v_origin === "derived_working_minus_counter") {
-    return "Cell voltage derived from Working - Counter";
-  }
-  if (value?.voltage_v_origin === "measured") return "Cell voltage measured";
-  return null;
-}
 
 function useImportPreviewLoader(
   setDrafts: Dispatch<SetStateAction<ImportDraft[]>>,
@@ -390,6 +347,7 @@ function FolderImportSelectionModal({
   opened,
   rootName,
   candidates,
+  initialSelectedPaths,
   failures,
   loading,
   progress,
@@ -400,6 +358,7 @@ function FolderImportSelectionModal({
   opened: boolean;
   rootName: string;
   candidates: FolderImportCandidate[];
+  initialSelectedPaths: string[] | null;
   failures: ImportInspectionFailure[];
   loading: boolean;
   progress?: ReactNode;
@@ -475,13 +434,16 @@ function FolderImportSelectionModal({
     candidates.find((candidate) => folderCandidateKey(candidate) === focusedKey) ?? null;
   const previewQuery = useQuery({
     queryKey: ["folder-import-preview", focusedCandidate?.path],
-    queryFn: ({ signal }) =>
-      post<ImportPreviewResult>("/api/imports/preview", {
-        staged_name: "folder-selection-preview",
-        source_path: focusedCandidate?.path,
-      }, { signal }),
+    queryFn: async ({ signal }) => {
+      const result = await post<ImportInspectResult>("/api/imports/inspect-paths", {
+        paths: [focusedCandidate?.path],
+      }, { signal });
+      if (result.files[0]) return result.files[0];
+      throw new Error(result.failures[0]?.error ?? "This file could not be inspected for preview.");
+    },
     enabled: opened && Boolean(focusedCandidate?.path),
     staleTime: Infinity,
+    placeholderData: (previous) => previous,
   });
 
   useEffect(() => {
@@ -494,13 +456,19 @@ function FolderImportSelectionModal({
       candidates: opened ? candidates : null,
     };
     if (!newSelectionSession) return;
-    setSelected(new Set(candidates.filter((candidate) => !isFailed(candidate)).map(folderCandidateKey)));
+    const initialSelection = initialSelectedPaths === null
+      ? candidates.filter((candidate) => !isFailed(candidate))
+      : candidates.filter((candidate) =>
+        !isFailed(candidate) && initialSelectedPaths.includes(candidate.path ?? ""),
+      );
+    setSelected(new Set(initialSelection.map(folderCandidateKey)));
     setSearch("");
     setLastSelected(null);
-    setFocusedKey(null);
+    const firstPreviewable = candidates.find((candidate) => !isFailed(candidate));
+    setFocusedKey(firstPreviewable ? folderCandidateKey(firstPreviewable) : null);
     setRootsExpanded(false);
     setTreeScrollTop(0);
-  }, [candidates, isFailed, opened]);
+  }, [candidates, initialSelectedPaths, isFailed, opened]);
 
   useEffect(() => {
     if (failures.length === 0) return;
@@ -888,7 +856,7 @@ function FolderImportSelectionModal({
                     {formatBytes(focusedCandidate.size)}
                   </Text>
                 </div>
-                {previewQuery.isPending ? (
+                {previewQuery.isPending && !previewQuery.data ? (
                   <Center h={390}>
                     <Stack align="center" gap="xs">
                       <Loader size="sm" />
@@ -897,45 +865,16 @@ function FolderImportSelectionModal({
                       </Text>
                     </Stack>
                   </Center>
-                ) : previewQuery.isError ? (
+                ) : previewQuery.isError && !previewQuery.data ? (
                   <Alert color="orange">
                     {previewQuery.error instanceof Error
                       ? previewQuery.error.message
                       : "Preview could not be generated."}
                   </Alert>
-                ) : previewQuery.data?.capacity_preview &&
-                  previewQuery.data.capacity_preview.x.length > 0 ? (
-                  <Plot
-                    data={[
-                      {
-                        x: previewQuery.data.capacity_preview.x,
-                        y: previewQuery.data.capacity_preview.y,
-                        type: "scatter",
-                        mode: "markers",
-                        marker: { size: 4, color: "#12b886" },
-                        hovertemplate: "Cycle %{x}<br>%{y:.4g} mAh<extra></extra>",
-                      },
-                    ]}
-                    layout={{
-                      height: 390,
-                      margin: { l: 58, r: 12, t: 12, b: 48 },
-                      xaxis: { title: { text: "Cycle" }, automargin: true },
-                      yaxis: {
-                        title: { text: previewQuery.data.capacity_preview.label },
-                        automargin: true,
-                      },
-                      showlegend: false,
-                      paper_bgcolor: "rgba(0,0,0,0)",
-                      plot_bgcolor: "rgba(0,0,0,0)",
-                    }}
-                    config={{ displayModeBar: false, responsive: true }}
-                    style={{ width: "100%" }}
-                  />
+                ) : previewQuery.data ? (
+                  <ImportSourcePreview source={previewQuery.data} />
                 ) : (
-                  <Alert color={previewQuery.data?.preview_error ? "orange" : "gray"}>
-                    {previewQuery.data?.preview_error ??
-                      "No capacity preview points were found in this file."}
-                  </Alert>
+                  <Alert color="gray">Select a compatible file to preview its voltage curve and cycle capacities.</Alert>
                 )}
               </Stack>
             )}
@@ -1058,6 +997,7 @@ function ImportModal({
   onSaved,
   targetFolderId,
   blockingInspectionSeconds,
+  onBackToFolderReview,
 }: {
   drafts: ImportDraft[];
   active: number;
@@ -1073,6 +1013,7 @@ function ImportModal({
   onSaved: () => void | Promise<void>;
   targetFolderId: number | null;
   blockingInspectionSeconds: number;
+  onBackToFolderReview?: () => void;
 }) {
   const qc = useQueryClient();
   const draft = drafts[active];
@@ -1667,6 +1608,18 @@ function ImportModal({
     }
   }, [active, drafts.length]);
 
+
+  useEffect(() => {
+    if (
+      !opened
+      || continuedMode
+      || !draft
+      || isRegisteredExactDuplicate(draft)
+      || !shouldRequestImportPreview(draft, true)
+    ) return;
+    onPreviewRequested(draft);
+  }, [continuedMode, draft, onPreviewRequested, opened]);
+
   return (
     <>
       <ImportModalShell
@@ -1749,6 +1702,16 @@ function ImportModal({
               <Text size="sm" c="dimmed">Review {drafts.length} selected file{drafts.length === 1 ? "" : "s"} before saving.</Text>
             )}
             <ImportModalPrimaryActions>
+              {onBackToFolderReview && !shouldShowDone && !shouldShowContinue && (
+                <Button
+                  variant="default"
+                  leftSection={<IconArrowLeft size={15} />}
+                  disabled={save.isPending}
+                  onClick={onBackToFolderReview}
+                >
+                  Back to file selection
+                </Button>
+              )}
               {shouldShowDone ? (
                 <Button
                   loading={handoffPending || closingBranch !== null}
@@ -2183,7 +2146,7 @@ function ImportModal({
               <Paper
                 withBorder
                 p="xs"
-                style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}
+                style={{ flex: "1 1 0", minWidth: 360, maxWidth: 470, display: "flex", flexDirection: "column", minHeight: 0 }}
               >
               <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="md" pr="xs">
@@ -2228,50 +2191,6 @@ function ImportModal({
                   )}
                 </Group>
               </Group>
-
-              <Paper withBorder p="sm" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-                <Stack gap={4}>
-                  <Text size="xs" c="dimmed">
-                    Source file
-                  </Text>
-                  <Text size="sm" fw={600}>
-                    {draft.filename}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {draft.source_path
-                      ? `Full path: ${draft.source_path}`
-                      : `Temporary import path: ${draft.staged_name}`}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {formatBytes(draft.size)} - .{draft.ext}
-                  </Text>
-                  {importSourceFormatLabel(draft.source_format) && (
-                    <Text size="xs" c="dimmed">
-                      Format: {importSourceFormatLabel(draft.source_format)}
-                    </Text>
-                  )}
-                  {draft.technique && (
-                    <Text size="xs" c="dimmed">
-                      Technique: {draft.technique}
-                    </Text>
-                  )}
-                  {draft.reference_electrode && (
-                    <Text size="xs" c="dimmed">
-                      Reference electrode: {draft.reference_electrode}
-                    </Text>
-                  )}
-                  {importVoltageCapabilitySummary(draft.voltage_capabilities) && (
-                    <Text size="xs" c="dimmed">
-                      Voltage channels: {importVoltageCapabilitySummary(draft.voltage_capabilities)}
-                    </Text>
-                  )}
-                  {importVoltageOriginLabel(draft.voltage_capabilities) && (
-                    <Text size="xs" c="dimmed">
-                      {importVoltageOriginLabel(draft.voltage_capabilities)}
-                    </Text>
-                  )}
-                </Stack>
-              </Paper>
 
               {draft.metadata_only && (
                 <Alert color="orange" icon={<IconAlertTriangle size={16} />}>
@@ -2488,72 +2407,6 @@ function ImportModal({
                 </Alert>
               )}
 
-              <Divider label="Quick preview" labelPosition="left" />
-              {draft.metadata_only ? (
-                <Alert color="gray" title="Capacity preview unavailable">
-                  Canonical cycling preview and cache preparation are unavailable for this
-                  source until its full-cycle identity is independently resolved. Retry will
-                  not change that limitation.
-                </Alert>
-              ) : draft.preview_state.status === "loading" ? (
-                <Paper withBorder p="xs" h={250}>
-                  <Center h="100%">
-                    <Stack align="center" gap="xs">
-                      <Loader />
-                      <Text size="sm" c="dimmed">
-                        Generating capacity preview
-                      </Text>
-                    </Stack>
-                  </Center>
-                </Paper>
-              ) : draft.preview_state.status === "error" ? (
-                <Alert color="orange" title="Preview could not be generated">
-                  <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
-                    <Text size="sm">{draft.preview_state.message}</Text>
-                    <Button
-                      size="compact-sm"
-                      variant="default"
-                      leftSection={<IconRefresh size={14} />}
-                      onClick={() => onPreviewRequested(draft, true)}
-                    >
-                      Retry
-                    </Button>
-                  </Group>
-                </Alert>
-              ) : draft.preview_state.status === "ready" && draft.capacity_preview && draft.capacity_preview.x.length > 0 ? (
-                <Paper withBorder p="xs">
-                  <Plot
-                    data={[
-                      {
-                        x: draft.capacity_preview.x,
-                        y: draft.capacity_preview.y,
-                        type: "scatter",
-                        mode: "markers",
-                        marker: { size: 5, color: "#12b886" },
-                        name: draft.capacity_preview.label,
-                      },
-                    ]}
-                    layout={{
-                      height: 250,
-                      margin: { l: 54, r: 16, t: 12, b: 42 },
-                      xaxis: { title: { text: "Cycle" } },
-                      yaxis: { title: { text: draft.capacity_preview.label } },
-                      showlegend: false,
-                      paper_bgcolor: "rgba(0,0,0,0)",
-                      plot_bgcolor: "rgba(0,0,0,0)",
-                    }}
-                    config={{ displayModeBar: false, responsive: true }}
-                    style={{ width: "100%" }}
-                  />
-                </Paper>
-              ) : (
-                <Alert color="gray">
-                  {draft.preview_state.status === "idle"
-                    ? "Preview is available when this source is active."
-                    : "No capacity preview points were found in this file."}
-                </Alert>
-              )}
-
               <Divider label="File metadata" labelPosition="left" />
               <Button
                 variant="subtle"
@@ -2598,6 +2451,32 @@ function ImportModal({
               </Collapse>
             </Stack>
             </ScrollArea>
+            </Paper>
+            <Paper
+              withBorder
+              p="xs"
+              w={410}
+              style={{ flex: "0 0 410px", minWidth: 370, display: "flex", flexDirection: "column", minHeight: 0 }}
+            >
+              <Stack gap="xs" style={{ minHeight: 0, flex: 1 }}>
+                <div>
+                  <Text size="sm" fw={700} truncate title={draft.filename}>{draft.cell_name || draft.filename}</Text>
+                  <Group justify="space-between" gap="xs" wrap="nowrap">
+                    <Tooltip label={draft.source_path ?? draft.staged_name} multiline w={480} withArrow>
+                      <Text size="xs" c="dimmed" truncate title={draft.source_path ?? draft.staged_name}>
+                        {draft.source_path ?? draft.staged_name}
+                      </Text>
+                    </Tooltip>
+                    <Text size="xs" c="dimmed" style={{ flex: "none" }}>{formatBytes(draft.size)} · .{draft.ext}</Text>
+                  </Group>
+                </div>
+                <Box style={{ minHeight: 0, overflowY: "auto", flex: 1 }}>
+                  <ImportSourcePreview
+                    source={draft}
+                    activeMassMgOverride={draft.active_mass_mg_override}
+                  />
+                </Box>
+              </Stack>
             </Paper>
             </Group>
             </Stack>
@@ -2725,8 +2604,10 @@ export function ImportCellsLauncher({
   const [sourceSelection, setSourceSelection] = useState<ImportSourceSelection | null>(null);
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderReviewRequired, setFolderReviewRequired] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
+  const [folderSelectedPaths, setFolderSelectedPaths] = useState<string[] | null>(null);
   const [inspectionFailures, setInspectionFailures] = useState<ImportInspectionFailure[]>([]);
   const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
@@ -2741,6 +2622,7 @@ export function ImportCellsLauncher({
     setDrafts([]);
     setActive(0);
     setInspectionFailures([]);
+    setFolderReviewRequired(false);
   };
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
@@ -2798,8 +2680,8 @@ export function ImportCellsLauncher({
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
-      }).then((result) => ({ result, append })),
-    onSuccess: ({ result, append }) => {
+      }).then((result) => ({ result, append, folderPaths })),
+    onSuccess: ({ result, append, folderPaths }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
@@ -2809,8 +2691,23 @@ export function ImportCellsLauncher({
       }
       setSourceAppend(append);
       setInspectionFailures([]);
+      setFolderReviewRequired(folderPaths.length > 0);
+      if (folderPaths.length === 0) {
+        const jobToken = newImportJobToken();
+        inspectionStartedAt.current = Date.now();
+        setProgressStage("inspect");
+        setProgressToken(jobToken);
+        inspectPaths.mutate({
+          paths: candidates.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
+          append,
+          jobToken,
+        });
+        setSourcePickerOpen(false);
+        return;
+      }
       setFolderRootName("Selected sources");
       setFolderCandidates(candidates);
+      setFolderSelectedPaths(null);
       setSourcePickerOpen(false);
       setFolderModalOpen(true);
     },
@@ -2826,6 +2723,7 @@ export function ImportCellsLauncher({
     setProgressToken(null);
     if (!append) {
       setBlockingInspectionSeconds(0);
+      setFolderReviewRequired(false);
     }
     setSourcePickerOpen(true);
   };
@@ -2839,6 +2737,7 @@ export function ImportCellsLauncher({
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
+    setFolderSelectedPaths(selected.map((candidate) => candidate.path ?? ""));
     setSourceSelection({
       filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
       folderPaths: [],
@@ -2881,6 +2780,7 @@ export function ImportCellsLauncher({
         opened={folderModalOpen}
         rootName={folderRootName}
         candidates={folderCandidates}
+        initialSelectedPaths={folderSelectedPaths}
         failures={inspectionFailures}
         loading={inspectPaths.isPending}
         progress={progressStage === "inspect" ? (
@@ -2941,6 +2841,11 @@ export function ImportCellsLauncher({
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={closeImportSession}
+        onBackToFolderReview={folderReviewRequired ? () => {
+          setModalOpen(false);
+          setInspectionFailures([]);
+          setFolderModalOpen(true);
+        } : undefined}
         onSaved={async () => {
           closeImportSession();
           await onSaved?.();
@@ -2960,8 +2865,10 @@ export function InboxPage() {
   const [sourceSelection, setSourceSelection] = useState<ImportSourceSelection | null>(null);
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderReviewRequired, setFolderReviewRequired] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
+  const [folderSelectedPaths, setFolderSelectedPaths] = useState<string[] | null>(null);
   const [inspectionFailures, setInspectionFailures] = useState<ImportInspectionFailure[]>([]);
   const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
@@ -2989,6 +2896,7 @@ export function InboxPage() {
     setDrafts([]);
     setActive(0);
     setInspectionFailures([]);
+    setFolderReviewRequired(false);
   };
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
@@ -3046,8 +2954,8 @@ export function InboxPage() {
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
-      }).then((result) => ({ result, append })),
-    onSuccess: ({ result, append }) => {
+      }).then((result) => ({ result, append, folderPaths })),
+    onSuccess: ({ result, append, folderPaths }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
@@ -3056,8 +2964,23 @@ export function InboxPage() {
         return;
       }
       setSourceAppend(append);
+      setFolderReviewRequired(folderPaths.length > 0);
+      if (folderPaths.length === 0) {
+        const jobToken = newImportJobToken();
+        inspectionStartedAt.current = Date.now();
+        setProgressStage("inspect");
+        setProgressToken(jobToken);
+        inspectPaths.mutate({
+          paths: candidates.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
+          append,
+          jobToken,
+        });
+        setSourcePickerOpen(false);
+        return;
+      }
       setFolderRootName("Selected sources");
       setFolderCandidates(candidates);
+      setFolderSelectedPaths(null);
       setSourcePickerOpen(false);
       setFolderModalOpen(true);
     },
@@ -3073,6 +2996,7 @@ export function InboxPage() {
     setProgressToken(null);
     if (!append) {
       setBlockingInspectionSeconds(0);
+      setFolderReviewRequired(false);
     }
     setSourcePickerOpen(true);
   };
@@ -3086,6 +3010,7 @@ export function InboxPage() {
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
+    setFolderSelectedPaths(selected.map((candidate) => candidate.path ?? ""));
     setSourceSelection({
       filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
       folderPaths: [],
@@ -3139,6 +3064,7 @@ export function InboxPage() {
         opened={folderModalOpen}
         rootName={folderRootName}
         candidates={folderCandidates}
+        initialSelectedPaths={folderSelectedPaths}
         failures={inspectionFailures}
         loading={inspectPaths.isPending}
         progress={progressStage === "inspect" ? (
@@ -3226,6 +3152,11 @@ export function InboxPage() {
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={closeImportSession}
+        onBackToFolderReview={folderReviewRequired ? () => {
+          setModalOpen(false);
+          setInspectionFailures([]);
+          setFolderModalOpen(true);
+        } : undefined}
         onSaved={() => {
           closeImportSession();
         }}

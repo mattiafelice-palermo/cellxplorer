@@ -180,6 +180,14 @@ import {
   type CellPickerSortState,
 } from "./policies/analysisSamplePickerPolicy";
 import { shiftPreviewCycleWindow } from "../../../analysisCellPreviewPolicy";
+import { CellPreviewPlot } from "../../../components/CellPreviewPlot";
+import {
+  cellPreviewCapacityLayout,
+  cellPreviewCapacityTraces,
+  cellPreviewVoltageLayout,
+  cellPreviewVoltageTraces,
+  paddedEfficiencyRange,
+} from "../../../components/cellPreviewPlotModel";
 import {
   DebouncedNumberInput,
   DebouncedTextInput,
@@ -1259,40 +1267,21 @@ function AddEntriesModal({
   }, []);
   const computedColorScheme = useComputedColorScheme("light");
   const theme = useMantineTheme();
-  const previewPlotColors = previewSurfaceMode === "theme"
-    ? computedColorScheme === "dark"
-      ? {
-          background: theme.colors.dark[7],
-          text: theme.colors.gray[0],
-          border: theme.colors.dark[3],
-          grid: theme.colors.dark[5],
-        }
-      : {
-          background: theme.white,
-          text: theme.black,
-          border: theme.colors.gray[5],
-          grid: theme.colors.gray[3],
-        }
-    : previewSurfaceMode === "sun"
-    ? {
-        background: theme.white,
-        text: theme.black,
-        border: theme.colors.gray[5],
-        grid: theme.colors.gray[3],
-      }
-    : previewSurfaceMode === "moon"
-      ? {
-          background: computedColorScheme === "dark" ? theme.colors.dark[7] : "#000000",
-          text: theme.colors.gray[0],
-          border: computedColorScheme === "dark" ? theme.colors.dark[3] : theme.colors.dark[1],
-          grid: computedColorScheme === "dark" ? theme.colors.dark[5] : theme.colors.dark[3],
-        }
-      : {
-          background: theme.colors.dark[4],
-          text: theme.colors.gray[0],
-          border: theme.colors.dark[1],
-          grid: theme.colors.dark[3],
-        };
+  const previewPlotColors = useMemo(() => {
+    if (previewSurfaceMode === "theme") return computedColorScheme === "dark"
+      ? { background: theme.colors.dark[7], text: theme.colors.gray[0], border: theme.colors.dark[3], grid: theme.colors.dark[5] }
+      : { background: theme.white, text: theme.black, border: theme.colors.gray[5], grid: theme.colors.gray[3] };
+    if (previewSurfaceMode === "sun") {
+      return { background: theme.white, text: theme.black, border: theme.colors.gray[5], grid: theme.colors.gray[3] };
+    }
+    if (previewSurfaceMode === "moon") return {
+      background: computedColorScheme === "dark" ? theme.colors.dark[7] : "#000000",
+      text: theme.colors.gray[0],
+      border: computedColorScheme === "dark" ? theme.colors.dark[3] : theme.colors.dark[1],
+      grid: computedColorScheme === "dark" ? theme.colors.dark[5] : theme.colors.dark[3],
+    };
+    return { background: theme.colors.dark[4], text: theme.colors.gray[0], border: theme.colors.dark[1], grid: theme.colors.dark[3] };
+  }, [computedColorScheme, previewSurfaceMode, theme]);
   const [previewCapacityMode, setPreviewCapacityMode] = useState<"discharge" | "both" | "charge">("both");
   const [cellColumnWidths, setCellColumnWidths] = useState<CellPickerColumnWidths>(
     CELL_PICKER_INITIAL_COLUMN_WIDTHS,
@@ -1607,6 +1596,7 @@ function AddEntriesModal({
   }, [matchingPreviewTrace, previewXAxis]);
   const previewTrace = matchingPreviewTrace ?? retainedPreview?.trace;
   const previewTraceXAxis = matchingPreviewTrace ? previewXAxis : retainedPreview?.xAxis;
+  const renderedPreviewXAxis = previewTraceXAxis ?? previewXAxis;
   const previewTraceIsUpdating = previewQuery.isFetching && !matchingPreviewTrace;
   const cyclePreviewSpec = useMemo<AnalysisSpec | null>(() => {
     if (activePreviewCellId === null || !previewHasVerifiedCycles) return null;
@@ -1640,35 +1630,19 @@ function AddEntriesModal({
   });
   const previewChartData = useMemo(() => {
     if (!previewTrace) return [];
-    const rawX = previewTraceXAxis === "time" ? previewTrace.time_s : previewTrace.capacity_mah;
-    const x = previewTraceXAxis === previewXAxis && previewTrace.display_x?.length === previewTrace.cycle.length
+    const rawX = renderedPreviewXAxis === "time" ? previewTrace.time_s : previewTrace.capacity_mah;
+    const x = previewTrace.display_x?.length === previewTrace.cycle.length
       ? previewTrace.display_x
-      : rawX.map((value) => value === null ? null : previewXAxis === "time" ? value / 60 : value);
+      : rawX.map((value) => value === null ? null : renderedPreviewXAxis === "time" ? value / 60 : value);
     const voltage = previewTrace.voltage_v_by_channel?.voltage ?? previewTrace.voltage_v;
-    return [
-      {
-        type: "scatter",
-        mode: "lines",
-        name: "Voltage",
-        x,
-        y: voltage,
-        line: { color: PLOT_PALETTES.app[0], width: 2.6 },
-        connectgaps: false,
-        hovertemplate: "%{x:.3g}<br>%{y:.4g} V<extra>Voltage</extra>",
-      },
-      {
-        type: "scatter",
-        mode: "lines",
-        name: "Current",
-        x,
-        y: previewTrace.current_ma,
-        yaxis: "y2",
-        line: { color: PLOT_PALETTES.app[1], width: 2 },
-        connectgaps: false,
-        hovertemplate: "%{x:.3g}<br>%{y:.4g} mA<extra>Current</extra>",
-      },
-    ];
-  }, [previewTrace, previewTraceXAxis, previewXAxis]);
+    return cellPreviewVoltageTraces([{
+      x,
+      voltage,
+      current: previewTrace.current_ma,
+      voltageColor: PLOT_PALETTES.app[0],
+      currentColor: PLOT_PALETTES.app[1],
+    }]);
+  }, [previewTrace, renderedPreviewXAxis]);
   const matchingCyclePreviewSeries = cyclePreviewQuery.isPlaceholderData ? undefined : cyclePreviewQuery.data?.cell_series.find(
     (series) => series.cell_id === activePreviewCellId,
   );
@@ -1678,74 +1652,42 @@ function AddEntriesModal({
   }, [matchingCyclePreviewSeries]);
   const cyclePreviewSeries = matchingCyclePreviewSeries ?? retainedCyclePreviewSeries;
   const cyclePreviewIsUpdating = cyclePreviewQuery.isFetching && !matchingCyclePreviewSeries;
-  const previewCeRange = useMemo(() => {
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-    for (const value of cyclePreviewSeries?.quantities.coulombic_efficiency_pct ?? []) {
-      if (value === null || !Number.isFinite(value)) continue;
-      min = Math.min(min, value);
-      max = Math.max(max, value);
-    }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
-    const padding = (max - min) * 0.15 || Math.max(Math.abs(min) * 0.15, 1);
-    return [min - padding, max + padding] as [number, number];
-  }, [cyclePreviewSeries]);
+  const previewCeRange = useMemo(
+    () => paddedEfficiencyRange(cyclePreviewSeries?.quantities.coulombic_efficiency_pct ?? []),
+    [cyclePreviewSeries],
+  );
   const previewCycleChartData = useMemo(() => {
     if (!cyclePreviewSeries) return [];
-    const x = cyclePreviewSeries.x;
     const quantities = cyclePreviewSeries.quantities;
-    const massInGrams = normalizeCapacityByMass ? previewActiveMassG : null;
-    const capacityUnit = massInGrams ? "mAh/g" : "mAh";
-    const capacityValues = (values: (number | null)[] | undefined) =>
-      (values ?? []).map((value) => value === null || !massInGrams ? value : value / massInGrams);
-    const output = [];
-    if (previewCapacityMode !== "discharge") output.push({
-      type: "scatter", mode: "markers", name: "Charge capacity", x,
-      y: capacityValues(quantities.charge_capacity_mah), yaxis: "y",
-      marker: { color: PLOT_PALETTES.app[0], size: 9, symbol: "circle" },
-      hovertemplate: `Cycle %{x}<br>%{y:.4g} ${capacityUnit}<extra>Charge capacity</extra>`,
-    });
-    if (previewCapacityMode !== "charge") output.push({
-      type: "scatter", mode: "markers", name: "Discharge capacity", x,
-      y: capacityValues(quantities.discharge_capacity_mah), yaxis: "y",
-      marker: { color: PLOT_PALETTES.app[1], size: 9, symbol: "square" },
-      hovertemplate: `Cycle %{x}<br>%{y:.4g} ${capacityUnit}<extra>Discharge capacity</extra>`,
-    });
-    output.push({
-      type: "scatter", mode: "markers", name: "Coulombic efficiency", x,
-      y: quantities.coulombic_efficiency_pct ?? [], yaxis: "y2",
-      marker: { color: PLOT_PALETTES.app[2], size: 4.5, opacity: 0.3, symbol: "circle" },
-      hovertemplate: "Cycle %{x}<br>%{y:.3g}%<extra>Coulombic efficiency</extra>",
-    });
-    return output;
+    return cellPreviewCapacityTraces([{
+      x: cyclePreviewSeries.x,
+      chargeCapacityMah: quantities.charge_capacity_mah,
+      dischargeCapacityMah: quantities.discharge_capacity_mah,
+      efficiencyX: cyclePreviewSeries.x,
+      efficiencyPct: quantities.coulombic_efficiency_pct,
+      massG: previewActiveMassG,
+      chargeColor: PLOT_PALETTES.app[0],
+      dischargeColor: PLOT_PALETTES.app[1],
+      efficiencyColor: PLOT_PALETTES.app[2],
+    }], previewCapacityMode, normalizeCapacityByMass);
   }, [cyclePreviewSeries, normalizeCapacityByMass, previewActiveMassG, previewCapacityMode, previewPlotColors.text]);
-  const previewVoltageLayout = useMemo(() => ({
-    autosize: true, height: 352, margin: { l: 76, r: 24, t: 8, b: 58 }, showlegend: false,
-    paper_bgcolor: previewPlotColors.background,
-    plot_bgcolor: previewPlotColors.background,
-    font: { family: "Arial, sans-serif", color: previewPlotColors.text, size: 17 },
-    uirevision: `cell-picker-voltage-${previewXAxis}`,
-    xaxis: { title: { text: previewXAxis === "time" ? "Time (min)" : "Capacity (mAh)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, domain: [0, 1], tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, showline: false, showgrid: false, zeroline: false, automargin: true, anchor: "y2" as const },
-    yaxis: { title: { text: "Voltage (V)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0.30, 1], showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true },
-    yaxis2: { title: { text: "Current (mA)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0, 0.23], showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.5, zeroline: false, automargin: true, anchor: "x" as const },
-    shapes: [
-      { type: "rect" as const, xref: "paper" as const, yref: "paper" as const, x0: 0, x1: 1, y0: 0, y1: 1, line: { color: previewPlotColors.border, width: 1 }, fillcolor: "rgba(0,0,0,0)", layer: "above" as const },
-    ],
-  }), [previewPlotColors, previewXAxis]);
-  const previewCapacityLayout = useMemo(() => ({
-    autosize: true, height: 352, margin: { l: 76, r: 24, t: 8, b: 58 }, showlegend: false,
-    paper_bgcolor: previewPlotColors.background,
-    plot_bgcolor: previewPlotColors.background,
-    font: { family: "Arial, sans-serif", color: previewPlotColors.text, size: 17 },
-    uirevision: `cell-picker-capacity-${normalizeCapacityByMass && previewActiveMassG !== null ? "mAh-per-g" : "mAh"}`,
-    xaxis: { title: { text: "Cycle", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, showline: false, showgrid: false, zeroline: false, automargin: true, anchor: "y" as const, autorange: true },
-    yaxis: { title: { text: `Capacity (${normalizeCapacityByMass && previewActiveMassG ? "mAh/g" : "mAh"})`, font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0, 0.72], showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true },
-    yaxis2: { title: { text: "CE (%)", font: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text } }, tickfont: { family: "Arial, sans-serif", size: 17, color: previewPlotColors.text }, domain: [0.77, 1], side: "left" as const, showline: false, gridcolor: previewPlotColors.grid, gridwidth: 0.8, zeroline: false, automargin: true, anchor: "x" as const, autorange: previewCeRange === undefined, ...(previewCeRange ? { range: previewCeRange } : {}) },
-    shapes: [
-      { type: "rect" as const, xref: "paper" as const, yref: "paper" as const, x0: 0, x1: 1, y0: 0, y1: 1, line: { color: previewPlotColors.border, width: 1.5 }, fillcolor: "rgba(0,0,0,0)", layer: "above" as const },
-      { type: "line" as const, xref: "paper" as const, yref: "paper" as const, x0: 0, x1: 1, y0: 0.77, y1: 0.77, line: { color: previewPlotColors.border, width: 1 }, layer: "above" as const },
-    ],
-  }), [normalizeCapacityByMass, previewActiveMassG, previewCeRange, previewPlotColors]);
+  const previewVoltageLayout = useMemo(
+    () => cellPreviewVoltageLayout(
+      previewPlotColors,
+      renderedPreviewXAxis === "time" ? "Time (min)" : "Capacity (mAh)",
+      `cell-picker-voltage-${renderedPreviewXAxis}`,
+    ),
+    [previewPlotColors, renderedPreviewXAxis],
+  );
+  const previewCapacityLayout = useMemo(
+    () => cellPreviewCapacityLayout(
+      previewPlotColors,
+      `Capacity (${normalizeCapacityByMass && previewActiveMassG ? "mAh/g" : "mAh"})`,
+      previewCeRange,
+      `cell-picker-capacity-${normalizeCapacityByMass && previewActiveMassG !== null ? "mAh-per-g" : "mAh"}`,
+    ),
+    [normalizeCapacityByMass, previewActiveMassG, previewCeRange, previewPlotColors],
+  );
   const previewPlotConfig = useMemo(() => ({ responsive: true, displayModeBar: false }), []);
   const previewPlotStyle = useMemo(() => ({ width: "100%", height: 352, fontWeight: 400 as const }), []);
   const unfiledGroups = (groups.data ?? []).filter(
@@ -2886,34 +2828,15 @@ function AddEntriesModal({
                   <Alert color="yellow" title="Cycle preview unavailable">Cycle capacities could not be loaded for this cell.</Alert>
                 ) : cyclePreviewSeries && previewCycleChartData.length ? (
                   <>
-                    <Box className="preview-plot-surface" style={{ position: "relative" }}>
-                    <Group className="preview-surface-controls" justify="flex-end" gap="xs" h={28} data-preview-surface-controls="" aria-label="Preview plot background">
-                      {([
-                        { mode: "sun", label: "Light plot background", icon: <IconSun size={15} /> },
-                        { mode: "gray", label: "Gray plot background", icon: <IconSunset size={15} /> },
-                        { mode: "moon", label: "Dark plot background", icon: <IconMoon size={15} /> },
-                      ] as const).map((choice) => (
-                        <Tooltip key={choice.mode} label={choice.label} withArrow>
-                          <ActionIcon
-                            size="sm"
-                            variant="default"
-                            color={previewSurfaceMode === choice.mode ? "teal" : undefined}
-                            aria-label={choice.label}
-                            aria-pressed={previewSurfaceMode === choice.mode}
-                            style={{ background: "var(--mantine-color-default)" }}
-                            onClick={() => setPreviewSurfaceMode(choice.mode)}
-                          >{choice.icon}</ActionIcon>
-                        </Tooltip>
-                      ))}
-                    </Group>
-                    <Plot
+                    <CellPreviewPlot
                       data={previewCycleChartData as never}
                       layout={previewCapacityLayout}
                       config={previewPlotConfig}
                       style={previewPlotStyle}
+                      surfaceMode={previewSurfaceMode}
+                      onSurfaceModeChange={setPreviewSurfaceMode}
+                      updating={cyclePreviewQuery.isFetching && Boolean(cyclePreviewSeries)}
                     />
-                    {cyclePreviewQuery.isFetching && cyclePreviewSeries && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
-                    </Box>
                   </>
                 ) : <Center h={300}><Text size="sm" c="dimmed">No charge/discharge cycle summary is available.</Text></Center>
               )}
@@ -2925,39 +2848,16 @@ function AddEntriesModal({
                 <Alert color="yellow" title="Preview unavailable">This cell has no curve for the selected cycle range, or the preview could not be loaded.</Alert>
               ) : previewTrace && previewChartData.length > 0 ? (
                 <>
-                  <Box className="preview-plot-surface" style={{ position: "relative" }}>
-                  <Group className="preview-surface-controls" justify="flex-end" gap="xs" h={28} data-preview-surface-controls="" aria-label="Preview plot background">
-                    {([
-                      { mode: "sun", label: "Light plot background", icon: <IconSun size={15} /> },
-                      { mode: "gray", label: "Gray plot background", icon: <IconSunset size={15} /> },
-                      { mode: "moon", label: "Dark plot background", icon: <IconMoon size={15} /> },
-                    ] as const).map((choice) => (
-                      <Tooltip key={choice.mode} label={choice.label} withArrow>
-                        <ActionIcon
-                          size="sm"
-                          variant="default"
-                          color={previewSurfaceMode === choice.mode ? "teal" : undefined}
-                          aria-label={choice.label}
-                          aria-pressed={previewSurfaceMode === choice.mode}
-                          style={{ background: "var(--mantine-color-default)" }}
-                          onClick={() => setPreviewSurfaceMode(choice.mode)}
-                        >{choice.icon}</ActionIcon>
-                      </Tooltip>
-                    ))}
-                  </Group>
-                  <Plot
+                  <CellPreviewPlot
                     data={previewChartData as never}
                     layout={previewVoltageLayout}
                     config={previewPlotConfig}
                     style={previewPlotStyle}
+                    surfaceMode={previewSurfaceMode}
+                    onSurfaceModeChange={setPreviewSurfaceMode}
+                    updating={previewQuery.isFetching && Boolean(previewTrace)}
+                    legend={[{ name: "Voltage", color: PLOT_PALETTES.app[0] }, { name: "Current", color: PLOT_PALETTES.app[1] }]}
                   />
-                  {previewQuery.isFetching && previewTrace && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
-                  </Box>
-                  <Group gap="md" justify="center">
-                    {[{ name: "Voltage", color: PLOT_PALETTES.app[0] }, { name: "Current", color: PLOT_PALETTES.app[1] }].map((trace) => (
-                      <Group gap={5} key={trace.name} wrap="nowrap"><Box w={16} h={0} style={{ borderTop: `2px solid ${trace.color}`, flex: "0 0 auto" }} /><Text size="xs">{trace.name}</Text></Group>
-                    ))}
-                  </Group>
                 </>
               ) : (
                 <Center h={300}><Text size="sm" c="dimmed" ta="center">No voltage curve is available for this cell.</Text></Center>

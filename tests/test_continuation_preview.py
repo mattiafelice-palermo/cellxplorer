@@ -97,6 +97,39 @@ class ContinuationPreviewServiceTests(unittest.TestCase):
         self.assertEqual(voltage["x_start"], 0.0)
         self.assertEqual(voltage["x_end"], 2.0)
 
+    def test_capacity_voltage_preview_keeps_acquisition_order_across_counter_resets(self):
+        frame = pd.DataFrame(
+            {
+                "record_index": [1, 2, 3, 4],
+                "cycle": [1, 1, 1, 1],
+                "status": ["CC Chg", "CC Chg", "CC DChg", "CC DChg"],
+                "current_ma": [10.0, 10.0, -10.0, -10.0],
+                "voltage_v": [3.0, 3.5, 3.4, 3.1],
+                "charge_capacity_mah": [0.0, 1.0, 1.0, 1.0],
+                "discharge_capacity_mah": [0.0, 0.0, 0.0, 1.0],
+            }
+        )
+
+        preview = voltage_preview_from_raw(frame, x_axis="capacity")
+
+        self.assertEqual(preview["y"], [3.0, 3.5, 3.4, 3.1])
+        self.assertEqual(preview["x"], [0.0, 1.0, 1.0, 2.0])
+
+    def test_voltage_preview_can_select_a_dense_cycle_window(self):
+        frame = pd.DataFrame(
+            {
+                "record_index": [1, 2, 3, 4],
+                "cycle": [10, 10, 30, 30],
+                "total_time_s": [0.0, 1.0, 2.0, 3.0],
+                "voltage_v": [3.0, 3.1, 3.2, 3.3],
+            }
+        )
+
+        preview = voltage_preview_from_raw(frame, cycle_start=2, cycle_end=2)
+
+        self.assertEqual(preview["x"], [2.0, 3.0])
+        self.assertEqual(preview["y"], [3.2, 3.3])
+
 
 if __name__ == "__main__":
     unittest.main()
