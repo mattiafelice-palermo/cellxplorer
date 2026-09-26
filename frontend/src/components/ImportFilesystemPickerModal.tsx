@@ -849,6 +849,60 @@ export function ImportFilesystemPickerModal({
     );
   };
 
+  const selectedSourcesPanel = (
+    <Paper withBorder p="xs" style={{ flex: "0 0 clamp(112px, 13vh, 140px)", minHeight: 112, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <Group justify="space-between" mb={4}>
+        <Group gap="xs">
+          <Text size="sm" fw={700}>Selected sources</Text>
+          <Text size="xs" c="dimmed">{selectedEntries.length}</Text>
+        </Group>
+        <Button
+          size="compact-sm"
+          variant="subtle"
+          color="gray"
+          disabled={selectedEntries.length === 0}
+          onClick={() => { setSelected(new Map()); setSelectedPreviewPath(null); }}
+        >
+          Clear all
+        </Button>
+      </Group>
+      <TextInput
+        size="xs"
+        placeholder="Search selected sources"
+        aria-label="Search selected sources"
+        leftSection={<IconSearch size={14} />}
+        value={selectedSearch}
+        onChange={(event) => setSelectedSearch(event.currentTarget.value)}
+        mb={4}
+      />
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbarSize={10} offsetScrollbars="y" type="auto" styles={{ viewport: { paddingRight: 10 } }}>
+        {selectedEntries.length === 0 ? (
+          <Text size="sm" c="dimmed">Nothing selected yet.</Text>
+        ) : visibleSelectedEntries.length === 0 ? (
+          <Text size="sm" c="dimmed">No selected sources match this search.</Text>
+        ) : (
+          <Box style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 390px), 1fr))", gap: "4px 12px", paddingRight: 6 }}>
+            {visibleSelectedEntries.map((entry) => (
+              <Group
+                key={entry.path}
+                gap="xs"
+                wrap="nowrap"
+                pr="xs"
+                bg={entry.path === selectedPreviewPath ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
+                style={{ minWidth: 0, cursor: entry.kind === "file" ? "pointer" : undefined, borderRadius: 4 }}
+                onClick={() => { if (entry.kind === "file") setSelectedPreviewPath(entry.path); }}
+              >
+                {entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}
+                <Text size="sm" truncate title={entry.path} style={{ flex: 1, minWidth: 0 }}>{entry.path}</Text>
+                <ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={(event) => { event.stopPropagation(); setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; }); }}><IconX size={12} /></ActionIcon>
+              </Group>
+            ))}
+          </Box>
+        )}
+      </ScrollArea>
+    </Paper>
+  );
+
   return (
     <ImportModalShell
       opened={opened}
@@ -1045,6 +1099,7 @@ export function ImportFilesystemPickerModal({
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
+            <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
               {browseQuery.isPending && !browseQuery.data ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%" } : undefined} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
@@ -1109,6 +1164,8 @@ export function ImportFilesystemPickerModal({
                 </>}
               </Stack></Box></ScrollArea>}
             </Paper>
+            {mode === "files" && selectedSourcesPanel}
+            </Stack>
             {mode === "files" && (
               <Paper withBorder p="xs" style={{ width: previewCollapsed ? 44 : "clamp(280px, 28vw, 390px)", flex: "0 0 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
                 <Group justify={previewCollapsed ? "center" : "space-between"} wrap="nowrap" mb={previewCollapsed ? 0 : "xs"}>
@@ -1131,7 +1188,6 @@ export function ImportFilesystemPickerModal({
                         {previewMatchesSelection ? (
                           <ImportSourcePreview
                             source={selectedPreviewQuery.data!}
-                            plotHeight={310}
                             preferences={previewPreferences}
                             onPreferencesChange={(update) => setPreviewPreferences((current) => ({ ...current, ...update }))}
                           />
@@ -1156,59 +1212,7 @@ export function ImportFilesystemPickerModal({
               </Paper>
             )}
             </Group>
-            {/* A dedicated summary area stays clear of the browser scrollbar and
-                gives long selections their own search and multi-column list. */}
-            <Paper withBorder p="xs" style={{ flex: "0 0 clamp(132px, 19vh, 190px)", minHeight: 132, display: "flex", flexDirection: "column", minWidth: 0 }}>
-              <Group justify="space-between" mb={4}>
-                <Group gap="xs">
-                  <Text size="sm" fw={700}>Selected sources</Text>
-                  <Text size="xs" c="dimmed">{selectedEntries.length}</Text>
-                </Group>
-                <Button
-                  size="compact-sm"
-                  variant="subtle"
-                  color="gray"
-                  disabled={selectedEntries.length === 0}
-                  onClick={() => { setSelected(new Map()); setSelectedPreviewPath(null); }}
-                >
-                  Clear all
-                </Button>
-              </Group>
-              <TextInput
-                size="xs"
-                placeholder="Search selected sources"
-                aria-label="Search selected sources"
-                leftSection={<IconSearch size={14} />}
-                value={selectedSearch}
-                onChange={(event) => setSelectedSearch(event.currentTarget.value)}
-                mb={4}
-              />
-              <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbarSize={10} offsetScrollbars="y" type="auto" styles={{ viewport: { paddingRight: 10 } }}>
-                {selectedEntries.length === 0 ? (
-                  <Text size="sm" c="dimmed">Nothing selected yet.</Text>
-                ) : visibleSelectedEntries.length === 0 ? (
-                  <Text size="sm" c="dimmed">No selected sources match this search.</Text>
-                ) : (
-                  <Box style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 390px), 1fr))", gap: "4px 12px", paddingRight: 6 }}>
-                    {visibleSelectedEntries.map((entry) => (
-                      <Group
-                        key={entry.path}
-                        gap="xs"
-                        wrap="nowrap"
-                        pr="xs"
-                        bg={entry.path === selectedPreviewPath ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
-                        style={{ minWidth: 0, cursor: entry.kind === "file" ? "pointer" : undefined, borderRadius: 4 }}
-                        onClick={() => { if (entry.kind === "file") setSelectedPreviewPath(entry.path); }}
-                      >
-                        {entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}
-                        <Text size="sm" truncate title={entry.path} style={{ flex: 1, minWidth: 0 }}>{entry.path}</Text>
-                        <ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={(event) => { event.stopPropagation(); setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; }); }}><IconX size={12} /></ActionIcon>
-                      </Group>
-                    ))}
-                  </Box>
-                )}
-              </ScrollArea>
-            </Paper>
+            {mode !== "files" && selectedSourcesPanel}
           </Stack>
         </Group>
       </Stack>
