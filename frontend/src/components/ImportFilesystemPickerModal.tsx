@@ -23,9 +23,9 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   IconArrowDown,
   IconArrowUp,
+  IconAlertTriangle,
   IconClock,
   IconDeviceDesktop,
-  IconEdit,
   IconFile,
   IconFilter,
   IconFolder,
@@ -127,6 +127,7 @@ function moveRangeHandleOnTrack(
 const IMPORT_BROWSER_HEADER_HEIGHT = 38;
 const IMPORT_BROWSER_ENTRY_ROW_HEIGHT = 38;
 const IMPORT_BROWSER_ROW_OVERSCAN = 8;
+const IMPORT_LAST_FOLDER_STORAGE_KEY = "cellxplorer-import-last-folder";
 const IMPORT_BROWSER_COLUMN_MIN_WIDTH: Record<ImportBrowserSortKey, number> = {
   name: 190,
   extension: 112,
@@ -167,7 +168,9 @@ export function ImportFilesystemPickerModal({
   selectionKey?: number;
   onFolderConfirm?: (path: string) => void;
 }) {
-  const [requestedPath, setRequestedPath] = useState<string | null>(null);
+  const [requestedPath, setRequestedPath] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : window.localStorage.getItem(IMPORT_LAST_FOLDER_STORAGE_KEY),
+  );
   const [pathInput, setPathInput] = useState("");
   const [pathEditing, setPathEditing] = useState(false);
   const [pendingPathEditTarget, setPendingPathEditTarget] = useState<string | null>(null);
@@ -180,6 +183,7 @@ export function ImportFilesystemPickerModal({
     name: 360, extension: 120, supplier: 115, protocol: 125, size: 100, modified: 165,
   });
   const [showFolders, setShowFolders] = useState(true);
+  const [hideUnavailable, setHideUnavailable] = useState(false);
   const [headerFilter, setHeaderFilter] = useState<ImportBrowserSortKey | null>(null);
   const [headerFilterSearch, setHeaderFilterSearch] = useState("");
   const headerHintInFlight = useRef(new Set<string>());
@@ -261,11 +265,17 @@ export function ImportFilesystemPickerModal({
     if (entry.kind !== "file") return false;
     const hint = headerHints.get(entry.path);
     return hint?.registered === true
-      || (importEntryExtension(entry) === ".xlsx" && hint?.compatible === false);
+      || hint?.compatible === false;
   };
-  const selectableVisibleEntries = visibleEntries.filter((entry) => entry.kind === "folder" || !unavailableFile(entry));
+  const displayedEntries = useMemo(() => hideUnavailable
+    ? visibleEntries.filter((entry) => {
+        const hint = headerHints.get(entry.path);
+        return entry.kind === "folder" || !(hint?.registered === true || hint?.compatible === false);
+      })
+    : visibleEntries, [headerHints, hideUnavailable, visibleEntries]);
+  const selectableVisibleEntries = displayedEntries.filter((entry) => entry.kind === "folder" || !unavailableFile(entry));
   const filesInDirectory = useMemo(() => directoryEntries.filter((entry) =>
-    entry.kind === "file" && !(importEntryExtension(entry) === ".xlsx" && headerHints.get(entry.path)?.compatible === false),
+    entry.kind === "file" && headerHints.get(entry.path)?.compatible !== false,
   ), [directoryEntries, headerHints]);
   const availableForSupplier = filesInDirectory.filter((entry) =>
     (!fileFilters.extensions.length || fileFilters.extensions.includes(importEntryExtension(entry)))
@@ -330,17 +340,21 @@ export function ImportFilesystemPickerModal({
 
   useEffect(() => {
     if (!opened) return;
-    entryViewportRef.current?.scrollTo({ top: 0 });
+    entryViewportRef.current?.scrollTo({ top: 0, left: 0 });
     headerHintInFlight.current.clear();
     headerHintFailed.current.clear();
     headerHintGeneration.current += 1;
     headerHintDirectory.current = null;
-    setRequestedPath(mode === "folder" ? initialPath ?? null : null);
+    const lastFolder = typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem(IMPORT_LAST_FOLDER_STORAGE_KEY);
+    setRequestedPath(mode === "folder" ? initialPath ?? null : initialPath ?? lastFolder);
     setPathInput("");
     setPathEditing(false);
     setPendingPathEditTarget(null);
     setSearch("");
     setShowFolders(true);
+    setHideUnavailable(false);
     setHeaderFilter(null);
     setHeaderFilterSearch("");
     setFileFilters(EMPTY_IMPORT_BROWSER_FILTERS);
@@ -358,6 +372,11 @@ export function ImportFilesystemPickerModal({
   useEffect(() => {
     if (browseQuery.data?.current_path) setPathInput(browseQuery.data.current_path);
   }, [browseQuery.data?.current_path]);
+
+  useEffect(() => {
+    const path = browseQuery.data?.current_path;
+    if (mode === "files" && path) window.localStorage.setItem(IMPORT_LAST_FOLDER_STORAGE_KEY, path);
+  }, [browseQuery.data?.current_path, mode]);
 
   useEffect(() => {
     entryViewportRef.current?.scrollTo({ top: 0 });
@@ -422,7 +441,7 @@ export function ImportFilesystemPickerModal({
     headerHintGeneration.current += 1;
     headerHintInFlight.current.clear();
     headerHintFailed.current.clear();
-    entryViewportRef.current?.scrollTo({ top: 0 });
+    entryViewportRef.current?.scrollTo({ top: 0, left: 0 });
     setRequestedPath(path);
     const reset = resetImportBrowserNavigation();
     setSearch(reset.search);
@@ -549,14 +568,14 @@ export function ImportFilesystemPickerModal({
       IMPORT_BROWSER_ROW_OVERSCAN,
   );
   const lastRenderedEntry = Math.min(
-    visibleEntries.length,
+    displayedEntries.length,
     firstRenderedEntry +
       Math.ceil(390 / IMPORT_BROWSER_ENTRY_ROW_HEIGHT) + IMPORT_BROWSER_ROW_OVERSCAN * 2,
   );
-  const renderedEntries = visibleEntries.slice(firstRenderedEntry, lastRenderedEntry);
+  const renderedEntries = displayedEntries.slice(firstRenderedEntry, lastRenderedEntry);
   const leadingSpacerHeight = firstRenderedEntry * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
   const trailingSpacerHeight =
-    (visibleEntries.length - lastRenderedEntry) * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
+    (displayedEntries.length - lastRenderedEntry) * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
 
   useEffect(() => {
     const directory = browseQuery.data?.current_path;
@@ -568,7 +587,7 @@ export function ImportFilesystemPickerModal({
     // the queue so they are eventually scanned without delaying visible rows.
     const batch = prioritizeImportHeaderHintPaths(
       renderedEntries,
-      visibleEntries,
+      displayedEntries,
       filesInDirectory,
       new Set(headerHints.keys()),
       headerHintInFlight.current,
@@ -597,7 +616,7 @@ export function ImportFilesystemPickerModal({
     opened,
     renderedEntries,
     submitHeaderHints,
-    visibleEntries,
+    displayedEntries,
   ]);
   const quickAccess = browseQuery.data?.quick_access ?? [];
   const breadcrumbs = parseImportPathBreadcrumbs(
@@ -684,12 +703,12 @@ export function ImportFilesystemPickerModal({
       if (key === "modified") setFileFilters((current) => ({ ...current, modifiedAfter: "", modifiedBefore: "" }));
     };
     return (
-        <Box key={key} pos="relative" style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: key === "size" ? "flex-end" : "flex-start", borderLeft: key === "name" ? undefined : "1px solid color-mix(in srgb, var(--mantine-color-default-border) 55%, transparent)", paddingLeft: key === "name" ? 0 : 8, boxSizing: "border-box", ...(key === "name" ? { position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" } : {}) }}>
+        <Box key={key} style={{ position: "relative", minWidth: 0, display: "flex", alignItems: "center", justifyContent: key === "size" ? "flex-end" : "flex-start", gap: 3, borderLeft: key === "name" ? undefined : "1px solid color-mix(in srgb, var(--mantine-color-default-border) 55%, transparent)", paddingLeft: key === "name" ? 0 : 8, boxSizing: "border-box", ...(key === "name" ? { position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", width: "var(--import-name-width)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" } : {}) }}>
         <UnstyledButton
           type="button"
           aria-label={`Sort by ${IMPORT_BROWSER_COLUMN_LABELS[key]}`}
           onClick={() => setFileSort((current) => nextImportBrowserSort(current, key))}
-          style={{ fontSize: "var(--mantine-font-size-xs)", fontWeight: 700, color: "var(--mantine-color-dimmed)", minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}
+          style={{ fontSize: "var(--mantine-font-size-sm)", fontWeight: 700, color: "var(--mantine-color-dimmed)", minWidth: 0, flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}
         >
           {IMPORT_BROWSER_COLUMN_LABELS[key]} {fileSort.key === key ? (fileSort.direction === "asc" ? "↑" : "↓") : "↕"}
         </UnstyledButton>
@@ -703,6 +722,7 @@ export function ImportFilesystemPickerModal({
           <Popover.Target>
             <ActionIcon
               size="xs"
+              style={{ flex: "none" }}
               variant={headerFilter === key || headerFilterIsActive(key) ? "light" : "subtle"}
               color={headerFilter === key || headerFilterIsActive(key) ? "green" : "gray"}
               aria-label={`Filter ${IMPORT_BROWSER_COLUMN_LABELS[key]}`}
@@ -840,7 +860,7 @@ export function ImportFilesystemPickerModal({
                   if (!items.length) return null;
                   return (
                     <Stack key={section} gap={3}>
-                      <Text size="xs" fw={700} c="dimmed">
+                      <Text size="sm" fw={700} c="dimmed">
                         {section === "quick" ? "Quick access" : section === "pinned" ? "Pinned" : "Recent"}
                       </Text>
                       {items.map((item) => {
@@ -863,7 +883,7 @@ export function ImportFilesystemPickerModal({
                   );
                 })}
                 <Stack gap={3}>
-                  <Text size="xs" fw={700} c="dimmed">This PC</Text>
+                  <Text size="sm" fw={700} c="dimmed">This PC</Text>
                   {(browseQuery.data?.roots ?? []).map((root) => <Button key={root.path} variant="subtle" color={browseQuery.data?.current_path === root.path ? "var(--mantine-primary-color-6)" : undefined} size="compact-sm" leftSection={root.name === "Home" ? <IconHome size={15} /> : <IconFolder size={15} />} justify="flex-start" onClick={() => navigate(root.path)} title={root.name}>{root.name}</Button>)}
                 </Stack>
                 </Stack>
@@ -918,25 +938,49 @@ export function ImportFilesystemPickerModal({
           <Stack gap="sm" style={{ flex: "1 1 0", minWidth: IMPORT_BROWSER_RIGHT_PANE_MIN, overflow: "hidden" }}>
             <Group gap="xs" wrap="nowrap">
               <ActionIcon variant="default" size="lg" aria-label="Go to parent folder" disabled={!browseQuery.data?.parent_path} onClick={() => navigate(browseQuery.data?.parent_path ?? null)}><IconArrowUp size={18} /></ActionIcon>
-              {pathEditing ? <TextInput ref={pathInputRef} value={pathInput} onChange={(event) => setPathInput(event.currentTarget.value)} onKeyDown={handlePathEditKeyDown} onBlur={() => { if (!pendingPathEditTarget) cancelPathEdit(); }} aria-label="Current folder path" style={{ flex: 1 }} /> : <>
-                <Box component="nav" aria-label="Current folder path" style={{ flex: 1, minWidth: 0, overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap" }}>
-                  <Group gap={3} wrap="nowrap" style={{ minWidth: "max-content", minHeight: 36 }}>
-                    {breadcrumbs.map((breadcrumb, index) => <Group key={breadcrumb.targetPath} gap={3} wrap="nowrap">
-                      {index > 0 && <Text size="sm" c="dimmed" aria-hidden="true">›</Text>}
-                      <Tooltip label={breadcrumb.targetPath} withArrow>
-                        <UnstyledButton type="button" onClick={() => navigate(breadcrumb.targetPath)} aria-current={index === breadcrumbs.length - 1 ? "location" : undefined} style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderRadius: 4, padding: "5px 6px", color: index === breadcrumbs.length - 1 ? "var(--mantine-color-text)" : "var(--mantine-primary-color-7)" }}>{breadcrumb.label}</UnstyledButton>
-                      </Tooltip>
-                    </Group>)}
-                  </Group>
-                </Box>
-                <Button variant="subtle" color="gray" size="compact-sm" leftSection={<IconEdit size={15} />} aria-label="Edit path" onClick={enterPathEdit}>Edit path</Button>
-              </>}
+              <Paper
+                withBorder
+                radius="md"
+                px="xs"
+                style={{ flex: 1, minWidth: 0, minHeight: 40, display: "flex", alignItems: "center", cursor: pathEditing ? "text" : "text" }}
+                onClick={(event) => {
+                  if (pathEditing || (event.target instanceof HTMLElement && event.target.closest("button"))) return;
+                  enterPathEdit();
+                }}
+              >
+                {pathEditing ? (
+                  <TextInput
+                    ref={pathInputRef}
+                    variant="unstyled"
+                    value={pathInput}
+                    onChange={(event) => setPathInput(event.currentTarget.value)}
+                    onKeyDown={handlePathEditKeyDown}
+                    onBlur={() => { if (!pendingPathEditTarget) cancelPathEdit(); }}
+                    aria-label="Current folder path"
+                    style={{ flex: 1 }}
+                  />
+                ) : (
+                  <Box component="nav" aria-label="Current folder path" style={{ flex: 1, minWidth: 0, overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap" }}>
+                    <Group gap={3} wrap="nowrap" style={{ minWidth: "max-content", minHeight: 36 }}>
+                      {breadcrumbs.map((breadcrumb, index) => <Group key={breadcrumb.targetPath} gap={3} wrap="nowrap">
+                        {index > 0 && <Text size="sm" c="dimmed" aria-hidden="true">›</Text>}
+                        <Tooltip label={breadcrumb.targetPath} withArrow>
+                          <UnstyledButton type="button" onClick={() => navigate(breadcrumb.targetPath)} aria-current={index === breadcrumbs.length - 1 ? "location" : undefined} style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderRadius: 4, padding: "5px 6px", color: index === breadcrumbs.length - 1 ? "var(--mantine-color-text)" : "var(--mantine-primary-color-7)" }}>{breadcrumb.label}</UnstyledButton>
+                        </Tooltip>
+                      </Group>)}
+                    </Group>
+                  </Box>
+                )}
+              </Paper>
               <ActionIcon variant="default" size="lg" aria-label="Refresh folder" onClick={refreshFolder}><IconRefresh size={17} /></ActionIcon>
             </Group>
             <Group gap="xs" wrap="nowrap">
-              <TextInput placeholder="Search this folder" leftSection={<IconSearch size={15} />} value={search} onChange={(event) => setSearch(event.currentTarget.value)} style={{ flex: 1, minWidth: 0 }} />
+              <TextInput size="md" placeholder="Search this folder" leftSection={<IconSearch size={15} />} value={search} onChange={(event) => setSearch(event.currentTarget.value)} style={{ flex: 1, minWidth: 0 }} />
               {mode === "files" && <Button variant={showFolders ? "default" : "light"} aria-pressed={!showFolders} onClick={() => setShowFolders((current) => !current)}>
                 {showFolders ? "Hide folders" : "Show folders"}
+              </Button>}
+              {mode === "files" && <Button variant={hideUnavailable ? "light" : "default"} aria-pressed={hideUnavailable} onClick={() => setHideUnavailable((current) => !current)}>
+                {hideUnavailable ? "Show unavailable" : "Hide unavailable"}
               </Button>}
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
@@ -946,7 +990,7 @@ export function ImportFilesystemPickerModal({
                   <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
                   {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}
                 </Box>
-                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or supported cycler files here.</Text></Center> : <>
+                {displayedEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or supported cycler files here.</Text></Center> : <>
                   <Box h={leadingSpacerHeight} aria-hidden="true" />
                   {renderedEntries.map((entry) => {
                   const isFolder = entry.kind === "folder";
@@ -964,7 +1008,9 @@ export function ImportFilesystemPickerModal({
                   const disabledReason = hint?.registered
                     ? "Already registered in CellXplorer."
                     : hint?.compatible === false
-                      ? "This workbook is not supported by the Neware Excel parser."
+                      ? importEntryExtension(entry) === ".mpr"
+                        ? "The protocol is not supported by CellXplorer."
+                        : "This workbook is not supported by the Neware Excel parser."
                       : hint?.error
                         ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
                         : null;
@@ -988,13 +1034,14 @@ export function ImportFilesystemPickerModal({
                     />
                     <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, minWidth: 0, background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
-                      <Text size="sm" truncate title={entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
+                      {!isFolder && hint?.compatible === false && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
+                      <Text size="md" truncate title={entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
                     </Group>
-                    <Text size="xs" c={metadataColor} truncate title={isFolder ? undefined : importEntryExtension(entry)} style={cellStyle}>{isFolder ? "" : importEntryExtension(entry)}</Text>
-                    <Text size="xs" c={metadataColor} truncate title={isFolder ? undefined : importEntrySupplier(entry, hint)} style={cellStyle}>{isFolder ? "" : importEntrySupplier(entry, hint)}</Text>
-                    <Text size="xs" c={metadataColor} truncate title={hint?.error ?? hint?.technique ?? undefined} style={cellStyle}>{isFolder ? "" : hint?.technique ?? (headerHintsPending ? "…" : "—")}</Text>
-                    <Text size="xs" c={metadataColor} ta="right" style={cellStyle}>{entry.size === null ? "" : formatMegabytes(entry.size)}</Text>
-                    <Text size="xs" c={metadataColor} truncate title={entry.modified_at ?? undefined} style={cellStyle}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
+                    <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntryExtension(entry)} style={cellStyle}>{isFolder ? "" : importEntryExtension(entry)}</Text>
+                    <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntrySupplier(entry, hint)} style={cellStyle}>{isFolder ? "" : importEntrySupplier(entry, hint)}</Text>
+                    <Text size="sm" c={metadataColor} truncate title={hint?.error ?? hint?.technique ?? undefined} style={cellStyle}>{isFolder ? "" : hint?.technique ?? (headerHintsPending ? "…" : "—")}</Text>
+                    <Text size="sm" c={metadataColor} ta="right" style={cellStyle}>{entry.size === null ? "" : formatMegabytes(entry.size)}</Text>
+                    <Text size="sm" c={metadataColor} truncate title={entry.modified_at ?? undefined} style={cellStyle}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
                   </Box>;
                   })}
                   <Box h={trailingSpacerHeight} aria-hidden="true" />
@@ -1005,9 +1052,9 @@ export function ImportFilesystemPickerModal({
                 selection used to shrink the file browser above it. */}
             <Paper withBorder p="xs" style={{ flex: "none" }}>
               <Group justify="space-between" mb={4}>
-                <Text size="xs" fw={700}>Selected sources</Text>
+                <Text size="sm" fw={700}>Selected sources</Text>
                 <Button
-                  size="compact-xs"
+                  size="compact-sm"
                   variant="subtle"
                   color="gray"
                   disabled={selectedEntries.length === 0}
@@ -1018,9 +1065,9 @@ export function ImportFilesystemPickerModal({
               </Group>
               <ScrollArea h={96} type="auto">
                 {selectedEntries.length === 0 ? (
-                  <Text size="xs" c="dimmed">Nothing selected yet.</Text>
+                  <Text size="sm" c="dimmed">Nothing selected yet.</Text>
                 ) : (
-                  <Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="xs" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack>
+                  <Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="sm" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack>
                 )}
               </ScrollArea>
             </Paper>

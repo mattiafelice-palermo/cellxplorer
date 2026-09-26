@@ -7,12 +7,14 @@ import argparse
 import re
 import sys
 
-STABLE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+SEMVER_NUMBER = r"(?:0|[1-9]\d*)"
+SEMVER_CORE = rf"{SEMVER_NUMBER}\.{SEMVER_NUMBER}\.{SEMVER_NUMBER}"
+STABLE_TAG_RE = re.compile(rf"^v{SEMVER_CORE}$")
 # Accept legacy vX.Y.Z-beta.N and compact vX.Y.Z-betaNNN (sorts above beta.9 on GitHub).
-BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$")
+BETA_TAG_RE = re.compile(rf"^v{SEMVER_CORE}-beta(?:\.{SEMVER_NUMBER}|\d+)$")
 # Alpha uses one exact dotted prerelease grammar and deliberately rejects leading-zero
 # sequence numbers so the tag, manifest, and installed updater all share one identity.
-ALPHA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-alpha\.(?:0|[1-9]\d*)$")
+ALPHA_TAG_RE = re.compile(rf"^v{SEMVER_CORE}-alpha\.{SEMVER_NUMBER}$")
 
 
 class ReleaseTagError(Exception):

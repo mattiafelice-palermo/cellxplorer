@@ -20,6 +20,20 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertEqual(result["technique"], "OCV")
         self.assertIsNone(result["cycle_count"])
         self.assertIsNone(result["error"])
+        self.assertIs(result["compatible"], True)
+
+    def test_unsupported_biologic_technique_is_marked_incompatible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "unsupported-geis.mpr"
+            path.write_bytes(b"mpr")
+            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
+                "error": "unsupported BioLogic technique",
+                "error_kind": "unsupported",
+                "error_message": "Unsupported BioLogic .mpr technique or file layout; CellXplorer does not support this source yet.",
+            }):
+                result = import_file_hints.inspect_header_hint(str(path))
+        self.assertIs(result["compatible"], False)
+        self.assertIn("does not support", result["error"])
 
     def test_header_cycle_count_is_used_only_when_explicitly_available(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -66,7 +66,7 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError("File changed while its header was being read.")
         ext = path.suffix.casefold()
-        if ext == ".xlsx":
+        if ext in {".xlsx", ".mpr"}:
             result["compatible"] = True
         biologic = ext == ".mpr"
         result.update(
@@ -85,7 +85,7 @@ def inspect_header_hint(path_string: str) -> dict[str, object]:
         # explicitly classifies the workbook as unsupported. I/O races,
         # permissions, and malformed-but-recognized exports leave the hint
         # unknown so an optional scan failure cannot hide a selectable file.
-        if path.suffix.casefold() == ".xlsx" and metadata.get("error_kind") == "unsupported":
+        if path.suffix.casefold() in {".xlsx", ".mpr"} and metadata.get("error_kind") == "unsupported":
             result["compatible"] = False
         result["error"] = str(exc)[:300] or "Header metadata is unavailable."
     return result

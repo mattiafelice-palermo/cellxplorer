@@ -31,9 +31,11 @@ GITHUB_BROWSER_DOWNLOAD_RE = re.compile(
     r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/download/"
     r"(?P<tag>[^/?#]+)/(?P<asset_name>[^/?#]+)$"
 )
-STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
-BETA_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$")
-ALPHA_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-alpha\.(?:0|[1-9]\d*)$")
+SEMVER_NUMBER = r"(?:0|[1-9]\d*)"
+SEMVER_CORE = rf"{SEMVER_NUMBER}\.{SEMVER_NUMBER}\.{SEMVER_NUMBER}"
+STABLE_VERSION_RE = re.compile(rf"^{SEMVER_CORE}$")
+BETA_VERSION_RE = re.compile(rf"^{SEMVER_CORE}-beta(?:\.{SEMVER_NUMBER}|\d+)$")
+ALPHA_VERSION_RE = re.compile(rf"^{SEMVER_CORE}-alpha\.{SEMVER_NUMBER}$")
 
 
 class ManifestVerificationError(Exception):
@@ -410,9 +412,9 @@ def infer_setup_exe_name_for_channel(version: str, channel: str) -> str:
 
 
 def assert_channel_version(version: str, channel: str) -> None:
-    if channel == "alpha" and version.strip().startswith("v"):
+    if version.strip().startswith("v"):
         raise ManifestVerificationError(
-            "Alpha channel versions must not include a leading 'v'."
+            "Channel manifest versions must omit the Git tag's leading 'v'."
         )
     normalized = normalize_version(version)
     if channel == "stable" and not STABLE_VERSION_RE.fullmatch(normalized):

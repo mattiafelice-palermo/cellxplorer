@@ -155,6 +155,23 @@ class BumpVersionScriptTests(unittest.TestCase):
             changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
             self.assertIn("## 0.27.0-alpha.1 -", changelog)
 
+    def test_publishable_versions_reject_leading_zero_numeric_identifiers(self):
+        for version in (
+            "00.1.0",
+            "0.01.0",
+            "0.1.00",
+            "0.1.0-alpha.01",
+            "0.1.0-beta.01",
+        ):
+            with self.subTest(version=version):
+                with self.assertRaises(bump_version.BumpVersionError):
+                    bump_version.parse_publishable_version(version)
+
+        self.assertEqual(
+            bump_version.parse_publishable_version("0.1.0-beta011"),
+            "0.1.0-beta011",
+        )
+
     def test_rejects_duplicate_changelog_section(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

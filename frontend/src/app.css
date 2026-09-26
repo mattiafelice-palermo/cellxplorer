@@ -8,6 +8,32 @@ body {
   margin: 0;
 }
 
+.database-nav-link .database-nav-action {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.database-nav-link:hover .database-nav-action,
+.database-nav-link:focus-within .database-nav-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-plot-surface .preview-surface-controls {
+  opacity: 0;
+  transition: opacity 80ms linear;
+}
+
+.preview-plot-surface:hover .preview-surface-controls,
+.preview-surface-controls:focus-within {
+  opacity: 0.5;
+}
+
+.preview-surface-controls:hover,
+.preview-surface-controls:focus-within {
+  opacity: 1;
+}
+
 .cellxplorer-scaled-surface {
   box-sizing: border-box;
   transform-origin: top left;

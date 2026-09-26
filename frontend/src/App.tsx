@@ -30,6 +30,8 @@ import {
   IconLayoutSidebar,
   IconLoader2,
   IconSettings,
+  IconPlus,
+  IconUpload,
 } from "@tabler/icons-react";
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
@@ -648,14 +650,44 @@ export default function App({
         >
           <ScrollArea type="auto" style={{ flex: 1 }}>
           <NavLink
+            className="database-nav-link"
             label="Cell Database"
             leftSection={<IconDatabase size={16} />}
+            rightSection={(
+              <Tooltip label="Load cells" withArrow openDelay={0} closeDelay={0}>
+                <ActionIcon
+                  size="sm"
+                  className="database-nav-action"
+                  variant="light"
+                  color="teal"
+                  aria-label="Load cells"
+                  tabIndex={0}
+                  style={{ border: "1px solid color-mix(in srgb, var(--mantine-primary-color-6) 50%, transparent)" }}
+                  onClick={(event) => { event.stopPropagation(); guardedNavigate("/?loadCells=1"); }}
+                ><IconUpload size={15} /></ActionIcon>
+              </Tooltip>
+            )}
             active={location.pathname === "/"}
             onClick={() => guardedNavigate("/")}
           />
           <NavLink
+            className="database-nav-link"
             label="Analysis Database"
             leftSection={<IconChartLine size={16} />}
+            rightSection={(
+              <Tooltip label="Create analysis" withArrow openDelay={0} closeDelay={0}>
+                <ActionIcon
+                  size="sm"
+                  className="database-nav-action"
+                  variant="light"
+                  color="teal"
+                  aria-label="Create analysis"
+                  tabIndex={0}
+                  style={{ border: "1px solid color-mix(in srgb, var(--mantine-primary-color-6) 50%, transparent)" }}
+                  onClick={(event) => { event.stopPropagation(); guardedNavigate("/analyses?new=1"); }}
+                ><IconPlus size={15} /></ActionIcon>
+              </Tooltip>
+            )}
             active={location.pathname === "/analyses"}
             onClick={() => guardedNavigate("/analyses")}
           />

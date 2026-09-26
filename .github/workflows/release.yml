@@ -131,11 +131,11 @@ jobs:
             python scripts/release_tag.py --tag "$env:GITHUB_REF_NAME"
             if ($LASTEXITCODE -ne 0) { exit 1 }
             $tag = $env:GITHUB_REF_NAME
-            if ($tag -match '^v\d+\.\d+\.\d+-alpha\.(0|[1-9]\d*)$') {
+            if ($tag -match '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-alpha\.(?:0|[1-9]\d*)$') {
               Write-ChannelOutputs "alpha"
-            } elseif ($tag -match '^v\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$') {
+            } elseif ($tag -match '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-beta(?:\.(?:0|[1-9]\d*)|\d+)$') {
               Write-ChannelOutputs "beta"
-            } elseif ($tag -match '^v\d+\.\d+\.\d+$') {
+            } elseif ($tag -match '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$') {
               Write-ChannelOutputs "stable"
             } else {
               Write-Error "Could not classify publishable tag $tag as Stable, Beta, or Alpha."
@@ -205,7 +205,7 @@ jobs:
             if (
               $release.draft -ne $true -and
               -not [string]::IsNullOrWhiteSpace([string]$release.published_at) -and
-              ([string]$release.tag_name) -match '^v\d+\.\d+\.\d+-alpha\.(0|[1-9]\d*)$'
+              ([string]$release.tag_name) -match '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-alpha\.(?:0|[1-9]\d*)$'
             ) {
               $publishedAlpha = $true
               break

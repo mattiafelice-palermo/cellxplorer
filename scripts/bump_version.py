@@ -24,9 +24,11 @@ from check_versions import (
 )
 
 
-SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+SEMVER_NUMBER = r"(?:0|[1-9]\d*)"
+SEMVER_CORE = rf"{SEMVER_NUMBER}\.{SEMVER_NUMBER}\.{SEMVER_NUMBER}"
+SEMVER_RE = re.compile(rf"^({SEMVER_NUMBER})\.({SEMVER_NUMBER})\.({SEMVER_NUMBER})$")
 PUBLISHABLE_VERSION_RE = re.compile(
-    r"^(\d+)\.(\d+)\.(\d+)(?:-(?:beta|alpha)(?:\.(\d+)|(\d+)))?$"
+    rf"^{SEMVER_CORE}(?:-alpha\.{SEMVER_NUMBER}|-beta(?:\.{SEMVER_NUMBER}|\d+))?$"
 )
 CHANGELOG_HEADING_RE = re.compile(
     r"^##\s+(?:\[)?(?P<version>v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\])?"

@@ -434,6 +434,7 @@ const LIBRARY_CELL_TABLE_COL_WIDTHS = {
 export function LibraryPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const openCellImportRef = useRef<(() => void) | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [cellPage, setCellPage] = useState(1);
@@ -463,6 +464,14 @@ export function LibraryPage() {
   // Deep links from the command palette: ?cell=<id> opens that cell's detail,
   // ?replicate=<id> opens the replicate preview. The parameter is consumed
   // once so normal navigation afterwards is unaffected.
+  useEffect(() => {
+    if (searchParams.get("loadCells") !== "1" || !openCellImportRef.current) return;
+    openCellImportRef.current();
+    const next = new URLSearchParams(searchParams);
+    next.delete("loadCells");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   useEffect(() => {
     const cellParam = searchParams.get("cell");
     const replicateParam = searchParams.get("replicate");
@@ -1364,11 +1373,12 @@ export function LibraryPage() {
               qc.invalidateQueries({ queryKey: ["tree"] });
             }}
           >
-            {({ open, loading }) => (
-              <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
+            {({ open, loading }) => {
+              openCellImportRef.current = open;
+              return <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
                 Load cells
-              </Button>
-            )}
+              </Button>;
+            }}
           </ImportCellsLauncher>
           <Menu withinPortal position="bottom-start" width="target">
             <Menu.Target>

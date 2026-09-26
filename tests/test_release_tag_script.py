@@ -47,11 +47,16 @@ class ReleaseTagScriptTests(unittest.TestCase):
         for value in (
             "0.17.0",
             "v0.17",
+            "v00.17.0",
+            "v0.017.0",
+            "v0.17.00",
             "v0.17.0-rc.1",
             "v0.17.0-beta",
+            "v0.17.0-beta.01",
             "v0.17.0-beta.1+build.1",
             "v0.17.0-alpha",
             "v0.17.0-alpha.01",
+            "v00.17.0-alpha.1",
             "v0.17.0-alpha.1+build.1",
         ):
             with self.subTest(value=value):

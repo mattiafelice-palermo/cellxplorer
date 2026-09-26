@@ -155,12 +155,16 @@ class ReleaseTagTests(unittest.TestCase):
     def test_rejects_prerelease_and_malformed_tags(self):
         for tag in (
             "v0.15",
+            "v00.15.0",
+            "v0.015.0",
+            "v0.15.00",
             "release-0.15.0",
             "v0.15.0-rc.1",
             "v0.15.0+build",
             "vfoo",
             "0.15.0",
             "v0.16.2-beta",
+            "v0.16.2-beta.01",
             "v0.16.2-alpha.01",
             "v0.16.2-alpha",
             "v0.16.2-alpha.1+build.1",
@@ -522,12 +526,23 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_alpha_tags_publish_as_prereleases(self):
         self.assertIn(
-            "^v\\d+\\.\\d+\\.\\d+-alpha\\.(0|[1-9]\\d*)$", self.release
+            "^v(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)-alpha\\.(?:0|[1-9]\\d*)$",
+            self.release,
         )
         self.assertIn(
             "steps.channel.outputs.channel == 'alpha'", self.release
         )
         self.assertIn('"is_prerelease=true" >> $env:GITHUB_OUTPUT', self.release)
+
+    def test_channel_classifier_uses_strict_semver_core_for_stable_and_beta(self):
+        self.assertIn(
+            "^v(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)-beta(?:\\.(?:0|[1-9]\\d*)|\\d+)$",
+            self.release,
+        )
+        self.assertIn(
+            "^v(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)$",
+            self.release,
+        )
 
     def test_channel_manifest_is_published_after_verification(self):
         self.assertIn("Publish channel manifest pointer", self.release)
@@ -987,10 +1002,30 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             expected_product_name="CellXplorer Alpha",
         )
 
+    def test_manifest_channel_versions_reject_leading_zero_numeric_identifiers(self):
+        for version, channel in (
+            ("00.15.0", "stable"),
+            ("0.015.0", "stable"),
+            ("0.15.00", "stable"),
+            ("v0.15.0", "stable"),
+            ("00.15.0-beta.1", "beta"),
+            ("0.15.0-beta.01", "beta"),
+            ("v0.15.0-beta.1", "beta"),
+        ):
+            with self.subTest(version=version, channel=channel):
+                with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+                    verify_updater_manifest.assert_channel_version(version, channel)
+
+        verify_updater_manifest.assert_channel_version("0.15.0-beta011", "beta")
+
     def test_rejects_crossed_or_non_exact_alpha_versions(self):
         for version in (
             "0.28.0",
+            "00.28.0-alpha.1",
+            "0.028.0-alpha.1",
+            "0.28.00-alpha.1",
             "0.28.0-beta.1",
+            "0.28.0-beta.01",
             "0.28.0-alpha",
             "0.28.0-alpha.01",
             "0.28.0-alpha1",
