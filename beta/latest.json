@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-beta.2",
-  "notes": "### New features\n\n- Add BioLogic CP and OCV voltage curves and broaden verified GCPL technique-profile support.\n- Improve Cell and analysis picking with richer, resizable previews, plot-axis controls, and quick navigation actions.\n- Expand the filesystem import browser with last-folder restoration, compatibility hints, richer filters, and unavailable-file controls.\n- Speed Time/Capacity cycle navigation with progressive warmup and bounded reusable per-Cell data.\n- Improve continued-Cell workflows with combined previews and clearer source-order and compatibility handling.\n\n### Bug fixes\n\n- Preserve cycle identity, capacity ownership, and provenance across BioLogic parsing and multi-source stitching.\n- Keep analysis previews, plot axes, voltage channels, and series state stable during sample, range, and family changes.\n- Reduce redundant Time/Capacity requests and refinement work while preserving full-timeline coordinates and visible traces.\n- Correct import-browser availability hints for supported and unsupported BioLogic MPR techniques.",
-  "pub_date": "2026-09-26T00:48:55.376Z",
+  "version": "0.27.1-beta.3",
+  "notes": "### Bug fixes\n\n- Make the Add to plot modal typography respect the app-wide UI zoom setting.",
+  "pub_date": "2026-09-26T02:05:05.394Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVptbnd5QVFOQkZJaXFDRXZZV245cFQvcnhPWlNlZDIvRkxTcGlWMlJDSitIZTd5YzA0VXhYUVlmTVNJQmF2WlJHNDFRQnN0ODhGVHQ3NWpsWllwU2dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzgzNzI5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS4yX3g2NC1zZXR1cC5leGUKUUh4bUJFV1JyVThHTzNqL0c3dUp4NG84V3ZSdThsaS9Pd3JZUUFEd3hjc09mUXVkWlc2bEdTRG5MVnd5RC82TjJPSjI3OFlRbHJ0MWpUbzNjWTRyQWc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.2/CellXplorer.Beta_0.27.1-beta.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVE0T1M5RjZkdWpnRjRqN3pnZ3V2b292UWNKTVdKNHIwbDUvQXUwdTJDaFdYUDd4NTc2ejdFUVZrUndsZjNhdjhRYVJsZE5XTml3azdtVjRjYkI0dlFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzg4Mjk5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS4zX3g2NC1zZXR1cC5leGUKRnJyWlIrVXJUV1JPZ3YzS1NmZGg0YkhPMzJPckVGWmRvSGoySk5aOTlVazlHaU8zU1ZXRkI1TXFWcFdTUEtWUjVtTEUrR2pydUlCY21WTUczMDRBQ3c9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.3/CellXplorer.Beta_0.27.1-beta.3_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVptbnd5QVFOQkZJaXFDRXZZV245cFQvcnhPWlNlZDIvRkxTcGlWMlJDSitIZTd5YzA0VXhYUVlmTVNJQmF2WlJHNDFRQnN0ODhGVHQ3NWpsWllwU2dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzgzNzI5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS4yX3g2NC1zZXR1cC5leGUKUUh4bUJFV1JyVThHTzNqL0c3dUp4NG84V3ZSdThsaS9Pd3JZUUFEd3hjc09mUXVkWlc2bEdTRG5MVnd5RC82TjJPSjI3OFlRbHJ0MWpUbzNjWTRyQWc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.2/CellXplorer.Beta_0.27.1-beta.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVE0T1M5RjZkdWpnRjRqN3pnZ3V2b292UWNKTVdKNHIwbDUvQXUwdTJDaFdYUDd4NTc2ejdFUVZrUndsZjNhdjhRYVJsZE5XTml3azdtVjRjYkI0dlFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzg4Mjk5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS4zX3g2NC1zZXR1cC5leGUKRnJyWlIrVXJUV1JPZ3YzS1NmZGg0YkhPMzJPckVGWmRvSGoySk5aOTlVazlHaU8zU1ZXRkI1TXFWcFdTUEtWUjVtTEUrR2pydUlCY21WTUczMDRBQ3c9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.3/CellXplorer.Beta_0.27.1-beta.3_x64-setup.exe"
     }
   }
 }
