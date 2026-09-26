@@ -2369,11 +2369,11 @@ function AddEntriesModal({
         body: { flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" },
       }}
       style={{
-        "--mantine-font-size-xs": "calc(0.75rem * var(--mantine-scale) + 0.2917rem)",
-        "--mantine-font-size-sm": "calc(0.875rem * var(--mantine-scale) + 0.2917rem)",
-        "--mantine-font-size-md": "calc(1rem * var(--mantine-scale) + 0.2917rem)",
-        "--mantine-font-size-lg": "calc(1.125rem * var(--mantine-scale) + 0.2917rem)",
-        "--mantine-font-size-xl": "calc(1.25rem * var(--mantine-scale) + 0.2917rem)",
+        "--mantine-font-size-xs": "calc((0.75rem * var(--mantine-scale) + 0.1667rem) * var(--cellxplorer-ui-zoom, 1))",
+        "--mantine-font-size-sm": "calc((0.875rem * var(--mantine-scale) + 0.1667rem) * var(--cellxplorer-ui-zoom, 1))",
+        "--mantine-font-size-md": "calc((1rem * var(--mantine-scale) + 0.1667rem) * var(--cellxplorer-ui-zoom, 1))",
+        "--mantine-font-size-lg": "calc((1.125rem * var(--mantine-scale) + 0.1667rem) * var(--cellxplorer-ui-zoom, 1))",
+        "--mantine-font-size-xl": "calc((1.25rem * var(--mantine-scale) + 0.1667rem) * var(--cellxplorer-ui-zoom, 1))",
       } as CSSProperties}
     >
       <Stack gap="sm" style={{ height: "100%", minHeight: 0 }}>

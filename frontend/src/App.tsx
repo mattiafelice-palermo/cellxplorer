@@ -170,6 +170,7 @@ export default function App({
   }, [databaseStatus.data, queryClient]);
   useEffect(() => {
     document.documentElement.style.removeProperty("zoom");
+    document.documentElement.style.setProperty("--cellxplorer-ui-zoom", String(uiZoom));
     window.localStorage.setItem("cellxplorer-ui-zoom", String(uiZoom));
     const timer = window.setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
     return () => window.clearTimeout(timer);
