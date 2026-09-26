@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.30",
-  "notes": "### New features\n\n- Add Continuous test-time and Cycle-aligned Time/Capacity display modes.\n- Preserve full-test timeline coordinates across cycle windows, sparse selections, refinements, and full-resolution exports.\n- Prepare saved analysis views during idle time within an estimated memory budget.\n\n### Bug fixes\n\n- Keep manual Time/Capacity x-axis limits stable when navigating Cycle-aligned windows.\n- Preserve elapsed-time coordinates across cache-backed worker results and skipped cycles.\n- Avoid transient redraws and stale voltage-channel availability while Time/Capacity data loads.\n- Keep retained analysis views and sample visibility stable when switching analysis families.\n- Invalidate older Time/Capacity cached results after the coordinate semantics update.",
-  "pub_date": "2026-09-08T23:43:35.306Z",
+  "version": "0.27.1-alpha.31",
+  "notes": "### Bug fixes\n\n- Make the Add to plot modal typography respect the app-wide UI zoom setting.",
+  "pub_date": "2026-09-26T01:30:15.775Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVZUTFZbkdPK05CT0JUc1RBTmljamV5NnNKV0lGYXBlL05PVk1DWSthQTdlRUNTZXNUdTR6ZFRRZklaUzB1Qm5JU290R0hmKzNZNDJUM3BHTXF6bXdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTExMDEwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMwX3g2NC1zZXR1cC5leGUKV3ZJNHhOckhjNkVtTnRkUVRMdG1KZDFBWWo0cW50c0JUS2hRay9VVGgrM0lTNzlCVUJBeDdrZm9oYlU5aGFsUVlOTzJLVFgxREl3a0pITEhiczE5QWc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.30/CellXplorer.Alpha_0.27.1-alpha.30_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVhOMnlEdUdvaHIwUytTVnJhWURtdFQ3M2g1czduazNBTUw1a1dUd1gxZnZ6bnpSSGtqUEVNYTFNWURYY0Rpb0txYzlFa3g0SW5wOERNS3FBWC93T0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzg2MjEwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMxX3g2NC1zZXR1cC5leGUKVFIrUUppR2s0RjV6NnkzR21aWlMvQ0cyVnZtYk5ncDE0RUkvSHdiRys5bXJ6Um9YRVhjQ1VCY1ZtMW5ObndBYTQrZTdPYU9HSDYrUUdEYmUyVlpkQkE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.31/CellXplorer.Alpha_0.27.1-alpha.31_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVZUTFZbkdPK05CT0JUc1RBTmljamV5NnNKV0lGYXBlL05PVk1DWSthQTdlRUNTZXNUdTR6ZFRRZklaUzB1Qm5JU290R0hmKzNZNDJUM3BHTXF6bXdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTExMDEwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMwX3g2NC1zZXR1cC5leGUKV3ZJNHhOckhjNkVtTnRkUVRMdG1KZDFBWWo0cW50c0JUS2hRay9VVGgrM0lTNzlCVUJBeDdrZm9oYlU5aGFsUVlOTzJLVFgxREl3a0pITEhiczE5QWc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.30/CellXplorer.Alpha_0.27.1-alpha.30_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVhOMnlEdUdvaHIwUytTVnJhWURtdFQ3M2g1czduazNBTUw1a1dUd1gxZnZ6bnpSSGtqUEVNYTFNWURYY0Rpb0txYzlFa3g0SW5wOERNS3FBWC93T0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzg2MjEwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMxX3g2NC1zZXR1cC5leGUKVFIrUUppR2s0RjV6NnkzR21aWlMvQ0cyVnZtYk5ncDE0RUkvSHdiRys5bXJ6Um9YRVhjQ1VCY1ZtMW5ObndBYTQrZTdPYU9HSDYrUUdEYmUyVlpkQkE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.31/CellXplorer.Alpha_0.27.1-alpha.31_x64-setup.exe"
     }
   }
 }
