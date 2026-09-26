@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-beta.2 - 2026-09-26
+
+### New features
+
+- Add BioLogic CP and OCV voltage curves and broaden verified GCPL technique-profile support.
+- Improve Cell and analysis picking with richer, resizable previews, plot-axis controls, and quick navigation actions.
+- Expand the filesystem import browser with last-folder restoration, compatibility hints, richer filters, and unavailable-file controls.
+- Speed Time/Capacity cycle navigation with progressive warmup and bounded reusable per-Cell data.
+- Improve continued-Cell workflows with combined previews and clearer source-order and compatibility handling.
+
+### Bug fixes
+
+- Preserve cycle identity, capacity ownership, and provenance across BioLogic parsing and multi-source stitching.
+- Keep analysis previews, plot axes, voltage channels, and series state stable during sample, range, and family changes.
+- Reduce redundant Time/Capacity requests and refinement work while preserving full-timeline coordinates and visible traces.
+- Correct import-browser availability hints for supported and unsupported BioLogic MPR techniques.
+
 ## 0.27.1-beta.1 - 2026-09-09
 
 ### New features
