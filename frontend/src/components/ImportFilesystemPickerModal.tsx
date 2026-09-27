@@ -227,6 +227,11 @@ export function ImportFilesystemPickerModal({
   });
   const [selectedSearch, setSelectedSearch] = useState("");
   const [selectedPreviewPath, setSelectedPreviewPath] = useState<string | null>(null);
+  const [focusedEntryPath, setFocusedEntryPath] = useState<string | null>(null);
+  const [quickPreviewCompletedPath, setQuickPreviewCompletedPath] = useState<string | null>(null);
+  useEffect(() => {
+    if (!opened) setQuickPreviewCompletedPath(null);
+  }, [opened]);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
   const [previewPreferences, setPreviewPreferences] = useState<ImportSourcePreviewPreferences>(DEFAULT_IMPORT_SOURCE_PREVIEW_PREFERENCES);
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
@@ -243,7 +248,11 @@ export function ImportFilesystemPickerModal({
     enabled: opened,
     placeholderData: (previous) => previous,
   });
-  const selectedPreviewEntry = selectedPreviewPath ? selected.get(selectedPreviewPath) ?? null : null;
+  const selectedPreviewEntry = selectedPreviewPath
+    ? selected.get(selectedPreviewPath)
+      ?? browseQuery.data?.entries.find((entry) => entry.path === selectedPreviewPath)
+      ?? null
+    : null;
   const selectedPreviewQuery = useQuery<ImportPreview>({
     queryKey: ["import-picker-selected-preview", selectedPreviewEntry?.path],
     queryFn: async ({ signal }) => {
@@ -258,7 +267,8 @@ export function ImportFilesystemPickerModal({
       }
       return preview;
     },
-    enabled: opened && mode === "files" && !previewCollapsed && selectedPreviewEntry?.kind === "file",
+    enabled: opened && mode === "files" && !previewCollapsed && selectedPreviewEntry?.kind === "file"
+      && (!/\.ndax$/i.test(selectedPreviewEntry.path) || quickPreviewCompletedPath === selectedPreviewEntry.path),
     staleTime: Infinity,
     retry: false,
   });
@@ -405,7 +415,9 @@ export function ImportFilesystemPickerModal({
     if (selectionKey === undefined) {
       setSelected(new Map());
       setLastSelectedPath(null);
+      setSelectedPreviewPath(null);
     }
+    setFocusedEntryPath(null);
     setSelectedSearch("");
     setPreviewCollapsed(false);
     setKnownFolderImportability(new Map());
@@ -494,6 +506,8 @@ export function ImportFilesystemPickerModal({
     // to have a completed compatibility result before submission.
     setEntryScrollTop(0);
     setLastSelectedPath(reset.lastSelectedPath);
+    setFocusedEntryPath(null);
+    setSelectedPreviewPath((current) => current && selected.has(current) ? current : null);
     if (options.keepPathEditor) {
       setPathEditing(true);
       setPendingPathEditTarget(path);
@@ -575,16 +589,29 @@ export function ImportFilesystemPickerModal({
     for (const candidate of safeSelection.values()) if (unavailableFile(candidate)) safeSelection.delete(candidate.path);
     setSelected(safeSelection);
     setLastSelectedPath(update.lastSelectedPath);
-    if (safeSelection.has(entry.path)) setSelectedPreviewPath(entry.path);
+  };
+
+  const includeFile = (entry: ImportBrowseEntry) => {
+    if (unavailableFile(entry)) return;
+    setSelected((current) => new Map(current).set(entry.path, entry));
+    setLastSelectedPath(entry.path);
+    setSelectedPreviewPath(entry.path);
   };
 
   const activateRow = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
-    if (importRowAction(entry) === "navigate") {
+    const action = importRowAction(entry);
+    if (action === "navigate") {
       navigate(entry.path);
       return;
     }
+    if (entry.kind === "folder") {
+      if (ctrlKey || metaKey) activateFolderCheckbox(entry);
+      return;
+    }
     if (unavailableFile(entry)) return;
-    toggleFile(entry, shiftKey, ctrlKey, metaKey);
+    setSelectedPreviewPath(entry.path);
+    setLastSelectedPath(entry.path);
+    if (shiftKey || ctrlKey || metaKey) toggleFile(entry, shiftKey, ctrlKey, metaKey);
   };
 
   const activateFolderCheckbox = (entry: ImportBrowseEntry) => {
@@ -593,10 +620,19 @@ export function ImportFilesystemPickerModal({
   };
 
   const handleRowKeyDown = (entry: ImportBrowseEntry, event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      if (!allVisibleSelected) toggleShownSelection();
+      return;
+    }
     const action = importKeyboardAction(entry, event.key);
     if (!action) return;
     event.preventDefault();
     if (action === "navigate") navigate(entry.path);
+    else if (action === "preview") {
+      if (entry.kind === "file" && !unavailableFile(entry)) setSelectedPreviewPath(entry.path);
+    } else if (entry.kind === "folder") activateFolderCheckbox(entry);
     else toggleFile(entry);
   };
 
@@ -605,10 +641,10 @@ export function ImportFilesystemPickerModal({
     `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(selectedSearch.trim().toLocaleLowerCase()),
   );
   useEffect(() => {
-    if (selectedPreviewPath && selected.get(selectedPreviewPath)?.kind === "file") return;
-    const nextPreview = [...selected.values()].reverse().find((entry) => entry.kind === "file");
-    setSelectedPreviewPath(nextPreview?.path ?? null);
-  }, [selected, selectedPreviewPath]);
+    if (!selectedPreviewPath || selected.has(selectedPreviewPath)) return;
+    if (browseQuery.data?.entries.some((entry) => entry.path === selectedPreviewPath)) return;
+    setSelectedPreviewPath(null);
+  }, [browseQuery.data?.entries, selected, selectedPreviewPath]);
   const selectedFileResolutionPending = selectedEntries.some((entry) =>
     entry.kind === "file"
     && !headerHints.has(entry.path)
@@ -1098,6 +1134,11 @@ export function ImportFilesystemPickerModal({
               </Button>}
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
+            {mode === "files" && (
+              <Text size="xs" c="dimmed">
+                Click a file to preview or a folder to focus it. Press Space or Ctrl-click to include; Shift-click selects a file range. Double-click includes a file or opens a folder. Ctrl+A selects all shown.
+              </Text>
+            )}
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
@@ -1113,10 +1154,14 @@ export function ImportFilesystemPickerModal({
                   const hint = headerHints.get(entry.path);
                   const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
                   const rowSelected = selected.has(entry.path) || folderState !== "none";
+                  const previewActive = selectedPreviewPath === entry.path;
+                  const rowFocused = focusedEntryPath === entry.path;
                   const selectedForeground = "light-dark(var(--mantine-color-black), var(--mantine-color-white))";
                   const rowBackground = selected.has(entry.path) || folderState === "some"
                     ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
-                    : "var(--mantine-color-body)";
+                    : previewActive || rowFocused
+                      ? "light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5))"
+                      : "var(--mantine-color-body)";
                   const disabledFile = unavailableFile(entry);
                   const metadataColor = rowSelected ? selectedForeground : "dimmed";
                   const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
@@ -1131,7 +1176,39 @@ export function ImportFilesystemPickerModal({
                       : hint?.error
                         ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
                         : headerScanPending ? "Checking whether this file can be imported…" : null;
-                  return <Box key={entry.path} px="sm" role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-disabled={!isFolder && disabledFile} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : undefined} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : disabledFile ? "not-allowed" : "default", opacity: disabledFile ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
+                  const rowInstructions = isFolder
+                    ? `Double-click or press Enter to open ${entry.name}. Press Space or Ctrl-click to include its files.`
+                    : `Click to preview ${entry.name}. Press Space or Ctrl-click to include it; Shift-click selects a range; double-click includes it.`;
+                  return <Box
+                    key={entry.path}
+                    px="sm"
+                    role={isFolder ? "button" : "option"}
+                    aria-label={rowInstructions}
+                    aria-disabled={!isFolder && disabledFile}
+                    aria-selected={!isFolder ? selected.has(entry.path) : undefined}
+                    aria-current={previewActive ? "true" : undefined}
+                    tabIndex={0}
+                    title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : rowInstructions}
+                    style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: disabledFile ? "not-allowed" : "pointer", opacity: disabledFile ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, userSelect: "none" }}
+                    onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      const target = event.target;
+                      if (target instanceof Element && target.closest("input, label, [role='checkbox'], button")) return;
+                      if (isFolder) navigate(entry.path);
+                      else includeFile(entry);
+                    }}
+                    onFocus={() => {
+                      setFocusedEntryPath(entry.path);
+                      if (!isFolder && !disabledFile) setSelectedPreviewPath(entry.path);
+                    }}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setFocusedEntryPath(null);
+                      }
+                    }}
+                    onKeyDown={(event) => handleRowKeyDown(entry, event)}
+                  >
                     <Checkbox
                       aria-label={isFolder ? `Select all importable files in ${entry.name}` : `Select ${entry.name}`}
                       checked={isFolder ? folderState === "all" : selected.has(entry.path)}
@@ -1169,7 +1246,13 @@ export function ImportFilesystemPickerModal({
             {mode === "files" && (
               <Paper withBorder p="xs" style={{ width: previewCollapsed ? 44 : "clamp(280px, 28vw, 390px)", flex: "0 0 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
                 <Group justify={previewCollapsed ? "center" : "space-between"} wrap="nowrap" mb={previewCollapsed ? 0 : "xs"}>
-                  {!previewCollapsed && <Text size="sm" fw={700}>Preview</Text>}
+                  {!previewCollapsed && (
+                    <Tooltip label={selectedPreviewEntry?.path ?? "Select a source file to preview it."} withArrow>
+                      <Text size="sm" fw={700} truncate style={{ minWidth: 0 }}>
+                        {selectedPreviewEntry ? `Preview · ${selectedPreviewEntry.name}` : "Preview"}
+                      </Text>
+                    </Tooltip>
+                  )}
                   <ActionIcon
                     size="sm"
                     variant="default"
@@ -1182,12 +1265,17 @@ export function ImportFilesystemPickerModal({
                   <Stack gap="xs" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
                     {selectedPreviewEntry ? (
                       <>
-                        <Tooltip label={selectedPreviewEntry.path} withArrow>
-                          <Text size="xs" c="dimmed" truncate>{selectedPreviewEntry.name}</Text>
-                        </Tooltip>
-                        {previewMatchesSelection ? (
+                        {previewMatchesSelection || /\.ndax$/i.test(selectedPreviewEntry.path) ? (
                           <ImportSourcePreview
-                            source={selectedPreviewQuery.data!}
+                            source={previewMatchesSelection ? selectedPreviewQuery.data! : null}
+                            quickSourcePath={selectedPreviewEntry.path}
+                            quickSourceVersion={`${selectedPreviewEntry.size ?? "unknown"}:${selectedPreviewEntry.modified_at ?? "unknown"}`}
+                            onQuickPreviewSettled={setQuickPreviewCompletedPath}
+                            inspectionError={selectedPreviewQuery.isError
+                              ? selectedPreviewQuery.error instanceof Error
+                                ? selectedPreviewQuery.error.message
+                                : "This file could not be inspected for preview."
+                              : undefined}
                             preferences={previewPreferences}
                             onPreferencesChange={(update) => setPreviewPreferences((current) => ({ ...current, ...update }))}
                           />

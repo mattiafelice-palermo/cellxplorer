@@ -2071,6 +2071,101 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["segments"][0]["display_x_start"], 0.0)
         self.assertEqual(response["segments"][1]["display_x_end"], 25.0)
 
+    def test_single_source_voltage_preview_reads_only_the_selected_indexed_cycles(self):
+        source = {
+            "hash": "a" * 64,
+            "parser_version": "parser",
+            "source_key": "staged-a",
+            "filename": "sample.ndax",
+        }
+        cycle_rows = pd.DataFrame(
+            {
+                "segment": [0] * 6,
+                "source_cycle": [10, 11, 12, 13, 14, 15],
+                "cycle": [1, 2, 3, 4, 5, 6],
+            }
+        )
+        selected_raw = pd.DataFrame(
+            {
+                "record_index": [9, 10, 11, 12],
+                "cycle": [14, 14, 15, 15],
+                "status": ["CC Chg"] * 4,
+                "total_time_s": [40.0, 41.0, 50.0, 51.0],
+                "capacity_mah": [10.0, 11.0, 20.0, 21.0],
+                "voltage_v": [3.1, 3.2, 3.3, 3.4],
+            }
+        )
+        raw_index = {
+            "observed_source_cycles": [10, 11, 12, 13, 14, 15],
+            "raw_column_names": list(selected_raw.columns),
+            "preview_time_origin_s": 5.0,
+        }
+
+        with (
+            patch.object(files.stitch, "stitch_cycles", return_value=(cycle_rows, [], [])),
+            patch.object(files.cache, "load_raw_layout_index", return_value=raw_index),
+            patch.object(files.cache, "load_raw_cycles", return_value=selected_raw) as load_selected,
+            patch.object(files.cache, "load_raw", side_effect=AssertionError("indexed preview must not read all raw rows")),
+        ):
+            response = files._build_continuation_preview(
+                [source],
+                quantity="voltage",
+                cycle_start=5,
+                cycle_end=6,
+            )
+
+        self.assertEqual(response["cycle_count"], 6)
+        self.assertEqual(response["segments"][0]["x"], [35.0, 36.0, 45.0, 46.0])
+        self.assertEqual(response["segments"][0]["y"], [3.1, 3.2, 3.3, 3.4])
+        self.assertEqual(set(load_selected.call_args.args[2]), {14, 15})
+
+    def test_single_source_capacity_axis_uses_selected_indexed_cycles(self):
+        source = {
+            "hash": "a" * 64,
+            "parser_version": "parser",
+            "source_key": "staged-a",
+            "filename": "sample.ndax",
+        }
+        cycle_rows = pd.DataFrame(
+            {
+                "segment": [0] * 6,
+                "source_cycle": [10, 11, 12, 13, 14, 15],
+                "cycle": [1, 2, 3, 4, 5, 6],
+            }
+        )
+        selected_raw = pd.DataFrame(
+            {
+                "record_index": [9, 10, 11, 12],
+                "cycle": [14, 14, 15, 15],
+                "status": ["CC Chg"] * 4,
+                "capacity_mah": [10.0, 11.0, 20.0, 21.0],
+                "total_time_s": [40.0, 41.0, 50.0, 51.0],
+                "voltage_v": [3.1, 3.2, 3.3, 3.4],
+            }
+        )
+        raw_index = {
+            "observed_source_cycles": [10, 11, 12, 13, 14, 15],
+            "raw_column_names": list(selected_raw.columns),
+            "preview_time_origin_s": 5.0,
+        }
+        with (
+            patch.object(files.stitch, "stitch_cycles", return_value=(cycle_rows, [], [])),
+            patch.object(files.cache, "load_raw_layout_index", return_value=raw_index),
+            patch.object(files.cache, "load_raw_cycles", return_value=selected_raw) as load_selected,
+            patch.object(files.cache, "load_raw", side_effect=AssertionError("indexed preview must not read all raw rows")),
+        ):
+            response = files._build_continuation_preview(
+                [source],
+                quantity="voltage",
+                voltage_x_axis="capacity",
+                cycle_start=5,
+                cycle_end=6,
+            )
+
+        self.assertEqual(response["cycle_count"], 6)
+        self.assertEqual(response["segments"][0]["x"], [10.0, 11.0, 20.0, 21.0])
+        self.assertEqual(set(load_selected.call_args.args[2]), {14, 15})
+
     def test_stitched_voltage_cycle_extent_stays_full_for_a_bounded_window(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "stitched-voltage.ndax"

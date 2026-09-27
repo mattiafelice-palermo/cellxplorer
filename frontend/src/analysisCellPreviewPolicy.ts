@@ -1,5 +1,11 @@
 export type PreviewCycleWindow = { start: number; end: number };
 
+/** Capacity/CE previews start with the entire available cycle range selected. */
+export function fullPreviewCycleWindow(cycleCount: number): PreviewCycleWindow | null {
+  const count = Math.trunc(cycleCount);
+  return Number.isFinite(count) && count > 0 ? { start: 1, end: count } : null;
+}
+
 /** Shift the visible cycle window by its span, clamping both ends at the data bounds. */
 export function shiftPreviewCycleWindow(
   window: PreviewCycleWindow,

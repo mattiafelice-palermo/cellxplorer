@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Box, Center, Group, Loader, NumberInput, SegmentedControl, Stack, Switch, Tabs, Text, Tooltip, useComputedColorScheme, useMantineTheme } from "@mantine/core";
+import { ActionIcon, Alert, Box, Button, Center, Group, Loader, Modal, NumberInput, SegmentedControl, Stack, Switch, Tabs, Text, Tooltip, useComputedColorScheme, useMantineTheme } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -8,13 +8,14 @@ import {
   ContinuationPreviewResult,
   ImportPreview,
   inspectContinuationSources,
+  previewQuickNdaxVoltage,
   previewContinuationSources,
 } from "../api";
 import {
   scaleContinuationPreviewTimeAxis,
   type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
-import { shiftPreviewCycleWindow } from "../analysisCellPreviewPolicy";
+import { fullPreviewCycleWindow, shiftPreviewCycleWindow } from "../analysisCellPreviewPolicy";
 import { CellPreviewPlot, CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
 import {
   cellPreviewCapacityLayout,
@@ -24,7 +25,7 @@ import {
   paddedEfficiencyRange,
   type CellPreviewCycleSeries,
 } from "./cellPreviewPlotModel";
-import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
+import { IconAlertTriangle, IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 
 export type ImportPreviewView = "voltage" | "cycles";
 export type ImportPreviewVoltageXAxis = "time" | "capacity";
@@ -67,19 +68,67 @@ function requestFor(
   };
 }
 
+function formatParserWarningExample(example: Record<string, number | string | boolean | null>): string | null {
+  const scope = typeof example.step === "number"
+    ? `Step ${example.step}`
+    : typeof example.cycle === "number"
+      ? `Cycle ${example.cycle}`
+      : null;
+  if (!scope) return null;
+  const quantity = typeof example.quantity === "string" ? example.quantity : "summary";
+  if (typeof example.summary_pct === "number" && typeof example.measurement_pct === "number") {
+    const impliedRange = typeof example.rounding_min_pct === "number" && typeof example.rounding_max_pct === "number"
+      ? `; rounded capacities imply ${example.rounding_min_pct.toFixed(2)}–${example.rounding_max_pct.toFixed(2)}%`
+      : "";
+    return `${scope} ${quantity}: workbook ${example.summary_pct.toFixed(2)}%; raw records ${example.measurement_pct.toFixed(2)}%${impliedRange}.`;
+  }
+  const summary = typeof example.summary_mwh === "number" ? example.summary_mwh : null;
+  const measurement = typeof example.measurement_integration_mwh === "number"
+    ? example.measurement_integration_mwh
+    : typeof example.calculated_mwh === "number"
+      ? example.calculated_mwh
+      : null;
+  if (summary !== null && measurement !== null) {
+    return `${scope} ${quantity}: workbook ${summary.toPrecision(6)} mWh; raw-record calculation ${measurement.toPrecision(6)} mWh.`;
+  }
+  return null;
+}
+
 export function ImportSourcePreview({
-  source,
+  source: inspectedSource,
+  quickSourcePath,
+  quickSourceVersion,
+  onQuickPreviewSettled,
+  inspectionError,
   activeMassMgOverride,
   plotHeight = 352,
+  stablePlotHeight = false,
   preferences,
   onPreferencesChange,
 }: {
-  source: ImportPreview;
+  source: ImportPreview | null;
+  quickSourcePath?: string;
+  quickSourceVersion?: string;
+  onQuickPreviewSettled?: (path: string) => void;
+  inspectionError?: string;
   activeMassMgOverride?: number | null;
   plotHeight?: number;
+  stablePlotHeight?: boolean;
   preferences?: ImportSourcePreviewPreferences;
   onPreferencesChange?: (update: Partial<ImportSourcePreviewPreferences>) => void;
 }) {
+  // The file picker mounts this plot immediately. Full identity and header
+  // inspection continues separately and replaces these display-only values.
+  const source = inspectedSource ?? ({
+    staged_name: quickSourcePath ?? "",
+    source_path: quickSourcePath ?? null,
+    hash: "quick-preview",
+    active_mass_mg: null,
+    metadata_only: false,
+    technique: null,
+    capacity_preview: null,
+    inspection: { hash: "", size: 0, mtime_ns: "0" },
+  } as ImportPreview);
   const [localPreferences, setLocalPreferences] = useState(DEFAULT_IMPORT_SOURCE_PREVIEW_PREFERENCES);
   const currentPreferences = preferences ?? localPreferences;
   const { view, voltageXAxis, capacityView, surfaceMode } = currentPreferences;
@@ -108,8 +157,9 @@ export function ImportSourcePreview({
   const [normalizeByMass, setNormalizeByMass] = useState(activeMassG !== null);
   const [cycleRange, setCycleRange] = useState<{ start: number; end: number } | null>(null);
   const [voltageCycleRange, setVoltageCycleRange] = useState<{ start: number; end: number } | null>(null);
+  const [warningsOpen, setWarningsOpen] = useState(false);
   const { ref: plotSurfaceRef, width: plotSurfaceWidth } = useElementSize();
-  const responsivePlotHeight = plotSurfaceWidth > 0
+  const responsivePlotHeight = !stablePlotHeight && plotSurfaceWidth > 0
     ? Math.max(240, Math.min(plotHeight, Math.round(plotSurfaceWidth - 34)))
     : plotHeight;
   const plotStackHeight = responsivePlotHeight + 20;
@@ -119,6 +169,26 @@ export function ImportSourcePreview({
   useEffect(() => {
     if (!preferences) setSurfaceMode("theme");
   }, [source.staged_name, source.hash, preferences]);
+  const quickVoltageQuery = useQuery({
+    queryKey: ["import-quick-ndax-voltage", quickSourcePath, quickSourceVersion, voltageXAxis, voltageCycleRange?.start, voltageCycleRange?.end],
+    queryFn: ({ signal }) => previewQuickNdaxVoltage({
+      source_path: quickSourcePath!,
+      voltage_x_axis: voltageXAxis,
+      ...(voltageCycleRange ? { cycle_start: voltageCycleRange.start, cycle_end: voltageCycleRange.end } : {}),
+    }, { signal }),
+    enabled: view === "voltage" && Boolean(quickSourcePath && /\.ndax$/i.test(quickSourcePath)),
+    staleTime: Infinity,
+    refetchOnMount: "always",
+    retry: false,
+  });
+  useEffect(() => {
+    if (quickSourcePath && !quickVoltageQuery.isFetching && (quickVoltageQuery.isSuccess || quickVoltageQuery.isError)) {
+      onQuickPreviewSettled?.(quickSourcePath);
+    }
+  }, [quickSourcePath, quickVoltageQuery.isSuccess, quickVoltageQuery.isError, quickVoltageQuery.isFetching, onQuickPreviewSettled]);
+  const freshQuickPreview = quickVoltageQuery.isFetching ? null : quickVoltageQuery.data?.preview;
+  const quickVoltageAvailable = Boolean(freshQuickPreview);
+  const quickVoltageTerminal = quickVoltageQuery.isError || (!quickVoltageQuery.isFetching && quickVoltageQuery.data?.preview === null);
   const inspectRequest = {
     sources: [{
       staged_name: source.staged_name,
@@ -131,14 +201,16 @@ export function ImportSourcePreview({
   const inspectionQuery = useQuery({
     queryKey: ["import-source-continuation-inspection", source.staged_name, source.hash],
     queryFn: () => inspectContinuationSources(inspectRequest),
-    enabled: view === "voltage" || view === "cycles",
+    enabled: Boolean(inspectedSource) && (
+      view === "cycles" || !quickSourcePath || !/\.ndax$/i.test(quickSourcePath) || quickVoltageTerminal
+    ),
     staleTime: Infinity,
     refetchInterval: (query) => {
       const data = query.state.data;
       const terminalSourceError = data?.sources.some((item) =>
         item.inspection_status === "error" || item.cache_build_status === "failed" || item.parse_status === "error",
       );
-      return data?.inspection_complete || terminalSourceError ? false : 1000;
+      return data?.inspection_complete || terminalSourceError ? false : 500;
     },
   });
   const inspectionFailure = inspectionQuery.data?.sources.find((item) =>
@@ -148,15 +220,45 @@ export function ImportSourcePreview({
     || (inspectionFailure?.cache_build_status === "failed" ? "The source cache could not be prepared." : null)
     || "Source inspection failed.";
   const continuationReady = inspectionQuery.data?.inspection_complete === true && !inspectionFailure;
+  const usesCapacityBundlePreview = /\.ndax$/i.test(source.source_path ?? source.staged_name);
+  const canRequestFastVoltagePreview = view === "voltage"
+    && usesCapacityBundlePreview;
   const sourceSupportsCycles = !source.metadata_only && source.technique?.trim().toLocaleUpperCase() !== "OCV";
   const inspectionCycleCount = Math.max(0, ...((inspectionQuery.data?.sources ?? []).map((item) => item.local_cycle_count ?? 0)));
+  const requestedVoltageCycleRange = voltageCycleRange ?? (inspectionCycleCount > 0
+    ? { start: Math.max(1, inspectionCycleCount - 19), end: inspectionCycleCount }
+    : null);
+  const parserWarnings = inspectionQuery.data?.sources.flatMap((item) => item.parser_warnings ?? []) ?? [];
+  const parserWarningCount = parserWarnings.reduce((total, warning) => total + warning.count, 0);
   const voltageQuery = useQuery({
-    queryKey: ["import-source-preview", source.staged_name, source.hash, "voltage", voltageXAxis, voltageCycleRange?.start, voltageCycleRange?.end],
+    queryKey: ["import-source-preview", source.staged_name, source.hash, "voltage", voltageXAxis, requestedVoltageCycleRange?.start, requestedVoltageCycleRange?.end, continuationReady],
     queryFn: ({ signal }) => previewContinuationSources(
-      requestFor(source, "voltage", voltageXAxis, voltageCycleRange),
+      requestFor(source, "voltage", voltageXAxis, requestedVoltageCycleRange),
       { signal },
     ),
-    enabled: view === "voltage" && continuationReady,
+    enabled: view === "voltage" && Boolean(inspectedSource)
+      && (!quickSourcePath || !/\.ndax$/i.test(quickSourcePath) || quickVoltageTerminal)
+      && (continuationReady || canRequestFastVoltagePreview),
+    staleTime: Infinity,
+    placeholderData: (previous) => previous,
+    retry: false,
+  });
+  const capacityBundleCycleRange = continuationReady ? cycleRange : null;
+  const capacityBundleQuery = useQuery({
+    queryKey: [
+      "import-source-preview",
+      source.staged_name,
+      source.hash,
+      "capacity_bundle",
+      continuationReady,
+      capacityBundleCycleRange?.start,
+      capacityBundleCycleRange?.end,
+    ],
+    queryFn: ({ signal }) => previewContinuationSources(
+      requestFor(source, "capacity_bundle", voltageXAxis, capacityBundleCycleRange),
+      { signal },
+    ),
+    enabled: view === "cycles" && Boolean(inspectedSource) && !source.metadata_only && usesCapacityBundlePreview,
     staleTime: Infinity,
     placeholderData: (previous) => previous,
     retry: false,
@@ -168,19 +270,20 @@ export function ImportSourcePreview({
         requestFor(source, quantity, voltageXAxis, cycleRange),
         { signal },
       ),
-      enabled: view === "cycles" && !source.metadata_only && continuationReady,
+      enabled: view === "cycles" && Boolean(inspectedSource) && !source.metadata_only && continuationReady && !usesCapacityBundlePreview,
       staleTime: Infinity,
       placeholderData: (previous: ContinuationPreviewResult | undefined) => previous,
       retry: false,
     })),
   });
+  const voltageResponse = freshQuickPreview ?? voltageQuery.data;
   const voltagePreview = useMemo(
-    () => voltageQuery.data
-      ? (voltageQuery.data.x_label?.toLocaleLowerCase().startsWith("time") ?? voltageXAxis === "time")
-        ? scaleContinuationPreviewTimeAxis(voltageQuery.data)
-        : voltageQuery.data
+    () => voltageResponse
+      ? (voltageResponse.x_label?.toLocaleLowerCase().startsWith("time") ?? voltageXAxis === "time")
+        ? scaleContinuationPreviewTimeAxis(voltageResponse)
+        : voltageResponse
       : null,
-    [voltageQuery.data, voltageXAxis],
+    [voltageResponse, voltageXAxis],
   );
   const voltageTraces = useMemo(() => voltagePreview
     ? cellPreviewVoltageTraces(voltagePreview.segments.map((segment) => ({
@@ -191,36 +294,43 @@ export function ImportSourcePreview({
       })))
     : [], [voltagePreview]);
   const capacitySeries = useMemo<CellPreviewCycleSeries[]>(() => {
+    const bundlePreview = usesCapacityBundlePreview
+      ? capacityBundleQuery.data as ContinuationPreviewResult | undefined
+      : undefined;
     const dischargePreview = capacityQueries[0]?.data as ContinuationPreviewResult | undefined;
     const chargePreview = capacityQueries[1]?.data as ContinuationPreviewResult | undefined;
     const keys = new Set([
+      ...(bundlePreview?.segments.map((segment) => segment.source_key) ?? []),
       ...(dischargePreview?.segments.map((segment) => segment.source_key) ?? []),
       ...(chargePreview?.segments.map((segment) => segment.source_key) ?? []),
     ]);
     return [...keys].map((key) => {
+      const bundle = bundlePreview?.segments.find((segment) => segment.source_key === key);
       const discharge = dischargePreview?.segments.find((segment) => segment.source_key === key);
       const charge = chargePreview?.segments.find((segment) => segment.source_key === key);
-      const efficiency = [discharge, charge].find((segment) =>
+      const efficiency = [bundle, discharge, charge].find((segment) =>
         segment?.coulombic_efficiency_x?.length && segment.coulombic_efficiency_pct?.length,
       );
       const inRange = (cycle: number | null) => cycle !== null
         && (!cycleRange || (cycle >= cycleRange.start && cycle <= cycleRange.end));
-      const dischargeX = discharge?.x ?? [];
-      const chargeX = charge?.x ?? [];
+      const dischargeX = bundle?.discharge_capacity_x ?? discharge?.x ?? [];
+      const dischargeY = bundle?.discharge_capacity_y ?? discharge?.y ?? [];
+      const chargeX = bundle?.charge_capacity_x ?? charge?.x ?? [];
+      const chargeY = bundle?.charge_capacity_y ?? charge?.y ?? [];
       const efficiencyX = efficiency?.coulombic_efficiency_x ?? [];
       const efficiencyPct = efficiency?.coulombic_efficiency_pct ?? [];
       return {
         x: [],
         dischargeX: dischargeX.filter(inRange),
-        dischargeCapacityMah: discharge?.y.filter((_, index) => inRange(dischargeX[index])) ?? [],
+        dischargeCapacityMah: dischargeY.filter((_, index) => inRange(dischargeX[index])) ?? [],
         chargeX: chargeX.filter(inRange),
-        chargeCapacityMah: charge?.y.filter((_, index) => inRange(chargeX[index])) ?? [],
+        chargeCapacityMah: chargeY.filter((_, index) => inRange(chargeX[index])) ?? [],
         efficiencyX: efficiencyX.filter(inRange),
         efficiencyPct: efficiencyPct.filter((_, index) => inRange(efficiencyX[index] ?? null)),
         massG: activeMassG,
       };
     });
-  }, [activeMassG, capacityQueries, cycleRange]);
+  }, [activeMassG, capacityBundleQuery.data, capacityQueries, cycleRange, usesCapacityBundlePreview]);
   const capacityTraces = useMemo(
     () => cellPreviewCapacityTraces(capacitySeries, capacityView, normalizeByMass),
     [capacitySeries, capacityView, normalizeByMass],
@@ -229,21 +339,38 @@ export function ImportSourcePreview({
     () => paddedEfficiencyRange(capacitySeries.flatMap((series) => series.efficiencyPct ?? [])),
     [capacitySeries],
   );
-  const cycleCount = Math.max(inspectionCycleCount, ...capacityQueries.flatMap((query) => {
+  const cycleCount = Math.max(
+    inspectionCycleCount,
+    freshQuickPreview?.cycle_count ?? 0,
+    voltageQuery.isPlaceholderData ? 0 : voltageQuery.data?.cycle_count ?? 0,
+    capacityBundleQuery.isPlaceholderData ? 0 : capacityBundleQuery.data?.cycle_count ?? 0,
+    ...capacityQueries.flatMap((query) => {
     if (query.isPlaceholderData) return [];
     const preview = query.data as ContinuationPreviewResult | undefined;
     return [preview?.cycle_count ?? 0, ...(preview?.segments.map((segment) => segment.global_cycle_end ?? 0) ?? [])];
-  }));
+    }),
+  );
   const hasNavigableCycles = sourceSupportsCycles && cycleCount > 0;
+  const [cycleRangeUserEdited, setCycleRangeUserEdited] = useState(false);
   useEffect(() => {
     setCycleRange(null);
     setVoltageCycleRange(null);
+    setCycleRangeUserEdited(false);
   }, [source.staged_name, source.hash]);
   useEffect(() => {
-    if (!cycleCount) return;
-    setCycleRange({ start: 1, end: cycleCount });
-    setVoltageCycleRange({ start: Math.max(1, cycleCount - 19), end: cycleCount });
-  }, [source.staged_name, source.hash, cycleCount]);
+    const fullRange = fullPreviewCycleWindow(cycleCount);
+    if (!fullRange) return;
+    setCycleRange((current) => current === null || (!cycleRangeUserEdited && current.start === 1)
+      ? fullRange
+      : current);
+  }, [source.staged_name, source.hash, cycleCount, cycleRangeUserEdited]);
+  useEffect(() => {
+    if (!inspectionCycleCount) return;
+    setVoltageCycleRange((current) => current ?? {
+      start: Math.max(1, inspectionCycleCount - 19),
+      end: inspectionCycleCount,
+    });
+  }, [source.staged_name, source.hash, inspectionCycleCount]);
   useEffect(() => {
     if (!sourceSupportsCycles) {
       if (view === "cycles") setView("voltage");
@@ -271,11 +398,24 @@ export function ImportSourcePreview({
     ? capacityTraces
     : capacityView !== "charge" ? fallbackDischargeTrace : [];
   const voltageError = voltageQuery.error instanceof Error ? voltageQuery.error.message : "Voltage preview is unavailable.";
-  const capacityError = capacityQueries.find((query) => query.isError)?.error;
-  const isCapacityLoading = inspectionQuery.isFetching || capacityQueries.some((query) => query.isPending || query.isFetching);
-  const activeCycleRange = view === "cycles" ? cycleRange : voltageCycleRange;
+  const capacityError = usesCapacityBundlePreview
+    ? capacityBundleQuery.error
+    : capacityQueries.find((query) => query.isError)?.error;
+  const isCapacityLoading = usesCapacityBundlePreview
+    ? capacityBundleQuery.isPending
+      || capacityBundleQuery.isFetching
+      || (!capacityBundleQuery.data && !continuationReady && !inspectionFailure)
+    : inspectionQuery.isFetching || capacityQueries.some((query) => query.isPending || query.isFetching);
+  const activeCycleRange = view === "cycles"
+    ? cycleRange
+    : voltageCycleRange ?? (cycleCount > 0
+      ? { start: Math.max(1, cycleCount - 19), end: cycleCount }
+      : null);
   const updateActiveCycleRange = (next: { start: number; end: number }) => {
-    if (view === "cycles") setCycleRange(next);
+    if (view === "cycles") {
+      setCycleRangeUserEdited(true);
+      setCycleRange(next);
+    }
     else setVoltageCycleRange(next);
   };
   const shiftCycleRange = (direction: -1 | 1) => {
@@ -284,15 +424,13 @@ export function ImportSourcePreview({
   };
   const voltageHasPoints = Boolean(voltagePreview?.segments.some((segment) => segment.x.length > 0));
   const voltageReady = view === "voltage"
-    && continuationReady
-    && !voltageQuery.isPending
-    && !voltageQuery.isFetching
-    && !voltageQuery.isPlaceholderData
+    && (quickVoltageAvailable || (!voltageQuery.isPending && !voltageQuery.isFetching && !voltageQuery.isPlaceholderData))
     && voltageHasPoints;
   const capacityReady = view === "cycles"
-    && continuationReady
     && !isCapacityLoading
-    && capacityQueries.some((query) => query.data && !query.isPlaceholderData)
+    && (usesCapacityBundlePreview
+      ? Boolean(capacityBundleQuery.data && !capacityBundleQuery.isPlaceholderData)
+      : continuationReady && capacityQueries.some((query) => query.data && !query.isPlaceholderData))
     && displayedCapacityTraces.length > 0;
   const voltagePlot: ReactNode = voltageHasPoints && voltagePreview ? (
     <CellPreviewPlot
@@ -347,6 +485,7 @@ export function ImportSourcePreview({
     voltageTraces,
     voltageXAxis,
     capacityReady,
+    capacityBundleQuery.data,
     capacityQueries[0]?.data,
     capacityQueries[1]?.data,
     cycleRange?.start,
@@ -405,7 +544,21 @@ export function ImportSourcePreview({
   const compactToolbarSecondaryContent = view === "cycles" ? normalizeSwitch : undefined;
 
   return (
-    <Stack gap="xs">
+    <>
+      <Stack gap="xs">
+      {parserWarnings.length > 0 && (
+        <Group justify="flex-end">
+          <Button
+            size="compact-sm"
+            variant="light"
+            color="orange"
+            leftSection={<IconAlertTriangle size={15} />}
+            onClick={() => setWarningsOpen(true)}
+          >
+            Data warnings · {parserWarningCount}
+          </Button>
+        </Group>
+      )}
       <Tabs value={view} onChange={(value) => value && setView(value as ImportPreviewView)} keepMounted>
         <Tabs.List grow>
           <Tabs.Tab value="voltage">Voltage</Tabs.Tab>
@@ -425,6 +578,8 @@ export function ImportSourcePreview({
           {view === "voltage" ? (
             voltageReady && voltagePlot ? (
               <Box w="100%">{voltagePlot}</Box>
+            ) : inspectionError ? (
+              <Alert color="orange" title="Voltage preview unavailable">{inspectionError}</Alert>
             ) : inspectionQuery.isError ? (
               <Alert color="orange" title="Voltage preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
             ) : inspectionFailure ? (
@@ -449,7 +604,12 @@ export function ImportSourcePreview({
             <Alert color="orange" title="Cycle preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
           ) : inspectionFailure ? (
             <Alert color="orange" title="Cycle preview unavailable">{inspectionFailureMessage}</Alert>
-          ) : retainedPlot && (inspectionQuery.isPending || inspectionQuery.isFetching || isCapacityLoading || capacityQueries.some((query) => query.isPlaceholderData)) ? (
+          ) : retainedPlot && (
+            isCapacityLoading
+            || (!usesCapacityBundlePreview && (inspectionQuery.isPending || inspectionQuery.isFetching))
+            || capacityBundleQuery.isPlaceholderData
+            || capacityQueries.some((query) => query.isPlaceholderData)
+          ) ? (
             <Box w="100%" h={plotStackHeight} style={{ position: "relative" }}>
               <Box style={{ opacity: 0.48, transition: "opacity 100ms linear" }}>{retainedPlot}</Box>
               <Text size="xs" c="dimmed" style={{ position: "absolute", top: 30, right: 8, pointerEvents: "none" }}>Updating preview…</Text>
@@ -476,6 +636,39 @@ export function ImportSourcePreview({
         }} w={86} />
         <Tooltip label="Next cycle window"><ActionIcon variant="default" aria-label="Next cycle window" disabled={!hasNavigableCycles || !activeCycleRange || activeCycleRange.end >= cycleCount} onClick={() => shiftCycleRange(1)}><IconChevronRight size={15} /></ActionIcon></Tooltip>
       </Group>
-    </Stack>
+      </Stack>
+      <Modal
+        opened={warningsOpen}
+        onClose={() => setWarningsOpen(false)}
+        title="Neware summary warnings"
+        centered
+        size="md"
+      >
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">
+            Some workbook summary values differ from values calculated from the recorded measurements. The preview and import remain available; the recorded measurements are used for the cell data.
+          </Text>
+          {parserWarnings.map((warning, index) => {
+            const examples = (warning.examples ?? [])
+              .map(formatParserWarningExample)
+              .filter((example): example is string => example !== null)
+              .slice(0, 3);
+            return (
+              <Alert
+                key={`${warning.code}-${warning.scope}-${index}`}
+                color="orange"
+                title={`${warning.message} (${warning.count})`}
+              >
+                {examples.length > 0 && (
+                  <Stack gap={4} mt="xs">
+                    {examples.map((example) => <Text key={example} size="xs">{example}</Text>)}
+                  </Stack>
+                )}
+              </Alert>
+            );
+          })}
+        </Stack>
+      </Modal>
+    </>
   );
 }

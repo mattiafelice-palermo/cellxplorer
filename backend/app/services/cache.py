@@ -389,7 +389,12 @@ def schedule_build(file_hash: str, source_path: str | Path) -> dict[str, str | N
 
         def _worker() -> None:
             try:
-                build(file_hash, source_path)
+                # Staged-file previews need canonical raw rows and cycle
+                # summaries, but not the optional Time/Capacity transform.
+                # Deferring that independent artifact removes it from the
+                # preview-readiness critical path; registered cells can still
+                # prepare it through the existing scanner/warmup flow.
+                build(file_hash, source_path, prepare_time_capacity=False)
             except Exception as exc:
                 error = str(exc) or exc.__class__.__name__
                 with _background_build_lock:
@@ -493,6 +498,132 @@ def _dir(file_hash: str) -> Path:
 
 def raw_path(file_hash: str, parser_version: str = parsing.PARSER_VERSION) -> Path:
     return _dir(file_hash) / f"raw__p{_safe(parser_version)}.parquet"
+
+
+def parser_diagnostics_path(file_hash: str, parser_version: str) -> Path:
+    """Return the parser-owned, non-scientific diagnostics sidecar path."""
+    return _dir(file_hash) / f"parser_diagnostics__p{_safe(parser_version)}.json"
+
+
+def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, object]]:
+    """Load small user-facing parser warnings from a completed cache build."""
+    path = parser_diagnostics_path(file_hash, parser_version)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != 1
+        or payload.get("parser_version") != parser_version
+        or not isinstance(payload.get("warnings"), list)
+    ):
+        return []
+    warnings: list[dict[str, object]] = []
+    for item in payload["warnings"]:
+        if (
+            isinstance(item, dict)
+            and item.get("code") in {
+                "energy_summary_mismatch",
+                "summary_reconciliation_mismatch",
+            }
+            and isinstance(item.get("message"), str)
+        ):
+            try:
+                count = max(1, int(item.get("count") or 1))
+            except (TypeError, ValueError, OverflowError):
+                count = 1
+            warning: dict[str, object] = {
+                "code": item["code"],
+                "scope": str(item.get("scope") or "source"),
+                "count": count,
+                "message": item["message"][:500],
+            }
+            raw_examples = item.get("examples")
+            if isinstance(raw_examples, list):
+                examples = [
+                    {
+                        str(key)[:80]: (
+                            value[:240]
+                            if isinstance(value, str)
+                            else value
+                        )
+                        for key, value in example.items()
+                        if isinstance(key, str)
+                        and isinstance(value, (str, int, float, bool, type(None)))
+                        and not (isinstance(value, float) and not math.isfinite(value))
+                    }
+                    for example in raw_examples[:3]
+                    if isinstance(example, dict)
+                ]
+                if examples:
+                    warning["examples"] = examples
+            warnings.append(warning)
+    return warnings
+
+
+def _write_parser_diagnostics(
+    file_hash: str,
+    parser_version: str,
+    raw: pd.DataFrame,
+) -> None:
+    excel_state = raw.attrs.get("neware_excel") if hasattr(raw, "attrs") else None
+    raw_warnings = excel_state.get("parser_warnings", []) if isinstance(excel_state, dict) else []
+    warnings: list[dict[str, object]] = []
+    for item in raw_warnings:
+        if (
+            not isinstance(item, dict)
+            or item.get("code") not in {
+                "energy_summary_mismatch",
+                "summary_reconciliation_mismatch",
+            }
+            or not isinstance(item.get("message"), str)
+        ):
+            continue
+        try:
+            count = max(1, int(item.get("count") or 1))
+        except (TypeError, ValueError, OverflowError):
+            count = 1
+        diagnostic: dict[str, object] = {
+            "code": str(item["code"]),
+            "scope": str(item.get("scope") or "source"),
+            "count": count,
+            "message": str(item["message"])[:500],
+        }
+        examples: list[dict[str, object]] = []
+        for example in item.get("examples", [])[:3] if isinstance(item.get("examples"), list) else []:
+            if not isinstance(example, dict):
+                continue
+            safe_example: dict[str, object] = {}
+            for key, value in example.items():
+                if not isinstance(key, str) or not isinstance(value, (str, int, float, bool, type(None))):
+                    continue
+                if isinstance(value, float) and not math.isfinite(value):
+                    continue
+                safe_example[key[:80]] = value[:240] if isinstance(value, str) else value
+            if safe_example:
+                examples.append(safe_example)
+        if examples:
+            diagnostic["examples"] = examples
+        warnings.append(diagnostic)
+    target = parser_diagnostics_path(file_hash, parser_version)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            json.dump(
+                {"version": 1, "parser_version": parser_version, "warnings": warnings},
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            handle.write("\n")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def raw_index_path(
@@ -652,6 +783,33 @@ def _timestamp_bounds(frame: pd.DataFrame) -> tuple[str | None, str | None]:
     return pd.Timestamp(start).isoformat(), pd.Timestamp(end).isoformat()
 
 
+def _preview_time_origin(frame: pd.DataFrame) -> float | None:
+    column = next(
+        (name for name in ("total_time_s", "time_s", "record_index") if name in frame.columns),
+        None,
+    )
+    if column is None:
+        return None
+    values = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype="float64")
+    valid_positions = np.flatnonzero(np.isfinite(values))
+    if valid_positions.size == 0:
+        return None
+    if "record_index" in frame.columns and column != "record_index":
+        record_indexes = pd.to_numeric(
+            frame["record_index"], errors="coerce"
+        ).to_numpy(dtype="float64")
+        valid_records = valid_positions[np.isfinite(record_indexes[valid_positions])]
+        if valid_records.size:
+            # np.argmin keeps the first row on ties, matching a stable sort,
+            # without allocating a sorted copy of a large cold parse frame.
+            position = int(valid_records[np.argmin(record_indexes[valid_records])])
+        else:
+            position = int(valid_positions[0])
+    else:
+        position = int(valid_positions[0])
+    return float(values[position])
+
+
 def _consecutive_time_metadata(frame: pd.DataFrame) -> dict[str, Any]:
     """Capture bounded facts needed to continue Time across selective reads.
 
@@ -799,6 +957,9 @@ def _build_raw_layout_index(
         "voltage_data_availability": voltage_availability,
         "timestamp_start": timestamp_start,
         "timestamp_end": timestamp_end,
+        # Optional display-only scalar. Older layout indexes omit this field
+        # and continue to use the safe full-raw preview path.
+        "preview_time_origin_s": _preview_time_origin(frame),
         "consecutive_time": consecutive_time,
         "raw_file_size": raw_file_size,
         "raw_shape_fingerprint": _raw_shape_fingerprint(
@@ -1291,6 +1452,16 @@ def _validate_raw_layout_index(
     for key in ("timestamp_start", "timestamp_end"):
         if index.get(key) is not None and not isinstance(index.get(key), str):
             raise RawLayoutError(f"raw layout index {key} is not a timestamp string")
+    preview_time_origin = index.get("preview_time_origin_s")
+    if preview_time_origin is not None:
+        if isinstance(preview_time_origin, bool):
+            raise RawLayoutError("raw layout index preview time origin is invalid")
+        try:
+            preview_time_origin = float(preview_time_origin)
+        except (TypeError, ValueError) as exc:
+            raise RawLayoutError("raw layout index preview time origin is invalid") from exc
+        if not math.isfinite(preview_time_origin):
+            raise RawLayoutError("raw layout index preview time origin is non-finite")
 
     if not parquet_path.is_file():
         raise RawLayoutError("raw cache disappeared while loading its index")
@@ -1333,6 +1504,7 @@ def _validate_raw_layout_index(
     normalized["complete_source_cycles"] = complete_cycles
     normalized["cycle_to_row_groups"] = cycle_mapping
     normalized["consecutive_time"] = consecutive_time
+    normalized["preview_time_origin_s"] = preview_time_origin
     if "biologic_cp_half_cycle" in index:
         normalized["biologic_cp_half_cycle"] = cp_half_value
     if step_detail is not None:
@@ -2373,6 +2545,7 @@ def build(
     force: bool = False,
     *,
     expected_fingerprint: parsing.SourceFingerprint | None = None,
+    prepare_time_capacity: bool = True,
 ) -> dict:
     """Parse source file and (re)build raw + cycles caches at that SOURCE's
     own current effective parser identity (Spec 040.3) and the current calc
@@ -2381,6 +2554,10 @@ def build(
     ``parser_version`` in the return value is this source's own identity
     (`parsing.parser_identity(source_path)`), not a process-global bundle —
     callers persist it verbatim into `SourceFile.parser_version`.
+
+    ``prepare_time_capacity=False`` skips the optional Time/Capacity derived
+    artifact so staged-file preview readiness is not blocked on analysis-only
+    preparation. Registered-cell scanner and warmup paths can prepare it later.
 
     Idempotent: identical content (hash) at identical versions yields
     identical caches, so if both files already exist the parse is skipped
@@ -2405,13 +2582,14 @@ def build(
             if column in pq.read_schema(cp).names
         ]
         totals = capacity_totals(pd.read_parquet(cp, columns=cycle_columns))
-        try:
-            prepare_time_capacity_derived(file_hash, parser_identity)
-        except Exception:
-            # The prepared artifact is optional performance state.  A source
-            # with valid raw/cycle caches must remain scientifically usable
-            # when its sidecar cannot be published.
-            logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
+        if prepare_time_capacity:
+            try:
+                prepare_time_capacity_derived(file_hash, parser_identity)
+            except Exception:
+                # The prepared artifact is optional performance state.  A source
+                # with valid raw/cycle caches must remain scientifically usable
+                # when its sidecar cannot be published.
+                logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
         cached_cycle_identity_source = None
         if Path(source_path).suffix.casefold() == ".mpr":
             index = load_raw_layout_index(file_hash, parser_identity)
@@ -2450,6 +2628,7 @@ def build(
     cycles = calc.per_cycle(raw)
     if parsed_from_source:
         parsing.validate_parsed_output(source_path, raw, cycles)
+        _write_parser_diagnostics(file_hash, parser_identity, raw)
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     d = _dir(file_hash)
     d.mkdir(parents=True, exist_ok=True)
@@ -2459,14 +2638,15 @@ def build(
         if parsed_from_source:
             _publish_optimized_raw(raw, rp, parser_identity)
         _write_atomic(cycles, cp)
-        try:
-            prepare_time_capacity_derived(
-                file_hash,
-                parser_identity,
-                raw_frame=raw,
-            )
-        except Exception:
-            logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
+        if prepare_time_capacity:
+            try:
+                prepare_time_capacity_derived(
+                    file_hash,
+                    parser_identity,
+                    raw_frame=raw,
+                )
+            except Exception:
+                logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
         _require_source_fingerprint(source_path, expected_source_fingerprint)
     except Exception:
         if not raw_was_present:
@@ -2527,6 +2707,7 @@ def build_write_behind(
     canonical_cycling.validate_raw_timeseries(raw)
     cycles = calc.per_cycle(raw)
     parsing.validate_parsed_output(source_path, raw, cycles)
+    _write_parser_diagnostics(file_hash, parser_identity, raw)
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     raw_target = raw_path(file_hash, parser_identity)
     cycles_target = cycles_path(file_hash, parser_identity)

@@ -615,6 +615,47 @@ class ContinuationPolicyTests(unittest.TestCase):
             next(item["id"] for item in protocol_changed["findings"] if item["code"] == "protocol_changed"),
         )
 
+    def test_enrichment_uses_raw_index_and_returns_cached_parser_warnings(self):
+        source = _source(
+            "staged-a",
+            filename="a.xlsx",
+            hash="a" * 64,
+            inspection_status="pending",
+        )
+        cycles = pd.DataFrame({"cycle": [1, 2]})
+        expected_start = "2026-01-01T12:00:00+00:00"
+        expected_end = "2026-01-02T12:00:00+00:00"
+        warning = {
+            "code": "energy_summary_mismatch",
+            "scope": "step",
+            "count": 1,
+            "message": "Neware's step energy summary differs from exported measurements.",
+        }
+        with (
+            patch.object(continuations.parsing, "current_parser_identity_for_extension", return_value="excel-parser"),
+            patch.object(continuations.cache, "has_cycles", return_value=True),
+            patch.object(
+                continuations.cache,
+                "raw_path",
+                return_value=SimpleNamespace(is_file=lambda: True),
+            ),
+            patch.object(
+                continuations.cache,
+                "try_load_raw_layout_index",
+                return_value={"timestamp_start": expected_start, "timestamp_end": expected_end},
+            ),
+            patch.object(continuations.cache, "load_raw", side_effect=AssertionError("current index should avoid a full raw read")),
+            patch.object(continuations.cache, "load_cycles", return_value=cycles),
+            patch.object(continuations.cache, "load_parser_warnings", return_value=[warning]),
+        ):
+            enriched = continuations.enrich_source_timing(source, source_path=Path("a.xlsx"))
+
+        self.assertEqual(enriched["inspection_status"], "ready")
+        self.assertEqual(enriched["first_record_timestamp"].isoformat(), expected_start)
+        self.assertEqual(enriched["end_time"], expected_end)
+        self.assertEqual(enriched["local_cycle_count"], 2)
+        self.assertEqual(enriched["parser_warnings"], [warning])
+
     def test_enrichment_without_cache_remains_pending(self):
         source = _source(
             "staged-a",
@@ -848,8 +889,8 @@ class CacheBuildCoordinationTests(unittest.TestCase):
         release = threading.Event()
         calls = []
 
-        def blocked_build(*_args, **_kwargs):
-            calls.append("build")
+        def blocked_build(*_args, **kwargs):
+            calls.append(kwargs)
             started.set()
             release.wait(timeout=2)
 
@@ -868,7 +909,7 @@ class CacheBuildCoordinationTests(unittest.TestCase):
             release.set()
             thread.join(timeout=2)
 
-        self.assertEqual(calls, ["build"])
+        self.assertEqual(calls, [{"prepare_time_capacity": False}])
 
         failing_calls = []
 

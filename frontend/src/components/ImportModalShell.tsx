@@ -87,6 +87,9 @@ export function ImportModalShell({
         </Group>
       }
       size={IMPORT_MODAL_WIDTH}
+      // All import steps swap in one React update. Disable independent exit/
+      // enter fades so their backdrops cannot reveal the page between steps.
+      transitionProps={{ duration: 0 }}
       classNames={{ content: styles.content, body: styles.body }}
     >
       <div className={fill ? styles.workFill : styles.work}>{children}</div>

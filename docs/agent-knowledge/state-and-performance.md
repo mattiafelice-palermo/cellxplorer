@@ -130,6 +130,51 @@ benchmark at least one representative large workbook when changing this ladder. 
 301k-row export, the measured calamine path was ~24 s versus ~85 s for openpyxl, while fastexcel is
 the faster primary path; this is still parsing work and belongs outside the registration transaction.
 
+Neware workbook summaries are converter-generated rollups, not the authoritative recorded points.
+Energy integration differences are retained as import warnings; cycle CE differences are warnings
+only when both the workbook value and raw-record value fit the uncertainty from the capacity cells'
+display precision. Capacity differences outside that display precision, cycle/step identity,
+chronology, malformed values, and unexplained CE differences remain errors. Persist bounded warning
+examples with the parser-versioned cache so warm previews after restart show the same diagnostic.
+
+The staged-file preview cache build needs canonical raw rows and per-cycle summaries, but not the
+optional Time/Capacity-derived artifact. The import browser therefore calls `cache.build()` with
+`prepare_time_capacity=False`; registered cells still prepare this artifact through their scanner
+and warmup path. In a three-run isolated-cache profile of an available 11.37 MB NDAX (523,067 rows,
+767 cycles), ordinary cache readiness took 5.19–5.35 s, including 2.25–2.38 s for the optional
+derived artifact. Deferring that artifact reduced staged cache readiness to 3.12–3.20 s. A separate
+display-only reader now
+handles the known simple v5/type-1, single-`data.ndc` layout: voltage selects the requested recent
+cycles, while capacity and CE derive the **full cycle range** from the stored cumulative record
+counters. The file does not contain a ready per-cycle CE summary. On the same 11.37 MB source,
+the direct full-range summary matched all 767 canonical charge, discharge, and CE cycle values;
+parse plus canonical cycle derivation. After vectorizing cycle-boundary detection and reducing
+capacity from per-run extrema, 21 matched runs measured 94.2 ms median (89.1 ms best) for the
+last-20-cycle voltage reader and 108.6 ms median (101.6 ms best) for the full-range capacity/CE
+reader. Voltage raw rows and formatted time/capacity plot points matched exactly over five tested
+windows; capacity and CE remained exact across all 767 cycles. The OS file cache was not cleared,
+so these are cold-application timings over a possibly warm filesystem cache, not disk-cold or full
+click-to-painted-plot timings. The reader still inflates the complete single DEFLATE member, with
+output capped at the ZIP-declared size plus one byte and CRC checked. The display-only voltage
+reader also recognizes the split NDC-11 layout (`data.ndc`, `data_runInfo.ndc`, `data_step.ndc`),
+including sparse run-info interpolation. On a real 2.48 MB/120,215-row split source, its selected
+last 20 cycles and all 600 formatted plot points matched canonical parsing exactly; the warmed
+direct route measured about 120–150 ms. Unsupported layouts still fall back, and this reader never
+substitutes for parser validation or cache preparation. Step 1 requests this direct voltage route
+as soon as a `.ndax` is selected, before checksum/header inspection; startup warms its imports in
+a background thread, and an early request joins the same warmup lock. Do not gate this display
+route on cache building or source identity checks. The early and cache-backed capacity bundle use the same 600-point
+display limit; keep the selected cycle extent full by default and preserve the first and last cycle
+when sampling.
+
+For a single source with a bounded cycle window, the continuation voltage preview maps global
+cycles through the cycle cache, then uses the raw layout index to read only the required row groups
+and columns. Its optional `preview_time_origin_s` preserves the source's original elapsed-time
+origin when the selected window is a subset; older indexes omit it and safely fall back to the full
+raw cache. Compute this origin with a linear scan rather than sorting/copying the entire decoded
+frame. Do not apply this shortcut to multi-source chains until each segment's offset and mapping
+semantics are preserved.
+
 Registration does **not** re-hash a submitted source. `_prepare_import_source_file` reuses the
 inspected hash whenever size and `mtime_ns` still match, and a real 200-file registration performs
 zero hash computations and zero header reads. The always-hashing

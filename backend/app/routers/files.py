@@ -103,6 +103,12 @@ def _load_continuation_preview():
     return module
 
 
+def _load_fast_neware():
+    from ..services import fast_neware as module
+
+    return module
+
+
 def _load_cell_folder_watch():
     from ..services import cell_folder_watch as module
 
@@ -130,9 +136,25 @@ scanner = LazyModule(_load_scanner)
 continuations = LazyModule(_load_continuations)
 stitch = LazyModule(_load_stitch)
 continuation_preview = LazyModule(_load_continuation_preview)
+fast_neware = LazyModule(_load_fast_neware)
 cell_folder_watch = LazyModule(_load_cell_folder_watch)
 analysis_usage = LazyModule(_load_analysis_usage)
 cache_maintenance = LazyModule(_load_cache_maintenance)
+
+_quick_preview_ready = threading.Event()
+_quick_preview_warm_lock = threading.Lock()
+
+
+def warm_quick_preview_dependencies() -> None:
+    """Share startup preparation with a click arriving while it is running."""
+    if _quick_preview_ready.is_set():
+        return
+    with _quick_preview_warm_lock:
+        if _quick_preview_ready.is_set():
+            return
+        _load_fast_neware()
+        _load_continuation_preview()
+        _quick_preview_ready.set()
 
 router = APIRouter(prefix="/api", tags=["files"])
 
@@ -1610,6 +1632,13 @@ class ImportPreviewRequest(BaseModel):
     expected_mtime_ns: int | str | None = None
 
 
+class ImportQuickVoltagePreviewRequest(BaseModel):
+    source_path: str
+    voltage_x_axis: Literal["time", "capacity"] = "time"
+    cycle_start: int | None = None
+    cycle_end: int | None = None
+
+
 class ImportRawDataRequest(BaseModel):
     staged_name: str
     source_path: str | None = None
@@ -1643,7 +1672,12 @@ class ContinuationInspectRequest(BaseModel):
 class ContinuationPreviewRequest(BaseModel):
     sources: list[ContinuationInspectSourceRequest]
     proposed_order: list[str]
-    quantity: Literal["voltage", "discharge_capacity_mah", "charge_capacity_mah"] | None = None
+    quantity: Literal[
+        "voltage",
+        "discharge_capacity_mah",
+        "charge_capacity_mah",
+        "capacity_bundle",
+    ] | None = None
     voltage_x_axis: Literal["time", "capacity"] = "time"
     cycle_start: int | None = Field(default=None, ge=1)
     cycle_end: int | None = Field(default=None, ge=1)
@@ -2810,6 +2844,155 @@ def _continuation_preview_unavailable(
 _CONTINUATION_PREVIEW_MAX_POINTS = 600
 
 
+@router.post("/imports/quick-voltage-preview")
+def quick_import_voltage_preview(req: ImportQuickVoltagePreviewRequest):
+    """Display-only voltage plot before identity/header/cache inspection finishes."""
+    source_path = Path(req.source_path).expanduser().resolve()
+    if source_path.suffix.casefold() != ".ndax":
+        raise HTTPException(400, "Quick voltage preview requires a Neware NDAX source.")
+    try:
+        before = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(404, "Source file is unavailable") from exc
+    if not source_path.is_file():
+        raise HTTPException(404, "Source file is unavailable")
+    warm_quick_preview_dependencies()
+    preview = _build_fast_neware_voltage_preview(
+        {
+            "source_path": str(source_path),
+            "source_key": str(source_path),
+            "filename": source_path.name,
+        },
+        voltage_x_axis=req.voltage_x_axis,
+        cycle_start=req.cycle_start,
+        cycle_end=req.cycle_end,
+    )
+    try:
+        after = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(404, "Source file is unavailable") from exc
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise HTTPException(409, "The source changed while its preview was being prepared.")
+    return {"preview": preview}
+
+
+def _build_fast_neware_voltage_preview(
+    source: dict[str, str],
+    *,
+    voltage_x_axis: Literal["time", "capacity"],
+    cycle_start: int | None,
+    cycle_end: int | None,
+) -> dict | None:
+    """Build an early display-only preview from a simple Neware NDAX member."""
+    selected = fast_neware.read_recent_ndax_raw_for_preview(
+        source["source_path"],
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
+    )
+    if selected is None:
+        return None
+    prepared = continuation_preview.prepare_segmented_raw(
+        [selected.raw],
+        time_origins_s=[selected.time_origin_s],
+    )
+    preview = continuation_preview.voltage_preview_from_raw(
+        prepared,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+        x_axis=voltage_x_axis,
+    )
+    cycle_count = selected.cycle_count
+    return {
+        "quantity": "voltage",
+        "label": "Voltage (V)",
+        "cycle_count": cycle_count,
+        "x_label": "Capacity (mAh)" if voltage_x_axis == "capacity" else "Time (s)",
+        "interpretation": "source_chain",
+        "segments": [
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "x": preview["x"],
+                "y": preview["y"],
+                **({"current_ma": preview["current_ma"]} if "current_ma" in preview else {}),
+                "global_cycle_start": 1 if cycle_count else None,
+                "global_cycle_end": cycle_count or None,
+                "source_cycle_start": 1 if cycle_count else None,
+                "source_cycle_end": cycle_count or None,
+                "source_cycle_count": cycle_count,
+                "display_x_start": preview["x_start"],
+                "display_x_end": preview["x_end"],
+                "coulombic_efficiency_x": [],
+                "coulombic_efficiency_pct": [],
+            }
+        ],
+    }
+
+
+def _build_fast_neware_capacity_bundle_preview(
+    source: dict[str, str],
+    *,
+    cycle_start: int | None,
+    cycle_end: int | None,
+) -> dict | None:
+    """Build exact full-range charge/discharge/CE points from a simple NDAX."""
+    selected = fast_neware.read_ndax_capacity_ce_for_preview(source["source_path"])
+    if selected is None:
+        return None
+    cycles = selected.cycles
+    requested_start = max(1, int(cycle_start or 1))
+    requested_end = max(
+        requested_start,
+        int(cycle_end or selected.cycle_count),
+    )
+    cycles = cycles[
+        pd.to_numeric(cycles["cycle"], errors="coerce").between(
+            requested_start, requested_end
+        )
+    ]
+    discharge = capacity_preview_from_cycles(
+        cycles,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+        quantity="discharge_capacity_mah",
+    )
+    charge = capacity_preview_from_cycles(
+        cycles,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+        quantity="charge_capacity_mah",
+    )
+    efficiency = capacity_efficiency_preview_from_cycles(
+        cycles,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+    )
+    return {
+        "quantity": "capacity_bundle",
+        "label": "Capacity (mAh)",
+        "cycle_count": selected.cycle_count,
+        "x_label": "Cycle number (source_chain)",
+        "interpretation": "source_chain",
+        "segments": [
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "x": discharge["x"],
+                "y": discharge["y"],
+                "charge_capacity_x": charge["x"],
+                "charge_capacity_y": charge["y"],
+                "discharge_capacity_x": discharge["x"],
+                "discharge_capacity_y": discharge["y"],
+                "global_cycle_start": 1,
+                "global_cycle_end": selected.cycle_count,
+                "source_cycle_start": 1,
+                "source_cycle_end": selected.cycle_count,
+                "source_cycle_count": selected.cycle_count,
+                "display_x_start": discharge["x"][0] if discharge["x"] else None,
+                "display_x_end": discharge["x"][-1] if discharge["x"] else None,
+                "coulombic_efficiency_x": efficiency["x"],
+                "coulombic_efficiency_pct": efficiency["y"],
+            }
+        ],
+    }
+
+
 def _build_continuation_preview(
     ordered_sources: list[dict[str, str]],
     *,
@@ -2834,6 +3017,7 @@ def _build_continuation_preview(
         )
         for source in ordered_sources
     ]
+    cycle_count: int | None = None
     if quantity == "voltage":
         # Voltage is a raw-measurement view and must remain available even
         # when canonical cycle summaries are absent or metadata-only.
@@ -2841,9 +3025,32 @@ def _build_continuation_preview(
         stitched_segments = []
         missing: list[str] = []
         cycle_cache_complete = False
+        try:
+            voltage_cycle_rows, voltage_cycle_segments, voltage_cycle_missing = (
+                stitch.stitch_cycles(refs, CALC_VERSION)
+            )
+            if (
+                not voltage_cycle_missing
+                and not voltage_cycle_rows.empty
+                and "cycle" in voltage_cycle_rows.columns
+            ):
+                cycle_ids = pd.to_numeric(
+                    voltage_cycle_rows["cycle"], errors="coerce"
+                ).dropna()
+                cycle_count = int(cycle_ids.max()) if not cycle_ids.empty else 0
+            else:
+                voltage_cycle_rows = pd.DataFrame()
+                voltage_cycle_segments = []
+        except Exception:
+            # Raw voltage previews remain useful if cycle summaries are not
+            # ready or cannot provide an authoritative source-cycle mapping.
+            voltage_cycle_rows = pd.DataFrame()
+            voltage_cycle_segments = []
     else:
         cycles, stitched_segments, missing = stitch.stitch_cycles(refs, CALC_VERSION)
         cycle_cache_complete = not missing and stitch.stitch_metadata(cycles)["complete"]
+        voltage_cycle_rows = pd.DataFrame()
+        voltage_cycle_segments = []
     if quantity != "voltage" and not cycle_cache_complete:
         missing_hashes = set(missing)
         missing_sources = [
@@ -2876,13 +3083,88 @@ def _build_continuation_preview(
     metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
     requested_start = max(1, int(cycle_start or 1))
     requested_end = max(requested_start, int(cycle_end or requested_start))
-    cycle_count: int | None = None
     if quantity != "voltage" and "cycle" in cycles.columns and not cycles.empty:
         full_cycle_ids = pd.to_numeric(cycles["cycle"], errors="coerce").dropna()
         cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
 
     if quantity == "voltage":
-        raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
+        global_cycle_sources: dict[int, set[int]] = {}
+        has_cycle_range = cycle_start is not None or cycle_end is not None
+        bounded_cycle_range = (
+            has_cycle_range
+            and cycle_count is not None
+            and cycle_count > 0
+            and not (requested_start <= 1 and requested_end >= cycle_count)
+        )
+        if (
+            bounded_cycle_range
+            and not voltage_cycle_rows.empty
+            and {"segment", "source_cycle", "cycle"}.issubset(voltage_cycle_rows.columns)
+        ):
+            selected_cycles = voltage_cycle_rows[
+                pd.to_numeric(voltage_cycle_rows["cycle"], errors="coerce").between(
+                    requested_start, requested_end
+                )
+            ]
+            global_cycle_sources = {
+                int(segment): set(
+                    pd.to_numeric(rows["source_cycle"], errors="coerce")
+                    .dropna()
+                    .astype(int)
+                )
+                for segment, rows in selected_cycles.groupby("segment", sort=False)
+            }
+
+        raw_frames: list[pd.DataFrame | None] = []
+        time_origins: list[float | None] = []
+        use_indexed_window = (
+            len(refs) == 1
+            and bounded_cycle_range
+            and bool(global_cycle_sources.get(0))
+        )
+        if use_indexed_window:
+            ref = refs[0]
+            selected_local_cycles = set(global_cycle_sources[0])
+            raw_index = cache.load_raw_layout_index(ref.file_hash, ref.parser_version)
+            if raw_index is not None:
+                available_cycles = set(raw_index.get("observed_source_cycles") or [])
+                selected_local_cycles.intersection_update(available_cycles)
+                time_origin = raw_index.get("preview_time_origin_s")
+                available_columns = set(raw_index.get("raw_column_names") or [])
+                preview_columns = [
+                    column
+                    for column in (
+                        "record_index",
+                        "cycle",
+                        "step",
+                        "step_index",
+                        "status",
+                        "time_s",
+                        "total_time_s",
+                        "measurement_type",
+                        "cycle_complete",
+                        "current_ma",
+                        "voltage_v",
+                        "charge_capacity_mah",
+                        "discharge_capacity_mah",
+                        "capacity_mah",
+                    )
+                    if column in available_columns
+                ]
+                if selected_local_cycles and time_origin is not None and preview_columns:
+                    selected_raw = cache.load_raw_cycles(
+                        ref.file_hash,
+                        ref.parser_version,
+                        selected_local_cycles,
+                        preview_columns,
+                    )
+                    if selected_raw is not None:
+                        raw_frames = [selected_raw]
+                        time_origins = [float(time_origin)]
+
+        if not raw_frames:
+            raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
+            time_origins = [None] * len(raw_frames)
         missing_sources = [
             {
                 "source_key": source["source_key"],
@@ -2901,45 +3183,19 @@ def _build_continuation_preview(
                 status_code=409,
             )
         prepared_raw = continuation_preview.prepare_segmented_raw(
-            [frame for frame in raw_frames if frame is not None]
+            [frame for frame in raw_frames if frame is not None],
+            time_origins_s=time_origins,
         )
         raw_by_segment = {
             segment_index: prepared_raw[prepared_raw["segment"] == segment_index]
             for segment_index in range(len(ordered_sources))
         }
-        global_cycle_sources: dict[int, set[int]] = {}
         raw_cycle_extent = sum(
             pd.to_numeric(frame.get("source_cycle", pd.Series(dtype="float64")), errors="coerce").nunique()
             for frame in raw_by_segment.values()
         )
-        try:
-            full_cycle_rows, _full_cycle_segments, missing_cycle_sources = stitch.stitch_cycles(refs, CALC_VERSION)
-            if not missing_cycle_sources and not full_cycle_rows.empty and "cycle" in full_cycle_rows.columns:
-                full_cycle_ids = pd.to_numeric(full_cycle_rows["cycle"], errors="coerce").dropna()
-                cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
-        except Exception:
-            # Raw voltage previews are intentionally available before cycle
-            # caches are ready. The inspection cycle count remains a UI fallback.
-            cycle_count = None
         if cycle_count is None and raw_cycle_extent > 0:
             cycle_count = int(raw_cycle_extent)
-        if (cycle_start is not None or cycle_end is not None) and not (
-            requested_start <= 1 and requested_end >= raw_cycle_extent
-        ):
-            try:
-                cycle_rows, _cycle_metadata, missing_cycle_sources = stitch.stitch_cycles(refs, CALC_VERSION)
-                if not missing_cycle_sources and {"segment", "source_cycle", "cycle"}.issubset(cycle_rows.columns):
-                    selected_cycles = cycle_rows[
-                        pd.to_numeric(cycle_rows["cycle"], errors="coerce").between(requested_start, requested_end)
-                    ]
-                    global_cycle_sources = {
-                        int(segment): set(pd.to_numeric(rows["source_cycle"], errors="coerce").dropna().astype(int))
-                        for segment, rows in selected_cycles.groupby("segment", sort=False)
-                    }
-            except Exception:
-                # The raw voltage plot remains useful when no canonical cycle
-                # cache can provide the source-local to global cycle mapping.
-                global_cycle_sources = {}
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
         selected_quantity, label = _capacity_quantity_and_label(cycles, quantity)
@@ -2983,17 +3239,38 @@ def _build_continuation_preview(
                 x_axis=voltage_x_axis,
             )
             efficiency_preview = {"x": [], "y": []}
+            capacity_preview_fields = {}
         else:
             segment_frame = cycles[cycles["segment"] == segment_index]
             if (cycle_start is not None or cycle_end is not None) and "cycle" in segment_frame.columns:
                 segment_frame = segment_frame[
                     pd.to_numeric(segment_frame["cycle"], errors="coerce").between(requested_start, requested_end)
                 ]
-            segment_preview = capacity_preview_from_cycles(
-                segment_frame,
-                max_points=segment_limit,
-                quantity=selected_quantity,
-            )
+            if quantity == "capacity_bundle":
+                discharge_preview = capacity_preview_from_cycles(
+                    segment_frame,
+                    max_points=segment_limit,
+                    quantity="discharge_capacity_mah",
+                )
+                charge_preview = capacity_preview_from_cycles(
+                    segment_frame,
+                    max_points=segment_limit,
+                    quantity="charge_capacity_mah",
+                )
+                segment_preview = discharge_preview
+                capacity_preview_fields = {
+                    "charge_capacity_x": charge_preview["x"],
+                    "charge_capacity_y": charge_preview["y"],
+                    "discharge_capacity_x": discharge_preview["x"],
+                    "discharge_capacity_y": discharge_preview["y"],
+                }
+            else:
+                segment_preview = capacity_preview_from_cycles(
+                    segment_frame,
+                    max_points=segment_limit,
+                    quantity=selected_quantity,
+                )
+                capacity_preview_fields = {}
             efficiency_preview = capacity_efficiency_preview_from_cycles(
                 segment_frame,
                 max_points=segment_limit,
@@ -3015,6 +3292,7 @@ def _build_continuation_preview(
                 "filename": source["filename"],
                 "x": segment_preview["x"],
                 "y": segment_preview["y"],
+                **capacity_preview_fields,
                 **({"current_ma": segment_preview["current_ma"]} if "current_ma" in segment_preview else {}),
                 "global_cycle_start": metadata["cycle_start"],
                 "global_cycle_end": metadata["cycle_end"],
@@ -3174,16 +3452,37 @@ def _build_stitched_continuation_preview(
                 x_axis=voltage_x_axis,
             )
             efficiency_preview = {"x": [], "y": []}
+            capacity_preview_fields = {}
         else:
             if merged_cycles.empty or "segment" not in merged_cycles.columns:
                 segment_cycles = merged_cycles
             else:
                 segment_cycles = merged_cycles[merged_cycles["segment"] == segment_index]
-            segment_preview = capacity_preview_from_cycles(
-                segment_cycles,
-                max_points=segment_limit,
-                quantity=selected_quantity,
-            )
+            if quantity == "capacity_bundle":
+                discharge_preview = capacity_preview_from_cycles(
+                    segment_cycles,
+                    max_points=segment_limit,
+                    quantity="discharge_capacity_mah",
+                )
+                charge_preview = capacity_preview_from_cycles(
+                    segment_cycles,
+                    max_points=segment_limit,
+                    quantity="charge_capacity_mah",
+                )
+                segment_preview = discharge_preview
+                capacity_preview_fields = {
+                    "charge_capacity_x": charge_preview["x"],
+                    "charge_capacity_y": charge_preview["y"],
+                    "discharge_capacity_x": discharge_preview["x"],
+                    "discharge_capacity_y": discharge_preview["y"],
+                }
+            else:
+                segment_preview = capacity_preview_from_cycles(
+                    segment_cycles,
+                    max_points=segment_limit,
+                    quantity=selected_quantity,
+                )
+                capacity_preview_fields = {}
             efficiency_preview = capacity_efficiency_preview_from_cycles(
                 segment_cycles,
                 max_points=segment_limit,
@@ -3205,6 +3504,7 @@ def _build_stitched_continuation_preview(
                 "filename": source["filename"],
                 "x": segment_preview["x"],
                 "y": segment_preview["y"],
+                **capacity_preview_fields,
                 **({"current_ma": segment_preview["current_ma"]} if "current_ma" in segment_preview else {}),
                 "global_cycle_start": int(global_cycles.min()) if not global_cycles.empty else None,
                 "global_cycle_end": int(global_cycles.max()) if not global_cycles.empty else None,
@@ -3837,21 +4137,31 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             )
             continue
         if not voltage_preview and not cache.has_cycles(fingerprint.hash, parser_version, CALC_VERSION):
-            unavailable.append(
-                {
-                    "source_key": source_key,
-                    "filename": source_path.name,
-                    "kind": "cache_not_ready",
-                    "reason": "The prepared cycle cache is not ready.",
-                }
+            fast_capacity_candidate = (
+                req.quantity == "capacity_bundle"
+                and req.interpretation == "source_chain"
+                and len(req.sources) == 1
+                and source_path.suffix.casefold() == ".ndax"
             )
-            continue
+            if not fast_capacity_candidate:
+                unavailable.append(
+                    {
+                        "source_key": source_key,
+                        "filename": source_path.name,
+                        "kind": "cache_not_ready",
+                        "reason": "The prepared cycle cache is not ready.",
+                    }
+                )
+                continue
         ordered_sources.append(
             {
                 "source_key": source_key,
                 "filename": source_path.name,
                 "hash": fingerprint.hash,
                 "parser_version": parser_version,
+                "source_path": str(source_path),
+                "source_size": str(fingerprint.size),
+                "source_mtime_ns": str(fingerprint.mtime_ns),
             }
         )
 
@@ -3868,6 +4178,75 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             status_code=422 if metadata_only else 409,
         )
     try:
+        if (
+            req.quantity == "capacity_bundle"
+            and req.interpretation == "source_chain"
+            and len(ordered_sources) == 1
+            and Path(ordered_sources[0]["filename"]).suffix.casefold() == ".ndax"
+            and not cache.has_cycles(
+                ordered_sources[0]["hash"],
+                ordered_sources[0]["parser_version"],
+                CALC_VERSION,
+            )
+        ):
+            source = ordered_sources[0]
+            fast_preview = _build_fast_neware_capacity_bundle_preview(
+                source,
+                cycle_start=req.cycle_start,
+                cycle_end=req.cycle_end,
+            )
+            if fast_preview is not None:
+                try:
+                    stat = Path(source["source_path"]).stat()
+                except OSError as exc:
+                    raise HTTPException(404, "Source file is unavailable") from exc
+                if (stat.st_size, stat.st_mtime_ns) != (
+                    int(source["source_size"]),
+                    int(source["source_mtime_ns"]),
+                ):
+                    raise HTTPException(
+                        409,
+                        {
+                            "code": "source_changed",
+                            "message": "The source changed while its preview was being prepared; inspect it again.",
+                            "filename": source["filename"],
+                        },
+                    )
+                return fast_preview
+        if (
+            req.quantity == "voltage"
+            and req.interpretation == "source_chain"
+            and len(ordered_sources) == 1
+            and Path(ordered_sources[0]["filename"]).suffix.casefold() == ".ndax"
+            and not cache.raw_path(
+                ordered_sources[0]["hash"], ordered_sources[0]["parser_version"]
+            ).is_file()
+        ):
+            source = ordered_sources[0]
+            fast_preview = _build_fast_neware_voltage_preview(
+                source,
+                voltage_x_axis=req.voltage_x_axis,
+                cycle_start=req.cycle_start,
+                cycle_end=req.cycle_end,
+            )
+            if fast_preview is not None:
+                try:
+                    stat = Path(source["source_path"]).stat()
+                except OSError as exc:
+                    raise HTTPException(404, "Source file is unavailable") from exc
+                if (stat.st_size, stat.st_mtime_ns) != (
+                    int(source["source_size"]),
+                    int(source["source_mtime_ns"]),
+                ):
+                    raise HTTPException(
+                        409,
+                        {
+                            "code": "source_changed",
+                            "message": "The source changed while its preview was being prepared; inspect it again.",
+                            "filename": source["filename"],
+                        },
+                    )
+                return fast_preview
         if req.interpretation == "stitched":
             return _build_stitched_continuation_preview(
                 ordered_sources,

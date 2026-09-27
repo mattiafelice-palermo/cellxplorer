@@ -588,7 +588,7 @@ class NewareExcelParserTests(unittest.TestCase):
             with self.assertRaises(neware_excel.InvalidNewareExcelError):
                 neware_excel.parse_timeseries(path)
 
-    def test_numeric_time_with_kwh_summary_keeps_strict_energy_tolerance(self):
+    def test_numeric_time_with_kwh_energy_discrepancy_is_a_non_blocking_warning(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "numeric-time-kwh-energy.xlsx"
             _write_synthetic_workbook(path)
@@ -601,8 +601,13 @@ class NewareExcelParserTests(unittest.TestCase):
                     step.cell(row, 9).value = 1.0
             step["I2"] = 1.000003
             workbook.save(path)
-            with self.assertRaises(neware_excel.InvalidNewareExcelError):
-                neware_excel.parse_timeseries(path)
+            frame = neware_excel.parse_timeseries(path)
+
+        state = frame.attrs["neware_excel"]
+        self.assertEqual(state["step_summary_validation_status"], "warning")
+        self.assertFalse(state["step_summary_validated"])
+        self.assertEqual(len(state["parser_warnings"]), 1)
+        self.assertIn("measurement points", state["parser_warnings"][0]["message"])
 
     def test_valid_workbook_is_recognized(self):
         with TemporaryDirectory() as temporary:
@@ -1438,7 +1443,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.parse_timeseries("source.csv")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
-        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 6)
+        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 7)
         self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
         self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
         self.assertLessEqual(len(parsing.PARSER_VERSION), 30)
@@ -1484,12 +1489,12 @@ class NewareExcelParserTests(unittest.TestCase):
             with self.assertRaises(neware_excel.InvalidNewareExcelError):
                 neware_excel.validate_cycles(path, raw, cycles)
 
-    def test_cycle_summary_identity_capacity_energy_and_time_mismatches_fail(self):
+    def test_cycle_summary_identity_capacity_and_time_mismatches_fail(self):
         mutations = {
             "identity": ("A2", 99),
             "capacity": ("B2", 999.0),
-            "energy": ("E2", 999.0),
             "time": ("G2", 999.0),
+            "efficiency": ("D2", 999.0),
         }
         for name, (cell, value) in mutations.items():
             with self.subTest(name=name), TemporaryDirectory() as temporary:
@@ -1502,6 +1507,50 @@ class NewareExcelParserTests(unittest.TestCase):
                 cycles = calc.per_cycle(raw)
                 with self.assertRaises(neware_excel.InvalidNewareExcelError):
                     neware_excel.validate_cycles(path, raw, cycles)
+
+    def test_cycle_energy_summary_discrepancy_is_a_non_blocking_warning(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cycle-energy-warning.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["E2"] = 999.0
+            workbook.save(path)
+            raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(raw)
+            neware_excel.validate_cycles(path, raw, cycles)
+
+        state = raw.attrs["neware_excel"]
+        self.assertEqual(state["cycle_summary_validation_status"], "warning")
+        self.assertFalse(state["cycle_summary_validated"])
+        self.assertEqual(len(state["parser_warnings"]), 1)
+        self.assertEqual(state["parser_warnings"][0]["scope"], "cycle")
+        self.assertIn("will import the recorded measurements", state["parser_warnings"][0]["message"])
+
+    def test_cycle_efficiency_from_display_rounded_capacities_is_a_warning(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cycle-efficiency-rounding.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["B2"] = 1.3
+            workbook["cycle"]["C2"] = 1.1
+            workbook["cycle"]["D2"] = round(1.1 / 1.3 * 100.0, 2)
+            workbook.save(path)
+            raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(raw)
+            cycles.loc[cycles.index[0], "charge_capacity_mah"] = 1.26
+            cycles.loc[cycles.index[0], "discharge_capacity_mah"] = 1.05
+            cycles.loc[cycles.index[0], "coulombic_efficiency_pct"] = 1.05 / 1.26 * 100.0
+            neware_excel.validate_cycles(path, raw, cycles)
+
+        state = raw.attrs["neware_excel"]
+        self.assertEqual(state["cycle_summary_validation_status"], "warning")
+        self.assertFalse(state["cycle_summary_validated"])
+        self.assertEqual(len(state["parser_warnings"]), 1)
+        warning = state["parser_warnings"][0]
+        self.assertEqual(warning["code"], "summary_reconciliation_mismatch")
+        self.assertEqual(warning["examples"][0]["cycle"], 1)
+        self.assertAlmostEqual(warning["examples"][0]["measurement_pct"], 83.3333333333)
+        self.assertAlmostEqual(warning["examples"][0]["summary_pct"], 84.62)
 
     def test_missing_cycle_summary_is_explicitly_non_validating(self):
         with TemporaryDirectory() as temporary:
@@ -1548,6 +1597,26 @@ class NewareExcelParserTests(unittest.TestCase):
                 if cache_directory.exists():
                     import shutil
                     shutil.rmtree(cache_directory)
+
+    def test_cache_persists_excel_energy_warnings_for_later_preview(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "energy-warning.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["E2"] = 999.0
+            workbook.save(path)
+            with mock.patch.object(cache, "CACHE_DIR", root / "cache"):
+                file_hash = parsing.compute_hash(path)
+                identity = parsing.parser_identity(path)
+                cache.build(file_hash, path)
+                warnings = cache.load_parser_warnings(file_hash, identity)
+
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["code"], "summary_reconciliation_mismatch")
+        self.assertEqual(warnings[0]["scope"], "cycle")
+        self.assertEqual(warnings[0]["examples"][0]["cycle"], 1)
+        self.assertIn("recorded measurements", warnings[0]["message"])
 
     def test_cycle_cache_derivation_from_existing_raw_does_not_reopen_excel(self):
         with TemporaryDirectory() as temporary:

@@ -2171,7 +2171,7 @@ export interface ContinuationInspectRequest {
 export interface ContinuationPreviewRequest {
   sources: ContinuationInspectSourceRequest[];
   proposed_order: string[];
-  quantity?: "voltage" | "discharge_capacity_mah" | "charge_capacity_mah" | null;
+  quantity?: "voltage" | "discharge_capacity_mah" | "charge_capacity_mah" | "capacity_bundle" | null;
   interpretation?: "source_chain" | "stitched";
   voltage_x_axis?: "time" | "capacity";
   cycle_start?: number;
@@ -2184,6 +2184,10 @@ export interface ContinuationPreviewSegment {
   x: number[];
   y: number[];
   current_ma?: (number | null)[];
+  charge_capacity_x?: number[];
+  charge_capacity_y?: number[];
+  discharge_capacity_x?: number[];
+  discharge_capacity_y?: number[];
   display_x_start?: number | null;
   display_x_end?: number | null;
   coulombic_efficiency_x?: number[];
@@ -2241,6 +2245,13 @@ export interface ContinuationInspectSource {
   canonical_cycling: boolean;
   metadata_only: boolean;
   capability_warning?: string | null;
+  parser_warnings?: {
+    code: string;
+    scope: string;
+    count: number;
+    message: string;
+    examples?: Record<string, number | string | boolean | null>[];
+  }[];
 }
 
 export interface ContinuationFinding {
@@ -2271,6 +2282,20 @@ export function previewContinuationSources(
   options?: Pick<RequestInit, "signal">,
 ) {
   return post<ContinuationPreviewResult>("/api/imports/continuations/preview", body, options);
+}
+
+export function previewQuickNdaxVoltage(
+  body: {
+    source_path: string;
+    voltage_x_axis: "time" | "capacity";
+    cycle_start?: number;
+    cycle_end?: number;
+  },
+  options?: Pick<RequestInit, "signal">,
+) {
+  return post<{ preview: ContinuationPreviewResult | null }>(
+    "/api/imports/quick-voltage-preview", body, options,
+  );
 }
 
 export interface ImportSourceDraft {

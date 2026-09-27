@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shiftPreviewCycleWindow } from "../src/analysisCellPreviewPolicy.ts";
+import { fullPreviewCycleWindow, shiftPreviewCycleWindow } from "../src/analysisCellPreviewPolicy.ts";
+
+test("capacity and CE preview starts with the complete available cycle range", () => {
+  assert.deepEqual(fullPreviewCycleWindow(767), { start: 1, end: 767 });
+  assert.equal(fullPreviewCycleWindow(0), null);
+});
 
 test("cycle preview windows move by their span and clamp at either end", () => {
   assert.deepEqual(shiftPreviewCycleWindow({ start: 5, end: 10 }, 100, -1), { start: 1, end: 5 });

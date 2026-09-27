@@ -2,7 +2,7 @@
    reposition as the user advances, so the height is pinned rather than derived
    from content. */
 .content {
-  height: min(54rem, 92vh);
+  height: min(54rem, 98vh);
   display: flex;
   flex-direction: column;
 }

@@ -14,7 +14,8 @@ type PreviewDraft = Pick<
 export type ContinuationPreviewQuantity =
   | "voltage"
   | "discharge_capacity_mah"
-  | "charge_capacity_mah";
+  | "charge_capacity_mah"
+  | "capacity_bundle";
 
 export type ContinuationPreviewInterpretation = "source_chain" | "stitched";
 

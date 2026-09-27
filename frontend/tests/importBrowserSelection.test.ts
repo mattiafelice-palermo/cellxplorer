@@ -24,11 +24,12 @@ function folder(path: string): ImportBrowseEntry {
   return { path, name: path.split(/[\\/]/).at(-1) ?? path, kind: "folder", size: null, modified_at: null };
 }
 
-test("folder row activation navigates without changing selection", () => {
+test("folder row click focuses, Enter navigates, and Space toggles inclusion", () => {
   const entry = folder("C:/data");
   const selected = new Map([["C:/old.ndax", file("C:/old.ndax")]]);
-  assert.equal(importRowAction(entry), "navigate");
+  assert.equal(importRowAction(entry), "focus");
   assert.equal(importKeyboardAction(entry, "Enter"), "navigate");
+  assert.equal(importKeyboardAction(entry, " "), "toggle");
   assert.deepEqual([...toggleImportFileSelection(entry, [entry], selected, null).selected.keys()], ["C:/old.ndax"]);
 });
 
@@ -50,9 +51,10 @@ test("folder state supports mixed and empty known descendants", () => {
   assert.equal(isImportFolderCheckboxDisabled(entry, [one.path]), false);
 });
 
-test("file click toggles one file and keyboard Space toggles", () => {
+test("file row previews while keyboard Space toggles inclusion", () => {
   const entry = file("C:/data/a.ndax");
-  assert.equal(importRowAction(entry), "toggle");
+  assert.equal(importRowAction(entry), "preview");
+  assert.equal(importKeyboardAction(entry, "Enter"), "preview");
   assert.equal(importKeyboardAction(entry, " "), "toggle");
   const selected = toggleImportFileSelection(entry, [entry], new Map(), null).selected;
   assert.deepEqual([...selected.keys()], [entry.path]);

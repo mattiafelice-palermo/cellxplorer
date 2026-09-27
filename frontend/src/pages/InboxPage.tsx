@@ -1030,7 +1030,7 @@ function ImportModal({
   onSaved,
   targetFolderId,
   blockingInspectionSeconds,
-  onBackToFolderReview,
+  onBack,
 }: {
   drafts: ImportDraft[];
   active: number;
@@ -1046,7 +1046,7 @@ function ImportModal({
   onSaved: () => void | Promise<void>;
   targetFolderId: number | null;
   blockingInspectionSeconds: number;
-  onBackToFolderReview?: () => void;
+  onBack: () => void;
 }) {
   const qc = useQueryClient();
   const draft = drafts[active];
@@ -1735,14 +1735,14 @@ function ImportModal({
               <Text size="sm" c="dimmed">Review {drafts.length} selected file{drafts.length === 1 ? "" : "s"} before saving.</Text>
             )}
             <ImportModalPrimaryActions>
-              {onBackToFolderReview && !shouldShowDone && !shouldShowContinue && (
+              {!shouldShowDone && !shouldShowContinue && (
                 <Button
                   variant="default"
                   leftSection={<IconArrowLeft size={15} />}
                   disabled={save.isPending}
-                  onClick={onBackToFolderReview}
+                  onClick={onBack}
                 >
-                  Back to file selection
+                  Back
                 </Button>
               )}
               {shouldShowDone ? (
@@ -2070,11 +2070,11 @@ function ImportModal({
                            const stateLabel = item.metadata_only
                              ? "Metadata only"
                              : previewError
-                             ? "Preview failed"
+                              ? "Capacity preview unavailable"
                              : duplicate
                                ? "Already imported"
                                : item.import_match?.kind === "possible_update"
-                                 ? "Possible update"
+                                  ? "Similar library file"
                                  : item.preview_state.status === "loading"
                                    ? "Loading preview"
                                    : item.preview_state.status === "idle"
@@ -2133,12 +2133,14 @@ function ImportModal({
                                        <Text size="xs" c="dimmed" style={{ flex: "none" }} aria-hidden="true">
                                          ·
                                        </Text>
-                                       {item.metadata_only || previewError || duplicate || item.import_match?.kind === "possible_update" ? (
+                                        {item.metadata_only || duplicate ? (
                                          <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" style={{ flex: "none" }} />
                                        ) : null}
-                                       <Text size="xs" truncate c={duplicate ? "red" : item.metadata_only || previewError ? "orange" : "dimmed"}>
-                                         {stateLabel}
-                                       </Text>
+                                        <Tooltip label={previewError ? `The capacity preview could not be prepared: ${previewError}. Review the source before importing; import may also fail.` : item.import_match?.kind === "possible_update" ? "A library file has a similar name or path. Its checksum differs; importing this file will not replace the existing cell." : stateLabel} multiline w={360} withArrow>
+                                          <Text size="xs" truncate c={duplicate ? "red" : item.metadata_only ? "orange" : "dimmed"}>
+                                            {stateLabel}
+                                          </Text>
+                                        </Tooltip>
                                      </Group>
                                      {groups.length > 0 && (
                                        <Group gap={4}>
@@ -2196,7 +2198,7 @@ function ImportModal({
                       color={
                         draft.import_match.kind === "exact_duplicate" && draft.import_match.registered
                           ? "red"
-                          : "orange"
+                          : draft.import_match.kind === "possible_update" ? "blue" : "orange"
                       }
                       variant="light"
                     >
@@ -2204,7 +2206,7 @@ function ImportModal({
                         ? "duplicate"
                         : draft.import_match.kind === "exact_duplicate"
                           ? "indexed"
-                          : "possible update"}
+                          : "similar file"}
                     </Badge>
                   )}
                   {draft.metadata_error && (
@@ -2417,9 +2419,9 @@ function ImportModal({
                   color={
                     draft.import_match.kind === "exact_duplicate" && draft.import_match.registered
                       ? "red"
-                      : "orange"
+                      : draft.import_match.kind === "possible_update" ? "blue" : "orange"
                   }
-                  icon={<IconAlertTriangle size={16} />}
+                  icon={draft.import_match.kind === "possible_update" ? <IconInfoCircle size={16} /> : <IconAlertTriangle size={16} />}
                 >
                   {draft.import_match.kind === "exact_duplicate" ? (
                     <>
@@ -2431,10 +2433,9 @@ function ImportModal({
                     </>
                   ) : (
                     <>
-                      This file has a new checksum, but it resembles{" "}
+                      This file has a new checksum, but its name or path resembles{" "}
                       <strong>{draft.import_match.cell_name || draft.import_match.filename}</strong>{" "}
-                      by {draft.import_match.matched_on.join(", ")}. It may be an updated or
-                      extended cycling file.
+                      by {draft.import_match.matched_on.join(", ")}. Review the match before importing; this import will create a separate cell and will not replace the existing file.
                     </>
                   )}
                 </Alert>
@@ -2503,11 +2504,12 @@ function ImportModal({
                     <Text size="xs" c="dimmed" style={{ flex: "none" }}>{formatBytes(draft.size)} · .{draft.ext}</Text>
                   </Group>
                 </div>
-                <Box style={{ minHeight: 0, overflowY: "auto", flex: 1 }}>
+                <Box style={{ minHeight: 0, overflowY: "auto", scrollbarGutter: "stable", flex: 1 }}>
                   <ImportSourcePreview
                     source={draft}
                     activeMassMgOverride={draft.active_mass_mg_override}
                     plotHeight={392}
+                    stablePlotHeight
                   />
                 </Box>
               </Stack>
@@ -2678,6 +2680,9 @@ export function ImportCellsLauncher({
         append,
       })),
     onSuccess: ({ result, append }) => {
+      // Keep the file picker visible throughout single-file inspection, then
+      // switch directly to the review step in the same render.
+      setSourcePickerOpen(false);
       setBlockingInspectionSeconds((current) => current + Math.max(
         0,
         (Date.now() - (inspectionStartedAt.current ?? Date.now())) / 1000,
@@ -2749,7 +2754,6 @@ export function ImportCellsLauncher({
           append,
           jobToken,
         });
-        setSourcePickerOpen(false);
         return;
       }
       setFolderRootName("Selected sources");
@@ -2812,11 +2816,13 @@ export function ImportCellsLauncher({
         key={sourcePickerKey}
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
-        progress={progressStage === "scan" ? (
+        progress={progressStage === "scan" || progressStage === "inspect" ? (
           <ImportProgressPanel
-            stage="scan"
+            stage={progressStage}
             job={progressQuery.data}
-            error={listSources.isError && listSources.error instanceof Error ? listSources.error.message : null}
+            error={progressStage === "scan"
+              ? listSources.isError && listSources.error instanceof Error ? listSources.error.message : null
+              : inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
           />
         ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
@@ -2898,11 +2904,15 @@ export function ImportCellsLauncher({
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={closeImportSession}
-        onBackToFolderReview={folderReviewRequired ? () => {
+        onBack={() => {
           setModalOpen(false);
           setInspectionFailures([]);
-          setFolderModalOpen(true);
-        } : undefined}
+          if (folderReviewRequired) setFolderModalOpen(true);
+          else {
+            setSourcePickerKey((current) => current + 1);
+            setSourcePickerOpen(true);
+          }
+        }}
         onSaved={async () => {
           closeImportSession();
           await onSaved?.();
@@ -2975,6 +2985,7 @@ export function InboxPage() {
         append,
       })),
     onSuccess: ({ result, append }) => {
+      setSourcePickerOpen(false);
       setBlockingInspectionSeconds((current) => current + Math.max(
         0,
         (Date.now() - (inspectionStartedAt.current ?? Date.now())) / 1000,
@@ -3045,7 +3056,6 @@ export function InboxPage() {
           append,
           jobToken,
         });
-        setSourcePickerOpen(false);
         return;
       }
       setFolderRootName("Selected sources");
@@ -3119,11 +3129,13 @@ export function InboxPage() {
         key={sourcePickerKey}
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
-        progress={progressStage === "scan" ? (
+        progress={progressStage === "scan" || progressStage === "inspect" ? (
           <ImportProgressPanel
-            stage="scan"
+            stage={progressStage}
             job={progressQuery.data}
-            error={listSources.isError && listSources.error instanceof Error ? listSources.error.message : null}
+            error={progressStage === "scan"
+              ? listSources.isError && listSources.error instanceof Error ? listSources.error.message : null
+              : inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
           />
         ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
@@ -3232,11 +3244,15 @@ export function InboxPage() {
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={closeImportSession}
-        onBackToFolderReview={folderReviewRequired ? () => {
+        onBack={() => {
           setModalOpen(false);
           setInspectionFailures([]);
-          setFolderModalOpen(true);
-        } : undefined}
+          if (folderReviewRequired) setFolderModalOpen(true);
+          else {
+            setSourcePickerKey((current) => current + 1);
+            setSourcePickerOpen(true);
+          }
+        }}
         onSaved={() => {
           closeImportSession();
         }}

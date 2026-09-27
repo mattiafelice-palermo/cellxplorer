@@ -115,12 +115,24 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertFalse(index["voltage_data_availability"]["counter_potential_v"])
         self.assertEqual(index["timestamp_start"], "2026-01-01T00:00:00")
         self.assertEqual(index["timestamp_end"], "2026-01-01T00:00:11")
+        self.assertEqual(index["preview_time_origin_s"], 0.0)
         self.assertEqual(index["consecutive_time"]["reset_total_s"], 0.0)
         self.assertEqual(
             index["consecutive_time"]["cycle_starts"]["2"],
             {"raw_time_s": 5.0, "reset_offset_s": 0.0},
         )
         self.assertEqual(cache.raw_layout_status(self.FILE_HASH, self.PARSER), "ready")
+
+    def test_preview_time_origin_uses_record_order_without_sorting_frame(self) -> None:
+        frame = canonical_frame()
+        frame["record_index"] = [3, 1, 2, 0, 4, 5, 6, 7, 8, 9, 10, 11]
+        frame["total_time_s"] = [30.0, 10.0, 20.0, 0.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0]
+        with patch.object(
+            pd.DataFrame,
+            "sort_values",
+            side_effect=AssertionError("time-origin lookup must not sort the full frame"),
+        ):
+            self.assertEqual(cache._preview_time_origin(frame), 0.0)
 
     def test_index_distinguishes_display_only_curve_labels(self) -> None:
         frame = canonical_frame()
@@ -178,6 +190,23 @@ class RawCacheLayoutTests(unittest.TestCase):
             calc.per_cycle(frame),
             check_dtype=False,
         )
+
+    def test_preview_cache_build_defers_optional_time_capacity_artifact(self) -> None:
+        frame = canonical_frame()
+        with (
+            patch.object(parsing, "parse_timeseries", return_value=frame),
+            patch.object(cache, "prepare_time_capacity_derived") as prepare_derived,
+        ):
+            info = cache.build(
+                self.FILE_HASH,
+                "preview.ndax",
+                prepare_time_capacity=False,
+            )
+
+        self.assertEqual(info["rows"], len(frame))
+        self.assertTrue(cache.raw_path(self.FILE_HASH, parsing.parser_identity("preview.ndax")).is_file())
+        self.assertTrue(cache.cycles_path(self.FILE_HASH, parsing.parser_identity("preview.ndax")).is_file())
+        prepare_derived.assert_not_called()
 
     def test_voltage_availability_distinguishes_absent_null_and_finite(self) -> None:
         absent = self._indexed(canonical_frame())

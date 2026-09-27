@@ -155,6 +155,10 @@ def _warm_scientific_services() -> None:
 
     apply_background_thread_priority()
     try:
+        # First import-picker clicks can arrive before any scientific cache
+        # work. Prepare the direct NDAX preview stack while the UI opens. A
+        # request arriving during this work joins the same lock in files.py.
+        files.warm_quick_preview_dependencies()
         import pandas  # noqa: F401
         import NewareNDA  # noqa: F401
         import pyarrow  # noqa: F401

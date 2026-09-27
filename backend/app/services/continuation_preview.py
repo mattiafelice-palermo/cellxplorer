@@ -67,7 +67,11 @@ def infer_contiguous_cycle_ids(status: pd.Series) -> pd.Series:
     return pd.Series(cycle_ids, index=status.index, dtype="int64")
 
 
-def prepare_segmented_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
+def prepare_segmented_raw(
+    source_frames: Sequence[pd.DataFrame],
+    *,
+    time_origins_s: Sequence[float | None] | None = None,
+) -> pd.DataFrame:
     """Return ordered raw rows with preview-only source/time provenance."""
 
     if not source_frames:
@@ -121,7 +125,16 @@ def prepare_segmented_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame
                     range(len(frame)), index=frame.index, dtype="float64"
                 ) + time_offset
             else:
-                first_time = float(valid_time.iloc[0])
+                supplied_origin = (
+                    time_origins_s[segment]
+                    if time_origins_s is not None and segment < len(time_origins_s)
+                    else None
+                )
+                first_time = (
+                    float(supplied_origin)
+                    if supplied_origin is not None
+                    else float(valid_time.iloc[0])
+                )
                 frame["preview_time_s"] = local_time - first_time + time_offset
         valid_preview_time = pd.to_numeric(frame["preview_time_s"], errors="coerce").dropna()
         if not valid_preview_time.empty:

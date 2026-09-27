@@ -2,7 +2,7 @@ import type { ImportBrowseEntry } from "./api";
 
 export type ImportSelection = ReadonlyMap<string, ImportBrowseEntry>;
 
-export type ImportRowAction = "navigate" | "toggle";
+export type ImportRowAction = "navigate" | "preview" | "focus";
 
 export type FolderSelectionState = "none" | "some" | "all";
 
@@ -11,7 +11,7 @@ export type ImportSelectionUpdate = {
   lastSelectedPath: string | null;
 };
 
-export type ImportKeyboardAction = ImportRowAction | null;
+export type ImportKeyboardAction = ImportRowAction | "toggle" | null;
 
 export type ImportShownSelectionState = {
   entries: ImportBrowseEntry[];
@@ -188,15 +188,16 @@ export function toggleImportFolderSelection(
 }
 
 export function importRowAction(entry: ImportBrowseEntry): ImportRowAction {
-  return entry.kind === "folder" ? "navigate" : "toggle";
+  return entry.kind === "folder" ? "focus" : "preview";
 }
 
 export function importKeyboardAction(
   entry: ImportBrowseEntry,
   key: string,
 ): ImportKeyboardAction {
-  if (key !== "Enter" && key !== " ") return null;
-  return importRowAction(entry);
+  if (key === " ") return "toggle";
+  if (key === "Enter") return entry.kind === "folder" ? "navigate" : "preview";
+  return null;
 }
 
 export function toggleImportFileSelection(

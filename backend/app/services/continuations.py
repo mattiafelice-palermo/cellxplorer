@@ -750,6 +750,7 @@ def _continuation_chain_response(
                 ),
                 "metadata_only": bool(source.get("metadata_only")),
                 "capability_warning": source.get("capability_warning"),
+                "parser_warnings": source.get("parser_warnings", []),
             }
         )
 
@@ -864,11 +865,18 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
     cycles_ready = cache.has_cycles(file_hash, expected_identity, CALC_VERSION)
     raw_ready = cache.raw_path(file_hash, expected_identity).is_file()
     cycles_frame = None
-    raw_frame = None
+    raw_index = None
 
     if raw_ready:
-        raw_frame = cache.load_raw(file_hash, expected_identity)
-        raw_ready = raw_frame is not None
+        raw_index = cache.try_load_raw_layout_index(file_hash, expected_identity)
+        if raw_index is None:
+            # Preserve compatibility with legacy raw caches that have no
+            # validated index. Current caches carry timestamp bounds in the
+            # index, so a full Parquet read is not needed for inspection.
+            raw_frame = cache.load_raw(file_hash, expected_identity)
+            raw_ready = raw_frame is not None
+        else:
+            raw_frame = None
 
     # A raw-only cache can derive the current cycle cache without rereading the
     # source. The result is still incomplete if that derivation is unavailable.
@@ -887,11 +895,19 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
         source["local_cycle_count"] = count
 
     if raw_ready:
-        first_ts, last_ts = timestamp_range_from_raw(raw_frame)
+        if raw_index is not None:
+            first_ts = _parse_timestamp(raw_index.get("timestamp_start"))
+            last_ts = _parse_timestamp(raw_index.get("timestamp_end"))
+        else:
+            first_ts, last_ts = timestamp_range_from_raw(raw_frame)
         source["first_record_timestamp"] = first_ts
         if last_ts is not None:
             source["end_time"] = _iso_timestamp(last_ts)
             source["end_timestamp"] = last_ts
+        source["parser_warnings"] = cache.load_parser_warnings(
+            file_hash,
+            expected_identity,
+        )
 
     missing_cache = []
     if not cycles_ready:

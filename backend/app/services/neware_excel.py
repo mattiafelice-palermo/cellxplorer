@@ -42,7 +42,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-EXCEL_PARSER_REVISION = 6
+EXCEL_PARSER_REVISION = 7
 
 
 class _FastExcelFallback(Exception):
@@ -1994,6 +1994,48 @@ def _step_time_tolerance_seconds(record_interval_s: float | None) -> float:
     return max(2.0, float(record_interval_s)) if record_interval_s is not None else 2.0
 
 
+def _record_summary_mismatches(
+    frame: pd.DataFrame,
+    *,
+    scope: str,
+    code: str,
+    summary_label: str,
+    measurement_label: str,
+    mismatches: list[dict[str, object]],
+) -> None:
+    if not mismatches:
+        return
+    state = frame.attrs.setdefault("neware_excel", {})
+    warnings = state.setdefault("parser_warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+        state["parser_warnings"] = warnings
+    summary_name = "step" if scope == "step" else "cycle"
+    unit_name = "step-summary value" if scope == "step" else "cycle-summary value"
+    count = len(mismatches)
+    examples = [
+        {
+            key: value.item() if isinstance(value, np.generic) else value
+            for key, value in mismatch.items()
+        }
+        for mismatch in mismatches[:3]
+    ]
+    warnings.append(
+        {
+            "code": code,
+            "scope": scope,
+            "count": count,
+            "message": (
+                f"Neware's {summary_name} {summary_label} summary differs from "
+                f"{measurement_label} in {count} {unit_name}"
+                f"{'s' if count != 1 else ''}. CellXplorer will import the recorded "
+                "measurements and use its own calculations; summary-derived values may differ."
+            ),
+            "examples": examples,
+        }
+    )
+
+
 def _validate_step_summary(
     frame: pd.DataFrame,
     sheet: Any,
@@ -2019,6 +2061,7 @@ def _validate_step_summary(
             f"{len(segments)} raw segments but {len(summary)} step-summary rows."
         )
 
+    energy_mismatches: list[dict[str, object]] = []
     for expected_step, (summary_row, segment) in enumerate(
         zip(summary, segments), start=1
     ):
@@ -2094,10 +2137,23 @@ def _validate_step_summary(
                 float(summary_row.get("energy_rounding_tolerance_mwh", 0.01)) * 2.5,
                 abs(expected_energy) * 0.005,
             )
-        if abs(_integrate_step_energy(segment) - expected_energy) > energy_tolerance:
-            raise InvalidNewareExcelError(
-                f"Neware Excel step summary energy does not match raw step {expected_step}."
+        integrated_energy = _integrate_step_energy(segment)
+        if abs(integrated_energy - expected_energy) > energy_tolerance:
+            energy_mismatches.append(
+                {
+                    "step": expected_step,
+                    "summary_mwh": expected_energy,
+                    "measurement_integration_mwh": integrated_energy,
+                }
             )
+    _record_summary_mismatches(
+        frame,
+        scope="step",
+        code="summary_reconciliation_mismatch",
+        summary_label="energy",
+        measurement_label="energy integrated from the exported measurement points",
+        mismatches=energy_mismatches,
+    )
     return True
 
 
@@ -2175,14 +2231,27 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
             "Could not parse the Neware Excel workbook."
         ) from exc
 
+    state = frame.attrs.get("neware_excel")
+    if not isinstance(state, dict):
+        state = {}
+    parser_warnings = list(state.get("parser_warnings") or [])
+    step_energy_warning = any(
+        isinstance(item, dict) and item.get("scope") == "step"
+        for item in parser_warnings
+    )
     frame.attrs["neware_excel"] = {
+        **state,
         "record_sheet": "record",
         "step_summary_available": step_sheet is not None,
-        "step_summary_validated": step_sheet is not None,
+        "step_summary_validated": step_sheet is not None and not step_energy_warning,
+        "step_summary_validation_status": (
+            "warning" if step_energy_warning else "valid" if step_sheet is not None else "unavailable"
+        ),
         "step_summary_duration_validated": step_duration_validated,
         "record_clock_dialect": record_clock_dialect,
         "record_count": int(len(frame)),
         "executed_step_count": int(frame["step"].nunique()),
+        "parser_warnings": parser_warnings,
     }
     return frame
 
@@ -2479,6 +2548,7 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
         if cycle_sheet is None:
             state["cycle_summary_available"] = False
             state["cycle_summary_validated"] = False
+            state["cycle_summary_validation_status"] = "unavailable"
             return
         summary = _parse_cycle_summary(cycle_sheet)
         interval_s: float | None = None
@@ -2509,6 +2579,8 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
 
     time_tolerance_s = max(2.0, interval_s if interval_s is not None else 2.0)
     record_clock_dialect = bool(state.get("record_clock_dialect", False))
+    energy_mismatches: list[dict[str, object]] = []
+    efficiency_mismatches: list[dict[str, object]] = []
 
     def compare(
         cycle_id: int,
@@ -2557,7 +2629,18 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
                 f"Neware Excel cycle {cycle_id} {quantity} mismatch: calculated {actual_number:g}, "
                 f"summary {expected_number:g}."
             )
-        if abs(actual_number - expected_number) > tolerance:
+        comparison_slack = max(1e-12, abs(expected_number) * 1e-12)
+        if abs(actual_number - expected_number) > tolerance + comparison_slack:
+            if quantity in {"charge energy", "discharge energy"}:
+                energy_mismatches.append(
+                    {
+                        "cycle": cycle_id,
+                        "quantity": quantity,
+                        "summary_mwh": expected_number,
+                        "calculated_mwh": actual_number,
+                    }
+                )
+                return
             raise InvalidNewareExcelError(
                 f"Neware Excel cycle {cycle_id} {quantity} mismatch: "
                 f"calculated {actual_number:g}, summary {expected_number:g}."
@@ -2579,7 +2662,16 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
             and row.get("charge_time_is_clock")
             and row.get("discharge_time_is_clock")
         )
-        capacity_tolerance = max(0.002, 0.001 * abs(float(charge_capacity))) if charge_capacity is not None else 0.0
+        charge_capacity_rounding = (
+            _display_rounding_tolerance(float(charge_capacity), scale=1.0, minimum=0.0)
+            if charge_capacity is not None
+            else 0.0
+        )
+        capacity_tolerance = max(
+            0.002,
+            0.001 * abs(float(charge_capacity)),
+            charge_capacity_rounding,
+        ) if charge_capacity is not None else 0.0
         if relaxed_clock_dialect:
             capacity_tolerance = max(
                 capacity_tolerance,
@@ -2593,7 +2685,16 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
             charge_capacity,
             capacity_tolerance,
         )
-        discharge_capacity_tolerance = max(0.002, 0.001 * abs(float(discharge_capacity))) if discharge_capacity is not None else 0.0
+        discharge_capacity_rounding = (
+            _display_rounding_tolerance(float(discharge_capacity), scale=1.0, minimum=0.0)
+            if discharge_capacity is not None
+            else 0.0
+        )
+        discharge_capacity_tolerance = max(
+            0.002,
+            0.001 * abs(float(discharge_capacity)),
+            discharge_capacity_rounding,
+        ) if discharge_capacity is not None else 0.0
         if relaxed_clock_dialect:
             discharge_capacity_tolerance = max(
                 discharge_capacity_tolerance,
@@ -2658,11 +2759,69 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
             efficiency_tolerance = 0.05
             if relaxed_clock_dialect:
                 efficiency_tolerance = 0.5
-            compare(
-                cycle_id,
-                "coulombic efficiency",
-                actual_row.get("coulombic_efficiency_pct"),
-                row["coulombic_efficiency_pct"],
-                efficiency_tolerance,
-            )
-    state["cycle_summary_validated"] = True
+            actual_efficiency = float(actual_row["coulombic_efficiency_pct"])
+            summary_efficiency = float(row["coulombic_efficiency_pct"])
+            if abs(actual_efficiency - summary_efficiency) > efficiency_tolerance + max(
+                1e-12, abs(summary_efficiency) * 1e-12
+            ):
+                charge_low = max(0.0, float(charge_capacity) - charge_capacity_rounding) if charge_capacity is not None else 0.0
+                charge_high = float(charge_capacity) + charge_capacity_rounding if charge_capacity is not None else 0.0
+                discharge_low = max(0.0, float(discharge_capacity) - discharge_capacity_rounding) if discharge_capacity is not None else 0.0
+                discharge_high = float(discharge_capacity) + discharge_capacity_rounding if discharge_capacity is not None else 0.0
+                if charge_high <= 0.0 or charge_low <= 1e-12:
+                    rounding_consistent = False
+                    efficiency_low = efficiency_high = 0.0
+                else:
+                    # Neware writes capacity and efficiency summaries at their
+                    # displayed precision. A ratio from those rounded values
+                    # can differ from the ratio computed from raw records,
+                    # especially for low-capacity cycles.
+                    efficiency_low = 100.0 * discharge_low / charge_high
+                    efficiency_high = 100.0 * discharge_high / charge_low
+                    efficiency_rounding = _display_rounding_tolerance(
+                        summary_efficiency,
+                        scale=1.0,
+                        minimum=0.0,
+                    )
+                    rounding_consistent = all(
+                        efficiency_low - efficiency_rounding - 1e-12
+                        <= value
+                        <= efficiency_high + efficiency_rounding + 1e-12
+                        for value in (actual_efficiency, summary_efficiency)
+                    )
+                if not rounding_consistent:
+                    compare(
+                        cycle_id,
+                        "coulombic efficiency",
+                        actual_efficiency,
+                        summary_efficiency,
+                        efficiency_tolerance,
+                    )
+                efficiency_mismatches.append(
+                    {
+                        "cycle": cycle_id,
+                        "quantity": "coulombic efficiency",
+                        "summary_pct": summary_efficiency,
+                        "measurement_pct": actual_efficiency,
+                        "rounding_min_pct": efficiency_low,
+                        "rounding_max_pct": efficiency_high,
+                    }
+                )
+    cycle_summary_mismatches = energy_mismatches + efficiency_mismatches
+    cycle_summary_quantities = list(dict.fromkeys(
+        str(item["quantity"]) for item in cycle_summary_mismatches if item.get("quantity")
+    ))
+    _record_summary_mismatches(
+        raw,
+        scope="cycle",
+        code="summary_reconciliation_mismatch",
+        summary_label=" and ".join(cycle_summary_quantities) or "numeric values",
+        measurement_label="values calculated from the exported measurements",
+        mismatches=cycle_summary_mismatches,
+    )
+    if energy_mismatches or efficiency_mismatches:
+        state["cycle_summary_validated"] = False
+        state["cycle_summary_validation_status"] = "warning"
+    else:
+        state["cycle_summary_validated"] = True
+        state["cycle_summary_validation_status"] = "valid"
