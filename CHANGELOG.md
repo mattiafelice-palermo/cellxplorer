@@ -4,6 +4,19 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.32 - 2026-09-27
+
+### New features
+
+- Add interactive import previews with analysis-style voltage/current charts, per-cycle capacity and coulombic efficiency, time-or-capacity axes, and cycle-window navigation.
+- Speed up Neware NDAX and structured Excel previews while deferring analysis-only Time/Capacity cache generation during import staging.
+- Improve source selection and preview continuity when building separate or continued-cell imports.
+
+### Bug fixes
+
+- Keep previews tied to the active source and preserve source, elapsed-time, and global-cycle coordinates when selections or preview modes change.
+- Improve import-picker sizing so preview plots and controls remain accessible alongside large source lists, and make preview warnings clearer without blocking import.
+
 ## 0.27.1-beta.3 - 2026-09-26
 
 ### Bug fixes
