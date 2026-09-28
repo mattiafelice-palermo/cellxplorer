@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-beta.3",
-  "notes": "### Bug fixes\n\n- Make the Add to plot modal typography respect the app-wide UI zoom setting.",
-  "pub_date": "2026-09-26T02:05:05.394Z",
+  "version": "0.27.1-beta.4",
+  "notes": "### New features\n\n- Add quick Neware Excel voltage and cycle previews, including time-or-capacity axes and cycle-window selection.\n- Stream large-workbook voltage previews and cache both axis views so repeated previews avoid rescanning the source.\n- Improve preview responsiveness with structural XLSX eligibility checks, hover prefetch, loading states, and clearer parser diagnostics.\n\n### Bug fixes\n\n- Recover isolated future-dated worksheet rows only when exact measurements reappear later, and preserve the skipped and matching DataPoints as warnings.\n- Treat unitless numeric cycle durations as ambiguous instead of guessing, while preserving validated capacities, efficiency, energy, and raw data.",
+  "pub_date": "2026-09-28T06:15:23.451Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVE0T1M5RjZkdWpnRjRqN3pnZ3V2b292UWNKTVdKNHIwbDUvQXUwdTJDaFdYUDd4NTc2ejdFUVZrUndsZjNhdjhRYVJsZE5XTml3azdtVjRjYkI0dlFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzg4Mjk5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS4zX3g2NC1zZXR1cC5leGUKRnJyWlIrVXJUV1JPZ3YzS1NmZGg0YkhPMzJPckVGWmRvSGoySk5aOTlVazlHaU8zU1ZXRkI1TXFWcFdTUEtWUjVtTEUrR2pydUlCY21WTUczMDRBQ3c9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.3/CellXplorer.Beta_0.27.1-beta.3_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVdtdnI5Uk03TXNwWGRFSUlmUG92dE5MZ3pZRXFBVWxrT2F3a2pNTmc2dEViNlVjb3orc2JBUm9RdFRXdENiV3Fvelc2ZHFLa211SlZ0NEw2SU1UN3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTc2MTE3CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS40X3g2NC1zZXR1cC5leGUKYTcvZW5YWTFTbFpxS1hRNGpkckRmT0d0a2lWMXpBeXlEa0pQeS9ZVkJmL3NOcnlVSHQvZGNFbzQvWi9WbEdBZkRwS3ZkbjArR0d2MVJFMVV1M1VjRFE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.4/CellXplorer.Beta_0.27.1-beta.4_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVE0T1M5RjZkdWpnRjRqN3pnZ3V2b292UWNKTVdKNHIwbDUvQXUwdTJDaFdYUDd4NTc2ejdFUVZrUndsZjNhdjhRYVJsZE5XTml3azdtVjRjYkI0dlFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzg4Mjk5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS4zX3g2NC1zZXR1cC5leGUKRnJyWlIrVXJUV1JPZ3YzS1NmZGg0YkhPMzJPckVGWmRvSGoySk5aOTlVazlHaU8zU1ZXRkI1TXFWcFdTUEtWUjVtTEUrR2pydUlCY21WTUczMDRBQ3c9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.3/CellXplorer.Beta_0.27.1-beta.3_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVdtdnI5Uk03TXNwWGRFSUlmUG92dE5MZ3pZRXFBVWxrT2F3a2pNTmc2dEViNlVjb3orc2JBUm9RdFRXdENiV3Fvelc2ZHFLa211SlZ0NEw2SU1UN3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTc2MTE3CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI3LjEtYmV0YS40X3g2NC1zZXR1cC5leGUKYTcvZW5YWTFTbFpxS1hRNGpkckRmT0d0a2lWMXpBeXlEa0pQeS9ZVkJmL3NOcnlVSHQvZGNFbzQvWi9WbEdBZkRwS3ZkbjArR0d2MVJFMVV1M1VjRFE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-beta.4/CellXplorer.Beta_0.27.1-beta.4_x64-setup.exe"
     }
   }
 }
