@@ -4,6 +4,19 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-beta.4 - 2026-09-28
+
+### New features
+
+- Add quick Neware Excel voltage and cycle previews, including time-or-capacity axes and cycle-window selection.
+- Stream large-workbook voltage previews and cache both axis views so repeated previews avoid rescanning the source.
+- Improve preview responsiveness with structural XLSX eligibility checks, hover prefetch, loading states, and clearer parser diagnostics.
+
+### Bug fixes
+
+- Recover isolated future-dated worksheet rows only when exact measurements reappear later, and preserve the skipped and matching DataPoints as warnings.
+- Treat unitless numeric cycle durations as ambiguous instead of guessing, while preserving validated capacities, efficiency, energy, and raw data.
+
 ## 0.27.1-alpha.32 - 2026-09-27
 
 ### New features
