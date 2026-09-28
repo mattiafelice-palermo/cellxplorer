@@ -1612,7 +1612,11 @@ def _metadata_only_biologic_header(
     }
 
 
-def read_header_metadata(path: str | Path) -> dict:
+def read_header_metadata(
+    path: str | Path,
+    *,
+    fast_excel_hint: bool = False,
+) -> dict:
     """Cheap header/metadata extraction (no full parse).
 
     Returns the normalized source metadata contract.  Neware sources retain
@@ -1640,7 +1644,11 @@ def read_header_metadata(path: str | Path) -> dict:
                     )
                 return biologic_gcpl.read_gcpl_header_metadata(document)
         if format_id == FORMAT_NEWARE_EXCEL:
-            meta = neware_excel.read_metadata(path)
+            meta = (
+                neware_excel.read_metadata_fast(path)
+                if fast_excel_hint
+                else neware_excel.read_metadata(path)
+            )
             flat = _flatten(meta)
         elif format_id == FORMAT_NEWARE_BINARY:
             flat = _read_neware_binary_header_flat(path)

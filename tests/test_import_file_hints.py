@@ -54,21 +54,20 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertIsNone(result["supplier"])
 
     def test_excel_hint_reports_parser_compatibility_without_blocking_other_formats(self):
+        from backend.app.services import neware_excel
+
         with tempfile.TemporaryDirectory() as directory:
             workbook = Path(directory) / "neware.xlsx"
             workbook.write_bytes(b"workbook")
-            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={"technique": "GCPL"}):
+            with patch.object(neware_excel, "validate_supported_workbook") as validate, \
+                 patch.object(import_file_hints.parsing, "read_header_metadata", side_effect=AssertionError("slow metadata reader called")):
                 accepted = import_file_hints.inspect_header_hint(str(workbook))
-            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
-                "error": "unrecognized workbook", "error_kind": "unsupported",
-                "error_message": "Not a supported Neware export."
-            }):
+                validate.assert_called_once_with(workbook)
+            with patch.object(neware_excel, "validate_supported_workbook", side_effect=neware_excel.UnsupportedNewareExcelError("Not a supported Neware export.")):
                 rejected = import_file_hints.inspect_header_hint(str(workbook))
-            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
-                "error": "I/O error", "error_kind": None, "error_message": "Temporary read failure."
-            }):
+            with patch.object(neware_excel, "validate_supported_workbook", side_effect=neware_excel.InvalidNewareExcelError("Temporary read failure.")):
                 transient = import_file_hints.inspect_header_hint(str(workbook))
-            with patch.object(import_file_hints.parsing, "read_header_metadata", side_effect=OSError("sharing violation")):
+            with patch.object(neware_excel, "validate_supported_workbook", side_effect=OSError("sharing violation")):
                 failed_read = import_file_hints.inspect_header_hint(str(workbook))
             binary = Path(directory) / "neware.ndax"
             binary.write_bytes(b"binary")

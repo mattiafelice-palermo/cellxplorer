@@ -8,6 +8,7 @@ import threading
 import uuid
 import json
 import hashlib
+from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -109,6 +110,12 @@ def _load_fast_neware():
     return module
 
 
+def _load_neware_excel():
+    from ..services import neware_excel as module
+
+    return module
+
+
 def _load_cell_folder_watch():
     from ..services import cell_folder_watch as module
 
@@ -143,6 +150,10 @@ cache_maintenance = LazyModule(_load_cache_maintenance)
 
 _quick_preview_ready = threading.Event()
 _quick_preview_warm_lock = threading.Lock()
+_QUICK_EXCEL_PREVIEW_CACHE_LIMIT = 8
+_quick_excel_preview_cache: OrderedDict[tuple[object, ...], dict[str, dict]] = OrderedDict()
+_quick_excel_preview_cache_lock = threading.Lock()
+_quick_excel_preview_inflight: dict[tuple[object, ...], threading.Event] = {}
 
 
 def warm_quick_preview_dependencies() -> None:
@@ -154,6 +165,7 @@ def warm_quick_preview_dependencies() -> None:
             return
         _load_fast_neware()
         _load_continuation_preview()
+        _load_neware_excel()
         _quick_preview_ready.set()
 
 router = APIRouter(prefix="/api", tags=["files"])
@@ -1639,6 +1651,14 @@ class ImportQuickVoltagePreviewRequest(BaseModel):
     cycle_end: int | None = None
 
 
+class ImportQuickExcelPreviewRequest(BaseModel):
+    source_path: str
+    quantity: Literal["voltage", "capacity_bundle"] = "voltage"
+    voltage_x_axis: Literal["time", "capacity"] = "time"
+    cycle_start: int | None = None
+    cycle_end: int | None = None
+
+
 class ImportRawDataRequest(BaseModel):
     staged_name: str
     source_path: str | None = None
@@ -2876,6 +2896,102 @@ def quick_import_voltage_preview(req: ImportQuickVoltagePreviewRequest):
     return {"preview": preview}
 
 
+@router.post("/imports/quick-excel-preview")
+def quick_import_excel_preview(req: ImportQuickExcelPreviewRequest):
+    """Preview a Neware workbook without waiting for identity or cache preparation."""
+    source_path = Path(req.source_path).expanduser().resolve()
+    if source_path.suffix.casefold() != ".xlsx":
+        raise HTTPException(400, "Quick Excel preview requires a Neware .xlsx source.")
+    try:
+        before = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(404, "Source file is unavailable") from exc
+    if not source_path.is_file():
+        raise HTTPException(404, "Source file is unavailable")
+    warm_quick_preview_dependencies()
+    try:
+        source = {
+            "source_path": str(source_path),
+            "source_key": str(source_path),
+            "filename": source_path.name,
+        }
+        if req.quantity == "voltage":
+            excel = _load_neware_excel()
+            summary = excel.read_preview_data(
+                str(source_path), quantity="capacity_bundle"
+            )
+            if summary is None:
+                preview = None
+            else:
+                cycle_count = int(summary["cycle_count"])
+                if req.cycle_start is None and req.cycle_end is None:
+                    cycle_start = max(1, cycle_count - 19)
+                    cycle_end = cycle_count
+                else:
+                    cycle_start = max(1, int(req.cycle_start or 1))
+                    cycle_end = min(
+                        cycle_count,
+                        max(cycle_start, int(req.cycle_end or cycle_start)),
+                    )
+                cache_key = (
+                    str(source_path),
+                    before.st_size,
+                    before.st_mtime_ns,
+                    "voltage-pair-v1",
+                    cycle_start,
+                    cycle_end,
+                )
+                builder = False
+                while True:
+                    with _quick_excel_preview_cache_lock:
+                        previews = _quick_excel_preview_cache.get(cache_key)
+                        if previews is not None:
+                            _quick_excel_preview_cache.move_to_end(cache_key)
+                            break
+                        ready = _quick_excel_preview_inflight.get(cache_key)
+                        if ready is None:
+                            ready = threading.Event()
+                            _quick_excel_preview_inflight[cache_key] = ready
+                            builder = True
+                            break
+                    ready.wait()
+                if builder:
+                    try:
+                        previews = _build_fast_neware_excel_voltage_preview_pair(
+                            source,
+                            cycle_start=cycle_start,
+                            cycle_end=cycle_end,
+                        )
+                        if previews is not None:
+                            with _quick_excel_preview_cache_lock:
+                                _quick_excel_preview_cache[cache_key] = previews
+                                _quick_excel_preview_cache.move_to_end(cache_key)
+                                while len(_quick_excel_preview_cache) > _QUICK_EXCEL_PREVIEW_CACHE_LIMIT:
+                                    _quick_excel_preview_cache.popitem(last=False)
+                    finally:
+                        with _quick_excel_preview_cache_lock:
+                            _quick_excel_preview_inflight.pop(cache_key).set()
+                preview = previews.get(req.voltage_x_axis) if previews is not None else None
+        else:
+            preview = _build_fast_neware_excel_preview(
+                source,
+                quantity=req.quantity,
+                voltage_x_axis=req.voltage_x_axis,
+                cycle_start=req.cycle_start,
+                cycle_end=req.cycle_end,
+            )
+    except Exception as exc:
+        logger.exception("Quick Neware Excel preview failed for %s", source_path.name)
+        raise HTTPException(422, f"Neware Excel preview could not be prepared: {exc}") from exc
+    try:
+        after = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(404, "Source file is unavailable") from exc
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise HTTPException(409, "The source changed while its preview was being prepared.")
+    return {"preview": preview}
+
+
 def _build_fast_neware_voltage_preview(
     source: dict[str, str],
     *,
@@ -2991,6 +3107,150 @@ def _build_fast_neware_capacity_bundle_preview(
             }
         ],
     }
+
+
+def _build_fast_neware_excel_preview(
+    source: dict[str, str],
+    *,
+    quantity: Literal["voltage", "capacity_bundle"],
+    voltage_x_axis: Literal["time", "capacity"],
+    cycle_start: int | None,
+    cycle_end: int | None,
+) -> dict | None:
+    if quantity == "voltage":
+        previews = _build_fast_neware_excel_voltage_preview_pair(
+            source,
+            cycle_start=cycle_start,
+            cycle_end=cycle_end,
+        )
+        return previews.get(voltage_x_axis) if previews is not None else None
+    selected = _load_neware_excel().read_preview_data(
+        source["source_path"], quantity=quantity,
+        cycle_start=cycle_start, cycle_end=cycle_end,
+        voltage_x_axis=voltage_x_axis,
+    )
+    if selected is None:
+        return None
+    cycle_count = int(selected["cycle_count"])
+    cycles = selected["cycles"]
+    cycle_ids = pd.to_numeric(cycles["cycle"], errors="coerce")
+    valid_cycle_ids = cycle_ids.dropna()
+    cycle_id_start = int(valid_cycle_ids.min()) if not valid_cycle_ids.empty else None
+    cycle_id_end = int(valid_cycle_ids.max()) if not valid_cycle_ids.empty else None
+    if cycle_id_start is None or cycle_id_end is None:
+        cycles = cycles.iloc[0:0]
+    else:
+        requested_start = max(
+            cycle_id_start,
+            int(cycle_start if cycle_start is not None else cycle_id_start),
+        )
+        requested_end = min(
+            cycle_id_end,
+            max(
+                requested_start,
+                int(cycle_end if cycle_end is not None else cycle_id_end),
+            ),
+        )
+        cycles = cycles.loc[cycle_ids.between(requested_start, requested_end)]
+    discharge = capacity_preview_from_cycles(
+        cycles,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+        quantity="discharge_capacity_mah",
+    )
+    charge = capacity_preview_from_cycles(
+        cycles,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+        quantity="charge_capacity_mah",
+    )
+    efficiency = capacity_efficiency_preview_from_cycles(
+        cycles,
+        max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+    )
+    return {
+        "quantity": "capacity_bundle",
+        "label": "Capacity (mAh)",
+        "cycle_count": cycle_count,
+        "x_label": "Cycle number (source_chain)",
+        "interpretation": "source_chain",
+        "segments": [
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "x": discharge["x"],
+                "y": discharge["y"],
+                "charge_capacity_x": charge["x"],
+                "charge_capacity_y": charge["y"],
+                "discharge_capacity_x": discharge["x"],
+                "discharge_capacity_y": discharge["y"],
+                "global_cycle_start": cycle_id_start,
+                "global_cycle_end": cycle_id_end,
+                "source_cycle_start": cycle_id_start,
+                "source_cycle_end": cycle_id_end,
+                "source_cycle_count": cycle_count,
+                "display_x_start": discharge["x"][0] if discharge["x"] else None,
+                "display_x_end": discharge["x"][-1] if discharge["x"] else None,
+                "coulombic_efficiency_x": efficiency["x"],
+                "coulombic_efficiency_pct": efficiency["y"],
+            }
+        ],
+    }
+
+
+def _build_fast_neware_excel_voltage_preview_pair(
+    source: dict[str, str],
+    *,
+    cycle_start: int | None,
+    cycle_end: int | None,
+) -> dict[str, dict] | None:
+    selected = _load_neware_excel().read_preview_data(
+        source["source_path"],
+        quantity="voltage",
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
+        voltage_x_axis="time",
+    )
+    if selected is None:
+        return None
+    raw = selected["raw"]
+    prepared = continuation_preview.prepare_segmented_raw(
+        [raw],
+        time_origins_s=[selected["time_origin_s"]],
+    )
+    cycle_start_value = int(selected["cycle_start"])
+    cycle_end_value = int(selected["cycle_end"])
+    previews: dict[str, dict] = {}
+    for axis in ("time", "capacity"):
+        axis_preview = continuation_preview.voltage_preview_from_raw(
+            prepared,
+            max_points=_CONTINUATION_PREVIEW_MAX_POINTS,
+            x_axis=axis,
+        )
+        previews[axis] = {
+            "quantity": "voltage",
+            "label": "Voltage (V)",
+            "cycle_count": int(selected["cycle_count"]),
+            "x_label": "Capacity (mAh)" if axis == "capacity" else "Time (s)",
+            "interpretation": "source_chain",
+            "segments": [
+                {
+                    "source_key": source["source_key"],
+                    "filename": source["filename"],
+                    "x": axis_preview["x"],
+                    "y": axis_preview["y"],
+                    **({"current_ma": axis_preview["current_ma"]} if "current_ma" in axis_preview else {}),
+                    "global_cycle_start": cycle_start_value,
+                    "global_cycle_end": cycle_end_value,
+                    "source_cycle_start": cycle_start_value,
+                    "source_cycle_end": cycle_end_value,
+                    "source_cycle_count": int(selected["cycle_count"]),
+                    "display_x_start": axis_preview["x_start"],
+                    "display_x_end": axis_preview["x_end"],
+                    "coulombic_efficiency_x": [],
+                    "coulombic_efficiency_pct": [],
+                }
+            ],
+        }
+    return previews
 
 
 def _build_continuation_preview(

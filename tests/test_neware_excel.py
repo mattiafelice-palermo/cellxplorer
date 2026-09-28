@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
+import random
+import re
 import shutil
 import sys
+import struct
 import unittest
+import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -244,6 +248,158 @@ def _add_duration_cycle_summary(path: Path, cycles: pd.DataFrame) -> None:
     workbook.save(path)
 
 
+def _rewrite_xlsx_members(
+    path: Path,
+    *,
+    replacements: dict[str, bytes] | None = None,
+    compression_overrides: dict[str, int] | None = None,
+) -> None:
+    replacements = replacements or {}
+    compression_overrides = compression_overrides or {}
+    replacement_path = path.with_name(path.stem + ".rewrite.xlsx")
+    with zipfile.ZipFile(path) as source:
+        members = [
+            (
+                info.filename,
+                replacements[info.filename]
+                if info.filename in replacements
+                else source.read(info.filename),
+                compression_overrides.get(info.filename, info.compress_type),
+            )
+            for info in source.infolist()
+        ]
+        existing_names = {info.filename for info in source.infolist()}
+    members.extend(
+        (
+            name,
+            data,
+            compression_overrides.get(name, zipfile.ZIP_DEFLATED),
+        )
+        for name, data in replacements.items()
+        if name not in existing_names
+    )
+    with zipfile.ZipFile(replacement_path, "w") as output:
+        for name, data, compression in members:
+            output.writestr(name, data, compress_type=compression)
+    replacement_path.replace(path)
+
+
+def _convert_inline_strings_to_shared_strings(path: Path) -> tuple[int, bytes]:
+    """Rewrite openpyxl inline text as an ordinary shared-string table."""
+    with zipfile.ZipFile(path) as source:
+        members = {info.filename: source.read(info.filename) for info in source.infolist()}
+    shared_texts: list[bytes] = []
+    text_indexes: dict[bytes, int] = {}
+    references = 0
+    cell_pattern = re.compile(rb"<c(?P<attributes>[^>]*)>(?P<body>.*?)</c>", re.DOTALL)
+
+    for name, xml in tuple(members.items()):
+        if not name.startswith("xl/worksheets/") or not name.endswith(".xml"):
+            continue
+
+        def replace_cell(match: re.Match[bytes]) -> bytes:
+            nonlocal references
+            attributes = match.group("attributes")
+            if b't="inlineStr"' not in attributes:
+                return match.group(0)
+            inline = re.search(rb"<is>(.*?)</is>", match.group("body"), re.DOTALL)
+            text_xml = inline.group(1) if inline is not None else b"<t></t>"
+            index = text_indexes.get(text_xml)
+            if index is None:
+                index = len(shared_texts)
+                text_indexes[text_xml] = index
+                shared_texts.append(text_xml)
+            references += 1
+            updated_attributes = re.sub(rb'\s+t="inlineStr"', b' t="s"', attributes, count=1)
+            return b"<c" + updated_attributes + b"><v>" + str(index).encode("ascii") + b"</v></c>"
+
+        members[name] = cell_pattern.sub(replace_cell, xml)
+
+    shared_xml = (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        b'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        + f'count="{references}" uniqueCount="{len(shared_texts)}">'.encode("ascii")
+        + b"".join(b"<si>" + item + b"</si>" for item in shared_texts)
+        + b"</sst>"
+    )
+    relationship_name = "xl/_rels/workbook.xml.rels"
+    relationships = members[relationship_name]
+    relationship_ids = [
+        int(value)
+        for value in re.findall(rb'\bId="rId(\d+)"', relationships)
+    ]
+    relationship_id = max(relationship_ids, default=0) + 1
+    relationship = (
+        f'<Relationship Id="rId{relationship_id}" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" '
+        'Target="sharedStrings.xml"/>'
+    ).encode("ascii")
+    members[relationship_name] = relationships.replace(
+        b"</Relationships>", relationship + b"</Relationships>", 1
+    )
+    content_types_name = "[Content_Types].xml"
+    content_types = members[content_types_name]
+    override = (
+        b'<Override PartName="/xl/sharedStrings.xml" '
+        b'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+    )
+    members[content_types_name] = content_types.replace(
+        b"</Types>", override + b"</Types>", 1
+    )
+    members["xl/sharedStrings.xml"] = shared_xml
+    _rewrite_xlsx_members(path, replacements=members)
+    return len(shared_texts), shared_xml
+
+
+def _replace_record_cell_with_inline_string(path: Path, reference: str, value: str) -> None:
+    with zipfile.ZipFile(path) as source:
+        members = {info.filename: source.read(info.filename) for info in source.infolist()}
+    # Synthetic fixtures always write the record sheet first.
+    record_path = "xl/worksheets/sheet1.xml"
+    pattern = re.compile(
+        rb'<c r="' + reference.encode("ascii") + rb'"[^>]*><v>\d+</v></c>'
+    )
+    replacement = (
+        f'<c r="{reference}" t="inlineStr"><is><t>{value}</t></is></c>'.encode("utf-8")
+    )
+    members[record_path], count = pattern.subn(replacement, members[record_path], count=1)
+    if count != 1:
+        raise AssertionError(f"Could not rewrite inline-string fixture cell {reference}.")
+    _rewrite_xlsx_members(path, replacements=members)
+
+
+def _rewrite_shared_string_unique_count(path: Path, *, value: int | None) -> bytes:
+    with zipfile.ZipFile(path) as source:
+        shared_xml = source.read("xl/sharedStrings.xml")
+    if value is None:
+        changed = re.sub(rb'\s+uniqueCount="\d+"', b"", shared_xml, count=1)
+    else:
+        changed = re.sub(
+            rb'uniqueCount="\d+"', f'uniqueCount="{value}"'.encode("ascii"), shared_xml, count=1
+        )
+    _rewrite_xlsx_members(path, replacements={"xl/sharedStrings.xml": changed})
+    return changed
+
+
+def _rewrite_member_central_crc(path: Path, member_name: str) -> None:
+    contents = bytearray(path.read_bytes())
+    cursor = 0
+    wanted = member_name.encode("ascii")
+    while True:
+        start = contents.find(b"PK\x01\x02", cursor)
+        if start < 0:
+            raise AssertionError(f"Could not find central directory entry for {member_name}.")
+        name_length, extra_length, comment_length = struct.unpack_from("<HHH", contents, start + 28)
+        name_start = start + 46
+        name_end = name_start + name_length
+        if bytes(contents[name_start:name_end]) == wanted:
+            crc = struct.unpack_from("<I", contents, start + 16)[0]
+            struct.pack_into("<I", contents, start + 16, crc ^ 1)
+            path.write_bytes(contents)
+            return
+        cursor = name_end + extra_length + comment_length
+
+
 def _convert_plan_to_duration_dialect(path: Path) -> None:
     workbook = load_workbook(path)
     test = workbook["test"]
@@ -469,6 +625,194 @@ def _write_protocol_workbook(
 
 
 class NewareExcelParserTests(unittest.TestCase):
+    def _make_shared_string_preview_workbook(self, path: Path) -> tuple[int, bytes]:
+        _write_synthetic_workbook(path)
+        full_raw = neware_excel.parse_timeseries(path)
+        cycles = calc.per_cycle(full_raw)
+        _add_duration_cycle_summary(path, cycles)
+        shared_count, shared_xml = _convert_inline_strings_to_shared_strings(path)
+        neware_excel._read_cycle_summary_fast_cached.cache_clear()
+        return shared_count, shared_xml
+
+    def _assert_preview_exactly_matches_reference(
+        self,
+        path: Path,
+        *,
+        cycle_start: int | None,
+        cycle_end: int | None,
+        chunk_size: int = neware_excel._XLSX_FAST_PREVIEW_CHUNK_BYTES,
+    ) -> None:
+        neware_excel._read_cycle_summary_fast_cached.cache_clear()
+        expected = neware_excel._read_preview_data_reference(
+            path,
+            quantity="voltage",
+            cycle_start=cycle_start,
+            cycle_end=cycle_end,
+        )
+        neware_excel._read_cycle_summary_fast_cached.cache_clear()
+        actual = neware_excel._try_read_voltage_preview_streaming(
+            path,
+            cycle_start=cycle_start,
+            cycle_end=cycle_end,
+            chunk_size=chunk_size,
+        )
+        self.assertIsNotNone(expected)
+        self.assertIsNotNone(actual)
+        assert expected is not None and actual is not None
+        pd.testing.assert_frame_equal(actual["raw"], expected["raw"], check_exact=True)
+        for key in ("cycle_count", "time_origin_s", "cycle_start", "cycle_end"):
+            self.assertEqual(actual[key], expected[key], key)
+
+    def test_streaming_voltage_preview_exact_parity_across_windows_and_chunk_boundaries(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "shared-preview.xlsx"
+            self._make_shared_string_preview_workbook(path)
+            for cycle_start, cycle_end in (
+                (None, None),  # Default last-window preview.
+                (2, 2),        # Middle / single-cycle window.
+                (1, 1),        # First cycle.
+                (3, 4),        # Window past the end.
+            ):
+                with self.subTest(cycle_start=cycle_start, cycle_end=cycle_end):
+                    self._assert_preview_exactly_matches_reference(
+                        path,
+                        cycle_start=cycle_start,
+                        cycle_end=cycle_end,
+                        chunk_size=37,
+                    )
+
+    def test_sparse_shared_string_lookup_matches_reference_for_random_indices(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "shared-preview.xlsx"
+            unique_count, shared_xml = self._make_shared_string_preview_workbook(path)
+            rng = random.Random(68421)
+            indexes = {0, unique_count - 1}
+            indexes.update(rng.sample(range(unique_count), min(6, unique_count)))
+            with zipfile.ZipFile(path) as archive:
+                for selected in ({0}, {unique_count - 1}, indexes):
+                    with self.subTest(indexes=selected):
+                        expected = neware_excel._xlsx_shared_strings_for_indices(
+                            archive, set(selected)
+                        )
+                        actual = neware_excel._xlsx_shared_strings_from_xml_for_indices(
+                            shared_xml, set(selected)
+                        )
+                        self.assertEqual(actual, expected)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel._xlsx_shared_strings_from_xml_for_indices(
+                    shared_xml, {unique_count}
+                )
+
+    def test_streaming_voltage_preview_falls_back_for_unproven_layouts(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            out_of_order = root / "out-of-order.xlsx"
+            _write_synthetic_workbook(out_of_order, shuffled_records=True)
+            raw = neware_excel.parse_timeseries(out_of_order)
+            _add_duration_cycle_summary(out_of_order, calc.per_cycle(raw))
+            _convert_inline_strings_to_shared_strings(out_of_order)
+            neware_excel._read_cycle_summary_fast_cached.cache_clear()
+            self.assertIsNone(neware_excel._try_read_voltage_preview_streaming(
+                out_of_order, cycle_start=None, cycle_end=None, chunk_size=37
+            ))
+
+            missing_count = root / "missing-unique-count.xlsx"
+            self._make_shared_string_preview_workbook(missing_count)
+            _rewrite_shared_string_unique_count(missing_count, value=None)
+            neware_excel._read_cycle_summary_fast_cached.cache_clear()
+            self.assertIsNone(neware_excel._try_read_voltage_preview_streaming(
+                missing_count, cycle_start=2, cycle_end=2, chunk_size=37
+            ))
+
+            mismatched_count = root / "mismatched-unique-count.xlsx"
+            unique_count, _ = self._make_shared_string_preview_workbook(mismatched_count)
+            _rewrite_shared_string_unique_count(mismatched_count, value=unique_count + 1)
+            neware_excel._read_cycle_summary_fast_cached.cache_clear()
+            self.assertIsNone(neware_excel._try_read_voltage_preview_streaming(
+                mismatched_count, cycle_start=2, cycle_end=2, chunk_size=37
+            ))
+
+            inline_string = root / "inline-string.xlsx"
+            self._make_shared_string_preview_workbook(inline_string)
+            _replace_record_cell_with_inline_string(inline_string, "D2", "CC Chg")
+            neware_excel._read_cycle_summary_fast_cached.cache_clear()
+            self.assertIsNone(neware_excel._try_read_voltage_preview_streaming(
+                inline_string, cycle_start=1, cycle_end=1, chunk_size=37
+            ))
+
+            stored_record = root / "stored-record.xlsx"
+            self._make_shared_string_preview_workbook(stored_record)
+            _rewrite_xlsx_members(
+                stored_record,
+                compression_overrides={"xl/worksheets/sheet1.xml": zipfile.ZIP_STORED},
+            )
+            neware_excel._read_cycle_summary_fast_cached.cache_clear()
+            self.assertIsNone(neware_excel._try_read_voltage_preview_streaming(
+                stored_record, cycle_start=1, cycle_end=1, chunk_size=37
+            ))
+
+            crc_mismatch = root / "bad-crc.xlsx"
+            self._make_shared_string_preview_workbook(crc_mismatch)
+            _rewrite_member_central_crc(crc_mismatch, "xl/worksheets/sheet1.xml")
+            neware_excel._read_cycle_summary_fast_cached.cache_clear()
+            self.assertIsNone(neware_excel._try_read_voltage_preview_streaming(
+                crc_mismatch, cycle_start=None, cycle_end=None, chunk_size=37
+            ))
+
+    def test_time_voltage_preview_retains_capacity_columns_for_axis_switch(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "preview.xlsx"
+            _write_synthetic_workbook(path)
+            full_raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(full_raw)
+            _add_duration_cycle_summary(path, cycles)
+
+            selected = neware_excel.read_preview_data(
+                path,
+                quantity="voltage",
+                cycle_start=1,
+                cycle_end=2,
+                voltage_x_axis="time",
+            )
+
+        self.assertIsNotNone(selected)
+        self.assertTrue({
+            "step_index", "status", "charge_capacity_mah", "discharge_capacity_mah"
+        }.issubset(selected["raw"].columns))
+        self.assertEqual(selected["cycle_start"], 1)
+        self.assertEqual(selected["cycle_end"], 2)
+
+    def test_quick_voltage_preview_defers_time_resets_to_validated_reader(self):
+        with TemporaryDirectory() as temporary:
+            for name, shared_strings in (("reference", False), ("streaming", True)):
+                path = Path(temporary) / f"preview-time-reset-{name}.xlsx"
+                _write_synthetic_workbook(path)
+                full_raw = neware_excel.parse_timeseries(path)
+                _add_duration_cycle_summary(path, calc.per_cycle(full_raw))
+
+                workbook = load_workbook(path)
+                record = workbook["record"]
+                total_time_column = RECORD_HEADERS.index("Total Time(min)") + 1
+                # Row 3 is in cycle 1. This future timestamp-like duration would
+                # make the preview disagree with the parser's ordering policy.
+                record.cell(3, total_time_column).value = 2000.0
+                workbook.save(path)
+                if shared_strings:
+                    # Exercise the optimized DEFLATE reader; the default
+                    # openpyxl workbook exercises the reference-reader fallback.
+                    _convert_inline_strings_to_shared_strings(path)
+                neware_excel._read_cycle_summary_fast_cached.cache_clear()
+
+                with self.subTest(reader=name):
+                    selected = neware_excel.read_preview_data(
+                        path,
+                        quantity="voltage",
+                        cycle_start=1,
+                        cycle_end=1,
+                    )
+                    self.assertIsNone(selected)
+
     def test_unbounded_clock_duration_is_strict_and_unitless(self):
         self.assertAlmostEqual(
             neware_excel._clock_duration_seconds("1697:53:24.000"),
@@ -743,6 +1087,158 @@ class NewareExcelParserTests(unittest.TestCase):
         )
         self.assertGreater(int(frame["timestamp"].duplicated().sum()), 0)
         self.assertTrue(frame["total_time_s"].is_monotonic_increasing)
+
+    def test_isolated_future_record_is_skipped_only_when_exact_measurement_reappears(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "future-duplicate-record.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            record = workbook["record"]
+            candidate_row = 4
+            capacity_column = RECORD_HEADERS.index("Capacity(mAh)") + 1
+            data_point_column = RECORD_HEADERS.index("DataPoint") + 1
+            cycle_column = RECORD_HEADERS.index("Cycle Index") + 1
+            step_column = RECORD_HEADERS.index("Step Index") + 1
+            status_column = RECORD_HEADERS.index("Step Type") + 1
+            time_column = RECORD_HEADERS.index("Time(min)") + 1
+            total_time_column = RECORD_HEADERS.index("Total Time(min)") + 1
+            date_column = RECORD_HEADERS.index("Date") + 1
+            # Both copies have the same blank optional measurement, while the
+            # misplaced copy carries stale cycle/step/status/step-relative time.
+            record.cell(candidate_row, capacity_column).value = None
+            source_values = [cell.value for cell in record[candidate_row]]
+            record.cell(candidate_row, total_time_column).value = 2 * 24 * 60 + 10
+            record.cell(candidate_row, date_column).value += timedelta(days=2)
+            source_values[data_point_column - 1] = 26
+            source_values[cycle_column - 1] = int(source_values[cycle_column - 1]) + 1
+            source_values[step_column - 1] = int(source_values[step_column - 1]) + 1
+            current_status = str(source_values[status_column - 1])
+            source_values[status_column - 1] = "Rest" if current_status != "Rest" else "CC Chg"
+            source_values[time_column - 1] = float(source_values[time_column - 1]) + 1
+            source_values[total_time_column - 1] = record.cell(candidate_row, total_time_column).value
+            source_values[date_column - 1] = record.cell(candidate_row, date_column).value
+            record.append(source_values)
+            workbook.save(path)
+
+            frame = neware_excel.parse_timeseries(path)
+
+        self.assertEqual(len(frame), 25)
+        self.assertNotIn(3, frame["record_index"].tolist())
+        self.assertIn(26, frame["record_index"].tolist())
+        self.assertTrue(frame["total_time_s"].is_monotonic_increasing)
+        warnings = frame.attrs["neware_excel"]["parser_warnings"]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["code"], "future_duplicate_records_skipped")
+        self.assertEqual(warnings[0]["count"], 1)
+        self.assertEqual(
+            warnings[0]["examples"],
+            [{"data_point": 3, "duplicate_data_point": 26}],
+        )
+
+    def test_unmatched_time_reset_remains_an_error(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "unmatched-time-reset.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            workbook["record"]["F4"] = 0.5
+            workbook.save(path)
+
+            with self.assertRaisesRegex(
+                neware_excel.InvalidNewareExcelError,
+                "Total Time\\(min\\) decreases in source order",
+            ):
+                neware_excel.parse_timeseries(path)
+
+    def test_xlsx_recovery_warnings_are_persisted_in_parser_diagnostics(self):
+        with TemporaryDirectory() as temporary:
+            with mock.patch.object(cache, "CACHE_DIR", Path(temporary)):
+                raw = pd.DataFrame()
+                raw.attrs["neware_excel"] = {
+                    "parser_warnings": [
+                        {
+                            "code": "future_duplicate_records_skipped",
+                            "scope": "source",
+                            "count": 1,
+                            "message": "A duplicated future record was skipped.",
+                            "examples": [{"data_point": 3, "duplicate_data_point": 26}],
+                        },
+                        {
+                            "code": "ambiguous_cycle_summary_times_ignored",
+                            "scope": "cycle",
+                            "count": 1,
+                            "message": "Unitless cycle time values were ignored.",
+                            "examples": [{"cycle": 1, "ambiguous_fields": "charge/discharge duration"}],
+                        },
+                    ]
+                }
+                cache._write_parser_diagnostics("a" * 64, "test-parser", raw)
+
+                warnings = cache.load_parser_warnings("a" * 64, "test-parser")
+
+        self.assertEqual(len(warnings), 2)
+        self.assertEqual(
+            [warning["code"] for warning in warnings],
+            ["future_duplicate_records_skipped", "ambiguous_cycle_summary_times_ignored"],
+        )
+        self.assertEqual(
+            warnings[0]["examples"],
+            [{"data_point": 3, "duplicate_data_point": 26}],
+        )
+        self.assertEqual(
+            warnings[1]["examples"],
+            [{"cycle": 1, "ambiguous_fields": "charge/discharge duration"}],
+        )
+
+    def test_numeric_cycle_times_without_units_are_ignored_with_warning(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "unitless-cycle-times.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            cycle = workbook["cycle"]
+            cycle["G1"] = "Chg. Time"
+            cycle["H1"] = "DChg. Time"
+            workbook.save(path)
+
+            raw = neware_excel.parse_timeseries(path)
+            calculated_cycles = calc.per_cycle(raw)
+            neware_excel.validate_cycles(path, raw, calculated_cycles)
+
+        state = raw.attrs["neware_excel"]
+        self.assertFalse(state["cycle_summary_validated"])
+        self.assertEqual(state["cycle_summary_validation_status"], "warning")
+        warning = next(
+            item
+            for item in state["parser_warnings"]
+            if item["code"] == "ambiguous_cycle_summary_times_ignored"
+        )
+        self.assertEqual(warning["count"], len(calculated_cycles))
+        self.assertIn("ignored those time summaries", warning["message"])
+        self.assertEqual(
+            warning["examples"][0],
+            {"cycle": 1, "ambiguous_fields": "charge/discharge duration"},
+        )
+
+    def test_single_unitless_cycle_time_warning_names_only_affected_field(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "unitless-charge-time.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["G1"] = "Chg. Time"
+            workbook.save(path)
+
+            raw = neware_excel.parse_timeseries(path)
+            calculated_cycles = calc.per_cycle(raw)
+            neware_excel.validate_cycles(path, raw, calculated_cycles)
+
+        warning = next(
+            item
+            for item in raw.attrs["neware_excel"]["parser_warnings"]
+            if item["code"] == "ambiguous_cycle_summary_times_ignored"
+        )
+        self.assertEqual(
+            warning["examples"][0],
+            {"cycle": 1, "ambiguous_fields": "charge duration"},
+        )
 
     def test_invalid_required_values_are_rejected(self):
         cases = {
@@ -1443,7 +1939,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.parse_timeseries("source.csv")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
-        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 7)
+        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 8)
         self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
         self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
         self.assertLessEqual(len(parsing.PARSER_VERSION), 30)

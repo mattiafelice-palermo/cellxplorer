@@ -2298,6 +2298,21 @@ export function previewQuickNdaxVoltage(
   );
 }
 
+export function previewQuickNewareExcel(
+  body: {
+    source_path: string;
+    quantity: "voltage" | "capacity_bundle";
+    voltage_x_axis?: "time" | "capacity";
+    cycle_start?: number;
+    cycle_end?: number;
+  },
+  options?: Pick<RequestInit, "signal">,
+) {
+  return post<{ preview: ContinuationPreviewResult | null }>(
+    "/api/imports/quick-excel-preview", body, options,
+  );
+}
+
 export interface ImportSourceDraft {
   staged_name: string;
   source_path?: string | null;

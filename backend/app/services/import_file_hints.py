@@ -1,9 +1,8 @@
 """Optional, header-only hints for files shown in the import browser.
 
-These hints are deliberately separate from import inspection. They never hash,
-register, or fully parse a file. For `.xlsx`, the bounded metadata read also
-reports whether the workbook matches the supported Neware parser; other hint
-failures remain non-blocking.
+These hints are deliberately separate from import inspection. They never
+register or fully parse a file. Neware `.xlsx` eligibility uses the structural
+record-sheet contract; optional workbook metadata is left to inspection.
 """
 from __future__ import annotations
 
@@ -62,7 +61,33 @@ def inspect_header_hint(
         before = path.stat()
         if not path.is_file() or not parsing.source_filename_allowed(path.name):
             raise ValueError("File is no longer a supported source.")
-        metadata = parsing.read_header_metadata(path)
+        ext = path.suffix.casefold()
+        if ext == ".xlsx":
+            # Picker eligibility is structural. Do not open Calamine or read
+            # workbook metadata here: on large Neware exports those optional
+            # sheets can take hundreds of milliseconds while the user is
+            # waiting for the row to become selectable.
+            from . import neware_excel
+
+            try:
+                neware_excel.validate_supported_workbook(path)
+            except neware_excel.UnsupportedNewareExcelError:
+                result["compatible"] = False
+                raise
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise ValueError("File changed while its header was being read.")
+            if hash_if_size_matches and before.st_size in hash_if_size_matches:
+                result["_hash"] = parsing.compute_hash(path).lower()
+            result.update(
+                source_format="Neware Excel",
+                supplier="Neware",
+                compatible=True,
+            )
+            return result
+        metadata = parsing.read_header_metadata(
+            path,
+        )
         if metadata.get("error"):
             message = metadata.get("error_message") or metadata.get("error")
             raise ValueError(str(message))
@@ -71,7 +96,6 @@ def inspect_header_hint(
             raise ValueError("File changed while its header was being read.")
         if hash_if_size_matches and before.st_size in hash_if_size_matches:
             result["_hash"] = parsing.compute_hash(path).lower()
-        ext = path.suffix.casefold()
         if ext in {".xlsx", ".mpr"}:
             result["compatible"] = True
         biologic = ext == ".mpr"

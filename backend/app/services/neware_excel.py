@@ -8,8 +8,14 @@ cycle-summary validation.  Dispatch and normalized compatibility fields remain i
 from __future__ import annotations
 
 import math
+import posixpath
 import re
+import struct
 import zipfile
+import zlib
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from html import unescape as _html_unescape
 from contextlib import contextmanager
 from datetime import time as datetime_time
 from datetime import timedelta
@@ -18,6 +24,7 @@ from itertools import chain, islice
 from numbers import Number
 from pathlib import Path
 from typing import Any, Iterator
+from xml.parsers import expat
 from xml.etree import ElementTree
 
 import numpy as np
@@ -42,7 +49,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-EXCEL_PARSER_REVISION = 7
+EXCEL_PARSER_REVISION = 8
 
 
 class _FastExcelFallback(Exception):
@@ -352,7 +359,7 @@ def _unitless_or_minutes_seconds(
 ) -> float:
     """Convert a duration according to the exact resolved header alias."""
 
-    if _normalize_text(source_header) == _normalize_text(canonical_header):
+    if _duration_header_is_unitless_minutes(source_header, canonical_header):
         try:
             number = float(value)
         except (TypeError, ValueError) as exc:
@@ -363,10 +370,19 @@ def _unitless_or_minutes_seconds(
     return _clock_duration_seconds(value)
 
 
+@lru_cache(maxsize=64)
+def _duration_header_is_unitless_minutes(
+    source_header: str,
+    canonical_header: str,
+) -> bool:
+    """Reuse a stable alias comparison across large row-wise conversions."""
+    return _normalize_text(source_header) == _normalize_text(canonical_header)
+
+
 def _is_clock_duration_source(source_header: str, canonical_header: str) -> bool:
     """Return whether a resolved duration header contains an elapsed clock."""
 
-    return _normalize_text(source_header) != _normalize_text(canonical_header)
+    return not _duration_header_is_unitless_minutes(source_header, canonical_header)
 
 
 def _power_to_watts_factor(source_header: str) -> float:
@@ -1423,6 +1439,1441 @@ class _FastFrameSheetAdapter:
         yield from rows
 
 
+class _CalamineSheetAdapter:
+    """Expose a Calamine worksheet through the parser's small row-reader API."""
+
+    def __init__(self, title: str, workbook: Any):
+        self.title = title
+        self._workbook = workbook
+        self._sheet: Any | None = None
+
+    def _get_sheet(self) -> Any:
+        if self._sheet is None:
+            self._sheet = self._workbook.get_sheet_by_name(self.title)
+        return self._sheet
+
+    def reset_dimensions(self) -> None:
+        # Calamine reads the actual worksheet range and does not trust Excel's
+        # sometimes-stale <dimension ref="A1"/> declaration.
+        return None
+
+    def iter_rows(
+        self,
+        *,
+        min_row: int = 1,
+        max_row: int | None = None,
+        values_only: bool = True,
+    ) -> Iterator[tuple[object, ...]]:
+        if not values_only:
+            raise ValueError("The Neware Excel parser requires values_only rows.")
+        rows: Iterator[tuple[object, ...]] = (
+            tuple(row) for row in self._get_sheet().iter_rows()
+        )
+        if min_row > 1:
+            rows = islice(rows, min_row - 1, None)
+        if max_row is not None:
+            rows = islice(rows, max(0, max_row - min_row + 1))
+        yield from rows
+
+
+class _RowsSheetAdapter:
+    """Expose a bounded in-memory worksheet fragment through the row-reader API."""
+
+    def __init__(self, title: str, rows: list[tuple[object, ...]]):
+        self.title = title
+        self._rows = rows
+
+    def reset_dimensions(self) -> None:
+        return None
+
+    def iter_rows(
+        self,
+        *,
+        min_row: int = 1,
+        max_row: int | None = None,
+        values_only: bool = True,
+    ) -> Iterator[tuple[object, ...]]:
+        if not values_only:
+            raise ValueError("The Neware Excel parser requires values_only rows.")
+        rows: Iterator[tuple[object, ...]] = iter(self._rows)
+        if min_row > 1:
+            rows = islice(rows, min_row - 1, None)
+        if max_row is not None:
+            rows = islice(rows, max(0, max_row - min_row + 1))
+        yield from rows
+
+
+class _CalamineWorkbookAdapter:
+    """Expose Calamine sheets lazily, allowing a ZIP-backed record-header override."""
+
+    def __init__(self, workbook: Any, overrides: dict[str, Any] | None = None):
+        self._workbook = workbook
+        normalized_overrides = {
+            _normalize_text(name): sheet
+            for name, sheet in (overrides or {}).items()
+        }
+        self.worksheets = []
+        for name in workbook.sheet_names:
+            title = str(name)
+            self.worksheets.append(
+                normalized_overrides.get(_normalize_text(title))
+                or _CalamineSheetAdapter(title, workbook)
+            )
+
+    def close(self) -> None:
+        self._workbook.close()
+
+
+_XML_CELL_BLOCK_RE = re.compile(rb"<c\b([^>]*)>(.*?)</c>", re.DOTALL)
+_XML_CELL_REF_RE = re.compile(rb'\br="([A-Z]+)\d+"')
+_XML_CELL_TYPE_RE = re.compile(rb'\bt="([^"]+)"')
+_XML_CELL_VALUE_RE = re.compile(rb"<v>(.*?)</v>", re.DOTALL)
+_XML_INLINE_TEXT_RE = re.compile(rb"<t(?:\s[^>]*)?>(.*?)</t>", re.DOTALL)
+_XML_SHARED_ITEM_RE = re.compile(
+    rb"<si\b[^>]*>(.*?)</si>|<si\b[^>]*/>", re.DOTALL
+)
+_XML_SHARED_TEXT_RE = re.compile(rb"<t(?:\s[^>]*)?>(.*?)</t>", re.DOTALL)
+_XML_ROW_NUMBER_RE = re.compile(rb'\br="(\d+)"')
+
+_XLSX_FAST_PREVIEW_CHUNK_BYTES = 256 << 10
+_XLSX_FAST_PREVIEW_MAX_SHARED_STRINGS_BYTES = 128 << 20
+_XLSX_FAST_PREVIEW_CELL_RE = re.compile(
+    rb'<c r="([A-Z]+)(\d+)"([^>]*?)(?:/>|>(.*?)</c>)', re.DOTALL
+)
+_XLSX_SHARED_STRING_REF = object()
+
+
+class _XlsxFastPreviewUnsupported(Exception):
+    """The bounded XLSX preview path cannot safely handle this workbook."""
+
+
+class _XlsxFastPreviewNeedsValidatedFallback(Exception):
+    """The selected quick-preview rows require the canonical parser path."""
+
+
+def _require_monotonic_preview_time(raw: pd.DataFrame) -> None:
+    if "total_time_s" not in raw or len(raw) < 2:
+        return
+    total_time = pd.to_numeric(raw["total_time_s"], errors="coerce").to_numpy(dtype="float64")
+    if np.any(np.diff(total_time) < -1e-9):
+        raise _XlsxFastPreviewNeedsValidatedFallback
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xlsx_sheet_paths(archive: zipfile.ZipFile) -> dict[str, str]:
+    """Map normalized worksheet names to ZIP member paths without loading sheets."""
+    workbook_root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+    relationship_root = ElementTree.fromstring(
+        archive.read("xl/_rels/workbook.xml.rels")
+    )
+    relationships = {
+        relation.attrib.get("Id", ""): relation.attrib.get("Target", "")
+        for relation in relationship_root
+        if _xml_local_name(relation.tag) == "Relationship"
+    }
+    result: dict[str, str] = {}
+    relationship_id_name = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    for item in workbook_root.iter():
+        if _xml_local_name(item.tag) != "sheet":
+            continue
+        name = item.attrib.get("name", "")
+        relationship_id = item.attrib.get(relationship_id_name, "")
+        target = relationships.get(relationship_id)
+        if not name or not target:
+            continue
+        member = target.lstrip("/") if target.startswith("/") else posixpath.normpath(
+            posixpath.join("xl", target)
+        )
+        result[_normalize_text(name)] = member
+    return result
+
+
+def _xlsx_shared_strings(
+    archive: zipfile.ZipFile,
+    *,
+    max_index: int | None = None,
+) -> list[str]:
+    """Read only the shared-string prefix needed by the requested cells."""
+    try:
+        source = archive.open("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+    values: list[str] = []
+    current_parts: list[str] | None = None
+    inside_text = False
+    parser = expat.ParserCreate()
+
+    class _ReachedRequestedIndex(Exception):
+        pass
+
+    def start_element(name: str, _attributes: dict[str, str]) -> None:
+        nonlocal current_parts, inside_text
+        if name == "si":
+            current_parts = []
+        elif name == "t" and current_parts is not None:
+            inside_text = True
+
+    def end_element(name: str) -> None:
+        nonlocal current_parts, inside_text
+        if name == "t":
+            inside_text = False
+        elif name == "si" and current_parts is not None:
+            values.append("".join(current_parts))
+            current_parts = None
+            if max_index is not None and len(values) > max_index:
+                raise _ReachedRequestedIndex
+
+    def character_data(value: str) -> None:
+        if inside_text and current_parts is not None:
+            current_parts.append(value)
+
+    parser.StartElementHandler = start_element
+    parser.EndElementHandler = end_element
+    parser.CharacterDataHandler = character_data
+    with source:
+        try:
+            while chunk := source.read(16 << 10):
+                parser.Parse(chunk, False)
+            parser.Parse(b"", True)
+        except _ReachedRequestedIndex:
+            pass
+    return values
+
+
+def _xlsx_shared_strings_for_indices(
+    archive: zipfile.ZipFile,
+    indexes: set[int],
+) -> list[str]:
+    """Resolve sparse worksheet string references with a C-level XML scan.
+
+    Neware can write unique time values into a very large shared-string table.
+    Expat is ideal for early prefix reads, but Python callbacks for every
+    string make a full pass expensive. The regex engine walks the XML in C and
+    only decodes the entries actually referenced by the preview rows.
+    """
+    if not indexes:
+        return []
+    try:
+        source = archive.read("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+    maximum = max(indexes)
+    values = [""] * (maximum + 1)
+    found: set[int] = set()
+    for index, match in enumerate(_XML_SHARED_ITEM_RE.finditer(source)):
+        if index not in indexes:
+            continue
+        item = match.group(1) or b""
+        pieces = (
+            _html_unescape(piece.decode("utf-8"))
+            for piece in _XML_SHARED_TEXT_RE.findall(item)
+        )
+        values[index] = "".join(pieces)
+        found.add(index)
+        if len(found) == len(indexes):
+            break
+    if found != indexes:
+        raise InvalidNewareExcelError(
+            "Neware Excel workbook contains an invalid shared-string reference."
+        )
+    return values
+
+
+def _iter_xlsx_xml_rows(source: Any, *, initial: bytes = b"") -> Iterator[bytes]:
+    """Yield worksheet row XML fragments while streaming the ZIP member."""
+    buffer = bytearray(initial)
+    cursor = 0
+    chunk_size = 1 << 20
+    while True:
+        chunk = source.read(chunk_size)
+        if chunk:
+            buffer.extend(chunk)
+        eof = not chunk
+        while True:
+            start = buffer.find(b"<row", cursor)
+            if start < 0:
+                if eof:
+                    return
+                cursor = max(0, len(buffer) - 8)
+                break
+            boundary = start + 4
+            if boundary >= len(buffer) and not eof:
+                cursor = start
+                break
+            if boundary < len(buffer) and buffer[boundary] not in b" />\t\r\n":
+                cursor = boundary
+                continue
+            open_end = buffer.find(b">", boundary)
+            if open_end < 0:
+                if eof:
+                    return
+                cursor = start
+                break
+            if buffer[open_end - 1] == ord("/"):
+                cursor = open_end + 1
+                continue
+            close = buffer.find(b"</row>", open_end + 1)
+            if close < 0:
+                if eof:
+                    return
+                cursor = start
+                break
+            row_end = close + len(b"</row>")
+            yield bytes(buffer[start:row_end])
+            cursor = row_end
+        if cursor >= chunk_size:
+            del buffer[:cursor]
+            cursor = 0
+
+
+def _iter_xlsx_rows_from_cycle_start(
+    source: Any,
+    *,
+    cycle_column: bytes,
+    first_cycle_id: int,
+) -> Iterator[bytes]:
+    """Start row iteration at the first numeric record for a given cycle."""
+    value = str(first_cycle_id).encode("ascii")
+    pattern = re.compile(
+        rb'<c r="'
+        + cycle_column
+        + rb'\d+"[^>]*><v>'
+        + value
+        + rb'(?:\.0+)?</v></c>'
+    )
+    buffer = bytearray()
+    chunk_size = 4 << 20
+    while True:
+        chunk = source.read(chunk_size)
+        if chunk:
+            buffer.extend(chunk)
+        match = pattern.search(buffer)
+        if match is not None:
+            row_start = buffer.rfind(b"<row", 0, match.start())
+            if row_start < 0:
+                raise InvalidNewareExcelError(
+                    "Could not locate the Neware Excel preview cycle row."
+                )
+            while buffer.find(b"</row>", match.end()) < 0:
+                more = source.read(chunk_size)
+                if not more:
+                    raise InvalidNewareExcelError(
+                        "Neware Excel preview cycle row is incomplete."
+                    )
+                buffer.extend(more)
+            yield from _iter_xlsx_xml_rows(source, initial=bytes(buffer[row_start:]))
+            return
+        if not chunk:
+            return
+        last_row_end = buffer.rfind(b"</row>")
+        if last_row_end >= 0:
+            del buffer[: last_row_end + len(b"</row>")]
+
+
+def _iter_xlsx_rows_for_cycles(
+    source: Any,
+    *,
+    cycle_column: bytes,
+    target_cycle_ids: set[int],
+) -> Iterator[tuple[int, int, bytes]]:
+    """Yield only rows whose numeric cycle cell is in the requested set.
+
+    The row worksheet is a single DEFLATE stream, so it must be inflated from
+    the beginning. Searching its decompressed chunks for the selected cycle
+    cells keeps the 460k-row scan in the C regex engine and avoids constructing
+    a Python bytes object and parsing XML for every row.
+    """
+    if not target_cycle_ids:
+        return
+    cycle_values = b"|".join(
+        str(cycle_id).encode("ascii") + rb"(?:\.0+)?"
+        for cycle_id in sorted(target_cycle_ids, key=lambda value: len(str(value)), reverse=True)
+    )
+    pattern = re.compile(
+        rb'<c r="'
+        + cycle_column
+        + rb'(\d+)"[^>]*><v>('
+        + cycle_values
+        + rb')</v></c>'
+    )
+    buffer = bytearray()
+    chunk_size = 4 << 20
+    while True:
+        chunk = source.read(chunk_size)
+        if chunk:
+            buffer.extend(chunk)
+        eof = not chunk
+        cursor = 0
+        pending_row_start: int | None = None
+        while True:
+            match = pattern.search(buffer, cursor)
+            if match is None:
+                break
+            row_start = buffer.rfind(b"<row", 0, match.start())
+            if row_start < 0:
+                pending_row_start = 0
+                break
+            row_end = buffer.find(b"</row>", match.end())
+            if row_end < 0:
+                pending_row_start = row_start
+                break
+            row_number = int(match.group(1))
+            cycle_id = int(float(match.group(2)))
+            yield row_number, cycle_id, bytes(buffer[row_start : row_end + len(b"</row>")])
+            cursor = row_end + len(b"</row>")
+        if eof:
+            return
+        if pending_row_start is not None:
+            del buffer[:pending_row_start]
+        else:
+            last_row_end = buffer.rfind(b"</row>")
+            if last_row_end >= 0:
+                del buffer[: last_row_end + len(b"</row>")]
+
+
+def _xlsx_column_letters(column_index: int) -> bytes:
+    value = column_index + 1
+    letters = bytearray()
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        letters.append(ord("A") + remainder)
+    letters.reverse()
+    return bytes(letters)
+
+
+def _xlsx_cell_value(
+    attributes: bytes,
+    content: bytes,
+    shared_strings: list[str],
+) -> object:
+    value_match = _XML_CELL_VALUE_RE.search(content)
+    type_match = _XML_CELL_TYPE_RE.search(attributes)
+    cell_type = type_match.group(1).decode("ascii") if type_match else ""
+    if cell_type == "inlineStr":
+        return "".join(
+            ElementTree.fromstring(b"<root>" + match.group(1) + b"</root>").text or ""
+            for match in _XML_INLINE_TEXT_RE.finditer(content)
+        )
+    if value_match is None:
+        return None
+    raw_value = value_match.group(1).decode("utf-8")
+    if cell_type == "s":
+        try:
+            return shared_strings[int(raw_value)]
+        except (IndexError, ValueError) as exc:
+            raise InvalidNewareExcelError(
+                "Neware Excel workbook contains an invalid shared-string reference."
+            ) from exc
+    if cell_type == "b":
+        return raw_value == "1"
+    return raw_value
+
+
+def _xlsx_row_values(
+    row: bytes,
+    shared_strings: list[str],
+    *,
+    selected_columns: set[int] | None = None,
+) -> tuple[object, ...]:
+    cells: dict[int, object] = {}
+    for match in _XML_CELL_BLOCK_RE.finditer(row):
+        attributes, content = match.groups()
+        reference = _XML_CELL_REF_RE.search(attributes)
+        if reference is None:
+            continue
+        column = 0
+        for character in reference.group(1):
+            column = column * 26 + character - ord("A") + 1
+        column -= 1
+        if selected_columns is not None and column not in selected_columns:
+            continue
+        cells[column] = _xlsx_cell_value(attributes, content, shared_strings)
+    if not cells:
+        return ()
+    output = [None] * (max(cells) + 1)
+    for column, value in cells.items():
+        output[column] = value
+    return tuple(output)
+
+
+def _xlsx_shared_string_indices(
+    row: bytes,
+    *,
+    selected_columns: set[int] | None = None,
+) -> set[int]:
+    indexes: set[int] = set()
+    for match in _XML_CELL_BLOCK_RE.finditer(row):
+        attributes, content = match.groups()
+        reference = _XML_CELL_REF_RE.search(attributes)
+        if reference is None:
+            continue
+        column = 0
+        for character in reference.group(1):
+            column = column * 26 + character - ord("A") + 1
+        column -= 1
+        if selected_columns is not None and column not in selected_columns:
+            continue
+        type_match = _XML_CELL_TYPE_RE.search(attributes)
+        value_match = _XML_CELL_VALUE_RE.search(content)
+        if type_match is None or type_match.group(1) != b"s" or value_match is None:
+            continue
+        try:
+            indexes.add(int(value_match.group(1)))
+        except ValueError as exc:
+            raise InvalidNewareExcelError(
+                "Neware Excel workbook contains an invalid shared-string reference."
+            ) from exc
+    return indexes
+
+
+def _xlsx_max_shared_string_index(
+    row: bytes,
+    *,
+    selected_columns: set[int] | None = None,
+) -> int | None:
+    indexes = _xlsx_shared_string_indices(row, selected_columns=selected_columns)
+    return max(indexes) if indexes else None
+
+
+def _xlsx_find_column_value(
+    row: bytes,
+    column_letters: bytes,
+    shared_strings: list[str],
+) -> object | None:
+    reference_prefix = b'r="' + column_letters
+    reference_position = row.find(reference_prefix)
+    if reference_position < 0:
+        return None
+    number_start = reference_position + len(reference_prefix)
+    number_end = row.find(b'"', number_start)
+    if number_end < 0 or not row[number_start:number_end].isdigit():
+        return None
+    cell_start = row.rfind(b"<c", 0, reference_position)
+    open_end = row.find(b">", number_end)
+    if cell_start < 0 or open_end < 0:
+        return None
+    if row[open_end - 1] == ord("/"):
+        return None
+    close = row.find(b"</c>", open_end + 1)
+    if close < 0:
+        return None
+    return _xlsx_cell_value(row[cell_start + 2 : open_end], row[open_end + 1 : close], shared_strings)
+
+
+def _xlsx_row_number(row: bytes, fallback: int) -> int:
+    match = _XML_ROW_NUMBER_RE.search(row.split(b">", 1)[0])
+    if match is None:
+        return fallback
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return fallback
+
+
+def _xlsx_local_member_data_offset(path: Path, info: zipfile.ZipInfo) -> int | None:
+    """Return the raw DEFLATE payload offset for a conventional ZIP member."""
+    if info.compress_type != zipfile.ZIP_DEFLATED or info.flag_bits & 0x41:
+        return None
+    try:
+        with path.open("rb") as source:
+            source.seek(info.header_offset)
+            header = source.read(30)
+            if len(header) != 30 or header[:4] != b"PK\x03\x04":
+                return None
+            flags, method = struct.unpack_from("<HH", header, 6)
+            if flags & 0x41 or method != zipfile.ZIP_DEFLATED:
+                return None
+            filename_length, extra_length = struct.unpack_from("<HH", header, 26)
+            local_filename = source.read(filename_length)
+            encoding = "utf-8" if flags & 0x800 else "cp437"
+            try:
+                expected_filename = info.filename.encode(encoding)
+            except UnicodeEncodeError:
+                return None
+            if local_filename != expected_filename:
+                return None
+            return info.header_offset + 30 + filename_length + extra_length
+    except OSError:
+        return None
+
+
+def _inflate_xlsx_member(path: Path, info: zipfile.ZipInfo) -> bytes | None:
+    """Inflate one bounded auxiliary member and verify its directory metadata."""
+    if info.file_size > _XLSX_FAST_PREVIEW_MAX_SHARED_STRINGS_BYTES:
+        return None
+    data_offset = _xlsx_local_member_data_offset(path, info)
+    if data_offset is None:
+        return None
+    try:
+        with path.open("rb") as source:
+            source.seek(data_offset)
+            compressed = source.read(info.compress_size)
+        if len(compressed) != info.compress_size:
+            return None
+        inflated = zlib.decompress(compressed, -15)
+    except (OSError, zlib.error, ValueError):
+        return None
+    if len(inflated) != info.file_size or zlib.crc32(inflated) & 0xFFFFFFFF != info.CRC:
+        return None
+    return inflated
+
+
+def _iter_xlsx_member_output_chunks(
+    path: Path,
+    info: zipfile.ZipInfo,
+    *,
+    chunk_size: int,
+) -> Iterator[bytes] | None:
+    """Stream a raw DEFLATE member, checking CRC only when its end is reached."""
+    data_offset = _xlsx_local_member_data_offset(path, info)
+    if data_offset is None or chunk_size <= 0:
+        return None
+
+    def output_chunks() -> Iterator[bytes]:
+        decoder = zlib.decompressobj(-15)
+        crc = 0
+        inflated_size = 0
+        compressed_remaining = info.compress_size
+        with path.open("rb") as source:
+            source.seek(data_offset)
+            while compressed_remaining:
+                compressed = source.read(min(chunk_size, compressed_remaining))
+                if not compressed:
+                    raise _XlsxFastPreviewUnsupported("Truncated XLSX member.")
+                compressed_remaining -= len(compressed)
+                try:
+                    output = decoder.decompress(memoryview(compressed))
+                except zlib.error as exc:
+                    raise _XlsxFastPreviewUnsupported("Invalid XLSX DEFLATE stream.") from exc
+                inflated_size += len(output)
+                if inflated_size > info.file_size:
+                    raise _XlsxFastPreviewUnsupported("XLSX member exceeds its declared size.")
+                crc = zlib.crc32(output, crc)
+                if output:
+                    yield output
+            try:
+                tail = decoder.flush()
+            except zlib.error as exc:
+                raise _XlsxFastPreviewUnsupported("Invalid XLSX DEFLATE trailer.") from exc
+            inflated_size += len(tail)
+            crc = zlib.crc32(tail, crc)
+            if tail:
+                yield tail
+            if (
+                not decoder.eof
+                or decoder.unused_data
+                or inflated_size != info.file_size
+                or crc & 0xFFFFFFFF != info.CRC
+            ):
+                raise _XlsxFastPreviewUnsupported("XLSX member CRC or size mismatch.")
+
+    return output_chunks()
+
+
+def _shared_string_text(item: bytes) -> str:
+    return "".join(
+        _html_unescape(piece.decode("utf-8"))
+        for piece in _XML_SHARED_TEXT_RE.findall(item)
+    )
+
+
+def _xlsx_shared_strings_from_xml_for_indices(
+    source: bytes,
+    indexes: set[int],
+) -> list[str] | None:
+    """Resolve sparse strings by scanning from the closer end of the SST."""
+    if not indexes:
+        return []
+    unique_match = re.search(rb'\buniqueCount="(\d+)"', source[:4096])
+    if unique_match is None:
+        return None
+    unique_count = int(unique_match.group(1))
+    if any(index < 0 or index >= unique_count for index in indexes):
+        raise InvalidNewareExcelError(
+            "Neware Excel workbook contains an invalid shared-string reference."
+        )
+
+    # In a shared-string part every start tag begins with <si. A single C-level
+    # count avoids six full 46 MB scans; malformed lookalike tags simply fail
+    # the declared-count check and use the reference reader.
+    item_start_count = source.count(b"<si")
+    self_closing_count = source.count(b"<si/>") + source.count(b"<si />")
+    closing_count = source.count(b"</si>")
+    if item_start_count != unique_count or closing_count + self_closing_count != unique_count:
+        return None
+
+    ordered = sorted(indexes)
+    split_after = -1
+    if len(ordered) == 1:
+        only_index = ordered[0]
+        if only_index <= unique_count - 1 - only_index:
+            split_after = 0
+    elif len(ordered) > 1:
+        largest_gap = max(
+            range(len(ordered) - 1),
+            key=lambda position: ordered[position + 1] - ordered[position],
+        )
+        split_after = largest_gap
+    low = set(ordered[: split_after + 1])
+    high = set(ordered[split_after + 1 :])
+    values = [""] * (max(indexes) + 1)
+
+    if low:
+        last_low = max(low)
+        found_low: set[int] = set()
+        for ordinal, match in enumerate(_XML_SHARED_ITEM_RE.finditer(source)):
+            if ordinal > last_low:
+                break
+            if ordinal in low:
+                values[ordinal] = _shared_string_text(match.group(1) or b"")
+                found_low.add(ordinal)
+        if found_low != low:
+            return None
+
+    if high:
+        found_high: set[int] = set()
+        cursor = len(source)
+        ordinal = unique_count
+        while cursor > 0 and found_high != high:
+            start = source.rfind(b"<si", 0, cursor)
+            if start < 0:
+                break
+            cursor = start
+            delimiter_position = start + 3
+            if delimiter_position >= len(source) or source[delimiter_position] not in b"> /\t\r\n":
+                continue
+            ordinal -= 1
+            if ordinal not in high:
+                continue
+            open_end = source.find(b">", delimiter_position)
+            if open_end < 0:
+                return None
+            if source[open_end - 1 : open_end] == b"/":
+                item = b""
+            else:
+                close = source.find(b"</si>", open_end + 1)
+                if close < 0:
+                    return None
+                item = source[open_end + 1 : close]
+            values[ordinal] = _shared_string_text(item)
+            found_high.add(ordinal)
+        if found_high != high:
+            return None
+    return values
+
+
+def _xlsx_first_complete_row_span(source: bytes | bytearray) -> tuple[int, int] | None:
+    start = source.find(b"<row")
+    if start < 0:
+        return None
+    close = source.find(b"</row>", start)
+    if close < 0:
+        return None
+    return start, close + len(b"</row>")
+
+
+def _xlsx_last_complete_row_span(source: bytes | bytearray) -> tuple[int, int] | None:
+    close = source.rfind(b"</row>")
+    if close < 0:
+        return None
+    start = source.rfind(b"<row", 0, close)
+    if start < 0:
+        return None
+    return start, close + len(b"</row>")
+
+
+def _xlsx_cycle_cell_pattern(column: bytes) -> re.Pattern[bytes]:
+    return re.compile(
+        rb'<c r="'
+        + re.escape(column)
+        + rb'(\d+)"([^>]*?)(?:/>|>(.*?)</c>)',
+        re.DOTALL,
+    )
+
+
+def _xlsx_cycle_match_value(
+    match: re.Match[bytes],
+    shared_strings: list[str],
+) -> tuple[int, int] | None:
+    type_match = _XML_CELL_TYPE_RE.search(match.group(2))
+    if type_match is not None and type_match.group(1) == b"inlineStr":
+        raise _XlsxFastPreviewUnsupported("Inline-string cycle cells require the reference reader.")
+    try:
+        value = _xlsx_cell_value(match.group(2), match.group(3) or b"", shared_strings)
+        numeric = float(value)
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            return None
+        return int(match.group(1)), int(numeric)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _xlsx_rows_end(source: bytes | bytearray) -> int:
+    close = source.rfind(b"</row>")
+    return close + len(b"</row>") if close >= 0 else 0
+
+
+def _xlsx_row_value_pairs(
+    source: bytes | bytearray,
+    *,
+    start: int,
+    end: int,
+    cycle_pattern: re.Pattern[bytes],
+    shared_strings: list[str],
+) -> Iterator[tuple[int, int, int]]:
+    """Yield (row start, worksheet row number, cycle id) for complete rows."""
+    for match in cycle_pattern.finditer(source, start, end):
+        parsed = _xlsx_cycle_match_value(match, shared_strings)
+        if parsed is None:
+            continue
+        row_number, cycle_id = parsed
+        row_start = source.rfind(b"<row", start, match.start())
+        if row_start < 0:
+            raise _XlsxFastPreviewUnsupported("Cycle cell is outside a worksheet row.")
+        yield row_start, row_number, cycle_id
+
+
+def _xlsx_rows_after(
+    source: bytes | bytearray,
+    *,
+    start: int,
+    end: int,
+) -> Iterator[tuple[int, int]]:
+    """Yield complete worksheet row spans from an unconsumed byte range."""
+    cursor = start
+    while cursor < end:
+        row_start = source.find(b"<row", cursor, end)
+        if row_start < 0:
+            return
+        close = source.find(b"</row>", row_start, end)
+        if close < 0:
+            return
+        row_end = close + len(b"</row>")
+        yield row_start, row_end
+        cursor = row_end
+
+
+def _xlsx_cycle_ordinal(
+    cycle_id: int,
+    cycle_ordinals: dict[int, int],
+) -> int | None:
+    return cycle_ordinals.get(cycle_id)
+
+
+def _xlsx_decode_preview_window(
+    source: bytes,
+    *,
+    header_row: bytes,
+    header_shared_strings: list[str],
+    used_shared_string_indices: set[int],
+    required: dict[str, tuple[int, str]],
+    cycle_ordinals: dict[int, int],
+    requested_start: int,
+    requested_end: int,
+    cycle_count: int,
+    time_origin_s: float | None,
+) -> dict[str, object] | None:
+    """Decode one retained record window in a single regex pass."""
+    selected_columns = {
+        required[_normalize_text(name)][0]
+        for name in (
+            "DataPoint",
+            "Cycle Index",
+            "Step Index",
+            "Step Type",
+            "Time(min)",
+            "Total Time(min)",
+            "Current(mA)",
+            "Voltage(V)",
+            "Chg. Cap.(mAh)",
+            "DChg. Cap.(mAh)",
+        )
+    }
+    cells_by_row: dict[int, dict[int, object]] = {}
+    row_numbers: list[int] = []
+    previous_row_number: int | None = None
+    used_indices = set(used_shared_string_indices)
+
+    for match in _XLSX_FAST_PREVIEW_CELL_RE.finditer(source):
+        letters, row_text, attributes, content = match.groups()
+        try:
+            row_number = int(row_text)
+        except ValueError:
+            return None
+        if previous_row_number is None or row_number != previous_row_number:
+            if previous_row_number is not None and row_number <= previous_row_number:
+                return None
+            previous_row_number = row_number
+            row_numbers.append(row_number)
+            cells_by_row[row_number] = {}
+        column = 0
+        for character in letters:
+            column = column * 26 + character - ord("A") + 1
+        column -= 1
+        if column not in selected_columns:
+            continue
+        type_match = _XML_CELL_TYPE_RE.search(attributes)
+        if type_match is not None and type_match.group(1) == b"inlineStr":
+            return None
+        cell_content = content or b""
+        value_match = _XML_CELL_VALUE_RE.search(cell_content)
+        cell_value: object | None = None
+        if type_match is not None and type_match.group(1) == b"s" and value_match is not None:
+            try:
+                string_index = int(value_match.group(1))
+            except ValueError as exc:
+                raise InvalidNewareExcelError(
+                    "Neware Excel workbook contains an invalid shared-string reference."
+                ) from exc
+            used_indices.add(string_index)
+            cell_value = (_XLSX_SHARED_STRING_REF, string_index)
+        elif value_match is not None:
+            raw_value = value_match.group(1).decode("utf-8")
+            cell_value = (
+                raw_value == "1"
+                if type_match is not None and type_match.group(1) == b"b"
+                else raw_value
+            )
+        cells_by_row[row_number][column] = cell_value
+
+    if not cells_by_row:
+        return None
+    # The caller replaces these placeholders after the parallel shared-string
+    # inflater completes. Keeping collection and materialization separate lets
+    # the retained record window be scanned only once.
+    return {
+        "_deferred_shared_string_indices": used_indices,
+        "_cells_by_row": cells_by_row,
+        "_row_numbers": row_numbers,
+        "cycle_count": cycle_count,
+        "time_origin_s": time_origin_s,
+        "cycle_start": requested_start,
+        "cycle_end": requested_end,
+    }
+
+
+def _xlsx_build_preview_rows(
+    cells_by_row: dict[int, dict[int, object]],
+    row_numbers: list[int],
+    shared_strings: list[str],
+    *,
+    cycle_ordinals: dict[int, int],
+    requested_start: int,
+    requested_end: int,
+    cycle_count: int,
+    time_origin_s: float | None,
+    required: dict[str, tuple[int, str]],
+) -> dict[str, object] | None:
+    def value_for(row_cells: dict[int, object], index: int) -> object | None:
+        value = row_cells.get(index)
+        if (
+            isinstance(value, tuple)
+            and len(value) == 2
+            and value[0] is _XLSX_SHARED_STRING_REF
+        ):
+            try:
+                return shared_strings[int(value[1])]
+            except (IndexError, ValueError) as exc:
+                raise InvalidNewareExcelError(
+                    "Neware Excel workbook contains an invalid shared-string reference."
+                ) from exc
+        return value
+
+    data_point_index = required[_normalize_text("DataPoint")][0]
+    cycle_index = required[_normalize_text("Cycle Index")][0]
+    step_index = required[_normalize_text("Step Index")][0]
+    status_index = required[_normalize_text("Step Type")][0]
+    time_index, time_source = required[_normalize_text("Time(min)")]
+    total_time_index, total_time_source = required[_normalize_text("Total Time(min)")]
+    current_index = required[_normalize_text("Current(mA)")][0]
+    voltage_index = required[_normalize_text("Voltage(V)")][0]
+    charge_index = required[_normalize_text("Chg. Cap.(mAh)")][0]
+    discharge_index = required[_normalize_text("DChg. Cap.(mAh)")][0]
+    rows: list[dict[str, object]] = []
+    previous_cycle_ordinal: int | None = None
+    normalized_statuses: dict[str, str] = {}
+    for row_number in row_numbers:
+        row_cells = cells_by_row[row_number]
+        values = {
+            data_point_index: value_for(row_cells, data_point_index),
+            cycle_index: value_for(row_cells, cycle_index),
+            step_index: value_for(row_cells, step_index),
+            status_index: value_for(row_cells, status_index),
+            time_index: value_for(row_cells, time_index),
+            total_time_index: value_for(row_cells, total_time_index),
+            current_index: value_for(row_cells, current_index),
+            voltage_index: value_for(row_cells, voltage_index),
+            charge_index: value_for(row_cells, charge_index),
+            discharge_index: value_for(row_cells, discharge_index),
+        }
+        cycle_value = values[cycle_index]
+        if cycle_value is None or (isinstance(cycle_value, str) and not cycle_value.strip()):
+            continue
+        try:
+            cycle_number = float(cycle_value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(cycle_number) or not cycle_number.is_integer():
+            return None
+        cycle_id = int(cycle_number)
+        cycle_ordinal = cycle_ordinals.get(cycle_id)
+        if cycle_ordinal is None:
+            continue
+        if previous_cycle_ordinal is not None and cycle_ordinal < previous_cycle_ordinal:
+            return None
+        previous_cycle_ordinal = cycle_ordinal
+        if cycle_ordinal < requested_start or cycle_ordinal > requested_end:
+            return None
+        status_value = values[status_index]
+        if isinstance(status_value, str) and status_value in normalized_statuses:
+            normalized_status = normalized_statuses[status_value]
+        else:
+            normalized_status = _normalize_status(status_value, row_number=row_number)
+            if isinstance(status_value, str):
+                normalized_statuses[status_value] = normalized_status
+        rows.append(
+            {
+                "record_index": _integer(
+                    values[data_point_index], row_number=row_number, column="DataPoint"
+                ),
+                "cycle": cycle_ordinal,
+                "time_s": _unitless_or_minutes_seconds(
+                    values[time_index], source_header=time_source, canonical_header="Time(min)"
+                ),
+                "total_time_s": _unitless_or_minutes_seconds(
+                    values[total_time_index],
+                    source_header=total_time_source,
+                    canonical_header="Total Time(min)",
+                ),
+                "current_ma": _number(
+                    values[current_index], row_number=row_number, column="Current(mA)"
+                ),
+                "voltage_v": _number(
+                    values[voltage_index], row_number=row_number, column="Voltage(V)"
+                ),
+                "step_index": _integer(
+                    values[step_index], row_number=row_number, column="Step Index"
+                ),
+                "status": normalized_status,
+                "charge_capacity_mah": _number(
+                    values[charge_index], row_number=row_number, column="Chg. Cap.(mAh)"
+                ),
+                "discharge_capacity_mah": _number(
+                    values[discharge_index], row_number=row_number, column="DChg. Cap.(mAh)"
+                ),
+            }
+        )
+    if not rows:
+        return None
+    raw = pd.DataFrame(rows).sort_values("record_index", kind="stable").reset_index(drop=True)
+    # The import parser validates the full record timeline and can recover a
+    # small set of verified future-dated duplicates. A window-local time reset
+    # must not be shown by the faster display-only reader before that validation
+    # has run; let the picker fall through to the canonical prepared preview.
+    _require_monotonic_preview_time(raw)
+    return {
+        "cycle_count": cycle_count,
+        "raw": raw,
+        "time_origin_s": time_origin_s,
+        "cycle_start": requested_start,
+        "cycle_end": requested_end,
+    }
+
+
+def _try_read_voltage_preview_streaming(
+    path: Path,
+    *,
+    cycle_start: int | None,
+    cycle_end: int | None,
+    chunk_size: int = _XLSX_FAST_PREVIEW_CHUNK_BYTES,
+) -> dict[str, object] | None:
+    """Prepare a bounded display preview from one raw-DEFLATE record pass.
+
+    Neware writes the record sheet in non-decreasing cycle order. The scan
+    samples that order at chunk boundaries until the requested window begins,
+    then verifies every cycle row retained in and immediately after the window.
+    This deliberately cannot detect an isolated earlier row with a requested
+    cycle label that is followed by lower cycle labels before the sampled
+    boundary; detecting that would require a full scan of the prefix.
+    """
+    try:
+        stat = path.stat()
+        cycles = _read_cycle_summary_fast_cached(str(path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        return None
+    if cycles is None or not len(cycles):
+        return None
+    cycle_ids = [int(value) for value in cycles["cycle"].tolist()]
+    cycle_count = len(cycle_ids)
+    if cycle_start is None and cycle_end is None:
+        requested_start = max(1, cycle_count - 19)
+        requested_end = cycle_count
+    else:
+        requested_start = max(1, int(cycle_start or 1))
+        requested_end = min(
+            cycle_count,
+            max(requested_start, int(cycle_end or requested_start)),
+        )
+    if requested_start > requested_end:
+        return {
+            "cycle_count": cycle_count,
+            "cycles": cycles,
+            "raw": pd.DataFrame(),
+            "time_origin_s": None,
+            "cycle_start": requested_start,
+            "cycle_end": requested_end,
+        }
+
+    cycle_ordinals = {cycle_id: ordinal for ordinal, cycle_id in enumerate(cycle_ids, start=1)}
+    selected_cycle_ids = cycle_ids[requested_start - 1 : requested_end]
+    if not selected_cycle_ids:
+        return None
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            sheet_paths = _xlsx_sheet_paths(archive)
+            record_path = sheet_paths.get(_normalize_text("record"))
+            if record_path is None:
+                return None
+            try:
+                record_info = archive.getinfo(record_path)
+            except KeyError:
+                return None
+            try:
+                shared_info = archive.getinfo("xl/sharedStrings.xml")
+            except KeyError:
+                shared_info = None
+
+            inflated = _iter_xlsx_member_output_chunks(
+                path, record_info, chunk_size=chunk_size
+            )
+            if inflated is None:
+                return None
+            prefix = bytearray()
+            header_span: tuple[int, int] | None = None
+            try:
+                while header_span is None:
+                    chunk = next(inflated)
+                    prefix.extend(chunk)
+                    header_span = _xlsx_first_complete_row_span(prefix)
+            except StopIteration:
+                return None
+            except _XlsxFastPreviewUnsupported:
+                return None
+
+            header_start, header_end = header_span
+            header_xml_row = bytes(prefix[header_start:header_end])
+            header_indices = _xlsx_shared_string_indices(header_xml_row)
+            header_shared_strings = _xlsx_shared_strings(
+                archive,
+                max_index=max(header_indices) if header_indices else None,
+            )
+            if header_indices and shared_info is None:
+                return None
+            header_values = _xlsx_row_values(header_xml_row, header_shared_strings)
+            headers = _fast_header_map(iter(header_values))
+            required = _require_columns(
+                headers,
+                (
+                    "DataPoint",
+                    "Cycle Index",
+                    "Step Index",
+                    "Step Type",
+                    "Time(min)",
+                    "Total Time(min)",
+                    "Current(mA)",
+                    "Voltage(V)",
+                    "Chg. Cap.(mAh)",
+                    "DChg. Cap.(mAh)",
+                ),
+                sheet_name="record",
+            )
+            cycle_index, _cycle_source = required[_normalize_text("Cycle Index")]
+            cycle_column = _xlsx_column_letters(cycle_index)
+            time_index, time_source = required[_normalize_text("Time(min)")]
+            total_time_index, total_time_source = required[_normalize_text("Total Time(min)")]
+            cycle_pattern = _xlsx_cycle_cell_pattern(cycle_column)
+
+            scan_buffer = bytearray(prefix[header_end:])
+            time_buffer = bytearray(scan_buffer)
+            time_cursor = 0
+            time_origin_s: float | None = None
+            time_origin_row_number = 2
+            used_shared_string_indices = set(header_indices)
+            window_buffer: bytearray | None = None
+            window_scan_offset = 0
+            window_previous_ordinal: int | None = None
+            previous_probe_ordinal: int | None = None
+            early_stop = False
+
+            shared_future = None
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                if shared_info is not None:
+                    shared_future = executor.submit(
+                        _inflate_xlsx_member, path, shared_info
+                    )
+
+                def update_time_origin() -> None:
+                    nonlocal time_cursor, time_origin_s, time_buffer
+                    nonlocal time_origin_row_number
+                    if time_origin_s is not None:
+                        return
+                    complete_end = _xlsx_rows_end(time_buffer)
+                    consumed = time_cursor
+                    for row_start, row_end in _xlsx_rows_after(
+                        time_buffer, start=time_cursor, end=complete_end
+                    ):
+                        xml_row = bytes(time_buffer[row_start:row_end])
+                        cycle_value = _xlsx_find_column_value(
+                            xml_row, cycle_column, header_shared_strings
+                        )
+                        if cycle_value is None or (
+                            isinstance(cycle_value, str) and not cycle_value.strip()
+                        ):
+                            consumed = row_end
+                            continue
+                        total_time_value = _xlsx_find_column_value(
+                            xml_row, _xlsx_column_letters(total_time_index), header_shared_strings
+                        )
+                        if total_time_value is None or (
+                            isinstance(total_time_value, str) and not total_time_value.strip()
+                        ):
+                            consumed = row_end
+                            continue
+                        time_origin_row_number = _xlsx_row_number(
+                            xml_row, time_origin_row_number
+                        )
+                        try:
+                            time_origin_s = _unitless_or_minutes_seconds(
+                                total_time_value,
+                                source_header=total_time_source,
+                                canonical_header="Total Time(min)",
+                            )
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise _invalid_record(time_origin_row_number, total_time_source) from exc
+                        consumed = row_end
+                        break
+                    if time_origin_s is None and consumed:
+                        del time_buffer[:consumed]
+                        time_cursor = 0
+                    elif time_origin_s is not None:
+                        time_buffer.clear()
+
+                def process_before_window() -> bool:
+                    nonlocal previous_probe_ordinal, window_buffer
+                    nonlocal window_scan_offset, window_previous_ordinal
+                    complete_end = _xlsx_rows_end(scan_buffer)
+                    last_span = _xlsx_last_complete_row_span(scan_buffer)
+                    if complete_end <= 0 or last_span is None:
+                        return False
+                    row_start, row_end = last_span
+                    last_row = bytes(scan_buffer[row_start:row_end])
+                    cycle_value = _xlsx_find_column_value(
+                        last_row, cycle_column, header_shared_strings
+                    )
+                    if cycle_value is None or (
+                        isinstance(cycle_value, str) and not cycle_value.strip()
+                    ):
+                        raise _XlsxFastPreviewUnsupported("Missing chunk-boundary cycle value.")
+                    try:
+                        numeric_cycle = float(cycle_value)
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        raise _XlsxFastPreviewUnsupported("Invalid chunk-boundary cycle.") from exc
+                    if not math.isfinite(numeric_cycle) or not numeric_cycle.is_integer():
+                        raise _XlsxFastPreviewUnsupported("Invalid chunk-boundary cycle.")
+                    boundary_ordinal = cycle_ordinals.get(int(numeric_cycle))
+                    if boundary_ordinal is None:
+                        raise _XlsxFastPreviewUnsupported("Unknown chunk-boundary cycle.")
+                    if (
+                        previous_probe_ordinal is not None
+                        and boundary_ordinal < previous_probe_ordinal
+                    ):
+                        raise _XlsxFastPreviewUnsupported("Record cycles are not ordered.")
+
+                    if boundary_ordinal < requested_start:
+                        previous_probe_ordinal = boundary_ordinal
+                        del scan_buffer[:complete_end]
+                        return False
+
+                    first_selected_start: int | None = None
+                    stop_before: int | None = None
+                    previous = previous_probe_ordinal
+                    last_window_ordinal: int | None = None
+                    for row_start, _row_number, cycle_id in _xlsx_row_value_pairs(
+                        scan_buffer,
+                        start=0,
+                        end=complete_end,
+                        cycle_pattern=cycle_pattern,
+                        shared_strings=header_shared_strings,
+                    ):
+                        ordinal = cycle_ordinals.get(cycle_id)
+                        if ordinal is None:
+                            continue
+                        if previous is not None and ordinal < previous:
+                            raise _XlsxFastPreviewUnsupported("Record cycles are not ordered.")
+                        previous = ordinal
+                        if first_selected_start is None:
+                            if ordinal > requested_end:
+                                raise _XlsxFastPreviewUnsupported(
+                                    "Requested cycle window was not found in order."
+                                )
+                            if ordinal < requested_start:
+                                continue
+                            first_selected_start = row_start
+                        if ordinal > requested_end:
+                            stop_before = row_start
+                            break
+                        last_window_ordinal = ordinal
+
+                    if first_selected_start is None:
+                        if boundary_ordinal > requested_end:
+                            raise _XlsxFastPreviewUnsupported(
+                                "Requested cycle window was not found."
+                            )
+                        previous_probe_ordinal = boundary_ordinal
+                        del scan_buffer[:complete_end]
+                        return False
+
+                    selected_end = stop_before if stop_before is not None else len(scan_buffer)
+                    window_buffer = bytearray(scan_buffer[first_selected_start:selected_end])
+                    window_scan_offset = complete_end - first_selected_start
+                    window_previous_ordinal = last_window_ordinal
+                    previous_probe_ordinal = last_window_ordinal
+                    if stop_before is not None:
+                        del window_buffer[stop_before - first_selected_start :]
+                        return True
+                    return False
+
+                def process_window_chunk() -> bool:
+                    nonlocal window_scan_offset, window_previous_ordinal, window_buffer
+                    if window_buffer is None:
+                        raise _XlsxFastPreviewUnsupported("Preview window was not initialized.")
+                    complete_end = _xlsx_rows_end(window_buffer)
+                    if complete_end <= window_scan_offset:
+                        return False
+                    new_complete_rows = bytes(
+                        window_buffer[window_scan_offset:complete_end]
+                    )
+                    for row_start, _row_number, cycle_id in _xlsx_row_value_pairs(
+                        new_complete_rows,
+                        start=0,
+                        end=len(new_complete_rows),
+                        cycle_pattern=cycle_pattern,
+                        shared_strings=header_shared_strings,
+                    ):
+                        ordinal = cycle_ordinals.get(cycle_id)
+                        if ordinal is None:
+                            raise _XlsxFastPreviewUnsupported("Unknown cycle in preview window.")
+                        if (
+                            window_previous_ordinal is not None
+                            and ordinal < window_previous_ordinal
+                        ):
+                            raise _XlsxFastPreviewUnsupported("Record cycles are not ordered.")
+                        if ordinal < requested_start:
+                            raise _XlsxFastPreviewUnsupported(
+                                "Record cycle precedes the requested window."
+                            )
+                        if ordinal > requested_end:
+                            del window_buffer[window_scan_offset + row_start :]
+                            return True
+                        window_previous_ordinal = ordinal
+                    window_scan_offset = complete_end
+                    return False
+
+                update_time_origin()
+                try:
+                    if process_before_window():
+                        early_stop = True
+                    if not early_stop:
+                        for chunk in inflated:
+                            if not chunk:
+                                continue
+                            if time_origin_s is None:
+                                time_buffer.extend(chunk)
+                                update_time_origin()
+                            if window_buffer is None:
+                                scan_buffer.extend(chunk)
+                                early_stop = process_before_window()
+                            else:
+                                window_buffer.extend(chunk)
+                                early_stop = process_window_chunk()
+                            if early_stop:
+                                break
+                except _XlsxFastPreviewUnsupported:
+                    return None
+                finally:
+                    inflated.close()
+
+                if window_buffer is None or not window_buffer:
+                    return None
+                if shared_future is not None:
+                    shared_xml = shared_future.result()
+                    if shared_xml is None:
+                        return None
+                else:
+                    shared_xml = b""
+
+                complete_end = _xlsx_rows_end(window_buffer)
+                if complete_end <= 0:
+                    return None
+                retained = bytes(window_buffer[:complete_end])
+                deferred = _xlsx_decode_preview_window(
+                    retained,
+                    header_row=header_xml_row,
+                    header_shared_strings=header_shared_strings,
+                    used_shared_string_indices=used_shared_string_indices,
+                    required=required,
+                    cycle_ordinals=cycle_ordinals,
+                    requested_start=requested_start,
+                    requested_end=requested_end,
+                    cycle_count=cycle_count,
+                    time_origin_s=time_origin_s,
+                )
+                if deferred is None:
+                    return None
+                needed_indices = set(deferred.pop("_deferred_shared_string_indices"))
+                cells_by_row = deferred.pop("_cells_by_row")
+                row_numbers = deferred.pop("_row_numbers")
+                if needed_indices:
+                    shared_strings = _xlsx_shared_strings_from_xml_for_indices(
+                        shared_xml, needed_indices
+                    )
+                    if shared_strings is None:
+                        return None
+                else:
+                    shared_strings = []
+                result = _xlsx_build_preview_rows(
+                    cells_by_row,
+                    row_numbers,
+                    shared_strings,
+                    cycle_ordinals=cycle_ordinals,
+                    requested_start=requested_start,
+                    requested_end=requested_end,
+                    cycle_count=cycle_count,
+                    time_origin_s=time_origin_s,
+                    required=required,
+                )
+                if result is None:
+                    return None
+                result["cycles"] = cycles
+                return result
+    except InvalidNewareExcelError:
+        raise
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        zipfile.BadZipFile,
+        zlib.error,
+        _XlsxFastPreviewUnsupported,
+    ):
+        return None
+    return None
+
+
 def _fast_load_sheet(
     reader: Any,
     name: str,
@@ -1773,6 +3224,108 @@ def _frame_from_records(records: list[dict[str, object]]) -> pd.DataFrame:
     return _frame_from_data(data)
 
 
+def _confirmed_future_duplicate_rows(frame: pd.DataFrame) -> list[tuple[int, int]] | None:
+    """Find a small set of isolated future-time records duplicated later.
+
+    Neware exports can contain isolated rows inserted early in the record
+    sheet even though their absolute date/time and measurement values belong
+    much later in the same file. Recover only when each such row is an obvious
+    >24-hour timestamp spike, its neighbors remain ordered, and the complete
+    measured record occurs again later. Real resets or unmatched disorders
+    keep failing closed.
+    """
+    total_time = frame["total_time_s"].to_numpy(dtype="float64")
+    decreases = np.flatnonzero(np.diff(total_time) < -1e-9) + 1
+    if len(decreases) == 0:
+        return []
+    if len(decreases) > 32:
+        return None
+
+    timestamps = frame["timestamp"].to_numpy(dtype="datetime64[ns]")
+    measurement_columns = tuple(
+        column
+        for column in (
+            "voltage_v",
+            "current_ma",
+            "charge_capacity_mah",
+            "discharge_capacity_mah",
+            "power_w",
+            "capacity_mah",
+            "specific_capacity_mah_g",
+            "charge_specific_capacity_mah_g",
+            "discharge_specific_capacity_mah_g",
+        )
+        if column in frame.columns
+    )
+    if not measurement_columns:
+        return None
+
+    minimum_future_gap_s = 24.0 * 60.0 * 60.0
+    recovery_pairs: list[tuple[int, int]] = []
+    outlier_indices: set[int] = set()
+    for decrease in decreases:
+        candidate = int(decrease) - 1
+        previous = candidate - 1
+        following = candidate + 1
+        if previous < 0 or following >= len(frame) or candidate in outlier_indices:
+            return None
+        if candidate - 1 in outlier_indices or candidate + 1 in outlier_indices:
+            return None
+
+        before_s = total_time[previous]
+        outlier_s = total_time[candidate]
+        after_s = total_time[following]
+        if (
+            outlier_s <= before_s + 1e-9
+            or outlier_s <= after_s + 1e-9
+            or after_s < before_s - 1e-9
+            or outlier_s - after_s < minimum_future_gap_s
+        ):
+            return None
+
+        before_time = timestamps[previous]
+        outlier_time = timestamps[candidate]
+        after_time = timestamps[following]
+        if (
+            np.isnat(before_time)
+            or np.isnat(outlier_time)
+            or np.isnat(after_time)
+            or before_time > after_time
+            or outlier_time <= after_time
+            or outlier_time - after_time < np.timedelta64(24, "h")
+        ):
+            return None
+
+        later = np.arange(following + 1, len(frame), dtype="int64")
+        matches = (timestamps[later] == outlier_time) & (
+            total_time[later] == outlier_s
+        )
+        # Identity is based on absolute elapsed time and physical measurements.
+        # A verified Neware corruption repeats the measurement while carrying
+        # stale cycle, step, status, and step-relative-time fields, so those
+        # metadata columns cannot safely be required to match.
+        for column in measurement_columns:
+            values = frame[column].to_numpy(dtype="float64")
+            candidate_value = values[candidate]
+            later_values = values[later]
+            equal_values = later_values == candidate_value
+            if np.isnan(candidate_value):
+                equal_values |= np.isnan(later_values)
+            matches &= equal_values
+        duplicate_indices = later[matches]
+        if len(duplicate_indices) == 0:
+            return None
+
+        recovery_pairs.append((candidate, int(duplicate_indices[0])))
+        outlier_indices.add(candidate)
+
+    keep = np.ones(len(frame), dtype=bool)
+    keep[list(outlier_indices)] = False
+    if np.any(np.diff(total_time[keep]) < -1e-9):
+        return None
+    return recovery_pairs
+
+
 def _frame_from_data(data: dict[str, Any]) -> pd.DataFrame:
     """Build the canonical frame and derived fields from ordered columns."""
 
@@ -1788,9 +3341,47 @@ def _frame_from_data(data: dict[str, Any]) -> pd.DataFrame:
 
     total_time = frame["total_time_s"].to_numpy(dtype="float64")
     if len(total_time) > 1 and np.any(np.diff(total_time) < -1e-9):
-        raise InvalidNewareExcelError(
-            "Neware Excel record Total Time(min) decreases in source order."
-        )
+        recovery_pairs = _confirmed_future_duplicate_rows(frame)
+        if recovery_pairs is None:
+            raise InvalidNewareExcelError(
+                "Neware Excel record Total Time(min) decreases in source order."
+            )
+        if recovery_pairs:
+            skipped_indices = [candidate for candidate, _duplicate in recovery_pairs]
+            skipped_points = [int(frame["record_index"].iloc[index]) for index in skipped_indices]
+            duplicate_points = [
+                int(frame["record_index"].iloc[duplicate])
+                for _candidate, duplicate in recovery_pairs
+            ]
+            keep = np.ones(len(frame), dtype=bool)
+            keep[skipped_indices] = False
+            frame = frame.iloc[keep].reset_index(drop=True)
+            frame.attrs["neware_excel"] = {
+                "parser_warnings": [
+                    {
+                        "code": "future_duplicate_records_skipped",
+                        "scope": "source",
+                        "count": len(recovery_pairs),
+                        "message": (
+                            "CellXplorer skipped isolated future-dated records that were "
+                            "also present later in the workbook. The later recorded "
+                            "measurements were kept; no values were synthesized."
+                        ),
+                        "examples": [
+                            {
+                                "data_point": point,
+                                "duplicate_data_point": duplicate,
+                            }
+                            for point, duplicate in zip(skipped_points, duplicate_points)
+                        ][:3],
+                    }
+                ]
+            }
+            total_time = frame["total_time_s"].to_numpy(dtype="float64")
+            if len(total_time) > 1 and np.any(np.diff(total_time) < -1e-9):
+                raise InvalidNewareExcelError(
+                    "Neware Excel record Total Time(min) decreases in source order."
+                )
 
     cycle = frame["cycle"].to_numpy(dtype="int64")
     step_index = frame["step_index"].to_numpy(dtype="int64")
@@ -2157,17 +3748,53 @@ def _validate_step_summary(
     return True
 
 
-def is_supported_workbook(path: str | Path) -> bool:
-    """Return whether ``path`` matches the supported Neware record contract."""
+def validate_supported_workbook(path: str | Path) -> None:
+    """Validate Neware structural eligibility without loading workbook metadata.
 
+    The import browser needs only the record sheet's header. Opening the full
+    metadata reader here needlessly reads the workbook's other sheets and may
+    expand a very large shared-string table.
+    """
     candidate = _path(path)
     if candidate.suffix.casefold() != ".xlsx":
-        return False
+        raise UnsupportedNewareExcelError(
+            "Not a recognized Neware Excel export: only .xlsx is supported."
+        )
     try:
-        with _open(candidate) as workbook:
-            sheet = _sheet_by_name(workbook, "record", required=True)
-            headers = _header_map(sheet)
+        with zipfile.ZipFile(candidate) as archive:
+            sheet_paths = _xlsx_sheet_paths(archive)
+            record_path = sheet_paths.get(_normalize_text("record"))
+            if record_path is None:
+                raise UnsupportedNewareExcelError(
+                    "Not a recognized Neware Excel export: required record sheet is missing."
+                )
+            with archive.open(record_path) as record_xml:
+                try:
+                    header_xml_row = next(_iter_xlsx_xml_rows(record_xml))
+                except StopIteration as exc:
+                    raise UnsupportedNewareExcelError(
+                        "Not a recognized Neware Excel export: record sheet is empty."
+                    ) from exc
+            shared_strings = _xlsx_shared_strings(
+                archive,
+                max_index=_xlsx_max_shared_string_index(header_xml_row),
+            )
+            headers = _fast_header_map(
+                iter(_xlsx_row_values(header_xml_row, shared_strings))
+            )
             _require_columns(headers, REQUIRED_RECORD_HEADERS, sheet_name="record")
+    except NewareExcelError:
+        raise
+    except Exception as exc:
+        raise InvalidNewareExcelError(
+            "Could not read the Neware Excel record header."
+        ) from exc
+
+
+def is_supported_workbook(path: str | Path) -> bool:
+    """Return whether ``path`` matches the supported Neware record contract."""
+    try:
+        validate_supported_workbook(path)
         return True
     except NewareExcelError:
         return False
@@ -2256,7 +3883,111 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     return frame
 
 
+def _read_metadata_inputs(workbook: Any) -> tuple[
+    dict[str, object],
+    dict[str, dict[str, str]],
+    dict[str, dict[str, object]],
+    dict[str, object],
+    str | None,
+    bool,
+    bool,
+    bool,
+]:
+    record_sheet = _sheet_by_name(workbook, "record", required=True)
+    _require_columns(
+        _header_map(record_sheet),
+        REQUIRED_RECORD_HEADERS,
+        sheet_name="record",
+    )
+    test_sheet = _sheet_by_name(workbook, "test", required=False)
+    info: dict[str, object] = {"raw": {}}
+    step_info: dict[str, dict[str, str]] = {}
+    original_steps: dict[str, dict[str, object]] = {}
+    if test_sheet is not None:
+        test_rows = _rows(test_sheet)
+        info, header_row, headers = _parse_test_information(test_rows)
+        step_info, original_steps = _parse_programmed_plan(
+            test_rows, header_row, headers, info
+        )
+    unit_original, unit_workbook_name = _parse_unit_original(
+        _sheet_by_name(workbook, "unit", required=False)
+    )
+    has_cycle_summary = _sheet_by_name(workbook, "cycle", required=False) is not None
+    has_step_summary = _sheet_by_name(workbook, "step", required=False) is not None
+    return (
+        info,
+        step_info,
+        original_steps,
+        unit_original,
+        unit_workbook_name,
+        has_cycle_summary,
+        has_step_summary,
+        test_sheet is not None,
+    )
+
+
+def _read_calamine_metadata_inputs(
+    candidate: Path,
+    *,
+    allow_fallback: bool,
+) -> tuple | None:
+    if _python_calamine is None:
+        return None
+    workbook = None
+    try:
+        workbook = _python_calamine.load_workbook(str(candidate))
+        with zipfile.ZipFile(candidate) as archive:
+            sheet_paths = _xlsx_sheet_paths(archive)
+            record_path = sheet_paths.get(_normalize_text("record"))
+            if record_path is None:
+                raise UnsupportedNewareExcelError(
+                    "Not a recognized Neware Excel export: required record sheet is missing."
+                )
+            with archive.open(record_path) as record_xml:
+                rows = _iter_xlsx_xml_rows(record_xml)
+                try:
+                    header_xml_row = next(rows)
+                except StopIteration as exc:
+                    raise UnsupportedNewareExcelError(
+                        "Not a recognized Neware Excel export: record sheet is empty."
+                    ) from exc
+            shared_strings = _xlsx_shared_strings(
+                archive,
+                max_index=_xlsx_max_shared_string_index(header_xml_row),
+            )
+            header_row = _xlsx_row_values(header_xml_row, shared_strings)
+        adapter = _CalamineWorkbookAdapter(
+            workbook,
+            overrides={
+                "record": _RowsSheetAdapter("record", [header_row]),
+            },
+        )
+        return _read_metadata_inputs(adapter)
+    except NewareExcelError:
+        if allow_fallback:
+            return None
+        raise
+    except Exception as exc:
+        if allow_fallback:
+            return None
+        raise InvalidNewareExcelError(
+            "Could not read the Neware Excel metadata with the fast reader."
+        ) from exc
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
 def read_metadata(path: str | Path) -> dict[str, object]:
+    return _read_metadata(path, fast_only=False)
+
+
+def read_metadata_fast(path: str | Path) -> dict[str, object]:
+    """Read eligibility metadata without falling back to openpyxl's shared-string load."""
+    return _read_metadata(path, fast_only=True)
+
+
+def _read_metadata(path: str | Path, *, fast_only: bool) -> dict[str, object]:
     """Read bounded workbook metadata and the programmed plan.
 
     The metadata path intentionally opens only the small ``test``, ``unit`` and
@@ -2271,28 +4002,24 @@ def read_metadata(path: str | Path) -> dict[str, object]:
         )
 
     try:
-        with _open(candidate) as workbook:
-            record_sheet = _sheet_by_name(workbook, "record", required=True)
-            _require_columns(
-                _header_map(record_sheet),
-                REQUIRED_RECORD_HEADERS,
-                sheet_name="record",
-            )
-            test_sheet = _sheet_by_name(workbook, "test", required=False)
-            info: dict[str, object] = {"raw": {}}
-            step_info: dict[str, dict[str, str]] = {}
-            original_steps: dict[str, dict[str, object]] = {}
-            if test_sheet is not None:
-                test_rows = _rows(test_sheet)
-                info, header_row, headers = _parse_test_information(test_rows)
-                step_info, original_steps = _parse_programmed_plan(
-                    test_rows, header_row, headers, info
+        inputs = _read_calamine_metadata_inputs(candidate, allow_fallback=not fast_only)
+        if inputs is None:
+            if fast_only:
+                raise InvalidNewareExcelError(
+                    "The fast Neware Excel metadata reader is unavailable."
                 )
-            unit_original, unit_workbook_name = _parse_unit_original(
-                _sheet_by_name(workbook, "unit", required=False)
-            )
-            has_cycle_summary = _sheet_by_name(workbook, "cycle", required=False) is not None
-            has_step_summary = _sheet_by_name(workbook, "step", required=False) is not None
+            with _open(candidate) as workbook:
+                inputs = _read_metadata_inputs(workbook)
+        (
+            info,
+            step_info,
+            original_steps,
+            unit_original,
+            unit_workbook_name,
+            has_cycle_summary,
+            has_step_summary,
+            has_test_sheet,
+        ) = inputs
     except NewareExcelError:
         raise
     except Exception as exc:
@@ -2381,7 +4108,7 @@ def read_metadata(path: str | Path) -> dict[str, object]:
             "Capabilities": {
                 "ExecutedStepSummary": {"Value": has_step_summary},
                 "CycleSummary": {"Value": has_cycle_summary},
-                "DeclaredProtocol": {"Value": test_sheet is not None},
+                "DeclaredProtocol": {"Value": has_test_sheet},
                 "ProtocolConditions": {"Value": False},
             },
             "Original": original,
@@ -2418,7 +4145,11 @@ def _display_rounding_tolerance(value: float, *, scale: float, minimum: float) -
     return max(minimum, 0.5 * (10.0**exponent) * scale)
 
 
-def _parse_cycle_summary(sheet: Any) -> list[dict[str, float | int | None]]:
+def _parse_cycle_summary(
+    sheet: Any,
+    *,
+    ambiguous_time_values: list[dict[str, object]] | None = None,
+) -> list[dict[str, float | int | None]]:
     headers = _header_map(sheet)
     required = _require_columns(headers, _CYCLE_REQUIRED_HEADERS, sheet_name="cycle")
     optional = _optional_columns(
@@ -2473,6 +4204,32 @@ def _parse_cycle_summary(sheet: Any) -> list[dict[str, float | int | None]]:
                     canonical_header=header,
                 )
             except (TypeError, ValueError, OverflowError) as exc:
+                numeric_value: float | None = None
+                if isinstance(value, Number) and not isinstance(value, bool):
+                    try:
+                        candidate = float(value)
+                        if math.isfinite(candidate):
+                            numeric_value = candidate
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+                elif isinstance(value, str) and _PLAIN_NUMBER_RE.fullmatch(value.strip()):
+                    candidate = float(value)
+                    if math.isfinite(candidate):
+                        numeric_value = candidate
+                if (
+                    numeric_value is not None
+                    and _is_clock_duration_source(source_header, header)
+                ):
+                    if ambiguous_time_values is not None:
+                        ambiguous_time_values.append(
+                            {
+                                "cycle": int(cycle),
+                                "field": header,
+                            }
+                        )
+                    # Capacity, CE, and energy summaries remain usable. Do not
+                    # guess the units of a unitless numeric duration.
+                    return None
                 raise InvalidNewareExcelError(
                     f"Neware Excel cycle summary row {row_number} has an invalid {source_header} value."
                 ) from exc
@@ -2535,6 +4292,377 @@ def _parse_cycle_summary(sheet: Any) -> list[dict[str, float | int | None]]:
     return parsed
 
 
+def _read_cycle_summary_fast(path: Path) -> pd.DataFrame | None:
+    """Read the compact Neware cycle sheet without opening/materializing other sheets."""
+    with zipfile.ZipFile(path) as archive:
+        sheet_paths = _xlsx_sheet_paths(archive)
+        cycle_path = sheet_paths.get(_normalize_text("cycle"))
+        if cycle_path is None:
+            return None
+        raw_rows: list[bytes] = []
+        max_shared_string_index: int | None = None
+        with archive.open(cycle_path) as cycle_xml:
+            for xml_row in _iter_xlsx_xml_rows(cycle_xml):
+                raw_rows.append(xml_row)
+                row_max = _xlsx_max_shared_string_index(xml_row)
+                if row_max is not None:
+                    max_shared_string_index = (
+                        row_max
+                        if max_shared_string_index is None
+                        else max(max_shared_string_index, row_max)
+                    )
+        if not raw_rows:
+            raise InvalidNewareExcelError("Neware Excel cycle sheet is empty.")
+        shared_strings = _xlsx_shared_strings(
+            archive,
+            max_index=max_shared_string_index,
+        )
+        rows = [_xlsx_row_values(xml_row, shared_strings) for xml_row in raw_rows]
+    adapter = _RowsSheetAdapter("cycle", rows)
+    return pd.DataFrame(_parse_cycle_summary(adapter))
+
+
+@lru_cache(maxsize=16)
+def _read_cycle_summary_fast_cached(
+    path_string: str,
+    size_bytes: int,
+    modified_ns: int,
+) -> pd.DataFrame | None:
+    """Reuse the compact cycle sheet while a source version remains unchanged."""
+    del size_bytes, modified_ns  # Included in the key for automatic invalidation.
+    return _read_cycle_summary_fast(Path(path_string))
+
+
+def _read_preview_data_reference(
+    path: str | Path,
+    *,
+    quantity: str,
+    cycle_start: int | None = None,
+    cycle_end: int | None = None,
+    voltage_x_axis: str = "time",
+) -> dict[str, object] | None:
+    """Read cycle-summary data or a bounded raw-voltage preview from an XLSX."""
+    candidate = _path(path)
+    if candidate.suffix.casefold() != ".xlsx":
+        return None
+    if quantity not in {"voltage", "capacity_bundle"}:
+        raise ValueError("Unsupported Neware Excel preview quantity.")
+    if voltage_x_axis not in {"time", "capacity"}:
+        raise ValueError("Unsupported Neware Excel voltage preview axis.")
+
+    try:
+        stat = candidate.stat()
+        cycles = _read_cycle_summary_fast_cached(
+            str(candidate), stat.st_size, stat.st_mtime_ns
+        )
+        if cycles is None:
+            # Without the workbook's bounded cycle index we cannot safely map
+            # preview navigation windows onto record rows.
+            return None
+        cycle_ids = [int(value) for value in cycles["cycle"].tolist()]
+        cycle_count = len(cycle_ids)
+        if quantity == "capacity_bundle":
+            return {
+                "cycle_count": cycle_count,
+                "cycles": cycles,
+                "raw": None,
+                "time_origin_s": None,
+                "cycle_start": 1,
+                "cycle_end": cycle_count,
+            }
+
+        if cycle_start is None and cycle_end is None:
+            requested_start = max(1, cycle_count - 19)
+            requested_end = cycle_count
+        else:
+            requested_start = max(1, int(cycle_start or 1))
+            requested_end = max(requested_start, int(cycle_end or requested_start))
+        requested_end = min(requested_end, cycle_count)
+        if requested_start > requested_end:
+            return {
+                "cycle_count": cycle_count,
+                "cycles": cycles,
+                "raw": pd.DataFrame(),
+                "time_origin_s": None,
+                "cycle_start": requested_start,
+                "cycle_end": requested_end,
+            }
+
+        selected_cycle_ids = cycle_ids[requested_start - 1 : requested_end]
+        cycle_ordinals = {cycle_id: ordinal for ordinal, cycle_id in enumerate(cycle_ids, start=1)}
+        target_cycles = set(selected_cycle_ids)
+        rows: list[dict[str, object]] = []
+        time_origin_s: float | None = None
+        with zipfile.ZipFile(candidate) as archive:
+            sheet_paths = _xlsx_sheet_paths(archive)
+            record_path = sheet_paths.get(_normalize_text("record"))
+            if record_path is None:
+                raise UnsupportedNewareExcelError(
+                    "Not a recognized Neware Excel export: required record sheet is missing."
+                )
+            with archive.open(record_path) as record_xml:
+                record_rows = _iter_xlsx_xml_rows(record_xml)
+                try:
+                    header_xml_row = next(record_rows)
+                except StopIteration as exc:
+                    raise UnsupportedNewareExcelError(
+                        "Neware Excel record sheet is empty."
+                    ) from exc
+                header_shared_strings = _xlsx_shared_strings(
+                    archive,
+                    max_index=_xlsx_max_shared_string_index(header_xml_row),
+                )
+                header_row = _xlsx_row_values(header_xml_row, header_shared_strings)
+                headers = _fast_header_map(iter(header_row))
+                required = _require_columns(
+                    headers,
+                    (
+                        "DataPoint",
+                        "Cycle Index",
+                        "Step Index",
+                        "Step Type",
+                        "Time(min)",
+                        "Total Time(min)",
+                        "Current(mA)",
+                        "Voltage(V)",
+                        "Chg. Cap.(mAh)",
+                        "DChg. Cap.(mAh)",
+                    ),
+                    sheet_name="record",
+                )
+                data_point_index = required[_normalize_text("DataPoint")][0]
+                cycle_index, _cycle_source = required[_normalize_text("Cycle Index")]
+                step_index = required[_normalize_text("Step Index")][0]
+                status_index = required[_normalize_text("Step Type")][0]
+                time_index, time_source = required[_normalize_text("Time(min)")]
+                total_time_index, total_time_source = required[_normalize_text("Total Time(min)")]
+                current_index = required[_normalize_text("Current(mA)")][0]
+                voltage_index = required[_normalize_text("Voltage(V)")][0]
+                charge_index = required[_normalize_text("Chg. Cap.(mAh)")][0]
+                discharge_index = required[_normalize_text("DChg. Cap.(mAh)")][0]
+                cycle_column = _xlsx_column_letters(cycle_index)
+                total_time_column = _xlsx_column_letters(total_time_index)
+                # The same selected rows serve both voltage axes. Retaining the
+                # cumulative capacity columns avoids a second full DEFLATE scan
+                # when the user switches between Time and Capacity.
+                include_capacity_data = True
+                selected_columns = {
+                    data_point_index,
+                    cycle_index,
+                    time_index,
+                    total_time_index,
+                    current_index,
+                    voltage_index,
+                }
+                if include_capacity_data:
+                    selected_columns.update(
+                        {step_index, status_index, charge_index, discharge_index}
+                    )
+
+                selected_rows: list[tuple[int, bytes, int]] = []
+                used_shared_string_indices = _xlsx_shared_string_indices(header_xml_row)
+                for fallback_row_number, xml_row in enumerate(record_rows, start=2):
+                    cycle_value = _xlsx_find_column_value(
+                        xml_row, cycle_column, header_shared_strings
+                    )
+                    if cycle_value is None or (
+                        isinstance(cycle_value, str) and not cycle_value.strip()
+                    ):
+                        continue
+                    total_time_value = _xlsx_find_column_value(
+                        xml_row, total_time_column, header_shared_strings
+                    )
+                    if total_time_value is None or (
+                        isinstance(total_time_value, str) and not total_time_value.strip()
+                    ):
+                        continue
+                    row_number = _xlsx_row_number(xml_row, fallback_row_number)
+                    try:
+                        time_origin_s = _unitless_or_minutes_seconds(
+                            total_time_value,
+                            source_header=total_time_source,
+                            canonical_header="Total Time(min)",
+                        )
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        raise _invalid_record(row_number, total_time_source) from exc
+                    break
+
+                unordered_cycle_rows = False
+                previous_cycle_ordinal: int | None = None
+                with archive.open(record_path) as record_xml:
+                    for fallback_row_number, xml_row in enumerate(
+                        _iter_xlsx_rows_from_cycle_start(
+                            record_xml,
+                            cycle_column=cycle_column,
+                            first_cycle_id=selected_cycle_ids[0],
+                        ),
+                        start=2,
+                    ):
+                        cycle_value = _xlsx_find_column_value(
+                            xml_row, cycle_column, header_shared_strings
+                        )
+                        if cycle_value is None or (
+                            isinstance(cycle_value, str) and not cycle_value.strip()
+                        ):
+                            continue
+                        try:
+                            cycle_number = float(cycle_value)
+                        except (TypeError, ValueError, OverflowError):
+                            continue
+                        if not math.isfinite(cycle_number) or not cycle_number.is_integer():
+                            continue
+                        cycle_id = int(cycle_number)
+                        cycle_ordinal = cycle_ordinals.get(cycle_id)
+                        if cycle_ordinal is None:
+                            continue
+                        if (
+                            previous_cycle_ordinal is not None
+                            and cycle_ordinal < previous_cycle_ordinal
+                        ):
+                            unordered_cycle_rows = True
+                            break
+                        previous_cycle_ordinal = cycle_ordinal
+                        if cycle_ordinal > requested_end:
+                            break
+                        if cycle_ordinal < requested_start:
+                            unordered_cycle_rows = True
+                            break
+                        row_number = _xlsx_row_number(xml_row, fallback_row_number)
+                        selected_rows.append((row_number, xml_row, cycle_id))
+                        used_shared_string_indices.update(
+                            _xlsx_shared_string_indices(
+                                xml_row,
+                                selected_columns=selected_columns,
+                            )
+                        )
+                if unordered_cycle_rows or not selected_rows:
+                    selected_rows.clear()
+                    used_shared_string_indices = _xlsx_shared_string_indices(header_xml_row)
+                    with archive.open(record_path) as record_xml:
+                        for row_number, cycle_id, xml_row in _iter_xlsx_rows_for_cycles(
+                            record_xml,
+                            cycle_column=cycle_column,
+                            target_cycle_ids=target_cycles,
+                        ):
+                            selected_rows.append((row_number, xml_row, cycle_id))
+                            used_shared_string_indices.update(
+                                _xlsx_shared_string_indices(
+                                    xml_row,
+                                    selected_columns=selected_columns,
+                                )
+                            )
+                shared_strings = _xlsx_shared_strings_for_indices(
+                    archive,
+                    used_shared_string_indices,
+                )
+                for row_number, xml_row, cycle_id in selected_rows:
+                    values = _xlsx_row_values(xml_row, shared_strings, selected_columns=selected_columns)
+                    row = {
+                        "record_index": _integer(
+                            values[data_point_index], row_number=row_number, column="DataPoint"
+                        ),
+                        "cycle": cycle_ordinals[cycle_id],
+                        "time_s": _unitless_or_minutes_seconds(
+                            values[time_index],
+                            source_header=time_source,
+                            canonical_header="Time(min)",
+                        ),
+                        "total_time_s": _unitless_or_minutes_seconds(
+                            values[total_time_index],
+                            source_header=total_time_source,
+                            canonical_header="Total Time(min)",
+                        ),
+                        "current_ma": _number(
+                            values[current_index], row_number=row_number, column="Current(mA)"
+                        ),
+                        "voltage_v": _number(
+                            values[voltage_index], row_number=row_number, column="Voltage(V)"
+                        ),
+                    }
+                    if include_capacity_data:
+                        row.update(
+                            {
+                                "step_index": _integer(
+                                    values[step_index], row_number=row_number, column="Step Index"
+                                ),
+                                "status": _normalize_status(
+                                    values[status_index], row_number=row_number
+                                ),
+                                "charge_capacity_mah": _number(
+                                    values[charge_index], row_number=row_number, column="Chg. Cap.(mAh)"
+                                ),
+                                "discharge_capacity_mah": _number(
+                                    values[discharge_index], row_number=row_number, column="DChg. Cap.(mAh)"
+                                ),
+                            }
+                        )
+                    rows.append(row)
+        if not rows:
+            raise InvalidNewareExcelError(
+                "Neware Excel record sheet has no rows for the selected preview cycles."
+            )
+        raw = pd.DataFrame(rows).sort_values("record_index", kind="stable").reset_index(drop=True)
+        # This preview path is display-only. If even the selected range contains a
+        # clock reset, leave the plot to the validated parser/cache path rather
+        # than presenting rows whose ordering semantics are not settled.
+        _require_monotonic_preview_time(raw)
+        return {
+            "cycle_count": cycle_count,
+            "cycles": cycles,
+            "raw": raw,
+            "time_origin_s": time_origin_s,
+            "cycle_start": requested_start,
+            "cycle_end": requested_end,
+        }
+    except NewareExcelError:
+        raise
+    except _XlsxFastPreviewNeedsValidatedFallback:
+        raise
+    except Exception as exc:
+        raise InvalidNewareExcelError(
+            "Could not read the Neware Excel preview."
+        ) from exc
+
+
+def read_preview_data(
+    path: str | Path,
+    *,
+    quantity: str,
+    cycle_start: int | None = None,
+    cycle_end: int | None = None,
+    voltage_x_axis: str = "time",
+) -> dict[str, object] | None:
+    """Use a bounded single-pass voltage preview, retaining the reference reader."""
+    candidate = _path(path)
+    if candidate.suffix.casefold() == ".xlsx" and quantity == "voltage":
+        try:
+            preview = _try_read_voltage_preview_streaming(
+                candidate,
+                cycle_start=cycle_start,
+                cycle_end=cycle_end,
+            )
+        except _XlsxFastPreviewNeedsValidatedFallback:
+            return None
+        except InvalidNewareExcelError:
+            raise
+        except Exception:
+            # The optimized path is intentionally opportunistic. Any workbook
+            # layout it cannot prove safe goes through the established reader.
+            preview = None
+        if preview is not None:
+            return preview
+    try:
+        return _read_preview_data_reference(
+            path,
+            quantity=quantity,
+            cycle_start=cycle_start,
+            cycle_end=cycle_end,
+            voltage_x_axis=voltage_x_axis,
+        )
+    except _XlsxFastPreviewNeedsValidatedFallback:
+        return None
+
+
 def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -> None:
     """Cross-check calculated cycles against the workbook's small cycle sheet."""
 
@@ -2550,7 +4678,11 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
             state["cycle_summary_validated"] = False
             state["cycle_summary_validation_status"] = "unavailable"
             return
-        summary = _parse_cycle_summary(cycle_sheet)
+        ambiguous_cycle_times: list[dict[str, object]] = []
+        summary = _parse_cycle_summary(
+            cycle_sheet,
+            ambiguous_time_values=ambiguous_cycle_times,
+        )
         interval_s: float | None = None
         test_sheet = _sheet_by_name(workbook, "test", required=False)
         if test_sheet is not None:
@@ -2566,6 +4698,50 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
 
     state["cycle_summary_available"] = True
     state["cycle_summary_validated"] = False
+    if ambiguous_cycle_times:
+        ambiguous_fields_by_cycle: dict[int, set[str]] = {}
+        for item in ambiguous_cycle_times:
+            cycle = item.get("cycle")
+            if not isinstance(cycle, int):
+                continue
+            normalized_field = _normalize_text(str(item.get("field", "")))
+            if normalized_field.startswith("dchg") or "discharge" in normalized_field:
+                label = "discharge duration"
+            elif "chg" in normalized_field or "charge" in normalized_field:
+                label = "charge duration"
+            else:
+                label = "cycle duration"
+            ambiguous_fields_by_cycle.setdefault(cycle, set()).add(label)
+        affected_cycles = sorted(ambiguous_fields_by_cycle)
+        warnings = state.setdefault("parser_warnings", [])
+        if not isinstance(warnings, list):
+            warnings = []
+            state["parser_warnings"] = warnings
+        warnings.append(
+            {
+                "code": "ambiguous_cycle_summary_times_ignored",
+                "scope": "cycle",
+                "count": len(affected_cycles),
+                "message": (
+                    "Neware's cycle summary contains numeric time values under headers "
+                    "with no units. CellXplorer ignored those time summaries instead of "
+                    "guessing their units; cycle capacity, CE, and recorded measurements "
+                    "remain available."
+                ),
+                "examples": [
+                    {
+                        "cycle": cycle,
+                        "ambiguous_fields": (
+                            "charge/discharge duration"
+                            if ambiguous_fields_by_cycle[cycle]
+                            == {"charge duration", "discharge duration"}
+                            else "/".join(sorted(ambiguous_fields_by_cycle[cycle]))
+                        ),
+                    }
+                    for cycle in affected_cycles[:3]
+                ],
+            }
+        )
     if cycles is None or cycles.empty or "cycle" not in cycles.columns:
         raise InvalidNewareExcelError("Neware Excel cycle summary cannot be compared with empty calculated cycles.")
 
@@ -2819,7 +4995,7 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
         measurement_label="values calculated from the exported measurements",
         mismatches=cycle_summary_mismatches,
     )
-    if energy_mismatches or efficiency_mismatches:
+    if energy_mismatches or efficiency_mismatches or ambiguous_cycle_times:
         state["cycle_summary_validated"] = False
         state["cycle_summary_validation_status"] = "warning"
     else:

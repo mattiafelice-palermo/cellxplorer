@@ -34,6 +34,46 @@ body {
   opacity: 1;
 }
 
+.import-preview-plot-skeleton,
+.import-preview-plot-ready {
+  animation: import-preview-plot-fade-in 160ms ease-out both;
+}
+
+.import-preview-plot-grid {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.import-preview-plot-grid::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 28%, var(--mantine-color-default-hover) 50%, transparent 72%);
+  opacity: 0.32;
+  transform: translateX(-100%);
+  animation: import-preview-plot-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes import-preview-plot-fade-in {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+@keyframes import-preview-plot-shimmer {
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .import-preview-plot-skeleton,
+  .import-preview-plot-grid::after,
+  .import-preview-plot-ready {
+    animation: none;
+  }
+}
+
 .cellxplorer-scaled-surface {
   box-sizing: border-box;
   transform-origin: top left;

@@ -527,6 +527,8 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
             and item.get("code") in {
                 "energy_summary_mismatch",
                 "summary_reconciliation_mismatch",
+                "future_duplicate_records_skipped",
+                "ambiguous_cycle_summary_times_ignored",
             }
             and isinstance(item.get("message"), str)
         ):
@@ -577,6 +579,8 @@ def _write_parser_diagnostics(
             or item.get("code") not in {
                 "energy_summary_mismatch",
                 "summary_reconciliation_mismatch",
+                "future_duplicate_records_skipped",
+                "ambiguous_cycle_summary_times_ignored",
             }
             or not isinstance(item.get("message"), str)
         ):

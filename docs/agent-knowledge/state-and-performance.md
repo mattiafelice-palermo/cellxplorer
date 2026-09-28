@@ -43,6 +43,13 @@ metadata so final registration can reuse the header only when the same fingerpri
 final checksum and transactional duplicate checks remain mandatory. Folder layout should not
 materially affect this boundary because it receives file paths after discovery.
 
+Step 1 file previews have format- and view-specific gates. NDAX has a quick voltage preview, but
+its Cycles capacity/CE preview requires the inspected source identity before the continuation
+preview request can run. If Cycles is already selected for a newly focused NDAX, start identity
+inspection directly; waiting for the voltage-preview completion callback deadlocks the preview
+because the voltage query is disabled in Cycles. Keep the quick-voltage-first gate in Voltage mode
+so identity inspection does not delay the immediate plot.
+
 Inspection is a per-file terminal boundary: source-level parser, metadata, or filesystem errors are
 returned as failure outcomes for that path while other selected sources continue to the review
 modal. The endpoint returns readable previews in `files` and `{path, filename, error}` entries in
@@ -130,12 +137,65 @@ benchmark at least one representative large workbook when changing this ladder. 
 301k-row export, the measured calamine path was ~24 s versus ~85 s for openpyxl, while fastexcel is
 the faster primary path; this is still parsing work and belongs outside the registration transaction.
 
+The Step 1 XLSX picker hint is a separate structural check: it reads workbook relationships, the
+record sheet's first row, and only the shared-string prefix referenced by that header. It must not
+call `read_header_metadata()` or open Calamine just to decide eligibility. The picker still computes
+a checksum when the candidate size matches a registered source size, because checksum identity is
+what catches renamed or copied duplicates; this can add file I/O beyond the structural check. On a
+59.16 MB Neware workbook, the warmed structural hint measured 5.2 ms after service imports. The
+standalone first call measured 0.72 s because it also imported the parser stack; production startup
+warms that stack in the background.
+
+The display-only XLSX preview reads charge/discharge capacity and CE from the compact cycle sheet
+over its full range, while voltage reads only the selected cycle window's point columns. The latter
+still has to inflate and scan the record sheet's DEFLATE member to find its tail; there is no ZIP
+random-access index for late rows. On the same 59.16 MB workbook (539 cycles, last 20 cycles), the
+uncached voltage builder measured 2.09 s once, then 2.52–3.18 s across three repeated scans with a
+warmed OS file cache. The full-range capacity/CE route measured 44 ms after import warmup. A bounded
+per-file-version cache stores both Time and Capacity voltage display arrays after one scan, and the
+picker starts a single debounced XLSX prefetch after 180 ms of row hover. Once prepared, the alternate
+axis and repeated plot requests measured below 1 ms. This is a warm-display result; the first scan
+still takes seconds, so do not describe a cold network-file click as a 100 ms operation. Keep the
+cache keyed by resolved path, size, modification time, and display revision, and preserve the
+full-parser path for import validation and registration.
+
+The cold voltage-preview path now has an opportunistic raw-DEFLATE reader before the reference
+reader. It reads the compact cycle sheet first, inflates the shared-string table concurrently,
+streams the record member in bounded compressed chunks, and retains only the selected cycle window.
+The 486 MB uncompressed record worksheet is never assembled into one buffer; the 46.7 MB
+shared-string XML is still inflated as one bounded auxiliary buffer. On the same 59.16 MB workbook,
+nine matched application-cache-cold endpoint rounds (clearing both the cycle-summary memo and the
+route preview cache before each request; the Windows filesystem cache was not forcibly flushed)
+measured 2,536 ms median / 2,330 ms best for the reference path and 1,215 ms median / 1,152 ms best
+for streaming, an observed 2.09x median speedup. The streaming path's incremental
+peak working set was 72 MB median and 73 MB maximum; reference was 62 MB median and 66 MB maximum.
+API preview payloads matched exactly in every round. One instrumented streaming run attributed about
+539 ms to record decompression/CRC, 167 ms to retained-window decoding, 95 ms to sparse shared-string
+lookup, and 74 ms to preview-row materialization. The streaming implementation
+does not yet meet the aspirational 800 ms target. Neware's non-decreasing cycle order is assumed
+before the requested window: the scan checks chunk-boundary probes and every retained cycle row,
+but cannot disprove an isolated earlier occurrence of a requested cycle without scanning the whole
+prefix. Unsupported layouts, invalid shared-string tables, non-DEFLATE members, row disorder, or
+CRC/size mismatches at EOF return to the reference reader. Capacity/CE continues to use the compact
+cycle sheet, and the route-level preview cache contract is unchanged.
+
 Neware workbook summaries are converter-generated rollups, not the authoritative recorded points.
 Energy integration differences are retained as import warnings; cycle CE differences are warnings
 only when both the workbook value and raw-record value fit the uncertainty from the capacity cells'
 display precision. Capacity differences outside that display precision, cycle/step identity,
 chronology, malformed values, and unexplained CE differences remain errors. Persist bounded warning
 examples with the parser-versioned cache so warm previews after restart show the same diagnostic.
+For chronology recovery, the parser may drop at most 32 isolated records whose total time and
+timestamp jump at least 24 hours ahead of ordered neighbors, only when the later workbook rows
+contain an exact match for the absolute time and every available measured value. It records the
+skipped and matching `DataPoint` values as a persisted parser warning. Blank optional measurements
+match only when they are blank in both rows. Do not require cycle, step, status, or step-relative
+time to match: a verified 391,855-row Neware export repeated 11 measurements with those metadata
+fields stale in the early copies. Ordinary clock resets,
+unmatched rows, and broader disorder remain errors; never synthesize replacement measurements.
+Cycle-summary duration values stored as numbers beneath headers with no units are likewise not
+guessed; the importer omits those summary durations with a warning while preserving capacity, CE,
+energy, and raw measurement validation.
 
 The staged-file preview cache build needs canonical raw rows and per-cycle summaries, but not the
 optional Time/Capacity-derived artifact. The import browser therefore calls `cache.build()` with

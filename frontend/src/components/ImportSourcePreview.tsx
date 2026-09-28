@@ -1,13 +1,14 @@
-import { ActionIcon, Alert, Box, Button, Center, Group, Loader, Modal, NumberInput, SegmentedControl, Stack, Switch, Tabs, Text, Tooltip, useComputedColorScheme, useMantineTheme } from "@mantine/core";
+import { ActionIcon, Alert, Box, Button, Group, Modal, NumberInput, SegmentedControl, Stack, Switch, Tabs, Text, Tooltip, useComputedColorScheme, useMantineTheme } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import {
   ContinuationPreviewResult,
   ImportPreview,
   inspectContinuationSources,
+  previewQuickNewareExcel,
   previewQuickNdaxVoltage,
   previewContinuationSources,
 } from "../api";
@@ -15,7 +16,7 @@ import {
   scaleContinuationPreviewTimeAxis,
   type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
-import { fullPreviewCycleWindow, shiftPreviewCycleWindow } from "../analysisCellPreviewPolicy";
+import { fullPreviewCycleWindow } from "../analysisCellPreviewPolicy";
 import { CellPreviewPlot, CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
 import {
   cellPreviewCapacityLayout,
@@ -24,6 +25,7 @@ import {
   cellPreviewVoltageTraces,
   paddedEfficiencyRange,
   type CellPreviewCycleSeries,
+  type CellPreviewPlotColors,
 } from "./cellPreviewPlotModel";
 import { IconAlertTriangle, IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 
@@ -69,6 +71,15 @@ function requestFor(
 }
 
 function formatParserWarningExample(example: Record<string, number | string | boolean | null>): string | null {
+  if (typeof example.data_point === "number") {
+    const duplicatePoint = typeof example.duplicate_data_point === "number"
+      ? `; matching measurements appear again at DataPoint ${example.duplicate_data_point}`
+      : "";
+    return `DataPoint ${example.data_point} was skipped${duplicatePoint}.`;
+  }
+  if (typeof example.cycle === "number" && typeof example.ambiguous_fields === "string") {
+    return `Cycle ${example.cycle}: ${example.ambiguous_fields} was omitted because its units are ambiguous.`;
+  }
   const scope = typeof example.step === "number"
     ? `Step ${example.step}`
     : typeof example.cycle === "number"
@@ -94,26 +105,212 @@ function formatParserWarningExample(example: Record<string, number | string | bo
   return null;
 }
 
+const QUICK_PREVIEW_SLOW_NOTICE_MS = 5_000;
+
+function previewCycleIdBounds(preview: ContinuationPreviewResult | null | undefined): { start: number; end: number } | null {
+  if (!preview) return null;
+  const reportedBounds = preview.segments.flatMap((segment) => {
+    const start = segment.source_cycle_start ?? segment.global_cycle_start;
+    const end = segment.source_cycle_end ?? segment.global_cycle_end;
+    return start !== null && end !== null && Number.isFinite(start) && Number.isFinite(end)
+      ? [{ start, end }]
+      : [];
+  });
+  if (reportedBounds.length > 0) {
+    return {
+      start: Math.min(...reportedBounds.map(({ start }) => start)),
+      end: Math.max(...reportedBounds.map(({ end }) => end)),
+    };
+  }
+  const cycleIds = preview.segments.flatMap((segment) => [
+    ...(segment.discharge_capacity_x ?? []),
+    ...(segment.charge_capacity_x ?? []),
+    ...(segment.coulombic_efficiency_x ?? []),
+  ]).filter(Number.isFinite);
+  if (cycleIds.length === 0) return null;
+  return { start: Math.min(...cycleIds), end: Math.max(...cycleIds) };
+}
+
+function shiftCycleWindowWithinBounds(
+  window: { start: number; end: number },
+  bounds: { start: number; end: number },
+  direction: -1 | 1,
+): { start: number; end: number } {
+  const start = Math.max(bounds.start, Math.min(window.start, bounds.end));
+  const end = Math.max(start, Math.min(window.end, bounds.end));
+  const step = Math.max(1, end - start);
+  return direction < 0
+    ? { start: Math.max(bounds.start, start - step), end: Math.max(bounds.start, end - step) }
+    : { start: Math.min(bounds.end, start + step), end: Math.min(bounds.end, end + step) };
+}
+
+function ImportPlotSkeleton({
+  view,
+  height,
+  colors,
+}: {
+  view: ImportPreviewView;
+  height: number;
+  colors: CellPreviewPlotColors;
+}) {
+  const bands = view === "voltage"
+    ? [{ top: 0, bottom: 70 }, { top: 77, bottom: 100 }]
+    : [{ top: 0, bottom: 23 }, { top: 28, bottom: 100 }];
+  const gridLines = bands.flatMap(({ top, bottom }) =>
+    Array.from({ length: 5 }, (_, index) => top + ((bottom - top) * index) / 4),
+  );
+  const plotTop = 8;
+  const plotAreaHeight = Math.max(1, height - 66);
+  const titleCenters = view === "voltage"
+    ? [0.35, 0.885]
+    : [0.115, 0.64];
+  const skeletonMark = (width: number, markHeight = 7): CSSProperties => ({
+    position: "absolute",
+    width,
+    height: markHeight,
+    borderRadius: 4,
+    backgroundColor: colors.text,
+    opacity: 0.42,
+  });
+
+  return (
+    <Box
+      className="import-preview-plot-skeleton"
+      data-preview-skeleton-view={view}
+      w="100%"
+      h={height + 20}
+      role="status"
+      aria-label={`Loading ${view === "voltage" ? "voltage and current" : "capacity and CE"} plot`}
+      aria-busy="true"
+      style={{ position: "relative", backgroundColor: colors.background, overflow: "hidden" }}
+    >
+      <Box aria-hidden="true" style={{ position: "relative", width: "100%", height }}>
+        <Box
+          className="import-preview-plot-grid"
+          style={{
+            position: "absolute",
+            left: 76,
+            right: 24,
+            top: 8,
+            bottom: 58,
+            boxSizing: "border-box",
+            border: `1px solid ${colors.border}`,
+          }}
+        >
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            width="100%"
+            height="100%"
+            aria-hidden="true"
+            style={{ display: "block" }}
+          >
+            {gridLines.map((y, index) => (
+              <line key={`grid-${index}`} x1="0" x2="100" y1={y} y2={y} stroke={colors.grid} strokeWidth="0.45" />
+            ))}
+            {view === "cycles" && <line x1="0" x2="100" y1="23" y2="23" stroke={colors.border} strokeWidth="0.5" />}
+          </svg>
+        </Box>
+        {titleCenters.map((center, index) => (
+          <Box
+            key={`axis-title-${index}`}
+            style={{
+              ...skeletonMark(view === "voltage" ? 72 : 68, 8),
+              left: view === "voltage" ? 1 : 5,
+              top: plotTop + (plotAreaHeight * center) - 4,
+              transform: "rotate(-90deg)",
+            }}
+          />
+        ))}
+        {gridLines.map((y, index) => (
+          <Box
+            key={`y-tick-${index}`}
+            style={{
+              ...skeletonMark([10, 15, 12, 18, 14][index % 5], 5),
+              left: 54,
+              top: plotTop + (plotAreaHeight * y / 100) - 2,
+            }}
+          />
+        ))}
+        <Box
+          style={{
+            position: "absolute",
+            left: 76,
+            right: 24,
+            top: height - 48,
+            display: "flex",
+            justifyContent: "space-between",
+          }}
+        >
+          {Array.from({ length: 5 }, (_, index) => (
+            <Box key={`x-tick-${index}`} style={{ ...skeletonMark(13, 5), position: "relative" }} />
+          ))}
+        </Box>
+        <Box
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 76,
+            right: 24,
+            top: height - 39,
+            display: "flex",
+            justifyContent: "space-between",
+          }}
+        >
+          {[10, 14, 18, 14, 10].map((width, index) => (
+            <Box key={`x-tick-label-${index}`} style={{ ...skeletonMark(width, 5), position: "relative" }} />
+          ))}
+        </Box>
+        <Box
+          style={{
+            ...skeletonMark(72, 8),
+            left: "calc(50% - 36px)",
+            top: height - 17,
+          }}
+        />
+      </Box>
+      {view === "voltage" && (
+        <Group aria-hidden="true" justify="center" gap="md" h={20}>
+          {[{ width: 34, color: "#12b886" }, { width: 32, color: "#2E86AB" }].map((item, index) => (
+            <Group key={`legend-${index}`} gap={5} wrap="nowrap">
+              <Box w={16} h={2} style={{ backgroundColor: item.color, opacity: 0.55 }} />
+              <Box style={{ ...skeletonMark(item.width, 7), position: "relative" }} />
+            </Group>
+          ))}
+        </Group>
+      )}
+    </Box>
+  );
+}
+
 export function ImportSourcePreview({
   source: inspectedSource,
   quickSourcePath,
   quickSourceVersion,
   onQuickPreviewSettled,
+  validateQuickExcel = false,
+  sourceInspectionLoading = false,
   inspectionError,
   activeMassMgOverride,
   plotHeight = 352,
   stablePlotHeight = false,
+  availableHeight,
   preferences,
   onPreferencesChange,
 }: {
   source: ImportPreview | null;
   quickSourcePath?: string;
   quickSourceVersion?: string;
-  onQuickPreviewSettled?: (path: string) => void;
+  onQuickPreviewSettled?: (path: string, sourceVersion: string | undefined, requiresFullInspection: boolean) => void;
+  /** Run full XLSX validation after a quick plot when included or when the quick preview failed. */
+  validateQuickExcel?: boolean;
+  /** Keep the loading skeleton visible while the picker starts a full fallback inspection. */
+  sourceInspectionLoading?: boolean;
   inspectionError?: string;
   activeMassMgOverride?: number | null;
   plotHeight?: number;
   stablePlotHeight?: boolean;
+  availableHeight?: number;
   preferences?: ImportSourcePreviewPreferences;
   onPreferencesChange?: (update: Partial<ImportSourcePreviewPreferences>) => void;
 }) {
@@ -159,10 +356,25 @@ export function ImportSourcePreview({
   const [voltageCycleRange, setVoltageCycleRange] = useState<{ start: number; end: number } | null>(null);
   const [warningsOpen, setWarningsOpen] = useState(false);
   const { ref: plotSurfaceRef, width: plotSurfaceWidth } = useElementSize();
-  const responsivePlotHeight = !stablePlotHeight && plotSurfaceWidth > 0
+  const previewContentRef = useRef<HTMLDivElement>(null);
+  const plotStackRef = useRef<HTMLDivElement>(null);
+  const [previewChromeHeight, setPreviewChromeHeight] = useState<number | null>(null);
+  const widthLimitedPlotHeight = !stablePlotHeight && plotSurfaceWidth > 0
     ? Math.max(240, Math.min(plotHeight, Math.round(plotSurfaceWidth - 34)))
     : plotHeight;
+  // Measure the controls around the plot separately. Deriving a correction from
+  // total content height feeds the plot's own height back into its next target,
+  // which can alternate between fitting and overflowing on ResizeObserver ticks.
+  const verticalPlotBudget = availableHeight && availableHeight > 0 && previewChromeHeight !== null
+    ? availableHeight - previewChromeHeight - 20
+    : widthLimitedPlotHeight;
+  const responsivePlotHeight = !stablePlotHeight
+    ? Math.max(180, Math.min(widthLimitedPlotHeight, verticalPlotBudget))
+    : plotHeight;
   const plotStackHeight = responsivePlotHeight + 20;
+  const quickNewareExcelPath = Boolean(quickSourcePath && /\.xlsx$/i.test(quickSourcePath));
+  const quickNdaxPath = Boolean(quickSourcePath && /\.ndax$/i.test(quickSourcePath));
+  const supportsQuickVoltagePreview = quickNewareExcelPath || quickNdaxPath;
   useEffect(() => {
     setNormalizeByMass(activeMassG !== null);
   }, [source.staged_name, source.hash, activeMassG]);
@@ -170,25 +382,96 @@ export function ImportSourcePreview({
     if (!preferences) setSurfaceMode("theme");
   }, [source.staged_name, source.hash, preferences]);
   const quickVoltageQuery = useQuery({
-    queryKey: ["import-quick-ndax-voltage", quickSourcePath, quickSourceVersion, voltageXAxis, voltageCycleRange?.start, voltageCycleRange?.end],
-    queryFn: ({ signal }) => previewQuickNdaxVoltage({
-      source_path: quickSourcePath!,
-      voltage_x_axis: voltageXAxis,
-      ...(voltageCycleRange ? { cycle_start: voltageCycleRange.start, cycle_end: voltageCycleRange.end } : {}),
-    }, { signal }),
-    enabled: view === "voltage" && Boolean(quickSourcePath && /\.ndax$/i.test(quickSourcePath)),
+    queryKey: ["import-quick-voltage", quickNewareExcelPath ? "neware-excel" : "ndax", quickSourcePath, quickSourceVersion, voltageXAxis, voltageCycleRange?.start, voltageCycleRange?.end],
+    queryFn: ({ signal }) => quickNewareExcelPath
+      ? previewQuickNewareExcel({
+          source_path: quickSourcePath!,
+          quantity: "voltage",
+          voltage_x_axis: voltageXAxis,
+          ...(voltageCycleRange ? { cycle_start: voltageCycleRange.start, cycle_end: voltageCycleRange.end } : {}),
+        }, { signal })
+      : previewQuickNdaxVoltage({
+          source_path: quickSourcePath!,
+          voltage_x_axis: voltageXAxis,
+          ...(voltageCycleRange ? { cycle_start: voltageCycleRange.start, cycle_end: voltageCycleRange.end } : {}),
+        }, { signal }),
+    enabled: view === "voltage" && supportsQuickVoltagePreview,
     staleTime: Infinity,
-    refetchOnMount: "always",
+    refetchOnMount: false,
     retry: false,
   });
-  useEffect(() => {
-    if (quickSourcePath && !quickVoltageQuery.isFetching && (quickVoltageQuery.isSuccess || quickVoltageQuery.isError)) {
-      onQuickPreviewSettled?.(quickSourcePath);
-    }
-  }, [quickSourcePath, quickVoltageQuery.isSuccess, quickVoltageQuery.isError, quickVoltageQuery.isFetching, onQuickPreviewSettled]);
-  const freshQuickPreview = quickVoltageQuery.isFetching ? null : quickVoltageQuery.data?.preview;
+  // Keep a ready plot visible while a refresh is running. In particular, do
+  // not turn axis/range edits into a blank preview while Plotly is waiting.
+  const freshQuickPreview = quickVoltageQuery.data?.preview;
+  const quickVoltageHasPoints = Boolean(freshQuickPreview?.segments.some((segment) => segment.x.length > 0));
   const quickVoltageAvailable = Boolean(freshQuickPreview);
-  const quickVoltageTerminal = quickVoltageQuery.isError || (!quickVoltageQuery.isFetching && quickVoltageQuery.data?.preview === null);
+  const quickVoltageTerminal = quickVoltageQuery.isError
+    || (!quickVoltageQuery.isFetching && quickVoltageQuery.data?.preview === null)
+    || (quickVoltageQuery.isSuccess && Boolean(freshQuickPreview) && !quickVoltageHasPoints);
+  const quickExcelCapacityQuery = useQuery({
+    queryKey: ["import-quick-excel-capacity", quickSourcePath, quickSourceVersion],
+    queryFn: ({ signal }) => previewQuickNewareExcel({
+      source_path: quickSourcePath!,
+      quantity: "capacity_bundle",
+    }, { signal }),
+    enabled: view === "cycles" && quickNewareExcelPath,
+    staleTime: Infinity,
+    refetchOnMount: false,
+    retry: false,
+  });
+  const quickExcelCapacityPreview = quickExcelCapacityQuery.data?.preview;
+  const quickExcelCapacityTerminal = quickExcelCapacityQuery.isError
+    || (!quickExcelCapacityQuery.isFetching && quickExcelCapacityQuery.data?.preview === null);
+  // Once the display-only preview settles, inspect in the background for the
+  // usual warning details. A failed XLSX quick preview also asks the picker to
+  // start full validation, so it can show a real failure instead of spinning.
+  const quickVoltageSettled = !quickVoltageQuery.isFetching
+    && (quickVoltageQuery.isSuccess || quickVoltageQuery.isError);
+  const quickExcelCapacitySettled = !quickExcelCapacityQuery.isFetching
+    && (quickExcelCapacityQuery.isSuccess || quickExcelCapacityQuery.isError);
+  const activeQuickPreviewSettled = view === "voltage" ? quickVoltageSettled : quickExcelCapacitySettled;
+  const activeQuickPreviewNeedsInspection = quickNewareExcelPath && (view === "voltage"
+    ? quickVoltageTerminal && !quickVoltageHasPoints
+    : quickExcelCapacityTerminal && !quickExcelCapacityPreview);
+  const activeQuickPreviewFetching = view === "voltage"
+    ? supportsQuickVoltagePreview && quickVoltageQuery.isFetching
+    : quickNewareExcelPath && quickExcelCapacityQuery.isFetching;
+  const activeQuickPreviewRequestKey = [
+    quickSourcePath ?? "",
+    quickSourceVersion ?? "",
+    view,
+    view === "voltage" ? voltageXAxis : "cycles",
+    view === "voltage" ? voltageCycleRange?.start ?? "" : "",
+    view === "voltage" ? voltageCycleRange?.end ?? "" : "",
+  ].join("\u0000");
+  const activeQuickPreviewScopeKey = [quickSourcePath ?? "", quickSourceVersion ?? "", view].join("\u0000");
+  const [slowQuickPreviewRequestKey, setSlowQuickPreviewRequestKey] = useState<string | null>(null);
+  const [canonicalFallbackScopeKeys, setCanonicalFallbackScopeKeys] = useState<Set<string>>(() => new Set());
+  const quickPreviewTakingLong = slowQuickPreviewRequestKey === activeQuickPreviewRequestKey;
+  const canonicalFallbackForActiveView = canonicalFallbackScopeKeys.has(activeQuickPreviewScopeKey);
+  useEffect(() => {
+    if (!activeQuickPreviewFetching || !quickSourcePath) {
+      setSlowQuickPreviewRequestKey((current) => current === activeQuickPreviewRequestKey ? null : current);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setSlowQuickPreviewRequestKey(activeQuickPreviewRequestKey),
+      QUICK_PREVIEW_SLOW_NOTICE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [activeQuickPreviewFetching, activeQuickPreviewRequestKey, quickSourcePath]);
+  useEffect(() => {
+    if (quickPreviewTakingLong && quickSourcePath) {
+      // Release the picker gate without starting a duplicate full parse. If the
+      // user included the file, its normal full inspection can still proceed.
+      onQuickPreviewSettled?.(quickSourcePath, quickSourceVersion, false);
+    }
+  }, [quickPreviewTakingLong, quickSourcePath, quickSourceVersion, onQuickPreviewSettled]);
+  useEffect(() => {
+    if (supportsQuickVoltagePreview && quickSourcePath && activeQuickPreviewSettled) {
+      onQuickPreviewSettled?.(quickSourcePath, quickSourceVersion, activeQuickPreviewNeedsInspection);
+    }
+  }, [supportsQuickVoltagePreview, quickSourcePath, quickSourceVersion, activeQuickPreviewSettled, activeQuickPreviewNeedsInspection, onQuickPreviewSettled]);
   const inspectRequest = {
     sources: [{
       staged_name: source.staged_name,
@@ -198,12 +481,17 @@ export function ImportSourcePreview({
     }],
     proposed_order: [source.staged_name],
   };
+  const inspectionEnabled = Boolean(inspectedSource) && (
+    quickNewareExcelPath
+      ? (view === "voltage"
+        ? quickVoltageTerminal || (validateQuickExcel && (quickVoltageSettled || quickPreviewTakingLong || canonicalFallbackForActiveView))
+        : quickExcelCapacityTerminal || (validateQuickExcel && (quickExcelCapacitySettled || quickPreviewTakingLong || canonicalFallbackForActiveView)))
+      : (view === "cycles" || !quickNdaxPath || quickVoltageTerminal)
+  );
   const inspectionQuery = useQuery({
     queryKey: ["import-source-continuation-inspection", source.staged_name, source.hash],
     queryFn: () => inspectContinuationSources(inspectRequest),
-    enabled: Boolean(inspectedSource) && (
-      view === "cycles" || !quickSourcePath || !/\.ndax$/i.test(quickSourcePath) || quickVoltageTerminal
-    ),
+    enabled: inspectionEnabled,
     staleTime: Infinity,
     refetchInterval: (query) => {
       const data = query.state.data;
@@ -219,31 +507,90 @@ export function ImportSourcePreview({
   const inspectionFailureMessage = inspectionFailure?.inspection_error
     || (inspectionFailure?.cache_build_status === "failed" ? "The source cache could not be prepared." : null)
     || "Source inspection failed.";
+  const sourceInspectionError = inspectionFailure
+    ? inspectionFailureMessage
+    : inspectionQuery.isError
+      ? inspectionQuery.error instanceof Error
+        ? inspectionQuery.error.message
+        : "Source inspection failed."
+      : null;
+  const quickExcelDiagnosticMessage = quickNewareExcelPath
+    ? sourceInspectionError ?? inspectionError ?? null
+    : null;
   const continuationReady = inspectionQuery.data?.inspection_complete === true && !inspectionFailure;
-  const usesCapacityBundlePreview = /\.ndax$/i.test(source.source_path ?? source.staged_name);
+  // Remember that this source/view entered the validated fallback so a quick
+  // request resolving later cannot replace the canonical preview.
+  useEffect(() => {
+    if (validateQuickExcel && quickNewareExcelPath && quickPreviewTakingLong && continuationReady) {
+      setCanonicalFallbackScopeKeys((current) => {
+        if (current.has(activeQuickPreviewScopeKey)) return current;
+        const next = new Set(current);
+        next.add(activeQuickPreviewScopeKey);
+        return next;
+      });
+    }
+  }, [validateQuickExcel, quickNewareExcelPath, quickPreviewTakingLong, continuationReady, activeQuickPreviewScopeKey]);
+  const quickVoltageFallbackReady = quickNewareExcelPath
+    && view === "voltage"
+    && (quickPreviewTakingLong || canonicalFallbackForActiveView)
+    && continuationReady;
+  const quickExcelCapacityFallbackReady = quickNewareExcelPath
+    && view === "cycles"
+    && (quickPreviewTakingLong || canonicalFallbackForActiveView)
+    && continuationReady;
+  // If the display-only quick request stalls, a validated source can use the
+  // ordinary preview route instead of remaining gated on that request forever.
+  const usesCapacityBundlePreview = /\.(ndax|xlsx)$/i.test(source.source_path ?? source.staged_name);
   const canRequestFastVoltagePreview = view === "voltage"
-    && usesCapacityBundlePreview;
+    && quickNdaxPath;
   const sourceSupportsCycles = !source.metadata_only && source.technique?.trim().toLocaleUpperCase() !== "OCV";
+  // Excel's independent cycle-summary sheet can be previewed even when its
+  // raw record sheet is invalid. Let the user open Cycles so that quick path
+  // can report the summary (or its own clear failure) instead of dead-ending
+  // on a disabled tab before the cycle count is known.
+  const canTryQuickExcelCycles = quickNewareExcelPath
+    && !source.metadata_only
+    && source.technique?.trim().toLocaleUpperCase() !== "OCV";
   const inspectionCycleCount = Math.max(0, ...((inspectionQuery.data?.sources ?? []).map((item) => item.local_cycle_count ?? 0)));
   const requestedVoltageCycleRange = voltageCycleRange ?? (inspectionCycleCount > 0
     ? { start: Math.max(1, inspectionCycleCount - 19), end: inspectionCycleCount }
     : null);
   const parserWarnings = inspectionQuery.data?.sources.flatMap((item) => item.parser_warnings ?? []) ?? [];
   const parserWarningCount = parserWarnings.reduce((total, warning) => total + warning.count, 0);
+  useLayoutEffect(() => {
+    const content = previewContentRef.current;
+    const plotSlot = plotStackRef.current;
+    if (!content || !plotSlot) return;
+
+    const updateChromeHeight = () => {
+      const nextHeight = Math.max(0, content.scrollHeight - plotSlot.getBoundingClientRect().height);
+      setPreviewChromeHeight((current) => current !== null && Math.abs(current - nextHeight) < 1
+        ? current
+        : nextHeight);
+    };
+    updateChromeHeight();
+    const observer = new ResizeObserver(updateChromeHeight);
+    observer.observe(content);
+    observer.observe(plotSlot);
+    return () => observer.disconnect();
+  }, [availableHeight, plotSurfaceWidth, view, parserWarningCount, quickExcelDiagnosticMessage]);
+  const voltageQueryEnabled = view === "voltage" && Boolean(inspectedSource)
+    && ((!quickNdaxPath && !quickNewareExcelPath) || quickVoltageTerminal || quickVoltageFallbackReady)
+    && (continuationReady || canRequestFastVoltagePreview);
   const voltageQuery = useQuery({
     queryKey: ["import-source-preview", source.staged_name, source.hash, "voltage", voltageXAxis, requestedVoltageCycleRange?.start, requestedVoltageCycleRange?.end, continuationReady],
     queryFn: ({ signal }) => previewContinuationSources(
       requestFor(source, "voltage", voltageXAxis, requestedVoltageCycleRange),
       { signal },
     ),
-    enabled: view === "voltage" && Boolean(inspectedSource)
-      && (!quickSourcePath || !/\.ndax$/i.test(quickSourcePath) || quickVoltageTerminal)
-      && (continuationReady || canRequestFastVoltagePreview),
+    enabled: voltageQueryEnabled,
     staleTime: Infinity,
     placeholderData: (previous) => previous,
     retry: false,
   });
   const capacityBundleCycleRange = continuationReady ? cycleRange : null;
+  const capacityBundleQueryEnabled = view === "cycles" && Boolean(inspectedSource) && !source.metadata_only && usesCapacityBundlePreview
+    && (!quickNewareExcelPath || quickExcelCapacityTerminal || quickExcelCapacityFallbackReady);
   const capacityBundleQuery = useQuery({
     queryKey: [
       "import-source-preview",
@@ -258,7 +605,7 @@ export function ImportSourcePreview({
       requestFor(source, "capacity_bundle", voltageXAxis, capacityBundleCycleRange),
       { signal },
     ),
-    enabled: view === "cycles" && Boolean(inspectedSource) && !source.metadata_only && usesCapacityBundlePreview,
+    enabled: capacityBundleQueryEnabled,
     staleTime: Infinity,
     placeholderData: (previous) => previous,
     retry: false,
@@ -276,7 +623,15 @@ export function ImportSourcePreview({
       retry: false,
     })),
   });
-  const voltageResponse = freshQuickPreview ?? voltageQuery.data;
+  const preferCanonicalCapacityPreview = canonicalFallbackForActiveView
+    && Boolean(capacityBundleQuery.data && !capacityBundleQuery.isPlaceholderData);
+  const preferCanonicalVoltagePreview = canonicalFallbackForActiveView
+    && Boolean(voltageQuery.data && !voltageQuery.isPlaceholderData);
+  const voltageResponse = preferCanonicalVoltagePreview
+    ? voltageQuery.data
+    : quickVoltageHasPoints
+      ? freshQuickPreview
+      : voltageQuery.data ?? freshQuickPreview;
   const voltagePreview = useMemo(
     () => voltageResponse
       ? (voltageResponse.x_label?.toLocaleLowerCase().startsWith("time") ?? voltageXAxis === "time")
@@ -294,9 +649,12 @@ export function ImportSourcePreview({
       })))
     : [], [voltagePreview]);
   const capacitySeries = useMemo<CellPreviewCycleSeries[]>(() => {
-    const bundlePreview = usesCapacityBundlePreview
+    const bundlePreview = (preferCanonicalCapacityPreview
       ? capacityBundleQuery.data as ContinuationPreviewResult | undefined
-      : undefined;
+      : quickExcelCapacityPreview as ContinuationPreviewResult | null | undefined)
+      ?? (usesCapacityBundlePreview
+        ? capacityBundleQuery.data as ContinuationPreviewResult | undefined
+        : undefined);
     const dischargePreview = capacityQueries[0]?.data as ContinuationPreviewResult | undefined;
     const chargePreview = capacityQueries[1]?.data as ContinuationPreviewResult | undefined;
     const keys = new Set([
@@ -330,7 +688,7 @@ export function ImportSourcePreview({
         massG: activeMassG,
       };
     });
-  }, [activeMassG, capacityBundleQuery.data, capacityQueries, cycleRange, usesCapacityBundlePreview]);
+  }, [activeMassG, capacityBundleQuery.data, capacityQueries, cycleRange, preferCanonicalCapacityPreview, quickExcelCapacityPreview, usesCapacityBundlePreview]);
   const capacityTraces = useMemo(
     () => cellPreviewCapacityTraces(capacitySeries, capacityView, normalizeByMass),
     [capacitySeries, capacityView, normalizeByMass],
@@ -339,9 +697,14 @@ export function ImportSourcePreview({
     () => paddedEfficiencyRange(capacitySeries.flatMap((series) => series.efficiencyPct ?? [])),
     [capacitySeries],
   );
+  const quickExcelCycleIdBounds = useMemo(
+    () => previewCycleIdBounds(quickExcelCapacityPreview),
+    [quickExcelCapacityPreview],
+  );
   const cycleCount = Math.max(
     inspectionCycleCount,
     freshQuickPreview?.cycle_count ?? 0,
+    quickExcelCycleIdBounds?.end ?? quickExcelCapacityPreview?.cycle_count ?? 0,
     voltageQuery.isPlaceholderData ? 0 : voltageQuery.data?.cycle_count ?? 0,
     capacityBundleQuery.isPlaceholderData ? 0 : capacityBundleQuery.data?.cycle_count ?? 0,
     ...capacityQueries.flatMap((query) => {
@@ -358,19 +721,21 @@ export function ImportSourcePreview({
     setCycleRangeUserEdited(false);
   }, [source.staged_name, source.hash]);
   useEffect(() => {
-    const fullRange = fullPreviewCycleWindow(cycleCount);
+    const fullRange = quickNewareExcelPath && quickExcelCycleIdBounds
+      ? quickExcelCycleIdBounds
+      : fullPreviewCycleWindow(cycleCount);
     if (!fullRange) return;
-    setCycleRange((current) => current === null || (!cycleRangeUserEdited && current.start === 1)
+    setCycleRange((current) => current === null || (!cycleRangeUserEdited && current.start <= 1)
       ? fullRange
       : current);
-  }, [source.staged_name, source.hash, cycleCount, cycleRangeUserEdited]);
+  }, [source.staged_name, source.hash, cycleCount, cycleRangeUserEdited, quickNewareExcelPath, quickExcelCycleIdBounds]);
   useEffect(() => {
-    if (!inspectionCycleCount) return;
+    if (!inspectionCycleCount || quickNewareExcelPath) return;
     setVoltageCycleRange((current) => current ?? {
       start: Math.max(1, inspectionCycleCount - 19),
       end: inspectionCycleCount,
     });
-  }, [source.staged_name, source.hash, inspectionCycleCount]);
+  }, [source.staged_name, source.hash, inspectionCycleCount, quickNewareExcelPath]);
   useEffect(() => {
     if (!sourceSupportsCycles) {
       if (view === "cycles") setView("voltage");
@@ -398,19 +763,41 @@ export function ImportSourcePreview({
     ? capacityTraces
     : capacityView !== "charge" ? fallbackDischargeTrace : [];
   const voltageError = voltageQuery.error instanceof Error ? voltageQuery.error.message : "Voltage preview is unavailable.";
-  const capacityError = usesCapacityBundlePreview
-    ? capacityBundleQuery.error
-    : capacityQueries.find((query) => query.isError)?.error;
-  const isCapacityLoading = usesCapacityBundlePreview
-    ? capacityBundleQuery.isPending
-      || capacityBundleQuery.isFetching
-      || (!capacityBundleQuery.data && !continuationReady && !inspectionFailure)
-    : inspectionQuery.isFetching || capacityQueries.some((query) => query.isPending || query.isFetching);
+  const useQuickExcelCapacity = quickNewareExcelPath
+    && !quickExcelCapacityTerminal
+    && (!quickExcelCapacityFallbackReady || (Boolean(quickExcelCapacityPreview) && !preferCanonicalCapacityPreview));
+  const capacityError = quickNewareExcelPath && quickExcelCapacityTerminal
+    ? capacityBundleQuery.error ?? quickExcelCapacityQuery.error
+    : usesCapacityBundlePreview
+      ? capacityBundleQuery.error
+      : capacityQueries.find((query) => query.isError)?.error;
+  const quickExcelFallbackValidationError = quickNewareExcelPath && canonicalFallbackForActiveView
+    ? view === "voltage" && quickVoltageHasPoints && voltageQuery.isError
+      ? voltageError
+      : view === "cycles" && quickExcelCapacityPreview && capacityBundleQuery.isError
+        ? capacityBundleQuery.error instanceof Error
+          ? capacityBundleQuery.error.message
+          : "The validated cycle preview could not be prepared."
+        : null
+    : null;
+  const isCapacityLoading = useQuickExcelCapacity
+    ? quickExcelCapacityQuery.isPending || quickExcelCapacityQuery.isFetching || !quickExcelCapacityPreview
+    : usesCapacityBundlePreview
+      ? sourceInspectionLoading
+        || (capacityBundleQueryEnabled && capacityBundleQuery.isPending)
+        || capacityBundleQuery.isFetching
+        || (capacityBundleQueryEnabled && !capacityBundleQuery.data && !continuationReady && !inspectionFailure)
+      : sourceInspectionLoading
+        || (inspectionEnabled && (inspectionQuery.isPending || inspectionQuery.isFetching))
+        || capacityQueries.some((query) => query.isFetching || (continuationReady && query.isPending));
   const activeCycleRange = view === "cycles"
     ? cycleRange
     : voltageCycleRange ?? (cycleCount > 0
       ? { start: Math.max(1, cycleCount - 19), end: cycleCount }
       : null);
+  const activeCycleBounds = view === "cycles" && quickNewareExcelPath && quickExcelCycleIdBounds
+    ? quickExcelCycleIdBounds
+    : { start: 1, end: cycleCount };
   const updateActiveCycleRange = (next: { start: number; end: number }) => {
     if (view === "cycles") {
       setCycleRangeUserEdited(true);
@@ -420,16 +807,27 @@ export function ImportSourcePreview({
   };
   const shiftCycleRange = (direction: -1 | 1) => {
     if (!activeCycleRange || cycleCount <= 0) return;
-    updateActiveCycleRange(shiftPreviewCycleWindow(activeCycleRange, cycleCount, direction));
+    updateActiveCycleRange(shiftCycleWindowWithinBounds(activeCycleRange, activeCycleBounds, direction));
   };
   const voltageHasPoints = Boolean(voltagePreview?.segments.some((segment) => segment.x.length > 0));
   const voltageReady = view === "voltage"
-    && (quickVoltageAvailable || (!voltageQuery.isPending && !voltageQuery.isFetching && !voltageQuery.isPlaceholderData))
+    && (quickVoltageAvailable || quickVoltageFallbackReady || (!voltageQuery.isPending && !voltageQuery.isFetching && !voltageQuery.isPlaceholderData))
     && voltageHasPoints;
+  const isVoltageLoading = (supportsQuickVoltagePreview && !quickVoltageFallbackReady && (quickVoltageQuery.isPending
+    || quickVoltageQuery.isFetching))
+    || sourceInspectionLoading
+    || (inspectionEnabled && (inspectionQuery.isPending || inspectionQuery.isFetching || !continuationReady))
+    || (voltageQueryEnabled && (voltageQuery.isPending || voltageQuery.isFetching || voltageQuery.isPlaceholderData));
+  const isCyclesLoading = isCapacityLoading
+    || (!usesCapacityBundlePreview && inspectionEnabled && (inspectionQuery.isPending || inspectionQuery.isFetching || !continuationReady))
+    || capacityBundleQuery.isPlaceholderData
+    || capacityQueries.some((query) => query.isPlaceholderData);
   const capacityReady = view === "cycles"
     && !isCapacityLoading
-    && (usesCapacityBundlePreview
-      ? Boolean(capacityBundleQuery.data && !capacityBundleQuery.isPlaceholderData)
+    && (useQuickExcelCapacity
+      ? Boolean(quickExcelCapacityPreview)
+      : usesCapacityBundlePreview
+        ? Boolean(capacityBundleQuery.data && !capacityBundleQuery.isPlaceholderData)
       : continuationReady && capacityQueries.some((query) => query.data && !query.isPlaceholderData))
     && displayedCapacityTraces.length > 0;
   const voltagePlot: ReactNode = voltageHasPoints && voltagePreview ? (
@@ -472,34 +870,6 @@ export function ImportSourcePreview({
       showToolbar={false}
     />
   ) : null;
-  const [retainedPlot, setRetainedPlot] = useState<ReactNode>(null);
-  useEffect(() => {
-    if (voltageReady && voltagePlot) setRetainedPlot(voltagePlot);
-    else if (capacityReady && capacityPlot) setRetainedPlot(capacityPlot);
-  }, [
-    source.staged_name,
-    source.hash,
-    view,
-    voltageReady,
-    voltagePreview,
-    voltageTraces,
-    voltageXAxis,
-    capacityReady,
-    capacityBundleQuery.data,
-    capacityQueries[0]?.data,
-    capacityQueries[1]?.data,
-    cycleRange?.start,
-    cycleRange?.end,
-    capacityView,
-    normalizeByMass,
-    activeMassG,
-    plotColors.background,
-    plotColors.text,
-    plotColors.grid,
-    plotColors.border,
-    surfaceMode,
-    responsivePlotHeight,
-  ]);
 
   const capacitySelector = (
     <SegmentedControl
@@ -545,26 +915,49 @@ export function ImportSourcePreview({
 
   return (
     <>
-      <Stack gap="xs">
-      {parserWarnings.length > 0 && (
+      <Stack ref={previewContentRef} gap="xs">
+      {(parserWarnings.length > 0 || quickExcelDiagnosticMessage || quickExcelFallbackValidationError) && (
         <Group justify="flex-end">
-          <Button
-            size="compact-sm"
-            variant="light"
-            color="orange"
-            leftSection={<IconAlertTriangle size={15} />}
-            onClick={() => setWarningsOpen(true)}
-          >
-            Data warnings · {parserWarningCount}
-          </Button>
+          {(quickExcelDiagnosticMessage || quickExcelFallbackValidationError) && (
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="orange"
+              leftSection={<IconAlertTriangle size={15} />}
+              onClick={() => setWarningsOpen(true)}
+            >
+              {quickExcelFallbackValidationError && !quickExcelDiagnosticMessage ? "Preview fallback" : "Source check failed"}
+            </Button>
+          )}
+          {parserWarnings.length > 0 && (
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="orange"
+              leftSection={<IconAlertTriangle size={15} />}
+              onClick={() => setWarningsOpen(true)}
+            >
+              Data warnings · {parserWarningCount}
+            </Button>
+          )}
         </Group>
       )}
       <Tabs value={view} onChange={(value) => value && setView(value as ImportPreviewView)} keepMounted>
         <Tabs.List grow>
           <Tabs.Tab value="voltage">Voltage</Tabs.Tab>
-          <Tabs.Tab value="cycles" disabled={!hasNavigableCycles}>Cycles</Tabs.Tab>
+          <Tabs.Tab value="cycles" disabled={!hasNavigableCycles && !canTryQuickExcelCycles}>Cycles</Tabs.Tab>
         </Tabs.List>
       </Tabs>
+      {view === "cycles" && quickNewareExcelPath && quickExcelCapacityPreview && quickExcelDiagnosticMessage && (
+        <Alert color="orange" title="Cycle-sheet preview only" p="xs">
+          This plot uses the workbook’s separate cycle summary and has not been checked against the raw records.
+        </Alert>
+      )}
+      {quickExcelFallbackValidationError && (
+        <Alert color="orange" title="Showing a display-only quick preview" p="xs">
+          The validated {view === "voltage" ? "voltage" : "cycle"} preview failed, so this quick preview remains visible. It may not include all source data. {quickExcelFallbackValidationError}
+        </Alert>
+      )}
       <Box ref={plotSurfaceRef} className="preview-plot-surface" style={{ position: "relative" }}>
         <CellPreviewToolbar
           surfaceMode={surfaceMode}
@@ -574,48 +967,47 @@ export function ImportSourcePreview({
         >
           {toolbarContent}
         </CellPreviewToolbar>
-        <Box h={plotStackHeight} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Box ref={plotStackRef} h={plotStackHeight} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
           {view === "voltage" ? (
             voltageReady && voltagePlot ? (
-              <Box w="100%">{voltagePlot}</Box>
+              <Box w="100%" className="import-preview-plot-ready">{voltagePlot}</Box>
             ) : inspectionError ? (
               <Alert color="orange" title="Voltage preview unavailable">{inspectionError}</Alert>
             ) : inspectionQuery.isError ? (
               <Alert color="orange" title="Voltage preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
             ) : inspectionFailure ? (
               <Alert color="orange" title="Voltage preview unavailable">{inspectionFailureMessage}</Alert>
-            ) : retainedPlot && (inspectionQuery.isPending || inspectionQuery.isFetching || voltageQuery.isPending || voltageQuery.isFetching || voltageQuery.isPlaceholderData) ? (
-              <Box w="100%" h={plotStackHeight} style={{ position: "relative" }}>
-                <Box style={{ opacity: 0.48, transition: "opacity 100ms linear" }}>{retainedPlot}</Box>
-                <Text size="xs" c="dimmed" style={{ position: "absolute", top: 30, right: 8, pointerEvents: "none" }}>Updating preview…</Text>
-              </Box>
-            ) : !continuationReady || voltageQuery.isPending ? (
-              <Center h={plotStackHeight}><Loader size="sm" /></Center>
             ) : voltageQuery.isError ? (
               <Alert color="orange" title="Voltage preview unavailable">{voltageError}</Alert>
+            ) : quickPreviewTakingLong && !quickVoltageFallbackReady ? (
+              <Alert color="gray" title="Preview is taking longer than expected">
+                The request is still running. You can keep browsing; the preview will update if it finishes.
+              </Alert>
+            ) : isVoltageLoading ? (
+              <ImportPlotSkeleton view="voltage" height={responsivePlotHeight} colors={plotColors} />
             ) : (
               <Alert color="gray">No voltage points were found for this source.</Alert>
             )
           ) : source.metadata_only ? (
             <Alert color="gray">Cycle preview is unavailable for this metadata-only source.</Alert>
           ) : capacityReady && capacityPlot ? (
-            <Box w="100%">{capacityPlot}</Box>
+            <Box w="100%" className="import-preview-plot-ready">{capacityPlot}</Box>
+          ) : inspectionError ? (
+            <Alert color="orange" title="Cycle preview unavailable">{inspectionError}</Alert>
           ) : inspectionQuery.isError ? (
             <Alert color="orange" title="Cycle preview unavailable">{inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Source inspection failed."}</Alert>
           ) : inspectionFailure ? (
             <Alert color="orange" title="Cycle preview unavailable">{inspectionFailureMessage}</Alert>
-          ) : retainedPlot && (
-            isCapacityLoading
-            || (!usesCapacityBundlePreview && (inspectionQuery.isPending || inspectionQuery.isFetching))
-            || capacityBundleQuery.isPlaceholderData
-            || capacityQueries.some((query) => query.isPlaceholderData)
-          ) ? (
-            <Box w="100%" h={plotStackHeight} style={{ position: "relative" }}>
-              <Box style={{ opacity: 0.48, transition: "opacity 100ms linear" }}>{retainedPlot}</Box>
-              <Text size="xs" c="dimmed" style={{ position: "absolute", top: 30, right: 8, pointerEvents: "none" }}>Updating preview…</Text>
-            </Box>
-          ) : isCapacityLoading ? (
-            <Center h={plotStackHeight}><Loader size="sm" /></Center>
+          ) : quickExcelCapacityFallbackReady && capacityError ? (
+            <Alert color="orange" title="Cycle preview unavailable">
+              {capacityError instanceof Error ? capacityError.message : "The cycle preview could not be prepared."}
+            </Alert>
+          ) : quickPreviewTakingLong && !quickExcelCapacityFallbackReady ? (
+            <Alert color="gray" title="Preview is taking longer than expected">
+              The request is still running. You can keep browsing; the preview will update if it finishes.
+            </Alert>
+          ) : isCyclesLoading ? (
+            <ImportPlotSkeleton view="cycles" height={responsivePlotHeight} colors={plotColors} />
           ) : (
             <Alert color={capacityError ? "orange" : "gray"} title="Cycle preview unavailable">
               {capacityError instanceof Error ? capacityError.message : "No charge or discharge capacity points were found."}
@@ -624,30 +1016,44 @@ export function ImportSourcePreview({
         </Box>
       </Box>
       <Group gap="xs" justify="center" wrap="nowrap" h={40}>
-        <Tooltip label="Previous cycle window"><ActionIcon variant="default" aria-label="Previous cycle window" disabled={!hasNavigableCycles || !activeCycleRange || activeCycleRange.start <= 1} onClick={() => shiftCycleRange(-1)}><IconChevronLeft size={15} /></ActionIcon></Tooltip>
-        <NumberInput aria-label="First preview cycle" min={1} max={cycleCount || undefined} value={activeCycleRange?.start ?? ""} disabled={!hasNavigableCycles} onChange={(value) => {
-          const start = Math.max(1, Math.min(Math.trunc(Number(value) || 1), activeCycleRange?.end ?? cycleCount));
-          updateActiveCycleRange({ start, end: activeCycleRange?.end ?? cycleCount });
+        <Tooltip label="Previous cycle window"><ActionIcon variant="default" aria-label="Previous cycle window" disabled={!hasNavigableCycles || !activeCycleRange || activeCycleRange.start <= activeCycleBounds.start} onClick={() => shiftCycleRange(-1)}><IconChevronLeft size={15} /></ActionIcon></Tooltip>
+        <NumberInput aria-label="First preview cycle" min={activeCycleBounds.start} max={activeCycleBounds.end || undefined} value={activeCycleRange?.start ?? ""} disabled={!hasNavigableCycles} onChange={(value) => {
+          const start = Math.max(activeCycleBounds.start, Math.min(Math.trunc(Number(value) || activeCycleBounds.start), activeCycleRange?.end ?? activeCycleBounds.end));
+          updateActiveCycleRange({ start, end: activeCycleRange?.end ?? activeCycleBounds.end });
         }} w={86} />
         <Text size="sm" c="dimmed">–</Text>
-        <NumberInput aria-label="Last preview cycle" min={activeCycleRange?.start ?? 1} max={cycleCount || undefined} value={activeCycleRange?.end ?? ""} disabled={!hasNavigableCycles} onChange={(value) => {
-          const end = Math.max(activeCycleRange?.start ?? 1, Math.min(Math.trunc(Number(value) || 1), cycleCount));
-          updateActiveCycleRange({ start: activeCycleRange?.start ?? 1, end });
+        <NumberInput aria-label="Last preview cycle" min={activeCycleRange?.start ?? activeCycleBounds.start} max={activeCycleBounds.end || undefined} value={activeCycleRange?.end ?? ""} disabled={!hasNavigableCycles} onChange={(value) => {
+          const end = Math.max(activeCycleRange?.start ?? activeCycleBounds.start, Math.min(Math.trunc(Number(value) || activeCycleBounds.end), activeCycleBounds.end));
+          updateActiveCycleRange({ start: activeCycleRange?.start ?? activeCycleBounds.start, end });
         }} w={86} />
-        <Tooltip label="Next cycle window"><ActionIcon variant="default" aria-label="Next cycle window" disabled={!hasNavigableCycles || !activeCycleRange || activeCycleRange.end >= cycleCount} onClick={() => shiftCycleRange(1)}><IconChevronRight size={15} /></ActionIcon></Tooltip>
+        <Tooltip label="Next cycle window"><ActionIcon variant="default" aria-label="Next cycle window" disabled={!hasNavigableCycles || !activeCycleRange || activeCycleRange.end >= activeCycleBounds.end} onClick={() => shiftCycleRange(1)}><IconChevronRight size={15} /></ActionIcon></Tooltip>
       </Group>
       </Stack>
       <Modal
         opened={warningsOpen}
         onClose={() => setWarningsOpen(false)}
-        title="Neware summary warnings"
+        title="Neware source diagnostics"
         centered
         size="md"
       >
         <Stack gap="sm">
-          <Text size="sm" c="dimmed">
-            Some workbook summary values differ from values calculated from the recorded measurements. The preview and import remain available; the recorded measurements are used for the cell data.
-          </Text>
+          {quickExcelDiagnosticMessage && (
+            <Alert color="orange" title="Source diagnostic">
+              This diagnostic describes the source check. A quick voltage plot, if shown, is display-only; a separate cycle-summary preview is not cross-checked against raw records.
+              <Text size="sm" mt="xs">{quickExcelDiagnosticMessage}</Text>
+            </Alert>
+          )}
+          {quickExcelFallbackValidationError && (
+            <Alert color="orange" title="Quick preview fallback">
+              The validated {view === "voltage" ? "voltage" : "cycle"} preview failed, so the quick preview is being retained for display. Treat it as display-only; it may not include all source data.
+              <Text size="sm" mt="xs">{quickExcelFallbackValidationError}</Text>
+            </Alert>
+          )}
+          {parserWarnings.length > 0 && (
+            <Text size="sm" c="dimmed">
+              These warnings describe inconsistencies found in the workbook. CellXplorer explains how it handled them below; preview and import remain available when the data can be recovered safely.
+            </Text>
+          )}
           {parserWarnings.map((warning, index) => {
             const examples = (warning.examples ?? [])
               .map(formatParserWarningExample)
