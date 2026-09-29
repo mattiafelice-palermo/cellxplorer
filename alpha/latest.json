@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.32",
-  "notes": "### New features\n\n- Add interactive import previews with analysis-style voltage/current charts, per-cycle capacity and coulombic efficiency, time-or-capacity axes, and cycle-window navigation.\n- Speed up Neware NDAX and structured Excel previews while deferring analysis-only Time/Capacity cache generation during import staging.\n- Improve source selection and preview continuity when building separate or continued-cell imports.\n\n### Bug fixes\n\n- Keep previews tied to the active source and preserve source, elapsed-time, and global-cycle coordinates when selections or preview modes change.\n- Improve import-picker sizing so preview plots and controls remain accessible alongside large source lists, and make preview warnings clearer without blocking import.",
-  "pub_date": "2026-09-27T12:37:26.448Z",
+  "version": "0.27.1-alpha.33",
+  "notes": "### New features\n\n- Add quick Neware Excel voltage and cycle previews, including time-or-capacity axes and cycle-window selection.\n- Stream large-workbook voltage previews and cache both axis views so repeated previews avoid rescanning the source.\n- Improve preview responsiveness with structural XLSX eligibility checks, hover prefetch, loading states, and clearer parser diagnostics.\n\n### Bug fixes\n\n- Recover isolated future-dated worksheet rows only when exact measurements reappear later, and preserve the skipped and matching DataPoints as warnings.\n- Treat unitless numeric cycle durations as ambiguous instead of guessing, while preserving validated capacities, efficiency, energy, and raw data.",
+  "pub_date": "2026-09-29T19:00:30.684Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVsQWsramVHOENIcTNuS3ZUT0ZzeVNLWHdvUk9ZZ3h1VWhpZTVCKzVRVTNDU0Z4eWw1Tit1TnBnOXRaTmREYS8vSzRsbFRmNEtLT2RpQkFpeGhQclFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTEyNjQxCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMyX3g2NC1zZXR1cC5leGUKNTFCZkY0YytkMnJ2K0d4UTRSbzhZQ3plTG5mOEttUHczRXVWSk1xK0hWa3B4VkxQdWpiMUpJUE9ldFcwTTFKVHA2K2ZnUVJRYTFzWnNjdVlZWjJZQnc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.32/CellXplorer.Alpha_0.27.1-alpha.32_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWN3NDBBc2pucEhlVC9wQ1BFVGxveGxpN2J6cUN0bVFrODRHTUpERFVDL0FnS2dQS1NVL3c5UVdpVWxVMm1LT1hlQ3lCZEJjeEIvWjdXbjVXYUhlaGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzA4NDI0CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMzX3g2NC1zZXR1cC5leGUKeFlKdWg5VVozMWFJYzF2U0w1V3NqRGpLbXVSWDQ1bTdqMFkxUm5hQVJHVnRrcGErMmoxSnl5dmxMM1JwYmRLWGV6U25ibGprY1dpZU84K1BNTWROQ1E9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.33/CellXplorer.Alpha_0.27.1-alpha.33_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVsQWsramVHOENIcTNuS3ZUT0ZzeVNLWHdvUk9ZZ3h1VWhpZTVCKzVRVTNDU0Z4eWw1Tit1TnBnOXRaTmREYS8vSzRsbFRmNEtLT2RpQkFpeGhQclFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTEyNjQxCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMyX3g2NC1zZXR1cC5leGUKNTFCZkY0YytkMnJ2K0d4UTRSbzhZQ3plTG5mOEttUHczRXVWSk1xK0hWa3B4VkxQdWpiMUpJUE9ldFcwTTFKVHA2K2ZnUVJRYTFzWnNjdVlZWjJZQnc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.32/CellXplorer.Alpha_0.27.1-alpha.32_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWN3NDBBc2pucEhlVC9wQ1BFVGxveGxpN2J6cUN0bVFrODRHTUpERFVDL0FnS2dQS1NVL3c5UVdpVWxVMm1LT1hlQ3lCZEJjeEIvWjdXbjVXYUhlaGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzA4NDI0CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjMzX3g2NC1zZXR1cC5leGUKeFlKdWg5VVozMWFJYzF2U0w1V3NqRGpLbXVSWDQ1bTdqMFkxUm5hQVJHVnRrcGErMmoxSnl5dmxMM1JwYmRLWGV6U25ibGprY1dpZU84K1BNTWROQ1E9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.33/CellXplorer.Alpha_0.27.1-alpha.33_x64-setup.exe"
     }
   }
 }
