@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## Unreleased
+
+### Bug fixes
+
+- Prevent Time/Capacity plots from repeatedly redrawing and freezing when opening a plot with hidden samples or changing sample visibility.
+- Show gaps between separately selected cycles without drawing a misleading connecting voltage/current line, while preserving their actual elapsed times.
+
 ## 0.27.1-alpha.34 - 2026-09-29
 
 ### New features

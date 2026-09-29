@@ -444,6 +444,19 @@ function timeCapacitySegments(
   const x = xOverride ?? timeCapacityX(trace, spec).x;
   const segments: TimeCapacitySegment[] = [];
   const displayBreaks = new Set(trace.display_break_before ?? []);
+  const selectedCycleRuns = new Map<number, number>();
+  if (cfg.x_axis === "time" && cfg.display_mode === "consecutive" && !timeCapacityUsesContinuousTime(cfg)) {
+    // Specific-cycle selection can remove real intervals (e.g. 161, 263).
+    // Preserve their elapsed-time coordinates, but do not draw an invented
+    // connecting line. Build runs from the selection, never from sampled
+    // cycle labels: an overview may legitimately decimate entire cycles.
+    const selected = [...new Set(cfg.cycles ?? [])].sort((a, b) => a - b);
+    let run = 0;
+    selected.forEach((cycle, index) => {
+      if (index > 0 && cycle !== selected[index - 1] + 1) run++;
+      selectedCycleRuns.set(cycle, run);
+    });
+  }
   let current: TimeCapacitySegment | null = null;
   const consecutiveCapacity =
     cfg.display_mode === "consecutive" && cfg.x_axis !== "time";
@@ -519,7 +532,10 @@ function timeCapacitySegments(
         current: [],
       };
     }
-    if (displayBreaks.has(index) && current.x.length) {
+    const previousRun = selectedCycleRuns.get(current.cycle[current.cycle.length - 1] ?? NaN);
+    const nextRun = selectedCycleRuns.get(trace.cycle[index] ?? NaN);
+    const selectedIntervalOmitted = previousRun !== undefined && nextRun !== undefined && previousRun !== nextRun;
+    if ((displayBreaks.has(index) || selectedIntervalOmitted) && current.x.length) {
       current.x.push(null);
       current.cycle.push(null);
       current.sourceCycle.push(null);

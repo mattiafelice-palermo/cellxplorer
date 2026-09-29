@@ -116,7 +116,7 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
   const figureVersionRef = useRef(0);
   const baseVisibilityStylesRef = useRef<PlotTraceVisibilityStyle[]>([]);
   const visibilityUpdateRef = useRef(Promise.resolve());
-  const internalVisibilityRestyleRef = useRef(0);
+  const internalVisibilityUpdateDepthRef = useRef(0);
   const frameHoldsRef = useRef(new Set<PlotFrameHold>());
   const latestVisibilityLayoutRef = useRef(traceVisibilityLayoutUpdate);
   latestVisibilityLayoutRef.current = traceVisibilityLayoutUpdate;
@@ -230,12 +230,16 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
           }
         }
         let layoutApplied = !layoutChanged || !nextLayout;
+        // react-plotly.js invokes onUpdate for both restyle and relayout.
+        // Keep the whole operation internal until both promises complete;
+        // treating our own axis fit as a new figure resets visibility and
+        // queues the same restyle/relayout indefinitely for hidden samples.
+        internalVisibilityUpdateDepthRef.current += 1;
         try {
           // Plotly's supported restyle keeps its canonical trace, legend, and
           // hover state in sync. A short-lived copy of the visible WebGL
           // frame masks the shared-canvas clear while scattergl recalculates.
           if (changed.length > 0) {
-            internalVisibilityRestyleRef.current += 1;
             await Plotly.restyle(
               graphDiv as never,
               { opacity: opacityValues, showlegend: legendValues } as unknown as Plotly.Data,
@@ -258,15 +262,7 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
             layoutApplied = true;
           }
         } finally {
-          // Plotly emits plotly_restyle before resolving the promise. The
-          // guard prevents that internal event from being treated as a new
-          // externally-driven figure update.
-          if (changed.length > 0) {
-            internalVisibilityRestyleRef.current = Math.max(
-              0,
-              internalVisibilityRestyleRef.current - 1,
-            );
-          }
+          internalVisibilityUpdateDepthRef.current -= 1;
           if (frameHold && !(graphDiv as PlotlyGraphDiv).once) {
             requestAnimationFrame(() => {
               releaseFrameHold?.();
@@ -301,8 +297,10 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
   };
 
   const handlePlotUpdated = (figure: Readonly<Figure>, graphDiv: Readonly<HTMLElement>) => {
-    if (internalVisibilityRestyleRef.current > 0) {
-      internalVisibilityRestyleRef.current -= 1;
+    const expectedFigure = previousFigureRef.current;
+    const completesReplacement = figureUpdatePendingRef.current &&
+      figure.data === expectedFigure?.data && figure.layout === expectedFigure?.layout;
+    if (internalVisibilityUpdateDepthRef.current > 0 && !completesReplacement) {
       return;
     }
     graphDivRef.current = graphDiv as HTMLElement;

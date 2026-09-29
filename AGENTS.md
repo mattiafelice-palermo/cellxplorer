@@ -283,7 +283,7 @@ Cellxplorer/
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
-│   └── tests/                      Lightweight TypeScript policy tests, including importFilePickerPolicy.test.ts and analysisCellPreviewPolicy.test.ts
+│   └── tests/                      TypeScript policy, trace-renderer and Plot visibility-lifecycle regressions
 ├── tests/                          Python backend and domain tests
 │   ├── biologic_mpr_fixture.py     Synthetic BioLogic MPR/GCPL byte fixtures (Specs 041.1/041.2)
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer

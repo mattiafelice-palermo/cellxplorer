@@ -189,7 +189,7 @@ test("interactive Plot visibility uses style restyle instead of a calc replot", 
   assert.match(restyleSource, /opacity: opacityValues/);
   assert.match(restyleSource, /showlegend: legendValues/);
   assert.doesNotMatch(restyleSource, /\bvisible\s*:/);
-  assert.match(plotSource, /internalVisibilityRestyleRef/);
+  assert.match(plotSource, /internalVisibilityUpdateDepthRef/);
   assert.match(plotSource, /figureUpdatePendingRef/);
 });
 

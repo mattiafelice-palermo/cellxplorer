@@ -178,6 +178,40 @@ test("voltage/time consecutive preserves source provenance without boundary mark
   }
 });
 
+test("disjoint specific cycles keep exact time but do not draw across omitted cycles", async () => {
+  const result = makeResult();
+  const source = result.cell_traces[0];
+  source.cycle = [161, 161, 161, 161, 263, 263, 263, 263];
+  source.display_x = [0, 10, 20, 30, 26000, 26010, 26020, 26030];
+  const { interactive } = await assertParity(result, makeSpec({
+    cycles: [263, 161], stacked: true, current_left: "current_ma",
+    voltage_channels: ["voltage", "working_potential"],
+  }), true);
+  assert.equal(interactive.length, 3, "a gap must not multiply voltage/current traces");
+  for (const trace of interactive) {
+    assert.deepEqual(trace.x, [0, 10, 20, 30, null, 26000, 26010, 26020, 26030]);
+    assert.equal((trace.y as unknown[])[4], null);
+    assert.equal(trace.connectgaps, false);
+    assert.equal(trace.type, "scattergl");
+  }
+});
+
+test("decimation and Continuous time do not invent gaps from skipped cycle labels", async () => {
+  const result = makeResult();
+  const source = result.cell_traces[0];
+  source.cycle = [1, 1, 1, 1, 3, 3, 3, 3];
+  source.display_sampled = true;
+  source.display_x = [0, 10, 20, 30, 60, 70, 80, 90];
+  for (const settings of [
+    { cycles: [] },
+    { cycles: [1, 2, 3] },
+    { cycles: [1, 3], time_reference: "test_start" },
+  ] as Partial<Settings>[]) {
+    const { interactive } = await assertParity(result, makeSpec(settings));
+    assert.deepEqual(interactive[0].x, source.display_x);
+  }
+});
+
 test("consecutive capacity omits rest rows and does not connect separate cycles", async () => {
   const result = makeResult();
   const trace = result.cell_traces[0];
