@@ -257,6 +257,7 @@ Cellxplorer/
 │   │   │       │   │                       timeCapacityWarmupPolicy.ts and
 │   │   │       │   │                       useTimeCapacityProgressiveWarmup.ts (Spec 058)
 │   │   │       │   │                       timeCapacityWarmupDebug.ts (temporary diagnostics)
+│   │   │       │   │                       timeCapacityRefinementReveal.ts (bounded rendered-frame crossfade)
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, multi-source, and sample-picker policies
 │   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views

@@ -43,6 +43,8 @@ export function mergeTimeCapacityRefinementChunks(
       if (!current) { traces.set(key, { ...incoming }); continue; }
       const rowOffset = current.cycle.length;
       const merged = { ...current } as TimeCapacityTrace & Record<string, unknown>;
+      // Missing legacy metadata must never promote a mixed batch to exact detail.
+      merged.display_sampled = current.display_sampled !== false || incoming.display_sampled !== false;
       const sources = [...(current.sources ?? [])];
       const sourceIndexes = new Map(sources.map((source, index) => [source.hash, index]));
       for (const source of incoming.sources ?? []) {
@@ -52,7 +54,14 @@ export function mergeTimeCapacityRefinementChunks(
       }
       for (const [field, value] of Object.entries(incoming)) {
         if (field === "segments" || field === "source_descriptors" || field === "sources") continue;
-        if (field === "source_index" && Array.isArray(value)) {
+        if (field === "display_break_before" && Array.isArray(value)) {
+          merged.display_break_before = [
+            ...(current.display_break_before ?? []),
+            ...value.map((index) => Number(index) + rowOffset),
+          ];
+        } else if (field === "display_sampled") {
+          merged.display_sampled = current.display_sampled !== false || value !== false;
+        } else if (field === "source_index" && Array.isArray(value)) {
           const incomingSources = incoming.sources ?? [];
           merged.source_index = value.map((sourceIndex) => {
             if (typeof sourceIndex !== "number" || !Number.isInteger(sourceIndex)) return null;
@@ -190,22 +199,7 @@ export function timeCapacityCycleRangeForViewport(
   result: TimeCapacityResult | undefined,
   viewport: TimeCapacityViewport,
 ): TimeCapacityCycleRange | null {
-  const visible = timeCapacityVisibleCycleRangeForViewport(result, viewport);
-  if (!result || !visible) return null;
-  let globalMin = Number.POSITIVE_INFINITY;
-  let globalMax = Number.NEGATIVE_INFINITY;
-  for (const trace of result.cell_traces) {
-    if (trace.excluded) continue;
-    for (const cycle of trace.cycle) {
-      if (typeof cycle !== "number" || !Number.isInteger(cycle)) continue;
-      globalMin = Math.min(globalMin, cycle);
-      globalMax = Math.max(globalMax, cycle);
-    }
-  }
-  return {
-    start: Math.max(globalMin, visible.start - 1),
-    end: Math.min(globalMax, visible.end + 1),
-  };
+  return timeCapacityViewportSummary(result, viewport).padded;
 }
 
 /** Exact cycle bounds intersecting the live Plotly x viewport. */
@@ -213,34 +207,115 @@ export function timeCapacityVisibleCycleRangeForViewport(
   result: TimeCapacityResult | undefined,
   viewport: TimeCapacityViewport,
 ): TimeCapacityCycleRange | null {
-  if (!result) return null;
-  const viewportMin = Math.min(viewport.min, viewport.max);
-  const viewportMax = Math.max(viewport.min, viewport.max);
+  return timeCapacityViewportSummary(result, viewport).visible;
+}
+
+export type TimeCapacityViewportIndex = {
+  overview: TimeCapacityViewport | null;
+  cycleSpans: ReadonlyMap<number, TimeCapacityViewport>;
+  globalMin: number;
+  globalMax: number;
+};
+
+/** Build once per resident overview; a pointer relayout then visits only cycles. */
+export function buildTimeCapacityViewportIndex(
+  result: TimeCapacityResult | undefined,
+): TimeCapacityViewportIndex {
   const cycleSpans = new Map<number, TimeCapacityViewport>();
+  if (!result) {
+    return { overview: null, cycleSpans, globalMin: Infinity, globalMax: -Infinity };
+  }
+  let overviewMin = Number.POSITIVE_INFINITY;
+  let overviewMax = Number.NEGATIVE_INFINITY;
+  let globalMin = Number.POSITIVE_INFINITY;
+  let globalMax = Number.NEGATIVE_INFINITY;
   for (const trace of result.cell_traces) {
     if (trace.excluded) continue;
     const x = trace.display_x ?? [];
-    for (let index = 0; index < trace.cycle.length; index += 1) {
+    for (let index = 0; index < Math.max(trace.cycle.length, x.length); index += 1) {
       const cycle = trace.cycle[index];
       const xValue = x[index];
-      if (typeof cycle !== "number" || !Number.isInteger(cycle) || !finite(xValue)) continue;
+      if (finite(xValue)) {
+        if (xValue < overviewMin) overviewMin = xValue;
+        if (xValue > overviewMax) overviewMax = xValue;
+      }
+      if (typeof cycle !== "number" || !Number.isInteger(cycle)) continue;
+      if (cycle < globalMin) globalMin = cycle;
+      if (cycle > globalMax) globalMax = cycle;
+      if (!finite(xValue)) continue;
       const span = cycleSpans.get(cycle);
-      cycleSpans.set(cycle, {
-        min: Math.min(span?.min ?? xValue, xValue),
-        max: Math.max(span?.max ?? xValue, xValue),
-      });
+      if (span) {
+        if (xValue < span.min) span.min = xValue;
+        if (xValue > span.max) span.max = xValue;
+      } else {
+        cycleSpans.set(cycle, { min: xValue, max: xValue });
+      }
     }
   }
+  // Exact pre-sampling spans include cycles entirely omitted by the overview
+  // sampler. Cache coverage and refinement selection must not infer their absence.
+  for (const trace of result.cell_traces) {
+    if (trace.excluded) continue;
+    for (const [key, bounds] of Object.entries(trace.display_cycle_spans ?? {})) {
+      const cycle = Number(key);
+      if (!Number.isInteger(cycle) || !bounds.every(Number.isFinite)) continue;
+      const previous = cycleSpans.get(cycle);
+      cycleSpans.set(cycle, {
+        min: Math.min(previous?.min ?? Infinity, bounds[0]),
+        max: Math.max(previous?.max ?? -Infinity, bounds[1]),
+      });
+      globalMin = Math.min(globalMin, cycle);
+      globalMax = Math.max(globalMax, cycle);
+      overviewMin = Math.min(overviewMin, bounds[0]);
+      overviewMax = Math.max(overviewMax, bounds[1]);
+    }
+  }
+  return {
+    overview: Number.isFinite(overviewMin) && Number.isFinite(overviewMax)
+      ? { min: overviewMin, max: overviewMax }
+      : null,
+    cycleSpans,
+    globalMin,
+    globalMax,
+  };
+}
+
+export function timeCapacityViewportSummaryFromIndex(
+  index: TimeCapacityViewportIndex,
+  viewport: TimeCapacityViewport,
+): {
+  overview: TimeCapacityViewport | null;
+  visible: TimeCapacityCycleRange | null;
+  padded: TimeCapacityCycleRange | null;
+} {
+  const viewportMin = Math.min(viewport.min, viewport.max);
+  const viewportMax = Math.max(viewport.min, viewport.max);
   let selectedMin = Number.POSITIVE_INFINITY;
   let selectedMax = Number.NEGATIVE_INFINITY;
-  for (const [cycle, span] of cycleSpans) {
+  for (const [cycle, span] of index.cycleSpans) {
     if (span.max >= viewportMin && span.min <= viewportMax) {
       selectedMin = Math.min(selectedMin, cycle);
       selectedMax = Math.max(selectedMax, cycle);
     }
   }
-  if (!Number.isFinite(selectedMin) || !Number.isFinite(selectedMax)) return null;
-  return { start: selectedMin, end: selectedMax };
+  const visible = Number.isFinite(selectedMin) && Number.isFinite(selectedMax)
+    ? { start: selectedMin, end: selectedMax }
+    : null;
+  const padded = visible
+    ? {
+        start: Math.max(index.globalMin, visible.start - 1),
+        end: Math.min(index.globalMax, visible.end + 1),
+      }
+    : null;
+  return { overview: index.overview, visible, padded };
+}
+
+/** Convenience path for callers that do not retain an overview identity. */
+export function timeCapacityViewportSummary(
+  result: TimeCapacityResult | undefined,
+  viewport: TimeCapacityViewport,
+) {
+  return timeCapacityViewportSummaryFromIndex(buildTimeCapacityViewportIndex(result), viewport);
 }
 
 export function timeCapacityRefinementWorthwhile(
@@ -373,4 +448,125 @@ export function timeCapacityRefinementCanSchedule(
   spec: AnalysisSpec,
 ): boolean {
   return active && timeCapacityRefinementEligible(spec);
+}
+
+
+/** A small per-mounted-card LRU of COMPLETE, unsampled viewport responses.
+ * Approximate sample density is insufficient: only explicit server proof that
+ * every selected row survived sampling permits reuse at a deeper zoom.
+ */
+export class TimeCapacityDetailCache {
+  private entries: { result: TimeCapacityRefinementResult; compatibility: string;
+    viewport: TimeCapacityViewport; cycles: TimeCapacityCycleRange; bytes: number }[] = [];
+  private maxBytes: number;
+  private maxEntries: number;
+  constructor(maxBytes = 16 * 1024 * 1024, maxEntries = 8) {
+    this.maxBytes = maxBytes;
+    this.maxEntries = maxEntries;
+  }
+  clear(): void { this.entries = []; }
+  get size(): number { return this.entries.length; }
+  get bytes(): number { return this.entries.reduce((sum, entry) => sum + entry.bytes, 0); }
+
+  put(result: TimeCapacityRefinementResult, compatibility: string,
+      viewport: TimeCapacityViewport, cycles: TimeCapacityCycleRange): boolean {
+    // Capacity origins depend on the requested cycle window. A matching data
+    // signature alone cannot prove that a differently buffered window uses the
+    // same per-Cell origin. Fail closed until that origin contract is explicit.
+    if (result.settings.x_axis !== "time" ||
+        !result.data_signature || result.data_signature !== result.overview_data_signature ||
+        !result.cell_traces.every((trace) => trace.display_sampled === false) ||
+        !Number.isFinite(viewport.min) || !Number.isFinite(viewport.max) || viewport.max <= viewport.min) return false;
+    const bytes = detailResidentBytes(result);
+    if (bytes > this.maxBytes) return false;
+    this.entries = this.entries.filter((entry) => !(entry.result.data_signature === result.data_signature &&
+      entry.compatibility === compatibility && entry.viewport.min === viewport.min && entry.viewport.max === viewport.max &&
+      entry.cycles.start === cycles.start && entry.cycles.end === cycles.end));
+    this.entries.push({ result, compatibility, viewport: { ...viewport }, cycles: { ...cycles }, bytes });
+    while (this.entries.length > this.maxEntries || this.bytes > this.maxBytes) this.entries.shift();
+    return true;
+  }
+
+  get(overview: TimeCapacityResult | undefined, compatibility: string,
+      viewport: TimeCapacityViewport, cycles: TimeCapacityCycleRange): TimeCapacityRefinementResult | null {
+    if (!overview || overview.settings.x_axis !== "time" ||
+        !overview.cell_traces.every((trace) => trace.display_cycle_spans !== undefined)) return null;
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const entry = this.entries[index];
+      if (entry.compatibility !== compatibility || !timeCapacityRefinementResultMatchesOverview(entry.result, overview) ||
+          !timeCapacityViewportContains(entry.viewport, viewport) ||
+          entry.cycles.start > cycles.start || entry.cycles.end < cycles.end) continue;
+      const identities = new Set(entry.result.cell_traces.map(traceIdentity));
+      if (!overview.cell_traces.every((trace) => identities.has(traceIdentity(trace)))) continue;
+      this.entries.splice(index, 1);
+      this.entries.push(entry);
+      return entry.result;
+    }
+    return null;
+  }
+}
+
+// Numeric/boolean sample vectors are charged by length, never scanned. The
+// allowance covers boxed values and array slots even though most engines store
+// these more compactly. Channel arrays use the same rule as the primary voltage.
+const DETAIL_NUMERIC_ARRAY_FIELDS = new Set([
+  "cycle", "cycles", "display_x", "display_only_cycle", "time_s",
+  "capacity_mah", "capacity_mah_g", "capacity_mah_cm2", "voltage_v", "current_ma",
+  "voltage", "working_potential", "counter_potential", "derivative_x", "derivative_y",
+  "source_cycle", "source_index", "source_position", "source_boundary_indices",
+  "display_break_before",
+]);
+
+/** Bound cache-accounting work independently of the number of plotted points. */
+function detailResidentBytes(value: TimeCapacityRefinementResult): number {
+  // Only trace headers and small metadata containers are inspected. A future
+  // unfamiliar large structure fails admission rather than blocking a paint.
+  let remainingFields = 4096;
+  const estimate = (item: unknown, field: string, depth: number): number => {
+    if (item === null || item === undefined) return 32;
+    if (typeof item === "string") return 64 + item.length * 2;
+    if (typeof item !== "object") return 48;
+    if (depth > 8 || remainingFields <= 0) return Infinity;
+    if (Array.isArray(item)) {
+      if (DETAIL_NUMERIC_ARRAY_FIELDS.has(field)) return 64 + item.length * 48;
+      // Canonical row phase/status strings and source hashes are short. Legacy
+      // repeated path/name arrays receive the Windows long-path-sized allowance;
+      // compact responses normally carry a small source table instead.
+      if (field === "phase" || field === "status" || field === "source_hash") {
+        return 64 + item.length * 512;
+      }
+      if (field === "source_filename") return 64 + item.length * 131_072;
+      // cell_traces and metadata tables contain objects, not sample scalars.
+      // Cap their inspection as well, including any unknown future arrays.
+      if (item.length > 256 || item.length > remainingFields) return Infinity;
+      let bytes = 64;
+      for (const child of item) {
+        remainingFields -= 1;
+        bytes += 16 + estimate(child, "", depth + 1);
+        if (!Number.isFinite(bytes)) return Infinity;
+      }
+      return bytes;
+    }
+    let bytes = 64;
+    for (const key in item) {
+      if (!Object.prototype.hasOwnProperty.call(item, key)) continue;
+      remainingFields -= 1;
+      if (remainingFields <= 0) return Infinity;
+      bytes += 64 + key.length * 2 + estimate((item as Record<string, unknown>)[key], key, depth + 1);
+      if (!Number.isFinite(bytes)) return Infinity;
+    }
+    return bytes;
+  };
+  return estimate(value, "", 0);
+}
+
+/** A bounded margin fetched only AFTER the completed foreground is visible. */
+export function timeCapacityBufferedRefinementViewport(
+  viewport: TimeCapacityViewport, overview: TimeCapacityViewport | null,
+): TimeCapacityViewport | null {
+  if (!overview) return null;
+  const margin = (viewport.max - viewport.min) * 0.2;
+  if (!(margin > 0)) return null;
+  const buffered = { min: Math.max(overview.min, viewport.min - margin), max: Math.min(overview.max, viewport.max + margin) };
+  return buffered.min < viewport.min || buffered.max > viewport.max ? buffered : null;
 }

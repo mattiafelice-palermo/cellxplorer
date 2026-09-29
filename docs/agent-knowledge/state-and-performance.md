@@ -477,27 +477,64 @@ change or the start of slider preview cancels this committed-navigation session;
 buffered panning continue to use their own schedulers and are never routed through the committed
 range request.
 
-Adaptive Time refinement is also display-only and ephemeral. Its response-generation check remains
-strict for accepting a newly arriving response, but it is independent from the compatibility check
-for the refinement already on screen: a compatible old viewport may remain visible while a newer
-zoom request is debounced or in flight. The frontend keeps the displayed refinement's requested
-viewport in a client-only ref, clears it on autorange, semantic/data-signature changes, inactive
-keep-mounted tabs, an ineligible client-only mode such as stacked rendering, or an uncovered
-pan/jump, and never treats it as the scientific or export source. The eligibility boundary is
-separate from query/compatibility identity: client-only mode changes must not enter scientific cache
-identity merely to invalidate this ephemeral display state.
-The production card delegates request generation, displayed/requested viewport metadata, stacked
-invalidation, and response acceptance to its ephemeral lifecycle controller. Late responses remain
-generation-gated, and an aborted or failed replacement leaves the best valid overview/refinement
-already displayed.
+Adaptive Time/Capacity refinement is display-only and ephemeral. Completed pointer relayouts
+start requests immediately; there is no debounce or animated reveal retaining the old coarse
+lines before publication. On the first accepted response for a request generation, the card copies
+the already-rendered WebGL data canvas once (at most 16 MiB of RGBA pixels), publishes the new
+figure immediately, then crossfades that old bitmap out and the completed new canvas in over
+220 ms using Web Animations. No coordinates, samples or Plotly traces are interpolated, and no
+per-frame Plotly update is issued. Axes, legend and interactions are outside the snapshot.
+The two true renderings briefly coexist during the dissolve; later chunks do not restart it.
+Reduced motion, SVG fallback, oversized surfaces or snapshot failure use immediate replacement.
+A resized/remounted canvas or changed axis range/geometry cannot accept a captured frame.
+The completed Plotly data array must match the accepted render; unrelated update events cannot
+start its fade. Visibility frame holds are excluded, and both WebGL context/focus layers are
+captured together. New gestures, presentation changes,
+cancellation, invalidation, tab deactivation and unmount cancel and remove the snapshot.
+Request generations and cancellation reject stale responses. Each accepted cycle batch
+is published immediately. Incomplete batches never enter the resident detail cache, and an
+incomplete sequence failure falls back to the overview. Zoom memory preserves the axes during
+replacement, including the explicitly retained stacked viewport.
 
-When a valid refinement replaces another valid display, the Time/Capacity card may reveal the new
-traces over the old traces for 140 ms while keeping the old line at its exact visual weight. This
-avoids alpha-compositing two fading copies of the same line, does not interpolate scientific
-coordinates or rebuild point arrays per frame, and never exports the transient trace list. A new
-viewport interaction, semantic reset, tab deactivation, ineligible mode transition, custom
-sub-unit trace opacity, or reduced-motion preference cancels or atomically skips that
-presentation-only effect.
+The per-mounted-card time-axis detail LRU holds at most eight entries and a conservative 16 MiB estimate.
+Admission estimates sample-array storage from array lengths, without walking sample values.
+Inspection of trace headers and short string metadata is bounded; unfamiliar oversized metadata
+fails admission. Both foreground and prefetched results use this same accounting path so a
+final foreground batch does not pause painting for a per-point cache-size scan.
+Reuse requires matching overview/scientific compatibility identities, every overview Cell,
+viewport containment, cycle-range coverage, and explicit server `display_sampled: false` for
+every trace. The overview supplies exact `display_cycle_spans` computed before sampling so a
+wholly omitted cycle cannot be mistaken for absent data. Legacy metadata and sampled responses
+fail closed. A completed cached foreground may trigger one optional 20% x-margin request
+limited to 64 cycles; it never replaces or delays the foreground and is cancelled by a new
+gesture. Reuse of that margin still requires the same completeness checks. Data/compatibility
+changes clear the cache; it is not persisted or used for scientific exports. Capacity axes retain
+immediate foreground refinement but are excluded from resident caching and margin prefetch:
+their per-Cell origins depend on the requested cycle window, so matching data signatures alone
+do not prove a buffered response has compatible coordinates.
+
+Time/Capacity responses keep ordinary decimation continuous. `display_sampled` describes
+resolution loss; it does not imply a real data discontinuity. `display_break_before` is reserved
+for evidenced intervals removed by x-viewport clipping before sampling, where a curve leaves
+and later re-enters the requested interval. The renderer inserts aligned null separators only
+there, without multiplying Plotly traces. Existing masks, phase/cycle segmentation and source
+provenance remain intact; an independent request boundary alone does not introduce a gap.
+Overview sampling includes current extrema alongside selected voltage channels. Exact coordinates
+and per-Cell origins are computed before display sampling. The response schema version is bumped
+for the new metadata; scientific calculations and full-resolution exports retain their transforms.
+A cold zoom can still briefly magnify a continuous coarse overview while real detail is fetched;
+no completeness claim or scientific discontinuity is inferred merely from skipped sample rows.
+
+The pointer-driven relayout handler is a hot path: build the Time/Capacity viewport index once
+per resident overview result, then resolve zoomed cycle bounds by visiting cycle spans only. Do
+not scan every plotted point or allocate per-point objects from each Plotly relayout event. Apply refined figures in one update; repeated
+full Plotly redraws for opacity animation add work after detail is already available.
+
+In the shared `Plot` wrapper, `traceVisibilityLayoutUpdate` is only a follow-up to an actual
+trace-visibility restyle. `Plotly.react` already receives the declarative axis layout when a
+figure mounts; an extra `Plotly.relayout` on that initial no-change path can leave Plotly's drag
+zoom interaction unresponsive. Keep the supplemental relayout guarded by a non-empty visibility
+change.
 
 Spec 050.1 also makes `analysis_cache._scientific_spec(spec, kind)` an explicit dependency
 projection. Cycles owns its generic calculation/filter/aggregation settings, Time/Capacity owns
@@ -565,6 +602,16 @@ The generic cycle query must stay disabled while any of those tabs is active; ot
 saved-plot change starts an unrelated cycle computation beside the visible request. Their query
 observers should retain previous data during a key change, and a delayed loading indicator should
 appear only when no plot is available.
+Time/Capacity sends its activity token immediately, but keeps token bookkeeping outside React state
+until the delayed no-result progress surface is eligible. Job-status observation is unnecessary
+while a usable plot remains visible; short navigation requests must not create polling-driven
+renders. Cached Time/Capacity availability badges reuse the current request's resolved owner
+context rather than repeating the selection and source queries.
+The Time/Capacity settings sidebar is memoized by its normalized settings, callback identities,
+and voltage-channel availability. Cycle start/end and explicit cycle selection belong to the
+separate navigation component and do not invalidate that sidebar. Its change handlers must keep
+reading the latest spec through the functional update callback; capturing a memoized spec would
+restore stale cycle bounds after navigation. Keep the axis-reset callback stable at its caller.
 Analysis editor persistence is explicit rather than timer-driven: plot Update, Save-as-new,
 rename, and delete actions issue the save request deliberately, while local edits remain visibly
 unsaved until the user saves or uses the existing leave flow. A successful explicit save writes its
@@ -572,6 +619,11 @@ returned `AnalysisFull` directly to `['analysis', analysisId]` and invalidates `
 compact index metadata. Source/cell/scientific mutations continue to use the broad scoped
 invalidation helper. Saved-plot create/update/delete paths therefore own their explicit artifact,
 thumbnail, prepared-marker, and preview lifecycle without depending on autosave side effects.
+Portable-report per-plot compatibility preparation belongs to the open export flow. Resolving
+each saved plot normalizes its scientific spec, so doing this while the dialog is closed adds
+work to every editor change, including cycle navigation. Keep the toolbar's selection-level
+compatibility checks live, calculate the initially supported selection when opening the dialog,
+and resolve per-plot policies while it is open; do not reuse stale policy results across edits.
 Within a newly mounted analysis family, the live plot has request priority. Saved rows may look up
 and display already-cached thumbnails immediately, but missing saved-plot computations are admitted
 sequentially during idle time only after the live plot is ready. Do not prefetch every thumbnail

@@ -354,7 +354,8 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /timeCapacityRefinementDisplayIsCurrent\(/);
   assert.match(liveSource, /const refinementViewport =/);
   assert.match(liveSource, /next\.xaxis2 = \{ \.\.\.\(base\.xaxis2 \?\? \{\}\)/);
-  assert.match(liveSource, /if \(panPresentationActive \|\| cfg\.stacked \|\| !refinementTransition\) return null;/);
+  assert.match(liveSource, /captureTimeCapacityRefinement\(plotDivRef\.current,/);
+  assert.match(liveSource, /generation !== refinementLifecycle\.generation/);
   assert.match(liveSource, /timeCapacityRefinementCanSchedule\(active, scientificRenderSpec\)/);
   assert.match(liveSource, /refinementLifecycle\.acceptResponse\(/);
   assert.match(headerSource, /const plotExportEnabled = canPlotExport \?\? canExport/);

@@ -1,5 +1,10 @@
 # Feature specs
 
+- [060-indexed-source-search.md](060-indexed-source-search.md)
+  adds subsecond search across user-selected source roots in the import picker, backed by a
+  local, rebuildable filename and header-metadata index. **Design spec; implementation not started.**
+  UI concepts: [060 mockups](060-indexed-source-search-mockups.html).
+
 - [059-time-capacity-slider-latency.md](059-time-capacity-slider-latency.md)
   investigates the post-preparation slider regression and optimizes request planning,
   envelope downsampling and browser trace construction with exact parity. **Implemented;

@@ -58,7 +58,8 @@ RESULT_SCHEMA_VERSIONS = {
     # multi-voltage arrays just like the serial path. Invalidate compact
     # entries produced before that worker parity fix.
     # Consecutive time uses the Cell timeline, including skipped-cycle gaps.
-    "time_capacity": 11,
+    # Display sampling topology and completeness; voltage/current extrema.
+    "time_capacity": 12,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

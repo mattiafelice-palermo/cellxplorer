@@ -174,10 +174,13 @@ export function PortableReportFlow({
       selectedSourceCountCellsForSpec(analysis, plotSpec, availableCells, availableGroups),
     );
   };
-  const portablePlotPolicies = portablePlotOptions.map((plot) => ({
+  const buildPortablePlotPolicies = () => portablePlotOptions.map((plot) => ({
     plot,
     policy: portablePlotPolicy(plot),
   }));
+  // Resolving every saved plot normalizes its scientific spec. Keep that work
+  // out of ordinary editor updates while the export dialog is closed.
+  const portablePlotPolicies = portableExportOpen ? buildPortablePlotPolicies() : [];
   const guardedPortablePlots = portablePlotPolicies.filter(
     ({ policy }) => policy.family && !policy.supported,
   );
@@ -336,7 +339,10 @@ export function PortableReportFlow({
     setPreparedShareBusy(false);
     setPortableSourceDecision(null);
     setPendingPortableExport(null);
-    setPortablePlotIds(exportablePortablePlotIds);
+    // Use the current spec on entry; the closed dialog has no prepared policies.
+    setPortablePlotIds(buildPortablePlotPolicies()
+      .filter(({ policy }) => !policy.family || policy.supported)
+      .map(({ plot }) => plot.id));
     setPortableExportOpen(true);
   };
 

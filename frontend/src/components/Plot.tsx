@@ -25,6 +25,7 @@ type PlotTraceVisibilityStyle = {
 };
 
 type PlotlyGraphDiv = HTMLElement & {
+  _fullLayout?: Plotly.Layout;
   calcdata?: Array<Array<{ trace?: { type?: string } }>>;
   once?: (eventName: string, listener: () => void) => void;
   removeListener?: (eventName: string, listener: () => void) => void;
@@ -101,20 +102,26 @@ type PlotProps = PlotParams & {
   traceVisibility?: PlotTraceVisibility;
   /** Apply axis changes alongside a trace-visibility restyle, without Plotly.react. */
   traceVisibilityLayoutUpdate?: Partial<Plotly.Layout>;
+  /** Changes only when a visibility or axis-mode edit requests a new fit. */
+  traceVisibilityLayoutKey?: string;
 };
 
-function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotProps) {
+function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLayoutKey, ...props }: PlotProps) {
   const graphDivRef = useRef<HTMLElement | null>(null);
   const latestVisibilityRef = useRef<PlotTraceVisibility | undefined>(traceVisibility);
   latestVisibilityRef.current = traceVisibility;
   const appliedVisibilityRef = useRef<PlotTraceVisibility | null>(null);
   const appliedVisibilityLayoutRef = useRef<Partial<Plotly.Layout> | undefined>(undefined);
+  const appliedVisibilityLayoutKeyRef = useRef<string | undefined>(undefined);
+  const figureVersionRef = useRef(0);
   const baseVisibilityStylesRef = useRef<PlotTraceVisibilityStyle[]>([]);
   const visibilityUpdateRef = useRef(Promise.resolve());
   const internalVisibilityRestyleRef = useRef(0);
   const frameHoldsRef = useRef(new Set<PlotFrameHold>());
   const latestVisibilityLayoutRef = useRef(traceVisibilityLayoutUpdate);
   latestVisibilityLayoutRef.current = traceVisibilityLayoutUpdate;
+  const latestVisibilityLayoutKeyRef = useRef(traceVisibilityLayoutKey);
+  latestVisibilityLayoutKeyRef.current = traceVisibilityLayoutKey;
   const previousFigureRef = useRef<{
     data: PlotParams["data"];
     layout: PlotParams["layout"];
@@ -156,6 +163,7 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
       // restyling visibility; otherwise a result replacement could race the
       // old graph and briefly apply indices to the wrong figure.
       figureUpdatePendingRef.current = true;
+      figureVersionRef.current += 1;
     }
     previousFigureRef.current = {
       data: props.data,
@@ -168,16 +176,20 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
     const graphDiv = graphDivRef.current;
     const requested = traceVisibility;
     if (!graphDiv || !requested || figureUpdatePendingRef.current) return;
+    const queuedFigureVersion = figureVersionRef.current;
 
     visibilityUpdateRef.current = visibilityUpdateRef.current
       .catch(() => undefined)
       .then(async () => {
         const next = latestVisibilityRef.current;
-        if (!next || graphDivRef.current !== graphDiv) return;
+        if (!next || graphDivRef.current !== graphDiv || figureVersionRef.current !== queuedFigureVersion) return;
         const previous = appliedVisibilityRef.current;
         if (figureUpdatePendingRef.current) return;
         const nextLayout = latestVisibilityLayoutRef.current;
-        const layoutChanged = nextLayout !== appliedVisibilityLayoutRef.current;
+        const nextLayoutKey = latestVisibilityLayoutKeyRef.current;
+        const layoutChanged = nextLayoutKey === undefined
+          ? nextLayout !== appliedVisibilityLayoutRef.current
+          : nextLayoutKey !== appliedVisibilityLayoutKeyRef.current;
         const changed: Array<{ index: number; hidden: boolean }> = [];
         next.forEach((value, index) => {
           if (previous === null ? value !== true : previous[index] !== value) {
@@ -217,6 +229,7 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
             fallbackTimer = window.setTimeout(releaseFrameHold, 1_000);
           }
         }
+        let layoutApplied = !layoutChanged || !nextLayout;
         try {
           // Plotly's supported restyle keeps its canonical trace, legend, and
           // hover state in sync. A short-lived copy of the visible WebGL
@@ -229,8 +242,20 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
               indices,
             );
           }
-          if (layoutChanged && nextLayout) {
+          // A restyle can finish after a replacement figure has started. Never
+          // relayout a graph that Plotly is updating or has already purged.
+          const graphIsCurrent = () =>
+            graphDivRef.current === graphDiv &&
+            figureVersionRef.current === queuedFigureVersion &&
+            !figureUpdatePendingRef.current &&
+            Boolean((graphDiv as PlotlyGraphDiv)._fullLayout);
+          // Plotly.react already receives the declarative axis ranges for the
+          // initial/current figure. The supplemental relayout exists only to
+          // refit axes after a trace visibility restyle; issuing it on the
+          // mount path leaves Plotly's drag/zoom interaction in a broken state.
+          if (layoutChanged && nextLayout && changed.length > 0 && graphIsCurrent()) {
             await Plotly.relayout(graphDiv as never, nextLayout as never);
+            layoutApplied = true;
           }
         } finally {
           // Plotly emits plotly_restyle before resolving the promise. The
@@ -248,16 +273,26 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
             });
           }
         }
+        if (graphDivRef.current !== graphDiv || figureVersionRef.current !== queuedFigureVersion) return;
         if (changed.length > 0) appliedVisibilityRef.current = [...next];
-        if (layoutChanged) appliedVisibilityLayoutRef.current = nextLayout;
+        if (layoutChanged && layoutApplied) {
+          appliedVisibilityLayoutRef.current = nextLayout;
+          appliedVisibilityLayoutKeyRef.current = nextLayoutKey;
+        }
+      })
+      .catch(() => {
+        // Plotly can reject an in-flight restyle/relayout when React replaces
+        // or purges the graph. The next committed figure reapplies visibility.
       });
-  }, [plotGeneration, traceVisibility, traceVisibilityLayoutUpdate]);
+  }, [plotGeneration, traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLayoutKey]);
 
   const handlePlotInitialized = (figure: Readonly<Figure>, graphDiv: Readonly<HTMLElement>) => {
     graphDivRef.current = graphDiv as HTMLElement;
     figureUpdatePendingRef.current = false;
+    figureVersionRef.current += 1;
     appliedVisibilityRef.current = null;
     appliedVisibilityLayoutRef.current = undefined;
+    appliedVisibilityLayoutKeyRef.current = undefined;
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
@@ -272,8 +307,8 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
     }
     graphDivRef.current = graphDiv as HTMLElement;
     figureUpdatePendingRef.current = false;
+    figureVersionRef.current += 1;
     appliedVisibilityRef.current = null;
-    appliedVisibilityLayoutRef.current = undefined;
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     setPlotGeneration((generation) => generation + 1);
@@ -282,9 +317,11 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, ...props }: PlotPr
   };
 
   const handlePlotPurged = (figure: Readonly<Figure>, graphDiv: Readonly<HTMLElement>) => {
+    figureVersionRef.current += 1;
     graphDivRef.current = null;
     appliedVisibilityRef.current = null;
     appliedVisibilityLayoutRef.current = undefined;
+    appliedVisibilityLayoutKeyRef.current = undefined;
     for (const frameHold of frameHoldsRef.current) frameHold.remove();
     frameHoldsRef.current.clear();
     disposePlotlyCssZoomHoverCompensation(graphDiv as HTMLElement);

@@ -254,12 +254,14 @@ def try_cell_result(job, request):
         take = np.arange(high - low)
         if high - low > request.display_max_points_per_cell:
             take = engine._downsample_indices(high - low, request.display_max_points_per_cell,
-                                              np.isfinite(voltage), [voltage])
+                                              np.isfinite(voltage), [voltage, current])
         file_hash, filename = descriptor.source_names[0]
         trace.update(
             cycle=engine._jsonsafe_int(cycles[take]), display_x=engine._jsonsafe_plot(display_x[take], 6),
             voltage_v=engine._jsonsafe_plot(voltage[take], 5), current_ma=engine._jsonsafe_plot(current[take], 5),
             source_cycle=engine._jsonsafe_int(arrays["source_cycle"][low:high][take]),
+            **engine.time_capacity_sampling_metadata(take, high - low),
+            display_cycle_spans=engine.time_capacity_cycle_spans(cycles, display_x),
             source_index=[0] * len(take),
             sources=[{"position": 1, "filename": filename, "hash": file_hash}],
         )

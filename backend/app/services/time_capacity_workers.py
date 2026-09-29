@@ -597,6 +597,9 @@ def _empty_trace(
         "electrode_area_cm2": descriptor.electrode_area_cm2,
         "cycle": [],
         "display_x": [],
+        "display_sampled": False,
+        "display_break_before": [],
+        "display_cycle_spans": {},
         "time_s": [],
         "capacity_mah": [],
         "capacity_mah_g": [],
@@ -923,6 +926,9 @@ def _cell_result(
         )
         else {}
     )
+    display_cycle_spans = analysis_engine.time_capacity_cycle_spans(raw["cycle"].to_numpy(), display_x) if not request.refinement else {}
+    display_row_indices = None
+    window_break_rows = None
     if (
         request.refinement
         and request.refinement_viewport_x_min is not None
@@ -933,6 +939,8 @@ def _cell_result(
         window &= display_x <= float(request.refinement_viewport_x_max)
         take = np.flatnonzero(window)
         raw = raw.iloc[take].reset_index(drop=True)
+        display_row_indices = take
+        window_break_rows = take[np.flatnonzero(np.diff(take) != 1) + 1]
         display_x = display_x[take]
         phases = np.asarray(phases)[take].tolist() if phases else []
         plot_mask = plot_mask[take]
@@ -953,11 +961,12 @@ def _cell_result(
             else np.array([], dtype="int64")
         )
     full_response = request.precision == "full" or not request.compact
+    selected_display_count = len(raw)
     if len(raw) > request.display_max_points_per_cell and not full_response:
         envelope_series = (
             [derivative_x, derivative_y]
             if settings["view"] != "voltage_current"
-            else list(voltage_by_channel.values()) or [voltage]
+            else [*(list(voltage_by_channel.values()) or [voltage]), current]
         )
         primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
         if settings["view"] == "voltage_current" and voltage_by_channel:
@@ -973,6 +982,7 @@ def _cell_result(
             )
         take = np.unique(np.concatenate((take, source_boundary_indices)))
         raw = raw.iloc[take]
+        display_row_indices = take if display_row_indices is None else display_row_indices[take]
         display_x = display_x[take]
         phases = np.asarray(phases)[take].tolist() if phases else []
         voltage_by_channel = {
@@ -1021,6 +1031,8 @@ def _cell_result(
         "electrode_area_cm2": electrode_area_cm2,
         "cycle": analysis_engine._jsonsafe_int(raw["cycle"].to_numpy()),
         "display_x": analysis_engine._jsonsafe_plot(display_x, None if full_response else 6),
+        **analysis_engine.time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows),
+        **({"display_cycle_spans": display_cycle_spans} if not request.refinement else {}),
         **(
             {"display_x_cycle_origins": display_x_cycle_origins}
             if (

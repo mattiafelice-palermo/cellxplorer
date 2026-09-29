@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CellXplorer — Indexed source search mockups</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #1b1c1d;
+      --surface: #242526;
+      --surface-raised: #292a2b;
+      --surface-hover: #303233;
+      --border: #414344;
+      --text: #dedede;
+      --muted: #929596;
+      --primary: #00a884;
+      --primary-soft: #173b33;
+      --primary-text: #6ce0c1;
+      --blue: #3185ad;
+      --warning: #d9953e;
+      --warning-soft: #44351f;
+      --danger: #d66d6d;
+      --radius: 8px;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #171819; color: var(--text); }
+    button, input, select { color: inherit; font: inherit; }
+    .gallery { width: min(1360px, calc(100% - 36px)); margin: 28px auto 60px; }
+    .gallery h1 { margin: 0; font-size: 23px; font-weight: 650; }
+    .gallery > p { margin: 6px 0 26px; color: var(--muted); }
+    .mock { margin: 0 0 38px; }
+    .mock-title { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+    .mock-caption { margin: -4px 0 10px; color: var(--muted); font-size: 13px; }
+    .window {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      min-height: 680px;
+      overflow: hidden;
+      background: var(--page);
+      border: 1px solid #37393a;
+      border-radius: 10px;
+      box-shadow: 0 12px 35px #0005;
+      font-size: 13px;
+    }
+    .topbar {
+      height: 48px; display: flex; align-items: center; gap: 14px; padding: 0 20px;
+      border-bottom: 1px solid #343637; background: #222324;
+    }
+    .brand-icon { color: var(--primary); font-size: 22px; font-weight: 800; }
+    .brand { font-size: 16px; font-weight: 700; }
+    .top-actions { display: flex; gap: 18px; align-items: center; margin-left: auto; color: #aeb0b0; }
+    .shell { display: flex; height: calc(100% - 48px); }
+    .app-nav {
+      width: 226px; flex: 0 0 226px; padding: 12px 10px; border-right: 1px solid #37393a;
+      display: flex; flex-direction: column; gap: 4px; background: #222324;
+    }
+    .nav-item { height: 42px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: 4px; color: #d0d1d1; }
+    .nav-item.active { background: #173b33; color: var(--primary-text); }
+    .nav-icon { width: 18px; text-align: center; color: #aaa; font-size: 15px; }
+    .nav-item.active .nav-icon { color: var(--primary-text); }
+    .nav-bottom { margin-top: auto; }
+    .main { flex: 1; min-width: 0; padding: 22px 18px; }
+    .page-title { font-size: 23px; font-weight: 650; margin-bottom: 8px; }
+    .dim { color: var(--muted); }
+    .button {
+      height: 34px; display: inline-flex; justify-content: center; align-items: center; gap: 8px;
+      padding: 0 13px; border: 1px solid var(--border); border-radius: 7px;
+      background: #292a2b; white-space: nowrap;
+    }
+    .button.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+    .button.subtle { background: transparent; }
+    .button.icon { width: 36px; padding: 0; }
+    .input {
+      height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 11px;
+      border: 1px solid var(--border); border-radius: 7px; background: #292a2b; color: var(--muted);
+    }
+    .input.fill { flex: 1; min-width: 0; }
+    .select { min-width: 185px; justify-content: space-between; color: var(--text); }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; background: #303233; color: #b9bbbb; font-size: 12px; }
+    .pill.primary { background: var(--primary-soft); color: var(--primary-text); }
+    .pill.warning { background: var(--warning-soft); color: #efbe72; }
+    .segmented { display: inline-flex; padding: 3px; border-radius: 7px; background: #1d1e1f; border: 1px solid #333536; }
+    .segment { padding: 7px 12px; border-radius: 5px; color: #b9bbbb; }
+    .segment.on { color: var(--text); background: #383a3b; font-weight: 600; }
+    .label { color: var(--muted); font-size: 12px; }
+    .search-modal {
+      position: absolute; inset: 36px 56px 34px; z-index: 3; display: flex; flex-direction: column;
+      background: var(--surface); border: 1px solid #393b3c; border-radius: 9px;
+      box-shadow: 0 16px 50px #0009;
+    }
+    .modal-heading { height: 50px; padding: 0 18px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #37393a; }
+    .modal-heading strong { font-size: 17px; }
+    .modal-heading .dim { font-size: 13px; }
+    .close { margin-left: auto; font-size: 21px; color: #b7b9b9; }
+    .modal-body { flex: 1; min-height: 0; display: flex; }
+    .quick { width: 206px; flex: 0 0 206px; padding: 13px 10px; border-right: 1px solid var(--border); overflow: hidden; }
+    .quick-label { margin: 5px 8px 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .quick-row { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 9px; border-radius: 5px; color: #d0d1d1; }
+    .quick-row.active { background: var(--primary-soft); color: var(--primary-text); }
+    .browser { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px; gap: 9px; }
+    .path-row { display: flex; align-items: center; gap: 8px; }
+    .crumbs { flex: 1; height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 13px; border: 1px solid var(--border); border-radius: 7px; background: #292a2b; }
+    .crumbs span:first-child, .crumbs span:nth-child(3) { color: var(--primary-text); }
+    .scope-row { display: flex; align-items: center; gap: 10px; }
+    .scope-row .segmented { flex: 0 0 auto; }
+    .scope-row .input { flex: 1; }
+    .toolbar { display: flex; align-items: center; gap: 8px; }
+    .filter-row { display: flex; align-items: center; gap: 7px; min-height: 28px; }
+    .filter-chip { border: 1px solid #464849; border-radius: 14px; padding: 4px 9px; color: #bfc1c1; font-size: 11px; }
+    .filter-chip.on { border-color: #168e75; background: #183a33; color: var(--primary-text); }
+    .index-status { margin-left: auto; font-size: 11px; color: #d7aa62; }
+    .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(390px, 1.35fr) minmax(300px, .9fr); gap: 10px; }
+    .left-stack { min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+    .results, .preview-card, .selected-card, .settings-card { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+    .results { flex: 1; min-height: 0; overflow: hidden; }
+    .table-head, .file-row { display: grid; grid-template-columns: minmax(180px, 2.3fr) minmax(145px, 1.5fr) 76px 84px 104px; gap: 8px; align-items: center; padding: 0 10px; }
+    .table-head { height: 34px; background: #2c2d2e; color: #a8aaaa; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; }
+    .file-row { min-height: 42px; border-bottom: 1px solid #383a3b; color: #d4d5d5; }
+    .file-row:last-child { border-bottom: 0; }
+    .file-row.previewing { background: #202b29; box-shadow: inset 3px 0 var(--primary); }
+    .file-row.included { background: #087d62; color: white; }
+    .file-name { min-width: 0; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .check { width: 17px; height: 17px; flex: 0 0 17px; border: 1px solid #656869; border-radius: 4px; display: grid; place-items: center; color: white; font-size: 12px; }
+    .check.on { background: #0a9c7a; border-color: #0a9c7a; }
+    .file-icon { color: #a9b1b4; }
+    .location { min-width: 0; color: #aeb0b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .included .location, .included .muted-cell { color: #e0f6f0; }
+    .muted-cell { color: #b4b6b6; font-size: 12px; }
+    .selected-card { height: 105px; flex: 0 0 105px; padding: 9px 10px; overflow: hidden; }
+    .selected-title { display: flex; align-items: center; gap: 6px; font-weight: 650; margin-bottom: 7px; }
+    .selected-path { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 5px; background: #087d62; white-space: nowrap; overflow: hidden; color: #fff; }
+    .selected-path .path-text { overflow: hidden; text-overflow: ellipsis; }
+    .preview-card { min-width: 0; display: flex; flex-direction: column; padding: 10px; }
+    .preview-title { display: flex; align-items: start; gap: 6px; font-weight: 650; }
+    .preview-title .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+    .preview-meta { margin: 4px 0 8px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .preview-tabs { display: flex; border-bottom: 1px solid #4b4d4e; }
+    .preview-tab { flex: 1; text-align: center; padding: 9px 4px; color: #bfc1c1; }
+    .preview-tab.on { border-bottom: 2px solid var(--primary); color: var(--text); }
+    .toggle-line { display: flex; justify-content: center; gap: 9px; align-items: center; margin: 12px 0 4px; color: #bfc1c1; }
+    .switch { width: 34px; height: 18px; border-radius: 12px; padding: 2px; background: var(--primary); display: flex; justify-content: end; }
+    .switch:after { content: ""; width: 14px; height: 14px; border-radius: 50%; background: white; }
+    .plot { min-height: 0; flex: 1; display: grid; place-items: center; }
+    .plot svg { width: 100%; max-height: 285px; }
+    .legend { display: flex; justify-content: center; gap: 18px; color: #b9bbbb; font-size: 11px; margin-top: 3px; }
+    .legend i { display: inline-block; width: 17px; height: 2px; vertical-align: middle; margin-right: 5px; }
+    .cycle-nav { display: flex; justify-content: center; align-items: center; gap: 7px; margin: 10px 0 1px; }
+    .cycle-box { border: 1px solid var(--border); background: #2a2b2c; border-radius: 6px; padding: 6px 12px; min-width: 55px; text-align: center; }
+    .footer { height: 48px; border-top: 1px solid #383a3b; display: flex; align-items: center; padding: 0 14px; color: var(--muted); }
+    .footer .actions { margin-left: auto; display: flex; gap: 8px; }
+    .backdrop { position: absolute; inset: 48px 0 0; background: #0809099e; z-index: 2; }
+    .setting-tabs { display: flex; flex-wrap: wrap; gap: 2px 20px; border-bottom: 1px solid var(--border); padding: 0 2px 12px; margin: 4px 0 18px; }
+    .setting-tab { display: flex; align-items: center; gap: 7px; padding: 7px 9px; color: #bbbdbd; }
+    .setting-tab.on { color: var(--text); border-bottom: 2px solid var(--primary); }
+    .settings-card { padding: 18px; }
+    .section-title { font-size: 17px; font-weight: 650; }
+    .section-sub { color: var(--muted); margin-top: 4px; }
+    .settings-header { display: flex; align-items: start; gap: 14px; margin-bottom: 18px; }
+    .settings-header .button { margin-left: auto; }
+    .summary-strip { display: flex; gap: 18px; padding: 11px 12px; background: #202122; border: 1px solid #363839; border-radius: 6px; margin-bottom: 14px; }
+    .summary-item strong { display: block; font-size: 15px; }
+    .summary-item span { color: var(--muted); font-size: 11px; }
+    .root-head, .root-row { display: grid; grid-template-columns: minmax(300px, 1fr) 140px 115px 136px; gap: 12px; align-items: center; padding: 11px 10px; }
+    .root-head { color: var(--muted); font-size: 11px; font-weight: 650; border-bottom: 1px solid var(--border); }
+    .root-row { border-bottom: 1px solid #393b3c; }
+    .root-row:last-child { border-bottom: 0; }
+    .root-path { min-width: 0; }
+    .root-path strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
+    .root-path span { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status-ready { color: var(--primary-text); }
+    .status-offline { color: #e8ad66; }
+    .small-actions { display: flex; gap: 6px; justify-content: end; }
+    .icon-button { width: 30px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; color: #c5c7c7; background: #292a2b; }
+    .lower-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+    .option-block { border: 1px solid var(--border); border-radius: 7px; padding: 13px; }
+    .option-block h3 { font-size: 13px; margin: 0 0 10px; }
+    .checkline { display: flex; align-items: center; gap: 8px; margin: 7px 0; color: #c8caca; }
+    .checkbox { width: 15px; height: 15px; border: 1px solid #6a6d6d; border-radius: 4px; }
+    .checkbox.checked { border-color: var(--primary); background: var(--primary); color: #fff; text-align: center; line-height: 13px; font-size: 11px; }
+    .field-label { color: #bcbebe; font-size: 12px; font-weight: 600; margin: 9px 0 6px; }
+    .dialog-shade { position: absolute; inset: 0; z-index: 5; background: #090a0b99; display: grid; place-items: center; }
+    .dialog { width: 520px; background: var(--surface); border: 1px solid #4a4c4d; border-radius: 9px; box-shadow: 0 18px 48px #000b; }
+    .dialog-head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; font-size: 17px; font-weight: 650; }
+    .dialog-body { padding: 17px 18px 12px; }
+    .dialog-body p { margin: 0 0 14px; color: var(--muted); line-height: 1.5; }
+    .field-row { display: flex; gap: 8px; }
+    .field-row .input { flex: 1; }
+    .dialog-footer { display: flex; justify-content: end; gap: 8px; border-top: 1px solid var(--border); padding: 13px 18px; }
+    .empty-search { position: absolute; inset: 0; z-index: 3; background: #242526; border-radius: 9px; display: flex; flex-direction: column; }
+    .empty-body { flex: 1; display: flex; justify-content: center; align-items: center; text-align: center; }
+    .empty-card { width: 430px; }
+    .empty-icon { font-size: 34px; color: var(--primary-text); margin-bottom: 12px; }
+    .empty-card h2 { font-size: 18px; margin: 0 0 8px; }
+    .empty-card p { color: var(--muted); line-height: 1.5; margin: 0 auto 16px; max-width: 390px; }
+    .progress { height: 7px; background: #3b3d3e; border-radius: 5px; overflow: hidden; margin: 8px 0; }
+    .progress span { display: block; width: 63%; height: 100%; background: var(--primary); }
+    .progress-caption { color: #b4b6b6; font-size: 11px; }
+    @media (max-width: 900px) {
+      .gallery { width: calc(100% - 20px); }
+      .window { min-height: 600px; }
+      .app-nav { width: 180px; flex-basis: 180px; }
+      .quick { width: 160px; flex-basis: 160px; }
+      .workspace { grid-template-columns: minmax(320px, 1fr) 300px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="gallery">
+    <h1>Indexed source search</h1>
+    <p>Concept screens based on the current CellXplorer Step 1 picker and Settings page. Dark theme shown; colors use the app's theme roles.</p>
+
+    <section class="mock">
+      <h2 class="mock-title">1. Search across configured locations</h2>
+      <p class="mock-caption">The search mode lives in Step 1. Results remain usable while metadata indexing continues.</p>
+      <div class="window">
+        <div class="topbar"><span class="brand-icon">X</span><span class="brand">CellXplorer</span><div class="top-actions"><span>Activity</span><span>Downloads&nbsp; <b class="pill primary">42</b></span><span>⏻</span></div></div>
+        <div class="shell">
+          <nav class="app-nav"><div class="nav-item active"><span class="nav-icon">▤</span>Cell Database</div><div class="nav-item"><span class="nav-icon">⌁</span>Analysis Database</div><div class="nav-item"><span class="nav-icon">▱</span>Projects</div><div class="nav-item nav-bottom"><span class="nav-icon">⚙</span>Settings</div></nav>
+          <div class="main"><div class="page-title">Cell Database</div><div class="dim">Flat repository of imported cells, cached cycling data, and source-file status.</div><div style="margin-top:44px" class="button primary">⇧&nbsp; Load cells</div></div>
+        </div>
+        <div class="backdrop"></div>
+        <section class="search-modal">
+          <header class="modal-heading"><strong>Load cell files</strong><span class="dim">Step 1 of 3</span><span class="close">×</span></header>
+          <div class="modal-body">
+            <aside class="quick">
+              <div class="quick-label">Quick access</div>
+              <div class="quick-row"><span>⌂</span>Home</div><div class="quick-row"><span>▱</span>Desktop</div><div class="quick-row"><span>▱</span>Documents</div><div class="quick-row"><span>▱</span>Downloads</div>
+              <div class="quick-label" style="margin-top:18px">Pinned</div><div class="quick-row"><span>▱</span>Lab Data</div><div class="quick-row"><span>▱</span>Battery cycling</div>
+              <div class="quick-label" style="margin-top:18px">Recent</div><div class="quick-row"><span>◷</span>Formation study</div>
+            </aside>
+            <div class="browser">
+              <div class="scope-row">
+                <div class="segmented"><span class="segment">This folder</span><span class="segment on">Search locations</span></div>
+                <div class="input"><span>⌕</span><span>Search files, paths, supplier, protocol…</span><span style="margin-left:auto">⌘</span></div>
+              </div>
+              <div class="toolbar"><div class="input select">All search locations <span>⌄</span></div><div class="button icon">↻</div><span class="dim" style="margin-left:auto">3 locations · 18,642 files indexed</span></div>
+              <div class="filter-row"><span class="filter-chip on">All formats</span><span class="filter-chip">.ndax</span><span class="filter-chip">.mpr</span><span class="filter-chip">Neware .xlsx</span><span class="filter-chip">Supplier&nbsp;⌄</span><span class="filter-chip">Protocol&nbsp;⌄</span><span class="index-status">● Indexing metadata · 2,841 remaining</span></div>
+              <div class="workspace">
+                <div class="left-stack">
+                  <div class="results">
+                    <div class="table-head"><span>Name&nbsp; ↑</span><span>Location</span><span>Format</span><span>Supplier</span><span>Modified</span></div>
+                    <div class="file-row previewing"><div class="file-name"><span class="check"></span><span class="file-icon">▯</span><span style="overflow:hidden;text-overflow:ellipsis">LFP_25C_1C_formation.ndax</span></div><span class="location">Battery cycling / LFP / 25C</span><span class="muted-cell">.ndax</span><span class="muted-cell">Neware</span><span class="muted-cell">9/21/2026</span></div>
+                    <div class="file-row included"><div class="file-name"><span class="check on">✓</span><span class="file-icon">▯</span><span style="overflow:hidden;text-overflow:ellipsis">NMC_formation_export.xlsx</span></div><span class="location">Lab Data / NMC / batch 04</span><span class="muted-cell">.xlsx</span><span class="muted-cell">Neware</span><span class="muted-cell">9/20/2026</span></div>
+                    <div class="file-row"><div class="file-name"><span class="check"></span><span class="file-icon">▯</span><span style="overflow:hidden;text-overflow:ellipsis">Cell_07_GCPL_C12.mpr</span></div><span class="location">Battery cycling / GCPL / run 07</span><span class="muted-cell">.mpr</span><span class="muted-cell">BioLogic</span><span class="muted-cell">9/18/2026</span></div>
+                    <div class="file-row"><div class="file-name"><span class="check"></span><span class="file-icon">▯</span><span style="overflow:hidden;text-overflow:ellipsis">LFP_45C_rate_test.ndax</span></div><span class="location">Battery cycling / LFP / 45C</span><span class="muted-cell">.ndax</span><span class="muted-cell">Neware</span><span class="muted-cell">9/13/2026</span></div>
+                    <div class="file-row"><div class="file-name"><span class="check"></span><span class="file-icon">▯</span><span style="overflow:hidden;text-overflow:ellipsis">Cell_11_CV_and_cycle.mpr</span></div><span class="location">Lab Data / validation / 11</span><span class="muted-cell">.mpr</span><span class="muted-cell">BioLogic</span><span class="muted-cell">9/11/2026</span></div>
+                    <div style="padding:8px 10px;color:var(--muted);font-size:11px">Showing 1–5 of 28 results</div>
+                  </div>
+                  <div class="selected-card"><div class="selected-title">Selected sources <span class="pill primary">1</span><span class="dim" style="margin-left:auto;font-weight:400">Clear all</span></div><div class="selected-path"><span>▯</span><span class="path-text">\\lab-share\cycling\Lab Data\NMC\batch 04\NMC_formation_export.xlsx</span><span style="margin-left:auto">×</span></div></div>
+                </div>
+                <div class="preview-card">
+                  <div class="preview-title">Preview <span class="dim">· LFP_25C_1C_formation.ndax</span></div>
+                  <div class="preview-meta">\\lab-share\cycling\Battery cycling\LFP\25C &nbsp;·&nbsp; 2.4 MB &nbsp;·&nbsp; Neware</div>
+                  <div class="preview-tabs"><div class="preview-tab on">Voltage</div><div class="preview-tab">Cycles</div></div>
+                  <div class="toggle-line"><span>Time</span><span class="switch"></span><span>Capacity</span></div>
+                  <div class="plot">
+                    <svg viewBox="0 0 360 230" role="img" aria-label="Illustrative voltage and current preview plot">
+                      <rect x="46" y="10" width="297" height="190" fill="#222425" stroke="#777b7d"/>
+                      <line x1="46" y1="55" x2="343" y2="55" stroke="#414445"/><line x1="46" y1="100" x2="343" y2="100" stroke="#414445"/><line x1="46" y1="145" x2="343" y2="145" stroke="#414445"/>
+                      <line x1="46" y1="175" x2="343" y2="175" stroke="#55595a"/>
+                      <polyline points="47,42 58,38 70,48 81,35 94,44 106,33 118,39 133,36 148,45 162,34 177,39 190,28 202,34 218,42 230,37 245,46 260,39 276,44 290,34 306,41 323,30 341,38" fill="none" stroke="#00b98d" stroke-width="3"/>
+                      <polyline points="47,177 58,180 70,169 81,182 94,176 106,187 118,170 133,181 148,177 162,186 177,171 190,180 202,168 218,177 230,188 245,177 260,182 276,170 290,181 306,174 323,187 341,176" fill="none" stroke="#3185ad" stroke-width="2.4"/>
+                      <text x="4" y="80" fill="#bfc1c1" font-size="12" transform="rotate(-90 15,80)">Voltage (V)</text><text x="10" y="190" fill="#bfc1c1" font-size="12" transform="rotate(-90 20,190)">Current (mA)</text>
+                      <text x="45" y="217" fill="#aeb0b0" font-size="11">0</text><text x="183" y="217" fill="#aeb0b0" font-size="11">Time (min)</text><text x="326" y="217" fill="#aeb0b0" font-size="11">120</text>
+                    </svg>
+                  </div>
+                  <div class="legend"><span><i style="background:#00b98d"></i>Voltage</span><span><i style="background:#3185ad"></i>Current</span></div>
+                  <div class="cycle-nav"><span class="button icon">‹</span><span class="cycle-box">54</span><span class="dim">–</span><span class="cycle-box">73</span><span class="button icon">›</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <footer class="footer"><span>Search covers enabled roots only</span><div class="actions"><span class="button">Cancel</span><span class="button primary">Continue</span></div></footer>
+        </section>
+      </div>
+    </section>
+
+    <section class="mock">
+      <h2 class="mock-title">2. Manage search locations in Settings</h2>
+      <p class="mock-caption">A dedicated Settings tab shows root freshness, counts, supported formats, and metadata/refresh options.</p>
+      <div class="window">
+        <div class="topbar"><span class="brand-icon">X</span><span class="brand">CellXplorer</span><div class="top-actions"><span>Activity</span><span>Downloads&nbsp; <b class="pill primary">42</b></span><span>⏻</span></div></div>
+        <div class="shell">
+          <nav class="app-nav"><div class="nav-item"><span class="nav-icon">▤</span>Cell Database</div><div class="nav-item"><span class="nav-icon">⌁</span>Analysis Database</div><div class="nav-item"><span class="nav-icon">▱</span>Projects</div><div class="nav-item active nav-bottom"><span class="nav-icon">⚙</span>Settings</div></nav>
+          <div class="main">
+            <div class="page-title">Settings</div>
+            <div class="setting-tabs"><span class="setting-tab">⇩ Downloads</span><span class="setting-tab">⌁ Source monitoring</span><span class="setting-tab">▤ Cell metadata</span><span class="setting-tab on">⌕ File search</span><span class="setting-tab">⌁ Plots &amp; export</span><span class="setting-tab">▣ Desktop</span><span class="setting-tab">♧ App updates</span><span class="setting-tab">◷ Performance</span><span class="setting-tab">▤ Cache</span><span class="setting-tab">◷ Activity log</span></div>
+            <div class="settings-card">
+              <div class="settings-header"><div><div class="section-title">Search locations</div><div class="section-sub">Choose folders to search from the import picker. Source files stay where they are.</div></div><span class="button primary">＋ Add search location</span></div>
+              <div class="summary-strip"><div class="summary-item"><strong>3</strong><span>Enabled roots</span></div><div class="summary-item"><strong>18,642</strong><span>Supported files indexed</span></div><div class="summary-item"><strong>2,841</strong><span>Metadata items remaining</span></div><div class="summary-item" style="margin-left:auto"><span>Last successful refresh</span><strong style="font-size:13px">Today, 9:42 AM</strong></div></div>
+              <div class="root-head"><span>Location</span><span>Index status</span><span>Files</span><span style="text-align:right">Actions</span></div>
+              <div class="root-row"><div class="root-path"><strong>\\lab-share\cycling\Battery Data</strong><span>UNC network share · Includes nested folders</span></div><span class="status-ready">● Ready</span><span>12,842</span><div class="small-actions"><span class="icon-button">↻</span><span class="icon-button">Ⅱ</span><span class="icon-button">⋯</span></div></div>
+              <div class="root-row"><div class="root-path"><strong>D:\Research\Neware Exports</strong><span>Local drive · Metadata updated 18 min ago</span></div><span class="status-ready">● Indexing</span><span>4,991</span><div class="small-actions"><span class="icon-button">↻</span><span class="icon-button">Ⅱ</span><span class="icon-button">⋯</span></div></div>
+              <div class="root-row"><div class="root-path"><strong>\\lab-share\archive\Cycling</strong><span>Last successful scan yesterday at 7:10 PM</span></div><span class="status-offline">● Offline · showing saved results</span><span>809</span><div class="small-actions"><span class="icon-button">↻</span><span class="icon-button">Ⅱ</span><span class="icon-button">⋯</span></div></div>
+              <div class="lower-grid">
+                <div class="option-block"><h3>File types</h3><div class="checkline"><span class="checkbox checked">✓</span>Neware binary <span class="dim">.ndax</span></div><div class="checkline"><span class="checkbox checked">✓</span>BioLogic <span class="dim">.mpr</span></div><div class="checkline"><span class="checkbox checked">✓</span>Recognized Neware workbook <span class="dim">.xlsx</span></div><div class="label" style="margin-top:8px">Other Excel workbooks are not indexed as importable files.</div></div>
+                <div class="option-block"><h3>Indexing behavior</h3><div class="checkline"><span class="checkbox checked">✓</span>Search header metadata when available</div><div class="field-label">Automatic refresh</div><div class="input select">When search opens, if older than 24 hours <span>⌄</span></div><div class="label" style="margin-top:7px">Refresh runs in the background. Search stays available.</div></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px"><span class="dim" style="font-size:11px">The index stores file paths and selected header metadata on this computer.</span><div style="display:flex;gap:8px"><span class="button subtle">Rebuild index</span><span class="button primary">Save settings</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mock">
+      <h2 class="mock-title">3. Add a search location</h2>
+      <p class="mock-caption">The user explicitly chooses each root. Adding a root starts background indexing; it does not import or copy files.</p>
+      <div class="window">
+        <div class="topbar"><span class="brand-icon">X</span><span class="brand">CellXplorer</span><div class="top-actions"><span>Activity</span><span>Downloads&nbsp; <b class="pill primary">42</b></span><span>⏻</span></div></div>
+        <div class="shell">
+          <nav class="app-nav"><div class="nav-item"><span class="nav-icon">▤</span>Cell Database</div><div class="nav-item"><span class="nav-icon">⌁</span>Analysis Database</div><div class="nav-item"><span class="nav-icon">▱</span>Projects</div><div class="nav-item active nav-bottom"><span class="nav-icon">⚙</span>Settings</div></nav>
+          <div class="main"><div class="page-title">Settings</div><div class="setting-tabs"><span class="setting-tab">⇩ Downloads</span><span class="setting-tab">⌁ Source monitoring</span><span class="setting-tab">▤ Cell metadata</span><span class="setting-tab on">⌕ File search</span><span class="setting-tab">⌁ Plots &amp; export</span></div><div class="settings-card"><div class="section-title">Search locations</div><div class="section-sub">Choose folders to search from the import picker.</div></div></div>
+        </div>
+        <div class="dialog-shade">
+          <div class="dialog">
+            <div class="dialog-head">Add a search location <span class="close">×</span></div>
+            <div class="dialog-body">
+              <p>Select a folder to include in file search. CellXplorer will scan supported file names and read available header metadata in the background.</p>
+              <div class="field-label">Folder path</div>
+              <div class="field-row"><div class="input">\\lab-share\cycling\Battery Data</div><span class="button">Browse…</span></div>
+              <div class="field-label" style="margin-top:15px">Include these formats</div>
+              <div class="checkline"><span class="checkbox checked">✓</span>Neware binary <span class="dim">.ndax</span></div>
+              <div class="checkline"><span class="checkbox checked">✓</span>BioLogic <span class="dim">.mpr</span></div>
+              <div class="checkline"><span class="checkbox checked">✓</span>Recognized Neware workbook <span class="dim">.xlsx</span></div>
+              <div class="checkline" style="margin-top:13px"><span class="checkbox checked">✓</span>Search available header metadata</div>
+              <div class="pill warning" style="margin-top:11px;white-space:normal;line-height:1.4">Initial scans of large network folders can take time. You can use the app while indexing runs.</div>
+              <div class="label" style="margin-top:9px">Files stay in this location. No network password is saved.</div>
+            </div>
+            <div class="dialog-footer"><span class="button">Cancel</span><span class="button primary">Add location</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mock">
+      <h2 class="mock-title">4. First-use state in the picker</h2>
+      <p class="mock-caption">Search explains the missing setup instead of returning an ambiguous empty result set.</p>
+      <div class="window">
+        <div class="topbar"><span class="brand-icon">X</span><span class="brand">CellXplorer</span><div class="top-actions"><span>Activity</span><span>Downloads&nbsp; <b class="pill primary">42</b></span><span>⏻</span></div></div>
+        <div class="shell"><nav class="app-nav"><div class="nav-item active"><span class="nav-icon">▤</span>Cell Database</div><div class="nav-item"><span class="nav-icon">⌁</span>Analysis Database</div><div class="nav-item"><span class="nav-icon">▱</span>Projects</div><div class="nav-item nav-bottom"><span class="nav-icon">⚙</span>Settings</div></nav><div class="main"><div class="page-title">Cell Database</div><span class="button primary">⇧&nbsp; Load cells</span></div></div>
+        <div class="backdrop"></div>
+        <section class="search-modal">
+          <header class="modal-heading"><strong>Load cell files</strong><span class="dim">Step 1 of 3</span><span class="close">×</span></header>
+          <div class="modal-body"><aside class="quick"><div class="quick-label">Quick access</div><div class="quick-row"><span>⌂</span>Home</div><div class="quick-row"><span>▱</span>Desktop</div><div class="quick-row"><span>▱</span>Documents</div><div class="quick-row"><span>▱</span>Downloads</div></aside>
+            <div class="browser">
+              <div class="scope-row"><div class="segmented"><span class="segment">This folder</span><span class="segment on">Search locations</span></div><div class="input"><span>⌕</span><span>Search files, paths, supplier, protocol…</span></div></div>
+              <div class="toolbar"><div class="input select">All search locations <span>⌄</span></div><span class="dim" style="margin-left:auto">No locations configured</span></div>
+              <div class="workspace" style="grid-template-columns:1fr 330px">
+                <div class="results" style="display:grid;place-items:center"><div class="empty-card"><div class="empty-icon">⌕</div><h2>Search across your experiment folders</h2><p>Add the folders where you keep cycler files. CellXplorer will index supported file names and available header metadata in the background.</p><span class="button primary">＋ Add a search location</span><div style="margin-top:10px"><span class="button subtle">Manage search locations</span></div></div></div>
+                <div class="preview-card" style="display:grid;place-items:center;text-align:center;color:var(--muted)"><div><div style="font-size:28px;color:#6c7071">⌁</div><div>Select a supported file to preview voltage, capacity, and cycles.</div></div></div>
+              </div>
+            </div>
+          </div>
+          <footer class="footer"><span>0 folders, 0 files</span><div class="actions"><span class="button">Cancel</span><span class="button" style="opacity:.5">Continue</span></div></footer>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

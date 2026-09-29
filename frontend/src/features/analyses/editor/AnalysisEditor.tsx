@@ -752,6 +752,10 @@ function resetManualAxis(spec: AnalysisSpec, scope: AnalysisTabKey, axis: "x_axi
   });
 }
 
+function resetTimeCapacityAxis(spec: AnalysisSpec, axis: "x_axis" | "y_axis"): void {
+  resetManualAxis(spec, "time_capacity", axis);
+}
+
 function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedAnalysisPlot {
   const validSegmentIds = new Set((base.protocol_segments ?? []).map((segment) => segment.id));
   const protocolFilter = {
@@ -5478,7 +5482,7 @@ function AnalysisEditorView({
         <TimeCapacitySettings
           spec={spec}
           update={update}
-          resetAxis={(s, axis) => resetManualAxis(s, "time_capacity", axis)}
+          resetAxis={resetTimeCapacityAxis}
           voltageChannels={timeCapacityVoltageChannels}
         />
       )}

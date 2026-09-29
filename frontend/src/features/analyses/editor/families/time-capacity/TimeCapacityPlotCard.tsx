@@ -143,20 +143,19 @@ import {
   timeCapacityNativeExportPlan,
 } from "./timeCapacityDataExport";
 import {
-  timeCapacityCycleRangeForViewport,
   timeCapacityRefinementChunks,
+  TimeCapacityDetailCache,
+  timeCapacityBufferedRefinementViewport,
   mergeTimeCapacityRefinementChunks,
-  timeCapacityOverviewExtent,
   timeCapacityRefinementCanSchedule,
-  timeCapacityRefinementDisplayIsCompatible,
   timeCapacityRefinementDisplayIsCurrent,
-  timeCapacityRefinementTransitionDuration,
-  timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
-  timeCapacityVisibleCycleRangeForViewport,
+  buildTimeCapacityViewportIndex,
+  timeCapacityViewportSummaryFromIndex,
   type TimeCapacityViewport,
 } from "./timeCapacityRefinementPolicy";
 import { TimeCapacityRefinementLifecycle } from "./timeCapacityRefinementLifecycle";
+import { captureTimeCapacityRefinement, type TimeCapacityRefinementCrossfade } from "./timeCapacityRefinementReveal";
 import { TimeCapacityCycleNavigation } from "./TimeCapacityCycleNavigation";
 import { useTimeCapacityProgressiveWarmup } from "./useTimeCapacityProgressiveWarmup";
 import { timeCapacityRangeSpec, TIME_CAPACITY_COMMITTED_VIEWPORT_WIDTH } from "./timeCapacityWarmupPolicy";
@@ -408,7 +407,7 @@ function timeCapacityX(trace: TimeCapacityTrace, spec: AnalysisSpec): { x: numbe
 type TimeCapacitySegment = {
   key: string;
   phase: string;
-  x: number[];
+  x: (number | null)[];
   cycle: (number | null)[];
   sourceCycle: (number | null)[];
   displayOnlyCycle: boolean[];
@@ -444,6 +443,7 @@ function timeCapacitySegments(
   );
   const x = xOverride ?? timeCapacityX(trace, spec).x;
   const segments: TimeCapacitySegment[] = [];
+  const displayBreaks = new Set(trace.display_break_before ?? []);
   let current: TimeCapacitySegment | null = null;
   const consecutiveCapacity =
     cfg.display_mode === "consecutive" && cfg.x_axis !== "time";
@@ -518,6 +518,16 @@ function timeCapacitySegments(
         ) as Partial<Record<VoltageChannel, (number | null)[]>>,
         current: [],
       };
+    }
+    if (displayBreaks.has(index) && current.x.length) {
+      current.x.push(null);
+      current.cycle.push(null);
+      current.sourceCycle.push(null);
+      current.displayOnlyCycle.push(false);
+      if (includeExportColumns) current.sources.push(timeCapacitySourceAt(trace, index));
+      current.voltage.push(null);
+      for (const channel of selectedChannels) current.voltageByChannel[channel]?.push(null);
+      current.current.push(null);
     }
     current.x.push(x[index]);
     current.cycle.push(trace.cycle[index] ?? null);
@@ -941,47 +951,6 @@ function timeCapacityTraceVisibleForSpec(trace: Plotly.Data, spec: AnalysisSpec)
   return sample ? !timeCapacityTraceIsHidden(sample, spec) : true;
 }
 
-type RefinementTransition = {
-  from: Plotly.Data[];
-  to: Plotly.Data[];
-};
-
-function refinementTransitionTraces(
-  result: TimeCapacityResult,
-  spec: AnalysisSpec,
-): Plotly.Data[] {
-  return interactivePlotTraces(timeCapacityTracesForResult(result, spec));
-}
-
-function transitionTraceOpacity(
-  trace: Plotly.Data,
-  factor: number,
-  hideInteraction: boolean,
-): Plotly.Data {
-  const baseOpacity = Number((trace as { opacity?: unknown }).opacity);
-  const opacity = Number.isFinite(baseOpacity) ? baseOpacity * factor : factor;
-  return {
-    ...trace,
-    opacity,
-    ...(hideInteraction ? { showlegend: false, hoverinfo: "skip" } : {}),
-  } as Plotly.Data;
-}
-
-function refinementTransitionCanReveal(from: Plotly.Data[], to: Plotly.Data[]): boolean {
-  return [...from, ...to].every((trace) => {
-    const opacity = Number((trace as { opacity?: unknown }).opacity);
-    return !Number.isFinite(opacity) || opacity >= 0.999;
-  });
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
 export function timeCapacityLayout(
   result: TimeCapacityResult | undefined,
   spec: AnalysisSpec,
@@ -1293,7 +1262,7 @@ function TimeCapacityVoltageChannelSelector({
 }
 
 
-export function TimeCapacitySettings({
+export const TimeCapacitySettings = memo(function TimeCapacitySettings({
   spec,
   update,
   resetAxis,
@@ -1563,8 +1532,18 @@ export function TimeCapacitySettings({
       </Accordion>
     </Paper>
   );
-}
-
+}, (previous, next) => {
+  if (previous.update !== next.update || previous.resetAxis !== next.resetAxis ||
+      previous.voltageChannels !== next.voltageChannels) return false;
+  // This panel displays settings, not the independently mounted cycle range.
+  // Its handlers always read the current spec through update's functional
+  // callback, so skipping a range-only edit cannot capture an obsolete range.
+  const settings = (spec: AnalysisSpec) => {
+    const { cycle_start, cycle_end, cycles, ...rest } = timeCapacityConfig(spec);
+    return rest;
+  };
+  return JSON.stringify(settings(previous.spec)) === JSON.stringify(settings(next.spec));
+});
 
 
 function TimeCapacityPlotCardView({
@@ -1616,17 +1595,26 @@ function TimeCapacityPlotCardView({
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
   const [computeToken, setComputeToken] = useState<string | null>(null);
+  const currentComputeTokenRef = useRef<string | null>(null);
+  const computeProgressEligibleRef = useRef(false);
   const [dataExporting, setDataExporting] = useState(false);
   const [dataExportStage, setDataExportStage] = useState<
     "requesting" | "formatting" | "saving" | null
   >(null);
   const [dataExportFormat, setDataExportFormat] = useState<PlotStyle["data_export_format"] | null>(null);
   const [refinedResult, setRefinedResult] = useState<TimeCapacityRefinementResult | null>(null);
-  const [refinementTransition, setRefinementTransition] = useState<RefinementTransition | null>(null);
-  const [refinementTransitionProgress, setRefinementTransitionProgress] = useState(1);
-  const refinementTimerRef = useRef<number | null>(null);
+  const detailCacheRef = useRef(new TimeCapacityDetailCache());
+  const refinementCrossfadeRef = useRef<TimeCapacityRefinementCrossfade | null>(null);
+  const refinementRevealPendingRef = useRef<string | null>(null);
+  const refinementRevealedGenerationRef = useRef<string | null>(null);
+  const cancelRefinementReveal = useCallback(() => {
+    refinementRevealPendingRef.current = null;
+    refinementCrossfadeRef.current?.cancel();
+    refinementCrossfadeRef.current = null;
+  }, []);
+  // Visibility/style edits must not leave pixels from the previous presentation.
+  useEffect(() => cancelRefinementReveal(), [spec, cancelRefinementReveal]);
   const refinementAbortRef = useRef<AbortController | null>(null);
-  const refinementTransitionFrameRef = useRef<number | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const familyActivity = usePlotFamilyActivity();
   const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;
@@ -2134,7 +2122,10 @@ function TimeCapacityPlotCardView({
       // Do not churn local token state or poll for a job that cannot exist on
       // every buffer refill.
       const token = transientPreviewRequest ? null : newComputeToken();
-      if (token) setComputeToken(token);
+      if (token) {
+        currentComputeTokenRef.current = token;
+        if (computeProgressEligibleRef.current) setComputeToken(token);
+      }
       if (profileRequest) {
         timeCapacityPerformanceProfiler.begin(profileRequest.requestId, profileContext);
       }
@@ -2179,7 +2170,12 @@ function TimeCapacityPlotCardView({
       } finally {
         if (token) {
           window.setTimeout(
-            () => setComputeToken((current) => (current === token ? null : current)),
+            () => {
+              if (currentComputeTokenRef.current === token) currentComputeTokenRef.current = null;
+              if (computeProgressEligibleRef.current) {
+                setComputeToken((current) => (current === token ? null : current));
+              }
+            },
             300
           );
         }
@@ -2204,7 +2200,7 @@ function TimeCapacityPlotCardView({
     enabled: active && timeResult.isSuccess && !timeResult.isPlaceholderData,
     blocked: timeResult.isFetching || cyclePreviewRange !== null ||
       committedNavigationRequest !== null || dataExportStage !== null,
-    foregroundBusy: () => refinementAbortRef.current !== null || refinementTimerRef.current !== null,
+    foregroundBusy: () => refinementAbortRef.current !== null,
     sourceIdentity: voltageChannelDataIdentity(timeResult.data),
     plotIdentity: navigationResetKey,
   });
@@ -2389,72 +2385,38 @@ function TimeCapacityPlotCardView({
   }, [queryResult, requestSpec, timeResult.isPlaceholderData]);
   const currentResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   currentResultRef.current = currentResult;
+  const viewportIndex = useMemo(() => buildTimeCapacityViewportIndex(currentResult), [currentResult]);
+  const viewportIndexRef = useRef(viewportIndex);
+  viewportIndexRef.current = viewportIndex;
   const cancelPendingRefinement = useCallback(() => {
+    cancelRefinementReveal();
     refinementLifecycle.cancelPending();
-    if (refinementTimerRef.current !== null) {
-      window.clearTimeout(refinementTimerRef.current);
-      refinementTimerRef.current = null;
-    }
     refinementAbortRef.current?.abort();
     refinementAbortRef.current = null;
-  }, [refinementLifecycle]);
-  const cancelRefinementTransition = useCallback(() => {
-    if (refinementTransitionFrameRef.current !== null) {
-      window.cancelAnimationFrame(refinementTransitionFrameRef.current);
-      refinementTransitionFrameRef.current = null;
-    }
-    setRefinementTransition(null);
-    setRefinementTransitionProgress(1);
-  }, []);
+  }, [cancelRefinementReveal, refinementLifecycle]);
   const clearDisplayedRefinement = useCallback(() => {
     refinementLifecycle.clearDisplayed();
     setRefinedResult(null);
   }, [refinementLifecycle]);
   const invalidateRefinement = useCallback(() => {
     cancelPendingRefinement();
-    cancelRefinementTransition();
     clearDisplayedRefinement();
-  }, [cancelPendingRefinement, cancelRefinementTransition, clearDisplayedRefinement]);
-  useEffect(() => {
-    if (!refinementTransition) return;
-    const duration = timeCapacityRefinementTransitionDuration(prefersReducedMotion());
-    if (duration <= 0) {
-      setRefinementTransitionProgress(1);
-      setRefinementTransition(null);
-      return;
-    }
-    const startedAt = window.performance.now();
-    const tick = (now: number) => {
-      const progress = timeCapacityRefinementTransitionProgress(now - startedAt, duration);
-      setRefinementTransitionProgress(progress);
-      if (progress >= 1) {
-        refinementTransitionFrameRef.current = null;
-        setRefinementTransition(null);
-        return;
-      }
-      refinementTransitionFrameRef.current = window.requestAnimationFrame(tick);
-    };
-    refinementTransitionFrameRef.current = window.requestAnimationFrame(tick);
-    return () => {
-      if (refinementTransitionFrameRef.current !== null) {
-        window.cancelAnimationFrame(refinementTransitionFrameRef.current);
-        refinementTransitionFrameRef.current = null;
-      }
-    };
-  }, [refinementTransition]);
+  }, [cancelPendingRefinement, clearDisplayedRefinement]);
   useEffect(() => {
     invalidateRefinement();
   }, [invalidateRefinement, currentResult?.data_signature, dataSignature]);
+  useEffect(() => {
+    detailCacheRef.current.clear();
+  }, [currentResult?.data_signature, compatibilitySignature]);
   useLayoutEffect(() => {
     if (stackedModeChanged) invalidateRefinement();
   }, [cfg.stacked, invalidateRefinement, stackedModeChanged]);
   useEffect(() => {
     if (!active) {
       cancelPendingRefinement();
-      cancelRefinementTransition();
       // Retain the completed viewport; only pending work pauses while hidden.
     }
-  }, [active, cancelPendingRefinement, cancelRefinementTransition]);
+  }, [active, cancelPendingRefinement]);
   useEffect(() => cancelPendingRefinement, [cancelPendingRefinement]);
   const selectedVoltageUnavailable = voltageChannelsUnavailable(
     cfg.voltage_channels,
@@ -2495,14 +2457,6 @@ function TimeCapacityPlotCardView({
     voltageCapabilitySignature,
     voltageDataIdentity,
   ]);
-  const computeJob = useQuery({
-    queryKey: ["background-job-token", computeToken],
-    queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
-    enabled: computeToken !== null,
-    // null means the compute was served from cache and never opened a job.
-    refetchInterval: (query) =>
-      query.state.data === null || query.state.data?.status === "running" ? 300 : false,
-  });
   const showComputeProgress = useDelayedFlag(
     (timeResult.isLoading || timeResult.isFetching) && !currentResult,
     // Channel selection changes the render/cache identity and therefore makes
@@ -2514,6 +2468,23 @@ function TimeCapacityPlotCardView({
   );
   const loadingWithoutResult =
     (timeResult.isLoading || timeResult.isFetching) && !currentResult;
+  const computeProgressEligible = loadingWithoutResult && showComputeProgress;
+  computeProgressEligibleRef.current = computeProgressEligible;
+  useEffect(() => {
+    // Backend activity keeps its token immediately. Observe it only when its
+    // progress surface is visible, avoiding status-query renders on fast loads
+    // and on navigation that already has a usable plot.
+    if (computeProgressEligible) setComputeToken(currentComputeTokenRef.current);
+    else if (computeToken !== null) setComputeToken(null);
+  }, [computeProgressEligible, computeToken]);
+  const computeJob = useQuery({
+    queryKey: ["background-job-token", computeToken],
+    queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
+    enabled: computeProgressEligible && computeToken !== null,
+    // null can precede activity creation; continue observing a visible load.
+    refetchInterval: (query) =>
+      query.state.data === null || query.state.data?.status === "running" ? 300 : false,
+  });
   const readyForParent = !loadingWithoutResult;
   useEffect(() => {
     // Background replacement of an already visible buffer is still ready.
@@ -2621,22 +2592,6 @@ function TimeCapacityPlotCardView({
     (panActive || panSettlingWindowRef.current) &&
       panLiveXRef.current,
   );
-  const transitionTraces = useMemo(() => {
-    if (panPresentationActive || cfg.stacked || !refinementTransition) return null;
-    // Keep the old line at its exact visual weight. The new LoD is revealed
-    // over it; this avoids alpha-compositing two copies of the same line,
-    // which otherwise produces a brief lightness/thickness blink.
-    const oldOpacity = 1;
-    const newOpacity = refinementTransitionProgress;
-    return [
-      ...refinementTransition.from.map((trace) =>
-        transitionTraceOpacity(trace, oldOpacity, true),
-      ),
-      ...refinementTransition.to.map((trace) =>
-        transitionTraceOpacity(trace, newOpacity, false),
-      ),
-    ];
-  }, [cfg.stacked, panPresentationActive, refinementTransition, refinementTransitionProgress]);
   // A committed range replacement keeps the last complete result/spec pair
   // visible while its query resolves. It must not make the export controls
   // flash or close their settings popover. Active pan/refill fallback remains
@@ -2648,8 +2603,8 @@ function TimeCapacityPlotCardView({
     exportTraces.length > 0,
   );
   const traces = useMemo(
-    () => transitionTraces ?? interactivePlotTraces(plotTraces),
-    [plotTraces, transitionTraces],
+    () => interactivePlotTraces(plotTraces),
+    [plotTraces],
   );
   const traceVisibility = useMemo(
     () => traces.map((trace) => timeCapacityTraceVisibleForSpec(trace, spec)),
@@ -2733,6 +2688,9 @@ function TimeCapacityPlotCardView({
     y2Mode: plotAxisStyle.y2_axis.mode,
     xQuantity: cfg.x_axis,
     timeUnit: cfg.time_unit,
+    displayMode: cfg.display_mode,
+    timeReference: cfg.time_reference,
+    view: cfg.view,
     stacked: cfg.stacked,
   });
   const lastVisibleAutoFitSignatureRef = useRef<string | null>(null);
@@ -2740,6 +2698,18 @@ function TimeCapacityPlotCardView({
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
+  // Matched x axes cannot use Plotly uirevision. Retain a pointer-selected
+  // viewport across result/refinement replacements for the stacked plot.
+  const stackedViewportRef = useRef<{
+    signature: string;
+    x?: [number, number];
+    y?: [number, number];
+  } | null>(null);
+  const stackedViewportFitSignatureRef = useRef(visibleAutoFitSignature);
+  if (stackedViewportFitSignatureRef.current !== visibleAutoFitSignature) {
+    stackedViewportFitSignatureRef.current = visibleAutoFitSignature;
+    stackedViewportRef.current = null;
+  }
 
   // Spec 052.8: y is frozen for the duration of one drag. Letting Plotly
   // reautoscale y as each buffer landed made the whole plot rescale and blink
@@ -2783,6 +2753,7 @@ function TimeCapacityPlotCardView({
   const resetPlotViewportForNavigation = useCallback((redrawCurrent = true) => {
     setPlotViewportCycleRange(null);
     zoomResetRef.current();
+    stackedViewportRef.current = null;
     invalidateRefinement();
     // A different range carries its own viewport in the next declarative
     // figure. Relayout here would synchronously redraw the old range before
@@ -2808,7 +2779,12 @@ function TimeCapacityPlotCardView({
     // Auto ranges are applied with Plotly.relayout alongside the trace restyle.
     const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, plotTraces));
     const next = { ...base } as Record<string, unknown>;
-    const retainedY = panFrozenYRef.current;
+    const rememberedViewport = stackedViewportRef.current;
+    const retainedY = panFrozenYRef.current ?? (
+      cfg.stacked && rememberedViewport?.signature === zoomSignature
+        ? rememberedViewport.y ?? null
+        : null
+    );
     // Stacked layouts intentionally omit uirevision because Plotly can enter
     // a relayout loop when matched x axes use it. Preserve the accepted
     // refinement viewport explicitly while replacing the coarse result so the
@@ -2817,8 +2793,13 @@ function TimeCapacityPlotCardView({
       cfg.stacked && activeRefinedResult
         ? refinementLifecycle.displayed?.viewport ?? null
         : null;
-    if (refinementViewport) {
-      const range = [refinementViewport.min, refinementViewport.max];
+    const retainedX = (
+      cfg.stacked && rememberedViewport?.signature === zoomSignature
+        ? rememberedViewport.x ?? null
+        : null
+    ) ?? (refinementViewport ? [refinementViewport.min, refinementViewport.max] : null);
+    if (retainedX) {
+      const range = retainedX;
       next.xaxis = { ...(base.xaxis ?? {}), range: [...range], autorange: false };
       next.xaxis2 = { ...(base.xaxis2 ?? {}), range: [...range], autorange: false };
     }
@@ -2845,6 +2826,7 @@ function TimeCapacityPlotCardView({
       frozenY,
       activeRefinedResult,
       refinementLifecycle,
+      zoomSignature,
     ]
   );
 
@@ -3128,6 +3110,27 @@ function TimeCapacityPlotCardView({
     },
     [cfg.cycles, resetPlotViewportForNavigation, update],
   );
+  const prepareRefinementReveal = (generation: string) => {
+    if (refinementRevealedGenerationRef.current === generation || refinementRevealPendingRef.current === generation) return;
+    refinementCrossfadeRef.current?.cancel();
+    refinementRevealPendingRef.current = generation;
+    refinementCrossfadeRef.current = plotDivRef.current
+      ? captureTimeCapacityRefinement(plotDivRef.current, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)
+      : null;
+  };
+  const revealCompletedRefinement = (completedData: Plotly.Data[], graphDiv: Readonly<HTMLElement>) => {
+    const generation = refinementRevealPendingRef.current;
+    if (!active || !activeRefinedResult || generation === null ||
+        generation !== refinementLifecycle.generation || activeRefinedResult.request_generation !== generation ||
+        completedData !== traces ||
+        (graphDiv as HTMLElement & { _fullLayout?: { _replotting?: boolean } })._fullLayout?._replotting) return;
+    // react-plotly also calls onUpdate for relayout/restyle events. Only the
+    // figure containing this accepted render's actual data may reveal it.
+    refinementRevealPendingRef.current = null;
+    refinementRevealedGenerationRef.current = generation;
+    refinementCrossfadeRef.current?.reveal();
+  };
+
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     const pointerDriven = zoom.onRelayout(event);
     if (pointerDriven) setPlotViewportChangeKey((current) => current + 1);
@@ -3145,59 +3148,81 @@ function TimeCapacityPlotCardView({
       return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
     };
     const viewport = axisPrefixes.map(readRange).find((value) => value !== null) ?? null;
+    const yViewport = cfg.stacked ? readRange("yaxis") : null;
     if (axisPrefixes.some((prefix) => relayout[`${prefix}.autorange`] === true)) {
-      if (pointerDriven) setPlotViewportCycleRange(null);
-      cancelPendingRefinement();
-      cancelRefinementTransition();
-      clearDisplayedRefinement();
+      if (pointerDriven) {
+        stackedViewportRef.current = null;
+        setPlotViewportCycleRange(null);
+        cancelPendingRefinement();
+            clearDisplayedRefinement();
+      }
     } else {
+      if (pointerDriven && cfg.stacked && (viewport || yViewport)) {
+        const previous = stackedViewportRef.current?.signature === zoomSignature
+          ? stackedViewportRef.current
+          : null;
+        stackedViewportRef.current = {
+          signature: zoomSignature,
+          x: viewport ? [viewport.min, viewport.max] : previous?.x,
+          y: yViewport ? [yViewport.min, yViewport.max] : previous?.y,
+        };
+      }
+      const viewportSummary = pointerDriven && viewport
+        ? timeCapacityViewportSummaryFromIndex(viewportIndexRef.current, viewport)
+        : null;
+      const visibleCycleRange = viewportSummary?.visible ?? null;
       if (pointerDriven && viewport) {
-        const visibleCycleRange = timeCapacityVisibleCycleRangeForViewport(
-          currentResultRef.current,
-          viewport,
-        );
         setPlotViewportCycleRange((current) =>
           current?.start === visibleCycleRange?.start && current?.end === visibleCycleRange?.end
             ? current
             : visibleCycleRange,
         );
       }
+      // Plotly emits relayout events while React replaces a refined figure.
+      // Only a user gesture may start another refinement; otherwise each
+      // response can schedule its own successor and lock up a large analysis.
       if (
+        pointerDriven &&
         !cyclePreviewRange &&
         !previewQueryRange &&
         timeCapacityRefinementCanSchedule(active, scientificRenderSpec)
       ) {
         const previousViewport = refinementLifecycle.requestedViewport;
-      const sameViewport =
-        viewport !== null &&
-        previousViewport !== null &&
-        Math.abs(viewport.min - previousViewport.min) < 1e-9 &&
-        Math.abs(viewport.max - previousViewport.max) < 1e-9;
-      if (viewport && !sameViewport) {
-        const overview = timeCapacityOverviewExtent(currentResultRef.current);
-        const cycleRange = timeCapacityCycleRangeForViewport(currentResultRef.current, viewport);
-        const keepDisplayedRefinement = timeCapacityRefinementDisplayIsCompatible(
-          refinedResult,
-          currentResultRef.current,
-          refinementLifecycle.displayed?.viewport ?? null,
-          viewport,
-        );
-        cancelPendingRefinement();
-        cancelRefinementTransition();
-        if (!keepDisplayedRefinement) clearDisplayedRefinement();
-        if (
-          timeCapacityRefinementWorthwhile(overview, viewport) &&
-          cycleRange &&
-          currentResultRef.current?.data_signature
-        ) {
-          const generation = refinementLifecycle.beginRequest(viewport);
-          refinementTimerRef.current = window.setTimeout(() => {
-            refinementTimerRef.current = null;
+        const sameViewport =
+          viewport !== null &&
+          previousViewport !== null &&
+          Math.abs(viewport.min - previousViewport.min) < 1e-9 &&
+          Math.abs(viewport.max - previousViewport.max) < 1e-9;
+        if (viewport && !sameViewport) {
+          const worthwhile = timeCapacityRefinementWorthwhile(viewportSummary?.overview ?? null, viewport);
+          const cycleRange = worthwhile ? viewportSummary?.padded ?? null : null;
+          cancelPendingRefinement();
+          const cached = cfg.x_axis === "time" && viewport && cycleRange
+            ? detailCacheRef.current.get(currentResultRef.current, compatibilitySignature, viewport, cycleRange)
+            : null;
+          if (!cached) clearDisplayedRefinement();
+          if (
+            worthwhile &&
+            cycleRange &&
+            currentResultRef.current?.data_signature
+          ) {
+            const generation = refinementLifecycle.beginRequest(viewport);
+            if (cached) {
+              const response = { ...cached, request_generation: generation };
+              if (refinementLifecycle.acceptResponse(response, currentResultRef.current, generation, viewport, compatibilitySignature)) {
+                prepareRefinementReveal(generation);
+                setRefinedResult(response);
+              }
+              return;
+            }
+            // onRelayout is the completed gesture, not pointer motion. Start now;
+            // generations and AbortController already provide latest-wins admission.
             const controller = new AbortController();
             refinementAbortRef.current = controller;
             void (async () => {
               const received: TimeCapacityRefinementResult[] = [];
               const chunks = timeCapacityRefinementChunks(cycleRange);
+              let foregroundCached = false;
               try {
                 for (let index = 0; index < chunks.length; index += 1) {
                   if (controller.signal.aborted) break;
@@ -3235,19 +3260,33 @@ function TimeCapacityPlotCardView({
                     viewport,
                     compatibilitySignature,
                   )) continue;
-                  if (index === 0) {
-                    const previousDisplayedResult = activeRefinedResult ?? currentResultRef.current;
-                    const transitionDuration = timeCapacityRefinementTransitionDuration(prefersReducedMotion());
-                    const fromTraces = previousDisplayedResult
-                      ? refinementTransitionTraces(previousDisplayedResult, scientificRenderSpec)
-                      : [];
-                    const toTraces = refinementTransitionTraces(streamed, scientificRenderSpec);
-                    if (previousDisplayedResult && transitionDuration > 0 && refinementTransitionCanReveal(fromTraces, toTraces)) {
-                      setRefinementTransitionProgress(0);
-                      setRefinementTransition({ from: fromTraces, to: toTraces });
-                    } else cancelRefinementTransition();
-                  } else cancelRefinementTransition();
+                  prepareRefinementReveal(generation);
                   setRefinedResult(streamed);
+                  if (cfg.x_axis === "time" && index === chunks.length - 1) {
+                    foregroundCached = detailCacheRef.current.put(streamed, compatibilitySignature, viewport, cycleRange);
+                  }
+                }
+                const buffered = timeCapacityBufferedRefinementViewport(viewport, viewportSummary?.overview ?? null);
+                const bufferedCycles = buffered
+                  ? timeCapacityViewportSummaryFromIndex(viewportIndexRef.current, buffered).padded
+                  : null;
+                if (foregroundCached && buffered && bufferedCycles && bufferedCycles.end - bufferedCycles.start < 64 && !controller.signal.aborted) {
+                  // This optional request never holds up publication or replaces
+                  // the foreground figure. A new gesture cancels it immediately.
+                  try {
+                    const response = await post<TimeCapacityRefinementResult>(
+                      `/api/analyses/${analysisId}/time-capacity/refine`,
+                      { spec: scientificRenderSpec, viewport_x_min: buffered.min, viewport_x_max: buffered.max,
+                        viewport_width: viewportWidth, cycle_start: bufferedCycles.start, cycle_end: bufferedCycles.end,
+                        origin_cycle_start: cycleRange.start, origin_cycle_end: cycleRange.end,
+                        request_generation: generation },
+                      { signal: controller.signal },
+                    );
+                    if (!controller.signal.aborted && refinementLifecycle.generation === generation &&
+                        response.data_signature === currentResultRef.current?.data_signature) {
+                      detailCacheRef.current.put(response, compatibilitySignature, buffered, bufferedCycles);
+                    }
+                  } catch { /* Optional resident margin: the foreground result remains valid. */ }
                 }
               } catch {
                 // An incomplete batch sequence cannot stand in for the full
@@ -3260,15 +3299,13 @@ function TimeCapacityPlotCardView({
                   received.length > 0 &&
                   refinementLifecycle.generation === generation
                 ) {
-                  cancelRefinementTransition();
                   clearDisplayedRefinement();
                 }
               } finally {
                 if (refinementAbortRef.current === controller) refinementAbortRef.current = null;
               }
             })();
-          }, 150);
-        }
+          }
         }
       }
     }
@@ -3701,7 +3738,10 @@ function TimeCapacityPlotCardView({
         ) : (
           <Box
             ref={containerRef}
-            onPointerDownCapture={zoom.armOnPointerDown}
+            onPointerDownCapture={() => {
+              cancelRefinementReveal();
+              zoom.armOnPointerDown();
+            }}
             data-tc-fit-y-hint={yOutOfView ? "on" : undefined}
             style={{
               width: "100%",
@@ -3730,8 +3770,9 @@ function TimeCapacityPlotCardView({
               data={traces}
               layout={layout}
               config={plotConfig}
-              traceVisibility={traceVisibility}
-              traceVisibilityLayoutUpdate={traceVisibilityLayoutUpdate}
+                traceVisibility={traceVisibility}
+                traceVisibilityLayoutUpdate={traceVisibilityLayoutUpdate}
+                traceVisibilityLayoutKey={visibleAutoFitSignature}
               style={{ width: "100%" }}
               onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
@@ -3740,12 +3781,15 @@ function TimeCapacityPlotCardView({
                 completeTimeCapacityProfile();
                 acknowledgePanRender();
               }}
-              onUpdate={(_, graphDiv) => {
+              onUpdate={(figure, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
                 completeTimeCapacityProfile();
                 acknowledgePanRender();
+                revealCompletedRefinement(figure.data, graphDiv);
               }}
+              onPurge={cancelRefinementReveal}
+              onError={cancelRefinementReveal}
             />
             {yOutOfView && (
               <Alert color="yellow" variant="light" mt="xs" p="xs" role="status">

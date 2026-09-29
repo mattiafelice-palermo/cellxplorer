@@ -1727,6 +1727,12 @@ export interface TimeCapacityTrace {
   display_only_cycle?: boolean[];
   /** Canonical plotted x coordinates calculated before display sampling. */
   display_x?: (number | null)[];
+  /** Row indexes after an explicitly clipped-out x interval; ordinary decimation remains connected. */
+  display_break_before?: number[];
+  /** Explicit false proves this response retained every row in its selected viewport. */
+  display_sampled?: boolean;
+  /** Exact cycle x extents before display sampling, for safe viewport selection. */
+  display_cycle_spans?: Record<string, [number, number]>;
   time_s: (number | null)[];
   capacity_mah: (number | null)[];
   capacity_mah_g: (number | null)[];

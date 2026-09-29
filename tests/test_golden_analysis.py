@@ -202,6 +202,31 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
         with self.assertRaises(NonFiniteProjectionError):
             project_result({"value": math.inf})
 
+    def test_project_result_excludes_display_refinement_metadata(self):
+        projected = project_result(
+            {
+                "cell_traces": [
+                    {
+                        "display_x": [0.0, 1.0],
+                        "voltage_v": [3.4, 3.6],
+                        "display_sampled": True,
+                        "display_break_before": [1],
+                        "display_cycle_spans": {"1": [0.0, 1.0]},
+                    }
+                ]
+            }
+        )
+        trace = projected["cell_traces"][0]
+        self.assertEqual(trace["display_x"], [0.0, 1.0])
+        self.assertEqual(trace["voltage_v"], [3.4, 3.6])
+        self.assertTrue(
+            {
+                "display_sampled",
+                "display_break_before",
+                "display_cycle_spans",
+            }.isdisjoint(trace)
+        )
+
     def test_non_finite_production_shaped_result_fails_projection_path(self):
         shaped = {
             "type": "cycles",

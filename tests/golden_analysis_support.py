@@ -743,6 +743,15 @@ def project_result(
                             "source_boundary_indices",
                         ):
                             trace.pop(key, None)
+                        if traces_key == "cell_traces":
+                            # Display sampling/gap/index metadata is a client
+                            # presentation contract, not a scientific golden.
+                            for key in (
+                                "display_sampled",
+                                "display_break_before",
+                                "display_cycle_spans",
+                            ):
+                                trace.pop(key, None)
         if projection:
             projected = _apply_cycles_projection(projected, projection)
     return projected

@@ -1255,6 +1255,45 @@ def _downsample_indices(
     return selected
 
 
+def time_capacity_sampling_metadata(
+    row_indices: np.ndarray | None,
+    selected_count: int,
+    window_break_rows: np.ndarray | None = None,
+) -> dict:
+    """Keep sampling density separate from explicitly clipped-out x intervals.
+
+    Decimation skips rows on a continuous curve; that is not a discontinuity.
+    Only boundaries observed BEFORE sampling, when an x-window excludes an
+    interval and the curve later re-enters it, require a separator here.
+    Existing masks and phase/cycle segmentation remain owned by their renderer.
+    """
+    breaks = []
+    if row_indices is not None and window_break_rows is not None:
+        positions = np.searchsorted(row_indices, window_break_rows)
+        breaks = np.unique(positions[(positions > 0) & (positions < len(row_indices))]).tolist()
+    return {
+        "display_sampled": row_indices is not None and len(row_indices) < selected_count,
+        "display_break_before": breaks,
+    }
+
+
+def time_capacity_cycle_spans(cycles: np.ndarray, display_x: np.ndarray) -> dict[str, list[float]]:
+    """Exact pre-sampling cycle extents, including wholly omitted overview cycles."""
+    if not len(cycles):
+        return {}
+    starts = np.r_[0, np.flatnonzero(cycles[1:] != cycles[:-1]) + 1]
+    minima = np.fmin.reduceat(display_x, starts)
+    maxima = np.fmax.reduceat(display_x, starts)
+    result: dict[str, list[float]] = {}
+    for cycle, low, high in zip(cycles[starts], minima, maxima):
+        if not np.isfinite(cycle) or not np.isfinite(low) or not np.isfinite(high):
+            continue
+        key = str(int(cycle))
+        previous = result.get(key)
+        result[key] = [float(low), float(high)] if previous is None else [min(previous[0], float(low)), max(previous[1], float(high))]
+    return result
+
+
 def resolve_selection(db: Session, spec: dict) -> tuple[list[dict], list[dict]]:
     """Expand selection entries into per-cell units.
 
@@ -4233,6 +4272,9 @@ def compute_time_capacity(
                     "source_descriptors": descriptors,
                     "source_cycle": [],
                     "source_boundary_indices": [],
+                    "display_sampled": False,
+                    "display_break_before": [],
+                    "display_cycle_spans": {},
                     **(
                         {"display_x_cycle_origins": {}}
                         if (
@@ -4627,6 +4669,9 @@ def compute_time_capacity(
             )
             else {}
         )
+        display_cycle_spans = time_capacity_cycle_spans(raw["cycle"].to_numpy(), display_x) if not refinement else {}
+        display_row_indices = None
+        window_break_rows = None
         if (
             refinement
             and refinement_viewport_x_min is not None
@@ -4637,6 +4682,8 @@ def compute_time_capacity(
             window &= display_x <= float(refinement_viewport_x_max)
             take = np.flatnonzero(window)
             raw = raw.iloc[take].reset_index(drop=True)
+            display_row_indices = take
+            window_break_rows = take[np.flatnonzero(np.diff(take) != 1) + 1]
             display_x = display_x[take]
             phases = np.asarray(phases)[take].tolist() if phases else []
             plot_mask = plot_mask[take]
@@ -4663,11 +4710,12 @@ def compute_time_capacity(
         # Full precision is used by scientific data export. It must retain
         # every selected-channel row even when the compact response shape
         # omits arrays that the exporter does not consume.
+        selected_display_count = len(raw)
         if len(raw) > display_max and not (precision == "full" or not compact):
             envelope_series = (
                 [derivative_x, derivative_y]
                 if settings["view"] != "voltage_current"
-                else list(voltage_by_channel.values()) or [voltage]
+                else [*(list(voltage_by_channel.values()) or [voltage]), current]
             )
             primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
             if settings["view"] == "voltage_current" and voltage_by_channel:
@@ -4686,6 +4734,7 @@ def compute_time_capacity(
             ):
                 take = np.unique(np.concatenate((take, source_boundary_indices)))
                 raw = raw.iloc[take]
+                display_row_indices = take if display_row_indices is None else display_row_indices[take]
                 display_x = display_x[take]
                 phases = np.asarray(phases)[take].tolist() if phases else []
                 voltage_by_channel = {
@@ -4753,6 +4802,8 @@ def compute_time_capacity(
                 "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
                 "display_x": _jsonsafe_plot(display_x, None if full_precision else 6),
+                **time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows),
+                **({"display_cycle_spans": display_cycle_spans} if not refinement else {}),
                 **(
                     {"display_x_cycle_origins": display_x_cycle_origins}
                     if (

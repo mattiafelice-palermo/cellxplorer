@@ -2382,10 +2382,16 @@ class AnalysisEngineTests(unittest.TestCase):
         overview_trace = overview["cell_traces"][0]
         self.assertLess(len(overview_trace["display_x"]), len(self.FRAMES[self.HASHES["c1"]]))
         origins = overview_trace["display_x_cycle_origins"]
-        retained_cycles = {int(value) for value in overview_trace["cycle"]}
-        missing_cycles = [cycle for cycle in range(1, 51) if cycle not in retained_cycles]
-        self.assertTrue(missing_cycles)
-        target_cycle = missing_cycles[0]
+        # The overview now preserves both voltage and current extrema, so this
+        # fixture can retain at least one plotted point from every cycle. The
+        # exact origin map and span metadata must nevertheless cover the full
+        # pre-sampling cycle set.
+        self.assertEqual(set(origins), {str(cycle) for cycle in range(1, 51)})
+        self.assertEqual(
+            set(overview_trace["display_cycle_spans"]),
+            {str(cycle) for cycle in range(1, 51)},
+        )
+        target_cycle = 48
         self.assertIn(str(target_cycle), origins)
 
         candidate_spec = deepcopy(overview_spec)

@@ -1650,7 +1650,9 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                 with time_capacity_profiling.profiled_stage(request_profile, "activity_finalize"):
                     _finish_job(req.job_id, cached=True)
                 with time_capacity_profiling.profiled_stage(request_profile, "availability_badges"):
-                    badges = kept + engine.availability_badges(db, spec)
+                    badges = kept + engine.availability_badges(
+                        db, spec, request_context=request_context
+                    )
                 if req.profile:
                     with time_capacity_profiling.profiled_stage(
                         request_profile, "request_profile_finalization"

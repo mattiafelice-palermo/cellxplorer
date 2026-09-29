@@ -18,6 +18,8 @@ import {
   timeCapacityRefinementTransitionProgress,
   timeCapacityRefinementWorthwhile,
   timeCapacityVisibleCycleRangeForViewport,
+  buildTimeCapacityViewportIndex,
+  timeCapacityViewportSummaryFromIndex,
   timeCapacityViewportContains,
 } from "../src/features/analyses/editor/families/time-capacity/timeCapacityRefinementPolicy.ts";
 
@@ -95,6 +97,24 @@ test("overview extent and cycle range use visible overview points only", () => {
   assert.deepEqual(
     timeCapacityVisibleCycleRangeForViewport(current, { min: 3.5, max: 1.5 }),
     { start: 2, end: 2 },
+  );
+});
+
+test("exact pre-sampling cycle spans include cycles omitted by the overview", () => {
+  const current = result();
+  const trace = current.cell_traces[0];
+  trace.cycle = [1, 1, 3, 3];
+  trace.display_x = [0, 1, 4, 5];
+  trace.display_cycle_spans = { "1": [0, 1], "2": [2, 3], "3": [4, 5] };
+
+  const index = buildTimeCapacityViewportIndex(current);
+  assert.deepEqual(
+    timeCapacityViewportSummaryFromIndex(index, { min: 2.25, max: 2.75 }),
+    {
+      overview: { min: 0, max: 5 },
+      visible: { start: 2, end: 2 },
+      padded: { start: 1, end: 3 },
+    },
   );
 });
 
