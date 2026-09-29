@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.34",
-  "notes": "### New features\n\n- Make Time/Capacity plots respond faster to pan and zoom by reusing bounded per-cell navigation data and refining only the visible viewport.\n\n### Bug fixes\n\n- Keep exact time/capacity origins, curve extrema, and continuity stable while viewport detail refinement updates the plotted window.",
-  "pub_date": "2026-09-29T20:04:46.712Z",
+  "version": "0.27.1-alpha.35",
+  "notes": "### Bug fixes\n\n- Prevent Time/Capacity plots from repeatedly redrawing and freezing when opening a plot with hidden samples or changing sample visibility.\n- Show gaps between separately selected cycles without drawing a misleading connecting voltage/current line, while preserving their actual elapsed times.",
+  "pub_date": "2026-09-29T21:34:01.6Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVk5Q2hBU0dOM1FNSEYxQUZaRDdIdnBVejVNNEM3WEFmd1BVMmRFMzlZWEUraHV2VTdMYlUvcmJHR2tBTklZajh6akE0cUtPMUYxZ0Q3cWxwKzVUVlEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzEyMjgxCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM0X3g2NC1zZXR1cC5leGUKY0VRUlJ2TVBQMVNERG9sQzFwTGZxcWt4LzJVc3hZYlpyb3RsN1lCSi81bkNBbjJWVjdYcEFmMkxOVU5Ga3UwTjV4K29TaU9qNlhWTHgwdHFDMm55QkE9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.34/CellXplorer.Alpha_0.27.1-alpha.34_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVc3S3BKUXQ2TE5GQ1JwVVF6dzhlVTEzamxBOVR2MlN4Y1gvRWRLMkNlZnVpUTc0alZIVUQ4V3pLMlkyeEw0RzBkV0ozUlNwNkptcmJJSWRHRi9pZnc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzE3NjM2CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM1X3g2NC1zZXR1cC5leGUKQThCRzFoRnlFcTZwU05oZ0orVDJySDFiOVBPdDJpb3k1cWJKRjRCUDFOYVI5RVBVTC9qTFg3VXBmUTR4UVFEaVhRRUh3a3JoL1FENDRiT29HeFVtQVE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.35/CellXplorer.Alpha_0.27.1-alpha.35_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVk5Q2hBU0dOM1FNSEYxQUZaRDdIdnBVejVNNEM3WEFmd1BVMmRFMzlZWEUraHV2VTdMYlUvcmJHR2tBTklZajh6akE0cUtPMUYxZ0Q3cWxwKzVUVlEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzEyMjgxCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM0X3g2NC1zZXR1cC5leGUKY0VRUlJ2TVBQMVNERG9sQzFwTGZxcWt4LzJVc3hZYlpyb3RsN1lCSi81bkNBbjJWVjdYcEFmMkxOVU5Ga3UwTjV4K29TaU9qNlhWTHgwdHFDMm55QkE9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.34/CellXplorer.Alpha_0.27.1-alpha.34_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVc3S3BKUXQ2TE5GQ1JwVVF6dzhlVTEzamxBOVR2MlN4Y1gvRWRLMkNlZnVpUTc0alZIVUQ4V3pLMlkyeEw0RzBkV0ozUlNwNkptcmJJSWRHRi9pZnc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzE3NjM2CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM1X3g2NC1zZXR1cC5leGUKQThCRzFoRnlFcTZwU05oZ0orVDJySDFiOVBPdDJpb3k1cWJKRjRCUDFOYVI5RVBVTC9qTFg3VXBmUTR4UVFEaVhRRUh3a3JoL1FENDRiT29HeFVtQVE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.35/CellXplorer.Alpha_0.27.1-alpha.35_x64-setup.exe"
     }
   }
 }
