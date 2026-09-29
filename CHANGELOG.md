@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.34 - 2026-09-29
+
+### New features
+
+- Make Time/Capacity plots respond faster to pan and zoom by reusing bounded per-cell navigation data and refining only the visible viewport.
+
+### Bug fixes
+
+- Keep exact time/capacity origins, curve extrema, and continuity stable while viewport detail refinement updates the plotted window.
+
 ## 0.27.1-alpha.33 - 2026-09-29
 
 ### New features
