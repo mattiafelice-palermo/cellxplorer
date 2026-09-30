@@ -38,18 +38,23 @@ export function searchLocationName(path: string) {
 const METADATA_LABELS: Record<string, string> = {
   barcode: "Barcode", remarks: "Remarks", part_number: "Part number", start_time: "Started", technique: "Technique",
 };
-/** Explain metadata/path matches without repeating the filename or hiding the matching field. */
+/** Match reasons describe source-export fields, never inferred Cell metadata. */
 export function indexedMatchExplanation(file: IndexedFile, query: string) {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-  const matches = (value: string) => terms.some((term) => value.toLocaleLowerCase().includes(term));
+  const normalize = (value: string) => value.toLocaleLowerCase().replace(/\//g, "\\");
+  const matches = (value: string) => terms.some((term) => normalize(value).includes(normalize(term)));
   const metadata = Object.entries(file.metadata).filter(([, value]) => matches(value));
-  const explanation = metadata.map(([key, value]) => `${METADATA_LABELS[key] ?? key}: ${value}`);
+  const explanation: string[] = [];
+  if (matches(file.name)) explanation.push("Filename");
+  explanation.push(...metadata.map(([key, value]) => `File header “${METADATA_LABELS[key] ?? key}”: ${value}`));
   const folder = file.path.replace(/[\\/][^\\/]*$/, "");
-  if (terms.some((term) => folder.toLocaleLowerCase().includes(term) && !file.name.toLocaleLowerCase().includes(term))) {
+  if (terms.some((term) => normalize(folder).includes(normalize(term)) && !normalize(file.name).includes(normalize(term)))) {
     explanation.push(`Folder: ${folder}`);
+  } else if (matches(file.canonical) && !matches(file.name) && !matches(folder)) {
+    explanation.push(`Resolved source path: ${file.canonical}`);
   }
-  if (explanation.length) return explanation.join(" · ");
-  return Object.entries(file.metadata).slice(0, 2).map(([key, value]) => `${METADATA_LABELS[key] ?? key}: ${value}`).join(" · ");
+  if (explanation.length) return `Matched: ${explanation.join(" · ")}`;
+  return Object.entries(file.metadata).slice(0, 2).map(([key, value]) => `File header “${METADATA_LABELS[key] ?? key}”: ${value}`).join(" · ");
 }
 
 export function searchRootStatus(status: string) {

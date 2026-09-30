@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## Unreleased
+
+### Improvements
+
+- Explain indexed-search matches by filename, folder, or named source-header field, with highlighted terms and full explanations on focus or hover.
+- Introduce file search once at startup in the next desktop release, with a bundled video, expandable guide, and direct search action. Reopen the guide from the power/settings menu.
+
 ## 0.28.0-alpha.2 - 2026-09-30
 
 ### Bug fixes

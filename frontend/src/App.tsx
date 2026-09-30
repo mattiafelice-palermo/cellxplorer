@@ -31,7 +31,7 @@ import {
   IconPlus,
   IconUpload,
 } from "@tabler/icons-react";
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -52,6 +52,7 @@ import { NavigationWarmupDebugButton } from "./components/NavigationWarmupDebugB
 import { CacheWarmupCoordinator } from "./features/analyses/editor/artifacts/CacheWarmupCoordinator";
 import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator";
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
+import { WhatsNewCoordinator } from "./components/WhatsNewCoordinator";
 import { AnalysisWorkspaceTabs } from "./features/analyses/workspace/AnalysisWorkspaceTabs";
 import { AnalysisWorkspaceContent } from "./features/analyses/workspace/AnalysisWorkspaceContent";
 import { addDebugEvent, getDebugEvents } from "./debug";
@@ -117,6 +118,8 @@ export default function App({
   const location = useLocation();
   const queryClient = useQueryClient();
   const [debugOpen, setDebugOpen] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const openWhatsNew = useCallback(() => setWhatsNewOpen(true), []);
   const [activityOpen, setActivityOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
@@ -560,6 +563,9 @@ export default function App({
         backendReady={databaseStatus.data?.compatible === true}
         gateRequiredOnLaunch={betaBootstrapGateRequired}
       />
+      <WhatsNewCoordinator opened={whatsNewOpen} onOpen={openWhatsNew} onClose={() => setWhatsNewOpen(false)}
+        ready={databaseStatus.data?.compatible === true} version={databaseStatus.data?.app_version ?? null}
+        onTrySearch={() => guardedNavigate("/?loadCells=1&searchSources=1")} />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"
@@ -635,7 +641,7 @@ export default function App({
             </AnalysisUpdateIndicator>
             <NavigationWarmupDebugButton />
             <DownloadsButton />
-            <QuickSettingsMenu onOpenDebug={() => setDebugOpen(true)} />
+            <QuickSettingsMenu onOpenDebug={() => setDebugOpen(true)} onOpenWhatsNew={openWhatsNew} />
           </Group>
         </Group>
       </AppShell.Header>

@@ -1,5 +1,9 @@
 # Feature specs
 
+- [062-search-match-explanations-and-whats-new.md](062-search-match-explanations-and-whats-new.md)
+  clarifies source-header match reasons and adds a bundled, one-time search introduction in the next
+  packaged release. **Implemented; Astra review clean. Packaged startup awaits rebuilt-app acceptance.**
+
 - [061-activity-center-analysis-updates.md](061-activity-center-analysis-updates.md)
   adds a default Updates tab with grouped, durable affected-analysis notices, alongside existing
   Processing details, independent notification settings and Windows data-update toasts.

@@ -435,6 +435,7 @@ export function LibraryPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const openCellImportRef = useRef<(() => void) | null>(null);
+  const openIndexedSearchRef = useRef<(() => void) | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [cellPage, setCellPage] = useState(1);
@@ -466,9 +467,10 @@ export function LibraryPage() {
   // once so normal navigation afterwards is unaffected.
   useEffect(() => {
     if (searchParams.get("loadCells") !== "1" || !openCellImportRef.current) return;
-    openCellImportRef.current();
+    (searchParams.get("searchSources") === "1" ? openIndexedSearchRef.current : openCellImportRef.current)?.();
     const next = new URLSearchParams(searchParams);
     next.delete("loadCells");
+    next.delete("searchSources");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -1373,8 +1375,9 @@ export function LibraryPage() {
               qc.invalidateQueries({ queryKey: ["tree"] });
             }}
           >
-            {({ open, loading }) => {
+            {({ open, openIndexedSearch, loading }) => {
               openCellImportRef.current = open;
+              openIndexedSearchRef.current = openIndexedSearch;
               return <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
                 Load cells
               </Button>;

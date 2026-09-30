@@ -233,7 +233,7 @@ Cellxplorer/
 │                                   Indexed Time/Capacity raw planning and selective access (Spec 050.3)
 ├── frontend/
 │   ├── package.json, vite.config.ts, tsconfig.json, index.html
-│   ├── public/                     Static application assets
+│   ├── public/                     Static application assets, including whats-new/ MP4, poster and captions
 │   ├── src/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
@@ -252,6 +252,7 @@ Cellxplorer/
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
 │   │   │   ├── BetaBootstrapCoordinator.tsx Shared Beta/Alpha first-launch setup (Specs 022/053.3)
+│   │   │   ├── WhatsNewCoordinator.tsx Next-release feature introduction and bundled search guide
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   ├── FolderTrackingSettingsModal.tsx  Continued-Cell folder tracking settings (Spec 047.4)
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
@@ -276,6 +277,7 @@ Cellxplorer/
 │   │   │       │   └── performance/ Time/Capacity opt-in interaction profiling
 │   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
 │   │   ├── appChannel.ts           Stable/Beta/Alpha channel branding (Specs 021/053.1)
+│   │   ├── whatsNew.ts             Channel-scoped feature announcement and release eligibility policy
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisCellPreviewPolicy.ts Cycle preview range navigation policy

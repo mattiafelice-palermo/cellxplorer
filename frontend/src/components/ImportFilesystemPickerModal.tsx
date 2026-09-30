@@ -179,6 +179,7 @@ export function ImportFilesystemPickerModal({
   selectionKey,
   onFolderConfirm,
   folderPurpose = "monitor",
+  initialScope = "folder",
 }: {
   opened: boolean;
   loading: boolean;
@@ -191,9 +192,10 @@ export function ImportFilesystemPickerModal({
   selectionKey?: number;
   onFolderConfirm?: (path: string) => void;
   folderPurpose?: "monitor" | "search";
+  initialScope?: "folder" | "indexed";
 }) {
   const queryClient = useQueryClient();
-  const [indexedScope, setIndexedScope] = useState(false);
+  const [indexedScope, setIndexedScope] = useState(initialScope === "indexed");
   const [searchDialogOpen, setSearchDialogOpen] = useState(false);
   const [indexedPreviewEntry, setIndexedPreviewEntry] = useState<IndexedFile | null>(null);
   const [requestedPath, setRequestedPath] = useState<string | null>(() =>
@@ -533,7 +535,7 @@ export function ImportFilesystemPickerModal({
     setPendingPathEditTarget(null);
     setPathEditError(null);
     setSearch("");
-    setIndexedScope(false);
+    setIndexedScope(initialScope === "indexed");
     setIndexedPreviewEntry(null);
     setShowFolders(true);
     setHideUnavailable(false);
@@ -551,7 +553,7 @@ export function ImportFilesystemPickerModal({
     setSelectedSearch("");
     setPreviewCollapsed(false);
     setKnownFolderImportability(new Map());
-  }, [mode, opened, selectionKey]);
+  }, [initialScope, mode, opened, selectionKey]);
 
   useEffect(() => () => resizeCleanup.current?.(), []);
 

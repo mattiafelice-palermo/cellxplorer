@@ -2628,6 +2628,7 @@ export function ImportCellsLauncher({
   onSaved?: () => void | Promise<void>;
   children: (state: {
     open: () => void;
+    openIndexedSearch: () => void;
     loading: boolean;
     selectedCount: number;
   }) => ReactNode;
@@ -2637,6 +2638,7 @@ export function ImportCellsLauncher({
   const [modalOpen, setModalOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [sourcePickerKey, setSourcePickerKey] = useState(0);
+  const [sourcePickerScope, setSourcePickerScope] = useState<"folder" | "indexed">("folder");
   const [sourceSelection, setSourceSelection] = useState<ImportSourceSelection | null>(null);
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
@@ -2808,13 +2810,15 @@ export function ImportCellsLauncher({
   return (
     <>
       {children({
-        open: () => startSourceSelection(false),
+        open: () => { setSourcePickerScope("folder"); startSourceSelection(false); },
+        openIndexedSearch: () => { setSourcePickerScope("indexed"); startSourceSelection(false); },
         loading: inspectPaths.isPending || listSources.isPending,
         selectedCount: drafts.length,
       })}
       <SharedImportFilesystemPickerModal
         key={sourcePickerKey}
         opened={sourcePickerOpen}
+        initialScope={sourcePickerScope}
         loading={listSources.isPending || inspectPaths.isPending}
         progress={progressStage === "scan" || progressStage === "inspect" ? (
           <ImportProgressPanel

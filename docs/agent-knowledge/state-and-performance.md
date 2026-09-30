@@ -1356,3 +1356,13 @@ only paths matching the current page; they still scan relational paths and shoul
 before replacing this boundary with a separate invalidation-sensitive cache.
 Search indexing also obeys the global background-automation pause; its separate indexing switch
 can keep scans paused after global automation resumes. Explicit search and previews remain usable.
+
+Indexed match explanations label source-export header fields explicitly. The catalog searches
+barcode, remarks, part number, start time and technique; it does not search editable database Cell
+names/notes or curated scientific Cell metadata. Do not infer chemistry/material from a part number.
+
+The search introduction is a channel-scoped local preference, eligible only in packaged versions
+after 0.28.0-alpha.2. Startup waits for compatible backend, completed channel bootstrap and existing
+dialogs. Manual replay in development does not consume the future announcement. Bundle tutorial
+media in frontend/public/whats-new; no runtime encoder is needed. Verify next-release startup and
+H.264 playback in a rebuilt WebView separately from development browser acceptance.

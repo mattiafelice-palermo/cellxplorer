@@ -20,6 +20,7 @@ import {
   IconDownload,
   IconPower,
   IconRefresh,
+  IconSparkles,
 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
@@ -71,7 +72,7 @@ function confirmDestructiveReload(
   });
 }
 
-export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void }) {
+export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug?: () => void; onOpenWhatsNew?: () => void }) {
   const queryClient = useQueryClient();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const tauri = isTauriApp();
@@ -194,6 +195,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
         </Indicator>
       </Menu.Target>
       <Menu.Dropdown>
+        <Menu.Item leftSection={<IconSparkles size={14} />} onClick={onOpenWhatsNew}>What’s new</Menu.Item>
         <Menu.Item leftSection={<IconRefresh size={14} />} onClick={reloadInterface}>
           Reload interface
         </Menu.Item>
