@@ -178,6 +178,7 @@ export function ImportFilesystemPickerModal({
   initialSelection,
   selectionKey,
   onFolderConfirm,
+  folderPurpose = "monitor",
 }: {
   opened: boolean;
   loading: boolean;
@@ -189,6 +190,7 @@ export function ImportFilesystemPickerModal({
   initialSelection?: ImportSourceSelection | null;
   selectionKey?: number;
   onFolderConfirm?: (path: string) => void;
+  folderPurpose?: "monitor" | "search";
 }) {
   const queryClient = useQueryClient();
   const [indexedScope, setIndexedScope] = useState(false);
@@ -221,6 +223,7 @@ export function ImportFilesystemPickerModal({
   const headerHintGeneration = useRef(0);
   const tableRootRef = useRef<HTMLDivElement>(null);
   const entryViewportRef = useRef<HTMLDivElement>(null);
+  const pendingRevealRef = useRef<{ path: string; folder: string } | null>(null);
   const [entryScrollTop, setEntryScrollTop] = useState(0);
   const [selected, setRawSelected] = useState<Map<string, ImportBrowseEntry>>(() => {
     const entries = [
@@ -280,6 +283,23 @@ export function ImportFilesystemPickerModal({
   const resizeContainerRef = useRef<HTMLDivElement>(null);
   const { ref: previewScrollRef, height: previewScrollHeight } = useElementSize();
   const resizeCleanup = useRef<(() => void) | null>(null);
+  const [previewWidth, setPreviewWidth] = useState<number | null>(null);
+  const beginPreviewResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const panel = event.currentTarget.nextElementSibling as HTMLElement | null;
+    if (!panel) return;
+    event.preventDefault();
+    resizeCleanup.current?.();
+    const width = Number.parseFloat(getComputedStyle(panel).width);
+    const scale = panel.getBoundingClientRect().width / width;
+    const start = event.clientX;
+    const maximum = Math.min(640, (panel.parentElement?.getBoundingClientRect().width ?? 1100) / scale * 0.6);
+    const move = (next: PointerEvent) => setPreviewWidth(Math.max(280, Math.min(maximum, width + (start - next.clientX) / scale)));
+    const finish = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", finish); resizeCleanup.current = null; };
+    resizeCleanup.current = finish;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish, { once: true });
+  };
   const browseQuery = useQuery({
     queryKey: ["import-filesystem", requestedPath],
     queryFn: () => post<ImportBrowseResult>("/api/imports/browse", { path: requestedPath }),
@@ -559,6 +579,22 @@ export function ImportFilesystemPickerModal({
   }, [fileFilters, fileSort, search, showFolders]);
 
   useEffect(() => {
+    const reveal = pendingRevealRef.current;
+    if (!reveal || indexedScope || browseQuery.isPlaceholderData || browseQuery.isFetching ||
+      !browseData?.current_path || !importPathsEqual(browseData.current_path, reveal.folder)) return;
+    const index = displayedEntries.findIndex((entry) => importPathsEqual(entry.path, reveal.path));
+    if (index < 0) return;
+    const top = Math.max(0, index * IMPORT_BROWSER_ENTRY_ROW_HEIGHT);
+    entryViewportRef.current?.scrollTo({ top });
+    setEntryScrollTop(top);
+    const frame = requestAnimationFrame(() => {
+      tableRootRef.current?.querySelector<HTMLElement>(`[data-import-entry-index="${index}"]`)?.focus({ preventScroll: true });
+      pendingRevealRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [browseData?.current_path, browseQuery.isFetching, browseQuery.isPlaceholderData, displayedEntries, indexedScope]);
+
+  useEffect(() => {
     const path = browseData?.current_path ?? null;
     if (headerHintDirectory.current === path) return;
     headerHintDirectory.current = path;
@@ -642,6 +678,7 @@ export function ImportFilesystemPickerModal({
   }, [opened]);
 
   const navigate = (path: string | null) => {
+    pendingRevealRef.current = null;
     setIndexedScope(false);
     headerHintGeneration.current += 1;
     headerHintInFlight.current.clear();
@@ -1060,7 +1097,7 @@ export function ImportFilesystemPickerModal({
   };
 
   const selectedSourcesPanel = (
-    <Paper withBorder p="xs" style={{ flex: "0 0 clamp(112px, 13vh, 140px)", minHeight: 112, display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <Paper withBorder p="xs" style={{ flex: selectedEntries.length > 3 ? "0 0 clamp(112px, 13vh, 140px)" : "0 0 auto", minHeight: selectedEntries.length > 3 ? 112 : undefined, display: "flex", flexDirection: "column", minWidth: 0 }}>
       <Group justify="space-between" mb={4}>
         <Group gap="xs">
           <Text size="sm" fw={700}>Selected sources</Text>
@@ -1076,7 +1113,7 @@ export function ImportFilesystemPickerModal({
           Clear all
         </Button>
       </Group>
-      <TextInput
+      {(selectedEntries.length > 3 || selectedSearch) && <TextInput
         size="xs"
         placeholder="Search selected sources"
         aria-label="Search selected sources"
@@ -1084,10 +1121,10 @@ export function ImportFilesystemPickerModal({
         value={selectedSearch}
         onChange={(event) => setSelectedSearch(event.currentTarget.value)}
         mb={4}
-      />
+      />}
       <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbarSize={10} offsetScrollbars="y" type="auto" styles={{ viewport: { paddingRight: 10 } }}>
         {selectedEntries.length === 0 ? (
-          <Text size="sm" c="dimmed">Nothing selected yet.</Text>
+          null
         ) : visibleSelectedEntries.length === 0 ? (
           <Text size="sm" c="dimmed">No selected sources match this search.</Text>
         ) : (
@@ -1118,10 +1155,10 @@ export function ImportFilesystemPickerModal({
       opened={opened}
       onClose={onClose}
       closeDisabled={loading || searchDialogOpen}
-      title={mode === "folder" ? "Choose a folder" : "Load cell files"}
-      step={1}
+      title={mode === "folder" ? folderPurpose === "search" ? "Add search location" : "Choose a folder" : "Load cell files"}
+      step={mode === "files" ? 1 : undefined}
       titleInfo={mode === "folder"
-        ? "Choose the folder to monitor. The watcher checks source files directly in this folder."
+        ? folderPurpose === "search" ? "Index this folder and its subfolders for fast file search. This does not import any files." : "Choose the folder to monitor. The watcher checks source files directly in this folder."
         : "Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL, CP, or OCV (.mpr) data, plus folders. Click a folder row to open it; use its checkbox to select the folder."}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       fill={mode === "files"}
@@ -1145,7 +1182,7 @@ export function ImportFilesystemPickerModal({
                   if (path) onFolderConfirm?.(path);
                 }}
               >
-                Use this folder
+                {folderPurpose === "search" ? "Index this folder" : "Use this folder"}
               </Button>
             ) : (
               <Button
@@ -1165,6 +1202,7 @@ export function ImportFilesystemPickerModal({
     >
       <Stack gap="sm" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0 } : undefined}>
         <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0 } : undefined}>
+          {!indexedScope && <>
           <Paper
             p="xs"
             withBorder
@@ -1259,6 +1297,7 @@ export function ImportFilesystemPickerModal({
               ))}
             </Group>
           </Box>
+          </>}
           <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, overflow: "hidden" }}>
             {mode === "files" && <SegmentedControl aria-label="File search scope" value={indexedScope ? "indexed" : "folder"} onChange={(value) => setIndexedScope(value === "indexed")} data={[{ value: "folder", label: "This folder" }, { value: "indexed", label: "Search indexed locations" }]} />}
             {!indexedScope && <>
@@ -1332,7 +1371,7 @@ export function ImportFilesystemPickerModal({
               {mode === "files" && <Button variant={hideUnavailable ? "light" : "default"} aria-pressed={hideUnavailable} onClick={() => setHideUnavailable((current) => !current)}>
                 {hideUnavailable ? "Show unavailable" : "Hide unavailable"}
               </Button>}
-              <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
+              {mode === "files" && <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>}
             </Group>
             {browseQuery.isError && browseData && !pendingPathEditTarget && !pathEditError && (
               <Alert color="orange" p="xs" icon={<IconAlertTriangle size={16} />}>
@@ -1348,17 +1387,18 @@ export function ImportFilesystemPickerModal({
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
-              {indexedScope ? <Box p="xs" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}><IndexedSourceSearch onDialogChange={setSearchDialogOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onSelection={(next, files) => {
+              {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onSelection={(next, files) => {
                 setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (next.has(file.path) && file.recognition === "recognized") hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
-              }} /></Box> : browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%" } : undefined} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
+              }} /></Box>}
+              {!indexedScope && (browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : mode === "folder" ? <ScrollArea h={IMPORT_BROWSER_VIEWPORT_HEIGHT} offsetScrollbars><Stack gap={2} p="xs">{displayedEntries.filter((entry) => entry.kind === "folder").map((entry) => <Button key={entry.path} variant="subtle" justify="flex-start" leftSection={<IconFolder size={16} />} onClick={() => navigate(entry.path)}><Text size="sm" truncate title={entry.path}>{entry.name}</Text></Button>)}{!displayedEntries.some((entry) => entry.kind === "folder") && <Text size="sm" c="dimmed" p="sm">{folderPurpose === "search" ? "No subfolders here. You can index the current folder." : "No subfolders here. You can use the current folder."}</Text>}</Stack></ScrollArea> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%" } : undefined} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
                   <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
                   {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}
                 </Box>
                 {displayedEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or supported cycler files here.</Text></Center> : <>
                   <Box h={leadingSpacerHeight} aria-hidden="true" />
-                  {renderedEntries.map((entry) => {
+                  {renderedEntries.map((entry, renderedIndex) => {
                   const isFolder = entry.kind === "folder";
                   const hint = headerHints.get(entry.path);
                   const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
@@ -1395,6 +1435,7 @@ export function ImportFilesystemPickerModal({
                         : `Click to preview ${entry.name}. Press Space or Ctrl-click to include it; Shift-click selects a range; double-click includes it.`;
                   return <Box
                     key={entry.path}
+                    data-import-entry-index={firstRenderedEntry + renderedIndex}
                     px="sm"
                     role={isFolder ? "button" : "option"}
                     aria-label={rowInstructions}
@@ -1460,12 +1501,13 @@ export function ImportFilesystemPickerModal({
                   })}
                   <Box h={trailingSpacerHeight} aria-hidden="true" />
                 </>}
-              </Stack></Box></ScrollArea>}
+              </Stack></Box></ScrollArea>)}
             </Paper>
             {mode === "files" && selectedSourcesPanel}
             </Stack>
-            {mode === "files" && (
-              <Paper withBorder p="xs" style={{ width: previewCollapsed ? 44 : "clamp(280px, 28vw, 390px)", flex: "0 0 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            {mode === "files" && !previewCollapsed && !(indexedScope && searchDialogOpen) && <Box role="separator" aria-orientation="vertical" aria-label="Resize source preview" tabIndex={0} onPointerDown={beginPreviewResize} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setPreviewWidth((width) => Math.max(280, Math.min(640, (width ?? 350) + (event.key === "ArrowLeft" ? 16 : -16)))); } }} style={{ width: 8, flexShrink: 0, cursor: "col-resize", alignSelf: "stretch", borderLeft: "2px solid var(--mantine-color-default-border)" }} />}
+            {mode === "files" && !(indexedScope && searchDialogOpen) && (
+              <Paper withBorder p="xs" style={{ width: previewCollapsed ? 44 : previewWidth ?? "clamp(280px, 28vw, 390px)", maxWidth: indexedScope ? "45%" : "60%", flex: "0 0 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
                 <Group justify={previewCollapsed ? "center" : "space-between"} wrap="nowrap" mb={previewCollapsed ? 0 : "xs"}>
                   {!previewCollapsed && (
                     <Tooltip label={selectedPreviewEntry?.path ?? "Select a source file to preview it."} withArrow>
@@ -1528,7 +1570,7 @@ export function ImportFilesystemPickerModal({
               </Paper>
             )}
             </Group>
-            {mode !== "files" && selectedSourcesPanel}
+
           </Stack>
         </Group>
       </Stack>

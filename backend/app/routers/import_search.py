@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -51,17 +52,25 @@ def results(q: str = Query("", max_length=512), root_id: str | None = None,
     result = service.catalog.search(config, query=q, root_id=root_id, extension=extension,
                                     supplier=supplier, technique=technique, offset=offset, limit=limit)
     # Pure strings from local storage; no stat/header/hash per search request.
-    registered = {path_key(path) for path, in db.query(SourceFile.path).all()}
     states = {row["id"]: row for row in service.catalog.roots(counts=False)}
-    for root in config["roots"]:
-        prefix = path_key(root["path"])
-        canonical = states.get(root["id"], {}).get("canonical_root")
-        if canonical:
-            for path in tuple(registered):
-                if path.startswith(prefix + "\\"):
-                    registered.add(canonical + path[len(prefix):])
+    aliases_by_item = []
     for item in result["items"]:
-        aliases = [path_key(item["path"]), item["canonical"]]
-        item["registered"] = any(key in registered for key in aliases)
+        aliases = {path_key(item["path"]), item["canonical"]}
+        for root in config["roots"]:
+            canonical = states.get(root["id"], {}).get("canonical_root")
+            if canonical and item["canonical"].startswith(canonical + "\\"):
+                aliases.add(path_key(root["path"]) + item["canonical"][len(canonical):])
+        aliases_by_item.append(aliases)
+    candidates = set().union(*aliases_by_item) if aliases_by_item else set()
+    registered = set()
+    if candidates:
+        # SQLite filters paths without transferring/materializing the entire library.
+        # Keep Unicode casefold and Windows alias semantics; SQLite lower() is ASCII-only.
+        connection = db.connection().connection.driver_connection
+        connection.create_function("search_path_key", 1, path_key, deterministic=True)
+        registered = {path_key(path) for path, in db.query(SourceFile.path).filter(func.search_path_key(SourceFile.path).in_(candidates))}
+    for item, aliases in zip(result["items"], aliases_by_item):
+        item["registered"] = bool(aliases & registered)
     result["roots"] = list(states.values())
+    result["techniques"] = service.catalog.techniques(config, root_id)
     return result

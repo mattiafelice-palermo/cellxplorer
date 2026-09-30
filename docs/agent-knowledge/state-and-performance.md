@@ -1341,3 +1341,18 @@ disabled notifications do not replay a backlog. Windows polling continues when m
 app must remain running. Toast activation is a database-validated request to open Activity Center.
 The Notifications settings tab preserves the existing app-update preference key and only merges
 its notification flag, leaving update schedules and Beta discovery preferences intact.
+
+Indexed source search stays mounted while the loader switches scope: hiding its surface pauses
+search polling without losing query/filter/page/scroll state. Location management is inline;
+adding a location uses one purpose-labelled folder chooser. Reconcile filters against enabled
+configuration, and distinguish unavailable roots from partial traversal or header failures.
+Unavailable locations retain searchable history but cannot stage files until refreshed.
+
+Indexer configuration changes invalidate the active scan only if its root or content policy is
+affected. Adding/removing other roots and changing refresh intervals must not restart healthy
+scans. Rebuild explicitly cancels workers and invalidates generations before clearing derived
+entries. Query registration checks retain Unicode casefold/mapped-root alias semantics but return
+only paths matching the current page; they still scan relational paths and should be profiled
+before replacing this boundary with a separate invalidation-sensitive cache.
+Search indexing also obeys the global background-automation pause; its separate indexing switch
+can keep scans paused after global automation resumes. Explicit search and previews remain usable.

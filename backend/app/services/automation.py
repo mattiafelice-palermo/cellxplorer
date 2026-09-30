@@ -1,4 +1,4 @@
-"""Background-automation pause state (source monitor + cache warmup)."""
+"""Background-automation pause state (source monitor, cache warmup and search indexing)."""
 
 from __future__ import annotations
 

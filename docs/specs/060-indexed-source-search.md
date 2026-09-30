@@ -4,6 +4,8 @@ Status: Implemented; independent Astra review, browser checks, preflight and fro
 
 Review document: [060 review](reviews/060-indexed-source-search-review.md).
 
+Workflow follow-ups: [search interaction follow-ups](reviews/060-indexed-search-workflow-followups.md).
+
 ## User goal
 
 Users often know a file name or experiment detail but do not remember which nested folder holds

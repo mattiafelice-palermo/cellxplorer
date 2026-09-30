@@ -98,6 +98,7 @@ class Catalog:
                 CREATE INDEX IF NOT EXISTS entry_format ON entries(extension);
                 CREATE INDEX IF NOT EXISTS entry_name ON entries(name_fold,canonical);
                 CREATE INDEX IF NOT EXISTS entry_search_state ON entries(canonical,recognition,metadata_state);
+                CREATE INDEX IF NOT EXISTS entry_technique ON entries(technique);
             """)
             try:
                 existed = db.execute("SELECT 1 FROM sqlite_master WHERE name='search_fts'").fetchone()
@@ -122,7 +123,7 @@ class Catalog:
     def connect(self):
         db = sqlite3.connect(self.path, timeout=1)
         db.row_factory = sqlite3.Row
-        db.create_function("casefold", 1, str.casefold, deterministic=True)
+        db.create_function("casefold", 1, lambda value: value.casefold() if value is not None else None, deterministic=True)
         try:
             with db:
                 yield db
@@ -202,6 +203,18 @@ class Catalog:
                 db.execute("DELETE FROM memberships WHERE root_id=? AND generation!=?", (root_id, generation))
                 self._prune(db)
 
+    def techniques(self, config: dict, root_id: str | None = None) -> list[str]:
+        roots = [r["id"] for r in config["roots"] if r["enabled"] and (root_id is None or r["id"] == root_id)]
+        if not config["metadata_enabled"] or not roots or not config["formats"]:
+            return []
+        with self.connect() as db:
+            rows = db.execute("""SELECT DISTINCT e.technique FROM entries e
+                WHERE e.technique IS NOT NULL AND e.technique!='' AND e.recognition='recognized'
+                AND e.extension IN (""" + ",".join("?" for _ in config["formats"]) + ") AND EXISTS "
+                "(SELECT 1 FROM memberships m WHERE m.canonical=e.canonical AND m.root_id IN ("
+                + ",".join("?" for _ in roots) + ")) ORDER BY casefold(e.technique)", (*config["formats"], *roots)).fetchall()
+            return list(dict.fromkeys(row[0] for row in rows))
+
     def search(self, config: dict, *, query: str = "", root_id: str | None = None,
                extension: str | None = None, supplier: str | None = None, technique: str | None = None,
                offset: int = 0, limit: int = 100) -> dict:
@@ -220,8 +233,8 @@ class Catalog:
                 if column == "technique" and not config["metadata_enabled"]:
                     clauses.append("0")
                 else:
-                    clauses.append(f"e.{column}=?")
-                    parameters.append(value)
+                    clauses.append(f"casefold(e.{column})=?" if column == "technique" else f"e.{column}=?")
+                    parameters.append(value.casefold() if column == "technique" else value)
         base_where = " AND ".join(clauses)
         base_parameters = tuple(parameters)
         text = query.strip().casefold()

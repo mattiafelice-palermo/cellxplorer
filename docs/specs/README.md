@@ -11,6 +11,7 @@
   local, rebuildable filename and header-metadata index. **Implemented; Astra review, preflight,
   browser checks and frozen-backend smoke passed. Real UNC and installed WebView checks remain unverified.**
   Review: [060 review](reviews/060-indexed-source-search-review.md).
+  Interaction refinements: [060 workflow follow-ups](reviews/060-indexed-search-workflow-followups.md).
   UI concepts: [060 mockups](060-indexed-source-search-mockups.html).
 
 - [059-time-capacity-slider-latency.md](059-time-capacity-slider-latency.md)

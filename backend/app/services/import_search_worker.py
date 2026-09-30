@@ -75,6 +75,7 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
     complete = True
     discovered = 0
     warnings = 0
+    root_error = None
     batch: list[dict] = []
 
     def publish():
@@ -121,11 +122,16 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
                         except OSError:
                             complete = False
                 messages.put({"kind": "progress", "discovered": discovered})
-            except OSError:
+            except OSError as exc:
                 complete = False
+                if directory == root["path"]:
+                    root_error = ("This folder is missing or disconnected. Reconnect the drive or choose another location, then refresh."
+                        if isinstance(exc, FileNotFoundError) else
+                        "Access to this folder was denied. Check your permissions, then refresh." if isinstance(exc, PermissionError) else
+                        "This location could not be reached. Check the drive or network connection, then refresh.")
         publish()
         if "resume_after" not in root:
-            messages.put({"kind": "traversed", "complete": complete, "discovered": discovered})
+            messages.put({"kind": "traversed", "complete": complete, "discovered": discovered, "root_error": root_error})
             # Parent acknowledges publishing before the enrichment query. This
             # is local IPC; all filenames are visible before any slow header.
             acknowledgement = Path(spool_path) / "traversal.ack"

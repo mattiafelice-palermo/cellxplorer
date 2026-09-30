@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from ..db import SessionLocal
 from ..models import AppSetting
-from . import background_jobs
+from . import automation, background_jobs
 from .import_search_catalog import Catalog, FORMATS, now, path_key, recover_catalog
 from .import_search_worker import scan_root
 
@@ -68,10 +68,11 @@ def save_config(db, value: dict) -> dict:
 
 
 class SearchIndexer:
-    def __init__(self, catalog: Catalog, *, timeout=45.0, worker=scan_root):
+    def __init__(self, catalog: Catalog, *, timeout=45.0, worker=scan_root, pause_provider=None):
         self.catalog = catalog
         self.timeout = timeout
         self.worker = worker
+        self.pause_provider = pause_provider
         self.lock = threading.RLock()
         self.config = dict(DEFAULT_CONFIG)
         self.pending: list[str] = []
@@ -80,22 +81,51 @@ class SearchIndexer:
         self.wake = threading.Event()
         self.thread = None
         self.process = None
+        self.active_root = None
+        self.pause_checked = 0.0
+        self.automation_paused = False
+
+    def _background_paused(self):
+        # Poll the existing local automation gate, never the source filesystem.
+        if self.pause_provider is None:
+            return False
+        if time.monotonic() - self.pause_checked >= 0.5:
+            self.automation_paused = self.pause_provider()
+            self.pause_checked = time.monotonic()
+        return self.automation_paused
 
     def configure(self, config: dict):
         with self.lock:
-            # Every configuration edit invalidates in-flight batches before writes.
-            self.epoch += 1
+            previous = self.config
+            old_roots = {r["id"]: r for r in previous["roots"]}
+            new_roots = {r["id"]: r for r in config["roots"]}
+            content_changed = (set(config["formats"]) - set(previous["formats"])) or (
+                config["metadata_enabled"] and not previous["metadata_enabled"])
+            scan_policy_changed = set(config["formats"]) != set(previous["formats"]) or config["metadata_enabled"] != previous["metadata_enabled"]
+            affected = {key for key, root in new_roots.items() if root["enabled"] and (
+                content_changed or key not in old_roots or not old_roots[key]["enabled"] or
+                path_key(root["path"]) != path_key(old_roots[key]["path"]))}
+            cancel_active = self.active_root and (config["paused"] or scan_policy_changed or self.active_root in affected or
+                self.active_root not in new_roots or not new_roots[self.active_root]["enabled"])
+            if cancel_active:
+                # Unrelated roots/settings must not discard an in-flight scan.
+                self.epoch += 1
+                if self.process:
+                    self.process.terminate()
             self.config = config
             self.catalog.sync_roots(config["roots"])
             enabled = {r["id"] for r in config["roots"] if r["enabled"]}
             self.pending = [r for r in self.pending if r in enabled]
+            if cancel_active and self.active_root in enabled:
+                affected.add(self.active_root)
+            if previous["paused"] and not config["paused"]:
+                affected.update(r["id"] for r in self.catalog.roots() if r["status"] == "paused" and r["id"] in enabled)
             for root in config["roots"]:
-                self.catalog.root_state(root["id"], generation=str(uuid.uuid4()),
-                                        status="paused" if config["paused"] or not root["enabled"] else "queued")
-                if root["id"] in enabled and root["id"] not in self.pending:
+                if root["id"] in affected or root["id"] in self.pending:
+                    self.catalog.root_state(root["id"], generation=str(uuid.uuid4()),
+                                            status="paused" if config["paused"] else "queued")
+                if root["id"] in affected and root["id"] not in self.pending:
                     self.pending.append(root["id"])
-            if self.process:
-                self.process.terminate()
             self.wake.set()
 
     def start(self, config: dict):
@@ -105,8 +135,11 @@ class SearchIndexer:
             self.stop_event.clear()
             self.config = config
             self.catalog.sync_roots(config["roots"])
+            enabled = {root["id"] for root in config["roots"] if root["enabled"]}
+            self.pending = list(dict.fromkeys(root_id for root_id in self.pending if root_id in enabled))
             for state in self.catalog.roots():
-                if state["status"] in ("queued", "scanning", "paused"):
+                if (state["id"] in enabled and state["id"] not in self.pending
+                        and state["status"] in ("queued", "scanning", "paused")):
                     self.pending.append(state["id"])
             self.thread = threading.Thread(target=self._run, name="source-search-index", daemon=True)
             self.thread.start()
@@ -135,11 +168,17 @@ class SearchIndexer:
     def rebuild(self):
         # Keep the schema/config, invalidate generation and clear derived rows only.
         with self.lock:
-            self.configure(self.config)
+            self.epoch += 1
+            if self.process:
+                self.process.terminate()
+            self.pending = [r["id"] for r in self.config["roots"] if r["enabled"]]
             with self.catalog.connect() as db:
                 db.execute("DELETE FROM memberships")
                 db.execute("DELETE FROM entries")
                 db.execute("UPDATE roots SET last_attempt=NULL,last_success=NULL,discovered=0")
+            for root_id in self.pending:
+                self.catalog.root_state(root_id, generation=str(uuid.uuid4()), status="paused" if self.config["paused"] else "queued", message=None)
+            self.wake.set()
 
     def stop(self):
         self.stop_event.set()
@@ -153,10 +192,18 @@ class SearchIndexer:
 
     def _run(self):
         while not self.stop_event.is_set():
+            if self._background_paused():
+                with self.lock:
+                    for root_id in self.pending:
+                        self.catalog.root_state(root_id, status="paused", message="Background automation is paused. Resume it from the power menu.")
+                self.wake.wait(0.5)
+                self.wake.clear()
+                continue
             with self.lock:
                 root_id = self.pending.pop(0) if self.pending and not self.config["paused"] else None
                 root = next((r for r in self.config["roots"] if r["id"] == root_id and r["enabled"]), None)
                 config, epoch = self.config, self.epoch
+                self.active_root = root_id if root else None
             if root:
                 try:
                     self._scan(root, config, epoch)
@@ -164,6 +211,9 @@ class SearchIndexer:
                     with self.lock:
                         if epoch == self.epoch:
                             self.catalog.root_state(root["id"], status="needs_attention", message="Indexing stopped. Refresh this location to try again.")
+                finally:
+                    with self.lock:
+                        self.active_root = None
             else:
                 self.wake.wait(0.5)
                 self.wake.clear()
@@ -176,6 +226,7 @@ class SearchIndexer:
         complete = False
         finished = False
         warnings = 0
+        root_error = None
         with self.lock:
             if epoch != self.epoch or self.stop_event.is_set():
                 background_jobs.update_job(job, status="completed", description="Indexing superseded")
@@ -197,6 +248,14 @@ class SearchIndexer:
                     last_message = time.monotonic()
                     try:
                         while not self.stop_event.is_set():
+                            if self._background_paused():
+                                with self.lock:
+                                    if epoch == self.epoch:
+                                        self.epoch += 1
+                                        if root["id"] not in self.pending:
+                                            self.pending.insert(0, root["id"])
+                                        self.catalog.root_state(root["id"], status="paused", message="Background automation is paused. Resume it from the power menu.")
+                                break
                             with self.lock:
                                 if epoch != self.epoch:
                                     break
@@ -226,13 +285,14 @@ class SearchIndexer:
                                 if "discovered" in message:
                                     count = message["discovered"]
                                     self.catalog.root_state(root["id"], discovered=count)
-                                    background_jobs.update_job(job, completed=count, total=count, phase_detail="Discovering files and reading source headers")
+                                    background_jobs.update_job(job, completed=0, total=0, phase_detail=f"Discovered {count} files; scanning folders")
                                 if kind == "root":
                                     resolved_root = message["canonical_root"]
                                 if kind == "header":
                                     last_header = message["fact"]
                                 if kind == "traversed":
                                     complete = message["complete"]
+                                    root_error = message.get("root_error")
                                     if complete:
                                         self.catalog.reconcile(root["id"], generation)
                                         if resolved_root:
@@ -255,7 +315,12 @@ class SearchIndexer:
                 current = epoch == self.epoch and not self.stop_event.is_set()
                 if current:
                     status = "ready" if complete and finished and not warnings else "needs_attention" if finished else "offline"
-                    values = dict(status=status, message=None if status == "ready" else "Some files or folders could not be read. Last known results are retained; refresh to retry.")
+                    if root_error:
+                        status = "offline"
+                    message = root_error or (None if status == "ready" else
+                        "Some source headers could not be read. File results remain searchable; refresh to retry." if complete and finished else
+                        "Some folders could not be scanned. Results may be incomplete; check access and refresh.")
+                    values = dict(status=status, message=message)
                     if complete and finished:
                         values["last_success"] = now()
                     self.catalog.root_state(root["id"], **values)
@@ -267,11 +332,16 @@ _indexer: SearchIndexer | None = None
 _service_lock = threading.Lock()
 
 
+def _automation_pause():
+    with SessionLocal() as db:
+        return automation.is_paused(db)
+
+
 def get_indexer() -> SearchIndexer:
     global _indexer
     with _service_lock:
         if _indexer is None:
-            _indexer = SearchIndexer(recover_catalog())
+            _indexer = SearchIndexer(recover_catalog(), pause_provider=_automation_pause)
             with SessionLocal() as db:
                 _indexer.start(load_config(db))
         return _indexer
