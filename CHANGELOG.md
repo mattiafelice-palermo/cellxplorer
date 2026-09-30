@@ -4,6 +4,18 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.1-alpha.36 - 2026-09-30
+
+### New features
+
+- Add an Activity Center Updates view that groups adopted source-data changes by batch, shows affected analyses and Cells, known source-cycle count deltas, and current readiness, with guarded analysis navigation; Processing retains job progress, errors, and details.
+- Add a database-scoped unread analysis-update badge and temporary header bubble, plus independent preferences for in-app updates, Windows data notifications, and Windows app-update notifications; dismissing the bubble does not acknowledge updates.
+
+### Bug fixes
+
+- Keep update readiness accurate across large work queues, foreground-prepared plots, superseded work, and changes to attached source membership.
+- Keep older same-database Windows data notifications actionable when newer batches arrive, and prevent opening Updates from acknowledging failed Processing jobs.
+
 ## 0.27.1-alpha.35 - 2026-09-29
 
 ### Bug fixes
