@@ -79,6 +79,26 @@ body {
   transform-origin: top left;
 }
 
+/* Modals portal to body, outside App's zoomed surfaces. Scale their common
+   viewport wrapper once, compensating viewport units so dialogs stay on screen.
+   The backdrop remains unscaled and covers the actual viewport. */
+.mantine-Modal-inner {
+  zoom: var(--cellxplorer-ui-zoom, 1);
+  width: calc(100vw / var(--cellxplorer-ui-zoom, 1));
+  height: calc(100dvh / var(--cellxplorer-ui-zoom, 1));
+  padding-block: calc(var(--modal-inner-y-offset, var(--modal-y-offset)) / var(--cellxplorer-ui-zoom, 1));
+  padding-inline: calc(var(--modal-inner-x-offset, var(--modal-x-offset)) / var(--cellxplorer-ui-zoom, 1));
+}
+
+.mantine-Modal-content {
+  max-height: calc((100dvh - var(--modal-y-offset) * 2) / var(--cellxplorer-ui-zoom, 1));
+}
+
+.mantine-Modal-root[data-full-screen] .mantine-Modal-content {
+  height: calc(100dvh / var(--cellxplorer-ui-zoom, 1));
+  max-height: none;
+}
+
 /* Mantine's stock indicator can drift by a pixel when a nested surface is
    zoomed. Keep every mode selector on the same explicit geometry. */
 .mantine-SegmentedControl-root {

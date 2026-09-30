@@ -241,6 +241,14 @@ The application shell is an invariant:
 - navigation width: 290 px before UI zoom;
 - main content padding: `md`;
 - UI zoom applies to chrome/layout, not to scientific export dimensions.
+- Mantine modals portal outside App's zoomed surfaces. Their shared `app.css` inner wrapper
+  applies `--cellxplorer-ui-zoom` once; viewport dimensions and offsets are divided by that
+  factor. Import-shell viewport height must use the same compensation. Do not increase loader
+  fonts separately for development or scale the whole document: that would double-scale app
+  chrome or make enlarged dialogs exceed the viewport. Verify nested dialogs at 70%, 100%,
+  and 160% using Ctrl+-/Ctrl+0/Ctrl++ before changing this geometry.
+- Standing explanations belong in compact info buttons beside the relevant heading/control,
+  with hover and keyboard-focus help. Keep actionable errors and current status visible.
 
 Pages normally begin with a title/action row, followed by one main work surface. Keep primary
 actions at the right side of the title row.

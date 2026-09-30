@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.2 - 2026-09-30
+
+### Bug fixes
+
+- Simplify file-search settings with inline help and make loader dialogs follow application zoom.
+
 ## 0.28.0-alpha.1 - 2026-09-30
 
 ### New features

@@ -1,15 +1,22 @@
-import { Alert, Badge, Button, Checkbox, Group, Modal, Paper, Select, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Checkbox, Group, Modal, Paper, Select, Stack, Switch, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconFolderPlus, IconRefresh, IconSearch, IconTrash } from "@tabler/icons-react";
+import { IconFolderPlus, IconInfoCircle, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { get, post, put } from "../api";
 import type { FileSearchConfig, FileSearchSettings as Settings } from "../importSearch";
 
 const FolderPicker = lazy(() => import("./ImportFilesystemPickerModal").then((module) => ({ default: module.ImportFilesystemPickerModal })));
 
+function SearchHelp({ label, text }: { label: string; text: string }) {
+  return <Tooltip label={text} multiline w={320} withArrow events={{ hover: true, focus: true, touch: true }}>
+    <ActionIcon size="sm" variant="subtle" color="gray" aria-label={`About ${label}`}><IconInfoCircle size={15} /></ActionIcon>
+  </Tooltip>;
+}
+
 export function FileSearchSettings({ initialPath, onDialogChange }: { initialPath?: string | null; onDialogChange?: (opened: boolean) => void }) {
   const queryClient = useQueryClient();
+  const refreshId = useId();
   const query = useQuery({ queryKey: ["file-search-settings"], queryFn: () => get<Settings>("/api/import-search/settings"), refetchInterval: 2000 });
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState(initialPath ?? "");
@@ -30,12 +37,11 @@ export function FileSearchSettings({ initialPath, onDialogChange }: { initialPat
   const save = (patch: Partial<FileSearchConfig>) => config && mutation.mutate({ ...config, ...patch });
   const busy = mutation.isPending || operation.isPending;
   return <Stack gap="md">
-    <Group justify="space-between"><div><Title order={4}>File search</Title><Text size="sm" c="dimmed">Find sources across the folders you choose, including network locations.</Text></div><IconSearch size={20} /></Group>
-    <Text size="sm" c="dimmed">The search catalog stays on this computer. Initial scanning and source previews run separately from search. No external search service or installation is needed.</Text>
+    <Group gap="xs"><Title order={4}>File search</Title><SearchHelp label="file search" text="Search the folders you choose, including network locations. The catalog stays on this computer. Scanning runs in the background; progress appears in Activity Center → Processing. Offline locations keep their last known results." /></Group>
     {query.isError && <Alert color="red">Could not load search settings. <Button variant="subtle" onClick={() => void query.refetch()}>Retry</Button></Alert>}
     {config && <>
       <Group><Button leftSection={<IconFolderPlus size={16} />} onClick={() => { setPath(initialPath ?? ""); setAdding(true); }}>Add search location</Button>{initialPath && <Button variant="default" disabled={busy} onClick={() => save({ roots: [...config.roots, { id: crypto.randomUUID(), path: initialPath, enabled: true }] })}>Add current folder</Button>}<Button variant="default" leftSection={<IconRefresh size={16} />} disabled={busy || !config.roots.length} onClick={() => operation.mutate({ url: "/api/import-search/refresh" })}>Refresh all</Button><Button variant="default" disabled={busy} onClick={() => save({ paused: !config.paused })}>{config.paused ? "Resume indexing" : "Pause indexing"}</Button></Group>
-      {!config.roots.length && <Paper withBorder p="md"><Text size="sm">No search locations yet. Add a folder to build its searchable catalog.</Text></Paper>}
+      {!config.roots.length && <Paper withBorder p="md"><Text size="sm" c="dimmed">No search locations added.</Text></Paper>}
       {config.roots.map((root) => {
         const state = query.data?.roots.find((item) => item.id === root.id);
         return <Paper key={root.id} withBorder p="sm"><Stack gap="xs">
@@ -45,10 +51,16 @@ export function FileSearchSettings({ initialPath, onDialogChange }: { initialPat
         </Stack></Paper>;
       })}
       <Paper withBorder p="md"><Stack gap="md">
-        <Checkbox.Group label="Indexed formats" value={config.formats} onChange={(formats) => save({ formats })}><Group mt="xs">{[".ndax", ".mpr", ".xlsx"].map((format) => <Checkbox key={format} disabled={busy} value={format} label={format === ".xlsx" ? "Structured Neware .xlsx" : format} />)}</Group></Checkbox.Group>
-        <Switch label="Search source metadata" description="Barcode, remarks, part number, start time and technique when the source header provides them. Disabling this stops enrichment and hides metadata matches; workbook format checks continue." checked={config.metadata_enabled} disabled={busy} onChange={(event) => save({ metadata_enabled: event.currentTarget.checked })} />
-        <Select label="Refresh when indexed search opens" description="Runs in the background only when this interval has elapsed since the last attempt." data={[{ value: "0", label: "Manual only" }, { value: "24", label: "After 24 hours" }, { value: "72", label: "After 3 days" }, { value: "168", label: "After 1 week" }]} value={String(config.refresh_hours)} disabled={busy} onChange={(value) => save({ refresh_hours: Number(value) })} />
-        <Group justify="space-between"><Text size="xs" c="dimmed">Removing a location or rebuilding only changes the search catalog. Your source files and Cell Database are preserved.</Text><Button variant="default" disabled={busy} onClick={() => setRebuilding(true)}>Rebuild catalog</Button></Group>
+        <Stack gap="xs">
+          <Group gap="xs"><Text size="sm" fw={500}>Indexed formats</Text><SearchHelp label="indexed formats" text="Only these source formats are indexed. Excel files must be structured Neware exports; arbitrary spreadsheets are unsupported." /></Group>
+          <Checkbox.Group aria-label="Indexed formats" value={config.formats} onChange={(formats) => save({ formats })}><Group>{[".ndax", ".mpr", ".xlsx"].map((format) => <Checkbox key={format} disabled={busy} value={format} label={format === ".xlsx" ? "Structured Neware .xlsx" : format} />)}</Group></Checkbox.Group>
+        </Stack>
+        <Group gap="xs"><Switch label="Search source metadata" checked={config.metadata_enabled} disabled={busy} onChange={(event) => save({ metadata_enabled: event.currentTarget.checked })} /><SearchHelp label="source metadata" text="Search barcode, remarks, part number, start time and technique when available in the source header. Turning this off stops metadata indexing and hides metadata matches; workbook format checks continue." /></Group>
+        <Stack gap={4}>
+          <Group gap="xs"><Text component="label" htmlFor={refreshId} size="sm" fw={500}>Refresh when indexed search opens</Text><SearchHelp label="automatic refresh" text="Refresh runs in the background when indexed search opens, only after this interval has elapsed since the last attempt. Choose Manual only to refresh using the buttons above." /></Group>
+          <Select id={refreshId} aria-label="Refresh when indexed search opens" data={[{ value: "0", label: "Manual only" }, { value: "24", label: "After 24 hours" }, { value: "72", label: "After 3 days" }, { value: "168", label: "After 1 week" }]} value={String(config.refresh_hours)} disabled={busy} onChange={(value) => save({ refresh_hours: Number(value) })} />
+        </Stack>
+        <Group gap="xs"><Button variant="default" disabled={busy} onClick={() => setRebuilding(true)}>Rebuild catalog</Button><SearchHelp label="rebuilding or removing locations" text="Rebuilding or removing a location changes only the search catalog. Your source files and Cell Database are preserved." /></Group>
       </Stack></Paper>
       <Modal opened={adding} closeOnEscape={!browse} closeOnClickOutside={!browse} onClose={() => setAdding(false)} title="Add search location">
         <Stack><Text size="sm" c="dimmed">Choose a root folder. Subfolders are scanned without following links or junctions.</Text><TextInput label="Folder path" placeholder="C:\\Data or \\\\server\\share\\cycling" value={path} onChange={(event) => setPath(event.currentTarget.value)} /><Group justify="space-between"><Button variant="default" onClick={() => setBrowse(true)}>Browse folders</Button><Button loading={mutation.isPending} disabled={!path.trim()} onClick={() => save({ roots: [...config.roots, { id: crypto.randomUUID(), path: path.trim(), enabled: true }] })}>Add location</Button></Group></Stack>
@@ -56,6 +68,5 @@ export function FileSearchSettings({ initialPath, onDialogChange }: { initialPat
       <Modal opened={rebuilding} onClose={() => setRebuilding(false)} title="Rebuild search catalog"><Stack><Text size="sm">Recreate indexed file information from enabled search locations? Search results will return as scanning progresses.</Text><Group justify="flex-end"><Button variant="default" onClick={() => setRebuilding(false)}>Cancel</Button><Button loading={operation.isPending} onClick={() => operation.mutate({ url: "/api/import-search/rebuild" })}>Rebuild</Button></Group></Stack></Modal>
       {browse && <Suspense fallback={<Text size="sm">Opening folder picker…</Text>}><FolderPicker opened loading={false} mode="folder" initialPath={path || initialPath} onClose={() => setBrowse(false)} onFolderConfirm={(folder) => { setPath(folder); setBrowse(false); }} /></Suspense>}
     </>}
-    <Text size="xs" c="dimmed">Indexing progress appears in Activity Center → Processing. Offline locations retain their last known results.</Text>
   </Stack>;
 }
