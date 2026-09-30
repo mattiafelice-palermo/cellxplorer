@@ -1,15 +1,15 @@
 {
-  "version": "0.27.1-alpha.35",
-  "notes": "### Bug fixes\n\n- Prevent Time/Capacity plots from repeatedly redrawing and freezing when opening a plot with hidden samples or changing sample visibility.\n- Show gaps between separately selected cycles without drawing a misleading connecting voltage/current line, while preserving their actual elapsed times.",
-  "pub_date": "2026-09-29T21:34:01.6Z",
+  "version": "0.27.1-alpha.36",
+  "notes": "### New features\n\n- Add an Activity Center Updates view that groups adopted source-data changes by batch, shows affected analyses and Cells, known source-cycle count deltas, and current readiness, with guarded analysis navigation; Processing retains job progress, errors, and details.\n- Add a database-scoped unread analysis-update badge and temporary header bubble, plus independent preferences for in-app updates, Windows data notifications, and Windows app-update notifications; dismissing the bubble does not acknowledge updates.\n\n### Bug fixes\n\n- Keep update readiness accurate across large work queues, foreground-prepared plots, superseded work, and changes to attached source membership.\n- Keep older same-database Windows data notifications actionable when newer batches arrive, and prevent opening Updates from acknowledging failed Processing jobs.",
+  "pub_date": "2026-09-30T07:30:36.508Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVc3S3BKUXQ2TE5GQ1JwVVF6dzhlVTEzamxBOVR2MlN4Y1gvRWRLMkNlZnVpUTc0alZIVUQ4V3pLMlkyeEw0RzBkV0ozUlNwNkptcmJJSWRHRi9pZnc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzE3NjM2CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM1X3g2NC1zZXR1cC5leGUKQThCRzFoRnlFcTZwU05oZ0orVDJySDFiOVBPdDJpb3k1cWJKRjRCUDFOYVI5RVBVTC9qTFg3VXBmUTR4UVFEaVhRRUh3a3JoL1FENDRiT29HeFVtQVE9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.35/CellXplorer.Alpha_0.27.1-alpha.35_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWZYSlFPL0RmSDMrdk91WEkyd2EvZGtrY3hBS0ZHYWI5S3k3eU44bU41QmtIb2lreU9Fa1IrUGlRczQ5cGRmZUFYbnMzbjk2NHZRT0lnRVRwTmNHakEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzUzNDMwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM2X3g2NC1zZXR1cC5leGUKQ0ZmOTkwajkzTysxMmpRWlFTOEJSOTdhUWJoNXhSYjdqaDFiRkJiZlFZeG5WeHdmRXE4RUJNeXpBOHk0NmlJREo4SEpHR0U5TXVndC9pTlZXR2VEREE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.36/CellXplorer.Alpha_0.27.1-alpha.36_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVc3S3BKUXQ2TE5GQ1JwVVF6dzhlVTEzamxBOVR2MlN4Y1gvRWRLMkNlZnVpUTc0alZIVUQ4V3pLMlkyeEw0RzBkV0ozUlNwNkptcmJJSWRHRi9pZnc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzE3NjM2CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM1X3g2NC1zZXR1cC5leGUKQThCRzFoRnlFcTZwU05oZ0orVDJySDFiOVBPdDJpb3k1cWJKRjRCUDFOYVI5RVBVTC9qTFg3VXBmUTR4UVFEaVhRRUh3a3JoL1FENDRiT29HeFVtQVE9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.35/CellXplorer.Alpha_0.27.1-alpha.35_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWZYSlFPL0RmSDMrdk91WEkyd2EvZGtrY3hBS0ZHYWI5S3k3eU44bU41QmtIb2lreU9Fa1IrUGlRczQ5cGRmZUFYbnMzbjk2NHZRT0lnRVRwTmNHakEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzUzNDMwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yNy4xLWFscGhhLjM2X3g2NC1zZXR1cC5leGUKQ0ZmOTkwajkzTysxMmpRWlFTOEJSOTdhUWJoNXhSYjdqaDFiRkJiZlFZeG5WeHdmRXE4RUJNeXpBOHk0NmlJREo4SEpHR0U5TXVndC9pTlZXR2VEREE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.27.1-alpha.36/CellXplorer.Alpha_0.27.1-alpha.36_x64-setup.exe"
     }
   }
 }
