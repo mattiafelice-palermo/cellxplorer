@@ -221,6 +221,8 @@ Cellxplorer/
 │           ├── import_file_hints.py Optional concurrent header-only import-browser hints
 │           ├── import_search_catalog.py Disposable SQLite filename/metadata catalog (Spec 060)
 │           ├── import_search_index.py Search preferences and cancellable scan coordination
+│           ├── import_search_live.py Bounded live roots, recovery and fallback scheduling (Spec 063)
+│           ├── import_search_watch.py Stoppable recursive Windows change subscriptions (Spec 063)
 │           ├── import_search_worker.py Spawned source discovery and header enrichment
 │           ├── import_search_transport.py Atomic local scan-batch spool
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
@@ -317,6 +319,7 @@ Cellxplorer/
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_import_file_hints.py    Optional header-only import-browser hint tests
 │   ├── test_import_search.py        Catalog, worker lifecycle, freshness and recovery tests (Spec 060)
+│   ├── test_import_search_live.py   Native changes, safe deltas, fallback and interval gates (Spec 063)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
 │   ├── test_biologic_cp_ocv.py       BioLogic CP/OCV curve and cycle-inference tests

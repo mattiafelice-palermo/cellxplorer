@@ -11,6 +11,36 @@ an SMB read or IPC batch stalls. Partial/offline traversal must retain unseen en
 mapped-drive/UNC identity. Header enrichment validates size/mtime again; failed identity checks
 clear unvalidated metadata and leave a retry state.
 
+Spec 063 adds `import_search_watch.py` native recursive `ReadDirectoryChangesW` subscriptions,
+owned by `import_search_live.py`, capped at eight stoppable child processes. Buffers stay below
+SMB's 64 KiB limit; queue overflow has a separate signal and causes reconciliation. A watcher
+must be armed before enumeration. The independent monitor retains/coalesces events while the
+single discovery/delta worker runs; a two-second burst ceiling prevents starvation. Startup,
+pause/resume and notification-loss gaps reconcile only after monitoring reconnects. Healthy
+connected roots do not receive scheduled full scans. Unsupported/over-limit roots use per-root
+background refresh (daily by default), with stable jitter and backend acknowledgement checks for
+subdaily intervals. Manual refresh remains available. API polling reports connection separately
+from the last full reconciliation and refetches results via a local catalog revision.
+
+Incremental deletion is never inferred from an exception: the worker confirms parent accessibility
+and current target absence, avoids reparse traversal, then removes only that root's memberships.
+Complete subtree enumeration can prune its scope; incomplete traversal retains unseen results.
+Generation guards reject superseded workers. Cancellation can kill a blocked SMB worker without
+joining it on the API thread. Native local Windows tests exercise changes and pause recovery;
+local acceptance does not prove a private NAS delivers notifications reliably. No USN journal,
+Everything service, installation or server access is assumed.
+Windows excludes the watched directory itself from rename events. The isolated watcher therefore
+checks that root's identity every 30 seconds, without walking descendants; identity change or access
+failure reconnects and reconciles. Roots without stable file identity fall back to scheduled scans.
+Delta roots are selected fairly in rotation. Application/IPC/catalog exceptions request recovery,
+and manual-only fallback preferences never suppress reconciliation after a monitoring/pause gap.
+Subtree changes stabilize at most 128 first samples together, then publish those filenames before
+header enrichment. Both filename and metadata writes use bounded batches; a per-file 250ms sleep
+and individual catalog transactions imposed avoidable bulk latency. Source disappearance during
+header reading is confirmed against its accessible parent and removed without disconnecting a
+healthy subscription. Unchanged but unreadable metadata stays visibly unavailable, not an endless
+full-root retry loop. Bulk traversal/header latency still depends on the share and source headers.
+
 Search requests use local data only: no recursive walk, source stat, header parse, or checksum.
 Metadata is an explicit scalar whitelist, never raw rows or scientific summaries. Cover root-count
 queries with `entry_search_state` and omit counts from result requests; random metadata-row lookups
@@ -1360,6 +1390,11 @@ can keep scans paused after global automation resumes. Explicit search and previ
 Indexed match explanations label source-export header fields explicitly. The catalog searches
 barcode, remarks, part number, start time and technique; it does not search editable database Cell
 names/notes or curated scientific Cell metadata. Do not infer chemistry/material from a part number.
+
+Live subtree enrichment publishes progress before every header and streams partial result batches
+(16 facts or 0.5 seconds). The coordinator's silence watchdog must measure one stalled header,
+not the aggregate duration of many successful network reads. Filename batches remain visible
+before enrichment; slow metadata must not delay searchable discovery.
 
 The search introduction is a channel-scoped local preference, eligible only in packaged versions
 after 0.28.0-alpha.2. Startup waits for compatible backend, completed channel bootstrap and existing

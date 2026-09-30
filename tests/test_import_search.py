@@ -168,7 +168,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(spool.get(0.1), {"kind": "done"})
 
     def test_blocked_worker_cancel_and_subsequent_scan(self):
-        indexer = SearchIndexer(self.catalog, timeout=2, worker=blocked_worker)
+        indexer = SearchIndexer(self.catalog, monitoring=False, timeout=2, worker=blocked_worker)
         indexer.start(self.config)
         indexer.refresh()
         deadline = time.monotonic() + 5
@@ -190,7 +190,7 @@ class CatalogTests(unittest.TestCase):
         self.assertFalse(indexer.thread.is_alive())
 
     def test_cancel_during_large_transfer_is_bounded(self):
-        indexer = SearchIndexer(self.catalog, timeout=3, worker=transfer_worker)
+        indexer = SearchIndexer(self.catalog, monitoring=False, timeout=3, worker=transfer_worker)
         indexer.start(self.config)
         indexer.refresh()
         deadline = time.monotonic() + 5
@@ -221,7 +221,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(unrelated.read_bytes(), b"scientific database sentinel")
 
     def test_header_timeout_skips_one_file_and_reaches_later_files(self):
-        indexer = SearchIndexer(self.catalog, timeout=10, worker=blocked_header_worker)
+        indexer = SearchIndexer(self.catalog, monitoring=False, timeout=10, worker=blocked_header_worker)
         indexer.start(self.config)
         indexer.refresh()
         deadline = time.monotonic() + 35
@@ -245,7 +245,7 @@ class CatalogTests(unittest.TestCase):
         from openpyxl import Workbook
         Workbook().save(root / "unrelated.xlsx")
         settings = config(str(root))
-        indexer = SearchIndexer(self.catalog, timeout=45)
+        indexer = SearchIndexer(self.catalog, monitoring=False, timeout=45)
         def wait_terminal():
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:

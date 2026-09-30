@@ -7,6 +7,8 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+import stat as stat_module
+import time
 
 from .import_search_transport import BatchSpool
 from .import_search_catalog import METADATA_FIELDS, METADATA_VERSION, path_key
@@ -86,6 +88,14 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
         batch = []
 
     try:
+        try:
+            root_info = os.lstat(root["path"])
+            if stat_module.S_ISLNK(root_info.st_mode) or getattr(root_info, "st_file_attributes", 0) & 0x400:
+                stack = []
+                complete = False
+                root_error = "This location is a link or junction. Choose the original folder instead."
+        except OSError:
+            pass  # Traversal below produces the existing friendly outage message.
         while stack:
             directory = stack.pop()
             try:
@@ -152,3 +162,167 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
         messages.put({"kind": "done", "warnings": warnings})
     finally:
         previous.close()
+
+
+def scan_changes(root: dict, config: dict, catalog_path: str, spool_path: str) -> None:
+    """Inspect changed scopes only. Ambiguous access/unstable writes request recovery.
+
+    Notifications are hints: confirm current filesystem state, never assume an event
+    proves deletion. All I/O remains inside the parent's bounded, stoppable worker.
+    """
+    logging.disable(logging.CRITICAL)
+    messages = BatchSpool(spool_path)
+    resolved = canonical_root(root["path"])
+    base = os.path.abspath(root["path"])
+    recovered = False
+
+    def key(path):
+        return path_key(os.path.join(resolved, os.path.relpath(path, base)))
+
+    def safe_path(path):
+        if os.path.commonpath((base, path)) != base:
+            raise OSError("Changed path is outside the location")
+        # A notification can include descendants of a newly introduced junction.
+        relative = os.path.relpath(path, base)
+        current = base
+        for part in relative.split(os.sep):
+            current = os.path.join(current, part)
+            try:
+                value = os.lstat(current)
+            except FileNotFoundError:
+                return False
+            if stat_module.S_ISLNK(value.st_mode) or getattr(value, "st_file_attributes", 0) & 0x400:
+                if current != path:
+                    raise OSError("Changed path crosses a reparse point")
+                return False
+        return True
+
+    def stable_fact(path, value, observed=None):
+        extension = Path(path).suffix.casefold()
+        if extension not in config["formats"]:
+            return None
+        # Wait for two equal size/mtime samples; recheck after header extraction too.
+        observed = time.monotonic() if observed is None else observed
+        for _ in range(12):
+            # Subtree discovery takes first samples for <=128 files together.
+            # One shared settling interval replaces a 250ms-per-file floor.
+            time.sleep(max(0, 0.25 - (time.monotonic() - observed)))
+            after = os.stat(path, follow_symlinks=False)
+            if not stat_module.S_ISREG(after.st_mode) or getattr(after, "st_file_attributes", 0) & 0x400:
+                raise OSError("Source type changed during inspection")
+            if (value.st_size, value.st_mtime_ns) == (after.st_size, after.st_mtime_ns):
+                break
+            value = after
+            observed = time.monotonic()
+        else:
+            raise OSError("Source is still being written")
+        fact = dict(canonical=key(path), path=path, name=Path(path).name, extension=extension,
+            size=value.st_size, mtime_ns=value.st_mtime_ns,
+            modified_at=datetime.fromtimestamp(value.st_mtime, timezone.utc).isoformat(),
+            recognition="pending" if extension == ".xlsx" else "recognized", metadata={}, metadata_version=0,
+            metadata_state="pending" if config["metadata_enabled"] else "disabled",
+            supplier="BioLogic" if extension == ".mpr" else "Neware")
+        return fact
+
+    def enrich(fact):
+        nonlocal recovered
+        if fact["extension"] != ".xlsx" and not config["metadata_enabled"]:
+            return None  # No header work or duplicate publication.
+        path = fact["path"]
+        try:
+            info = os.stat(path, follow_symlinks=False)
+            if not stat_module.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise OSError("Source type changed before header read")
+        except FileNotFoundError:
+            pass  # The normal post-read absence check confirms accessible deletion.
+        # Renew the coordinator's watchdog for each header. A large batch of
+        # productive reads must not look like one stalled network operation.
+        messages.put(dict(kind="header", canonical=fact["canonical"]))
+        result = inspect_fact(fact, config["metadata_enabled"])
+        if result["metadata_state"] == "unavailable" and result["recognition"] != "unsupported":
+            try:
+                after = os.stat(path, follow_symlinks=False)
+                # Failed parsing of an unchanged known source is a visible metadata
+                # warning, not evidence that notifications for the root were lost.
+                recovered |= (after.st_size, after.st_mtime_ns) != (fact["size"], fact["mtime_ns"])
+            except FileNotFoundError:
+                with os.scandir(os.path.dirname(path)) as entries:
+                    present = any(entry.name.casefold() == Path(path).name.casefold() for entry in entries)
+                if not present:
+                    messages.put(dict(kind="remove", canonical=key(path)))
+                    return None  # File renamed after filename publication; retain the subscription.
+                recovered = True
+            except OSError:
+                recovered = True
+        return result
+
+    scopes = sorted({os.path.abspath(os.path.join(base, name)) for name in root["changes"]}, key=len)
+    completed = []
+    for scope in scopes:
+        if any(scope == parent or scope.startswith(parent + os.sep) for parent in completed):
+            continue
+        try:
+            if not safe_path(scope):
+                # Missing target is only a deletion if its parent can be enumerated.
+                with os.scandir(os.path.dirname(scope)) as entries:
+                    present = any(entry.name.casefold() == Path(scope).name.casefold() for entry in entries)
+                if present:
+                    # Reparse point: remove any older indexed subtree without following it.
+                    value = os.lstat(scope)
+                    if not (stat_module.S_ISLNK(value.st_mode) or getattr(value, "st_file_attributes", 0) & 0x400):
+                        raise OSError("Source changed during inspection")
+                messages.put(dict(kind="remove", canonical=key(scope)))
+                completed.append(scope)
+                continue
+            value = os.stat(scope, follow_symlinks=False)
+            if not stat_module.S_ISDIR(value.st_mode):
+                fact = stable_fact(scope, value)
+                if fact:
+                    messages.put(dict(kind="batch", facts=[fact]))
+                    result = enrich(fact)
+                    if result:
+                        messages.put(dict(kind="batch", facts=[result]))
+                messages.put(dict(kind="subtree", canonical=key(scope)))
+                continue
+            stack = [scope]
+            pending_files = []
+            def flush_files():
+                facts = [stable_fact(path, value, observed) for path, value, observed in pending_files]
+                pending_files.clear()
+                if facts:
+                    # Publish a bounded filename batch before reading any headers.
+                    # Batch catalog transactions as well as the settling interval.
+                    messages.put(dict(kind="batch", facts=facts))
+                    results = []
+                    published = time.monotonic()
+                    for fact in facts:
+                        result = enrich(fact)
+                        if result:
+                            results.append(result)
+                        if results and (len(results) >= 16 or time.monotonic() - published >= 0.5):
+                            messages.put(dict(kind="batch", facts=results))
+                            results = []
+                            published = time.monotonic()
+                    if results:
+                        messages.put(dict(kind="batch", facts=results))
+            while stack:
+                with os.scandir(stack.pop()) as entries:
+                    for entry in entries:
+                        value = entry.stat(follow_symlinks=False)
+                        if entry.is_symlink() or getattr(value, "st_file_attributes", 0) & 0x400:
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False) and Path(entry.name).suffix.casefold() in config["formats"]:
+                            pending_files.append((entry.path, value, time.monotonic()))
+                            if len(pending_files) >= 128:
+                                flush_files()
+            flush_files()
+            # Avoid an unbounded IPC message for large directory additions.
+            # Facts already have this generation; subtree completion is handled by
+            # parent comparison against streamed canonical keys.
+            messages.put(dict(kind="subtree", canonical=key(scope)))
+            completed.append(scope)
+        except (OSError, ValueError):
+            recovered = True
+    messages.put(dict(kind="done", recovery=recovered))

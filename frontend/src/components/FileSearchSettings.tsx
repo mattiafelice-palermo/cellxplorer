@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { get, post, put } from "../api";
 import type { FileSearchConfig, FileSearchSettings as Settings } from "../importSearch";
-import { searchLocationName, searchRootStatus } from "../importSearch";
+import { searchLocationName, searchRootStatus, searchMonitorStatus } from "../importSearch";
 import { importPathsEqual } from "../importPathBreadcrumbs";
 
 const FolderPicker = lazy(() => import("./ImportFilesystemPickerModal").then((module) => ({ default: module.ImportFilesystemPickerModal })));
@@ -25,6 +25,7 @@ export function FileSearchSettings({ initialPath, onDialogChange, compact = fals
   const [browse, setBrowse] = useState(initialBrowse);
   const [rebuilding, setRebuilding] = useState(false);
   const [advanced, setAdvanced] = useState(!compact);
+  const [refreshRoot, setRefreshRoot] = useState<string | null>(null);
   useEffect(() => { onDialogChange?.(rebuilding || browse); return () => onDialogChange?.(false); }, [rebuilding, browse, onDialogChange]);
   const mutation = useMutation({
     mutationFn: (config: FileSearchConfig) => put<Settings>("/api/import-search/settings", config),
@@ -48,10 +49,21 @@ export function FileSearchSettings({ initialPath, onDialogChange, compact = fals
       {!config.roots.length && <Paper withBorder p="md"><Text size="sm" c="dimmed">No search locations added.</Text></Paper>}
       {config.roots.map((root) => {
         const state = query.data?.roots.find((item) => item.id === root.id);
+        const hours = root.refresh_hours ?? config.refresh_hours;
+        const acknowledged = Boolean(root.network_load_acknowledged);
+        const saveRoot = (patch: Partial<typeof root>) => save({ roots: config.roots.map((r) => r.id === root.id ? { ...r, ...patch } : r) });
         return <Paper key={root.id} withBorder p="sm"><Stack gap="xs">
           <Group wrap="nowrap"><Switch aria-label={`Enable ${root.path}`} checked={root.enabled} disabled={busy} onChange={(event) => save({ roots: config.roots.map((r) => r.id === root.id ? { ...r, enabled: event.currentTarget.checked } : r) })} /><Text size="sm" fw={600} style={{ flex: 1, overflowWrap: "anywhere" }}>{root.path}</Text><Badge variant="light" color={state?.status === "offline" ? "red" : state?.status === "needs_attention" ? "orange" : "gray"}>{!root.enabled ? "Disabled" : config.paused && ["queued", "scanning", "paused"].includes(state?.status ?? "") ? "Indexing paused" : searchRootStatus(state?.status ?? "queued")}</Badge></Group>
-          <Group justify="space-between"><Text size="xs" c="dimmed">{state?.count ?? 0} files · {state?.pending ?? 0} pending{state?.last_success ? ` · Updated ${new Date(state.last_success).toLocaleString()}` : " · Not scanned yet"}</Text><Group gap="xs"><Button size="xs" variant="default" disabled={busy || !root.enabled} onClick={() => operation.mutate({ url: "/api/import-search/refresh", body: { root_id: root.id } })}>Rescan</Button><Button size="xs" variant="subtle" leftSection={<IconTrash size={14} />} disabled={busy} onClick={() => save({ roots: config.roots.filter((r) => r.id !== root.id) })}>Remove</Button></Group></Group>
+          <Group gap="xs"><Badge variant="light" color={state?.monitor_state === "connected" ? "teal" : state?.monitor_state === "refresh_only" ? "orange" : "gray"}>{searchMonitorStatus(!root.enabled ? "disabled" : state?.monitor_state ?? "connecting")}</Badge><SearchHelp label={`monitoring ${root.path}`} text="One recursive subscription listens for changes in this location. Connected monitoring updates changed paths without scheduled full scans. Startup gaps, reconnection or lost notifications trigger reconciliation. Connection alone cannot guarantee that every network device reports every change." /><Text size="xs" c="dimmed">{state?.next_refresh ? `Next refresh ${new Date(state.next_refresh).toLocaleString()}` : state?.monitor_state === "refresh_only" && !hours ? "Manual refresh only" : null}</Text></Group>
+          <Group justify="space-between"><Text size="xs" c="dimmed">{state?.count ?? 0} files · {state?.pending ?? 0} pending{state?.last_success ? ` · Last full scan ${new Date(state.last_success).toLocaleString()}` : " · Not scanned yet"}</Text><Group gap="xs"><Button size="xs" variant="default" disabled={busy || !root.enabled} onClick={() => operation.mutate({ url: "/api/import-search/refresh", body: { root_id: root.id } })}>Rescan</Button><Button size="xs" variant="subtle" leftSection={<IconTrash size={14} />} disabled={busy} onClick={() => save({ roots: config.roots.filter((r) => r.id !== root.id) })}>Remove</Button></Group></Group>
+          {state?.monitor_message && <Text size="xs" c={state.monitor_state === "refresh_only" ? "orange" : "dimmed"}>{state.monitor_message}{state.monitor_state === "refresh_only" ? hours ? ` Refreshes every ${hours} hours while the app runs.` : " Use Rescan to update results." : ""}</Text>}
           {state?.message && <Text size="xs" c="dimmed">{state.message}</Text>}
+          <Button size="compact-xs" variant="subtle" style={{ alignSelf: "flex-start" }} rightSection={<IconChevronDown size={14} style={{ transform: refreshRoot === root.id ? "rotate(180deg)" : undefined }} />} aria-expanded={refreshRoot === root.id} onClick={() => setRefreshRoot(refreshRoot === root.id ? null : root.id)}>Refresh settings</Button>
+          <Collapse in={refreshRoot === root.id}><Stack gap="xs">
+            <Select label="Fallback refresh interval" aria-label={`Fallback refresh interval for ${root.path}`} size="sm" value={String(hours)} disabled={busy} data={[{ value: "0", label: "Manual only" }, ...[1, 4, 12, 24, 72, 168].map((value) => ({ value: String(value), label: value === 1 ? "Every hour" : value === 24 ? "Every day (recommended)" : value === 72 ? "Every 3 days" : value === 168 ? "Every week" : `Every ${value} hours`, disabled: value < 24 && !acknowledged }))]} onChange={(value) => value && saveRoot({ refresh_hours: Number(value) })} />
+            <Checkbox size="sm" checked={acknowledged} disabled={busy} label="I understand frequent scans can increase network/server load and should be avoided for large shared folders used by multiple people." onChange={(event) => saveRoot({ network_load_acknowledged: event.currentTarget.checked, ...(!event.currentTarget.checked && hours > 0 && hours < 24 ? { refresh_hours: 24 } : {}) })} />
+            <Text size="xs" c="dimmed">Used when live monitoring is unavailable. Connected locations do not run scheduled full scans.</Text>
+          </Stack></Collapse>
         </Stack></Paper>;
       })}
       <Button size="compact-sm" variant="subtle" rightSection={<IconChevronDown size={14} style={{ transform: advanced ? "rotate(180deg)" : undefined }} />} aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Indexing settings</Button>
@@ -62,8 +74,8 @@ export function FileSearchSettings({ initialPath, onDialogChange, compact = fals
         </Stack>
         <Group gap="xs"><Switch label="Search source metadata" checked={config.metadata_enabled} disabled={busy} onChange={(event) => save({ metadata_enabled: event.currentTarget.checked })} /><SearchHelp label="source metadata" text="Search barcode, remarks, part number, start time and technique when available in the source header. Turning this off stops metadata indexing and hides metadata matches; workbook format checks continue." /></Group>
         <Stack gap={4}>
-          <Group gap="xs"><Text component="label" htmlFor={refreshId} size="sm" fw={500}>Refresh when indexed search opens</Text><SearchHelp label="automatic refresh" text="Refresh runs in the background when indexed search opens, only after this interval has elapsed since the last attempt. Choose Manual only to refresh using the buttons above." /></Group>
-          <Select id={refreshId} aria-label="Refresh when indexed search opens" data={[{ value: "0", label: "Manual only" }, { value: "24", label: "After 24 hours" }, { value: "72", label: "After 3 days" }, { value: "168", label: "After 1 week" }]} value={String(config.refresh_hours)} disabled={busy} onChange={(value) => save({ refresh_hours: Number(value) })} />
+          <Group gap="xs"><Text component="label" htmlFor={refreshId} size="sm" fw={500}>Default fallback for new locations</Text><SearchHelp label="automatic refresh" text="When live monitoring is unavailable, refresh runs in the background at this interval while the app is open. Each existing location has its own Refresh settings. Automatic scans are staggered and run one at a time." /></Group>
+          <Select id={refreshId} aria-label="Default fallback for new locations" data={[{ value: "0", label: "Manual only" }, { value: "24", label: "Every day" }, { value: "72", label: "Every 3 days" }, { value: "168", label: "Every week" }]} value={String(config.refresh_hours)} disabled={busy} onChange={(value) => save({ refresh_hours: Number(value) })} />
         </Stack>
         <Group gap="xs"><Button variant="default" disabled={busy} onClick={() => setRebuilding(true)}>Rebuild catalog</Button><SearchHelp label="rebuilding or removing locations" text="Rebuilding or removing a location changes only the search catalog. Your source files and Cell Database are preserved." /></Group>
       </Stack></Paper></Collapse>

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/import-search", tags=["file search"])
 @router.get("/settings")
 def settings(db: Session = Depends(get_db)):
     service = get_indexer()
-    return {"config": load_config(db), "roots": service.catalog.roots()}
+    return {"config": load_config(db), "roots": service.root_snapshots(), "revision": service.revision}
 
 
 @router.put("/settings")
@@ -28,7 +28,7 @@ def update_settings(value: dict, db: Session = Depends(get_db)):
         except (ValueError, TypeError) as exc:
             raise HTTPException(400, str(exc)) from exc
         service.configure(config)
-    return {"config": config, "roots": service.catalog.roots()}
+    return {"config": config, "roots": service.root_snapshots(), "revision": service.revision}
 
 
 @router.post("/refresh")

@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.3 - 2026-09-30
+
+### New features
+
+- Indexed file search can monitor chosen Windows folders and mapped drives for changes, with safe scheduled refresh when live monitoring is unavailable.
+- Per-location fallback intervals include an explicit network-load acknowledgement for frequent scans.
+
 ## Unreleased
 
 ### Improvements

@@ -3,7 +3,7 @@ import { useDebouncedValue, useResizeObserver } from "@mantine/hooks";
 import { IconArrowLeft, IconFolder, IconInfoCircle, IconSearch, IconSettings } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { get, post, type ImportBrowseEntry } from "../api";
+import { get, type ImportBrowseEntry } from "../api";
 import { importPathsEqual } from "../importPathBreadcrumbs";
 import { toggleImportFileSelection } from "../importBrowserSelection";
 import { indexedFileAvailable, indexedFileStatus, indexedMatchExplanation, searchLocationName, searchRootStatus, type FileSearchResults, type FileSearchSettings as Settings, type IndexedFile } from "../importSearch";
@@ -68,13 +68,12 @@ export function IndexedSourceSearch({ active, selected, currentPath, onPreview, 
     refetchInterval: active && settings.data?.roots.some((r) => ["scanning", "queued"].includes(r.status)) ? 2000 : false,
   });
   // Keep rows mounted during progress and completion refetches so focus survives.
-  const progress = JSON.stringify(settings.data?.roots.map((r) => [r.id, r.status, r.count, r.pending, r.last_success]));
+  const progress = JSON.stringify([settings.data?.revision, settings.data?.roots.map((r) => [r.id, r.status, r.count, r.pending, r.last_success])]);
   const previousProgress = useRef(progress);
   useEffect(() => {
     if (active && previousProgress.current !== progress && config?.roots.some((r) => r.enabled)) void query.refetch();
     previousProgress.current = progress;
   }, [active, progress, config, query.refetch]);
-  useEffect(() => { if (active) void post("/api/import-search/refresh", { due_only: true }).catch(() => undefined); }, [active]);
   useEffect(() => {
     if (!config) return;
     if (root && !config.roots.some((r) => r.enabled && r.id === root)) setRoot(null);

@@ -1,5 +1,9 @@
 # Feature specs
 
+- [063-live-search-index.md](063-live-search-index.md) adds recursive directory notifications,
+  safe recovery and scheduled refresh-only fallback with network-load acknowledgement.
+  **Implemented; Astra review clean. Actual NAS and installed WebView acceptance remain deferred.**
+
 - [062-search-match-explanations-and-whats-new.md](062-search-match-explanations-and-whats-new.md)
   clarifies source-header match reasons and adds a bundled, one-time search introduction in the next
   packaged release. **Implemented; Astra review clean. Packaged startup awaits rebuilt-app acceptance.**

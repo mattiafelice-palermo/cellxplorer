@@ -1,15 +1,16 @@
 import type { ImportBrowseEntry } from "./api";
 import { importPathsEqual } from "./importPathBreadcrumbs.ts";
 
-export interface SearchRoot { id: string; path: string; enabled: boolean }
+export interface SearchRoot { id: string; path: string; enabled: boolean; refresh_hours?: number; network_load_acknowledged?: boolean }
 export interface FileSearchConfig {
   roots: SearchRoot[]; formats: string[]; metadata_enabled: boolean; refresh_hours: number; paused: boolean;
 }
 export interface SearchRootState {
   id: string; path: string; status: string; count: number; pending: number;
   last_success: string | null; message: string | null;
+  monitor_state?: string; monitor_message?: string | null; next_refresh?: string | null;
 }
-export interface FileSearchSettings { config: FileSearchConfig; roots: SearchRootState[] }
+export interface FileSearchSettings { config: FileSearchConfig; roots: SearchRootState[]; revision?: number }
 export interface IndexedFile extends ImportBrowseEntry {
   canonical: string; relative_path: string; root_id: string; root_path: string; root_status: string; extension: string;
   supplier: string; recognition: string; metadata_state: string; metadata: Record<string, string>; registered: boolean;
@@ -59,6 +60,9 @@ export function indexedMatchExplanation(file: IndexedFile, query: string) {
 
 export function searchRootStatus(status: string) {
   return ({ queued: "Waiting to scan", scanning: "Scanning", paused: "Indexing paused", offline: "Location unavailable", needs_attention: "Some files need attention", ready: "Ready" } as Record<string, string>)[status] ?? status;
+}
+export function searchMonitorStatus(status: string) {
+  return ({ connected: "Monitoring connected", connecting: "Connecting", reconnecting: "Reconnecting", refresh_only: "Refresh-only", paused: "Paused", disabled: "Disabled" } as Record<string, string>)[status] ?? "Connecting";
 }
 /** Cross-scope staging keeps the existing map keys but coalesces Windows path aliases. */
 export function mergeIndexedSelection(current: ReadonlyMap<string, ImportBrowseEntry>, next: ReadonlyMap<string, ImportBrowseEntry>) {

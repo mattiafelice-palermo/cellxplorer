@@ -172,6 +172,24 @@ class Catalog:
         with self.connect() as db:
             db.execute(f"UPDATE roots SET {','.join(f'{key}=?' for key in values)} WHERE id=?", (*values.values(), root_id))
 
+    def remove_scope(self, root_id: str, generation: str, canonical: str, *, retain_current=False):
+        """Remove this root's memberships only, after a worker confirmed accessible scope.
+
+        SQL prefix equality avoids treating wildcard characters in filenames as patterns.
+        Overlapping roots retain their independent memberships.
+        """
+        separator = "\\" if "\\" in canonical else os.sep
+        prefix = canonical.rstrip(separator) + separator
+        with self.connect() as db:
+            row = db.execute("SELECT generation FROM roots WHERE id=?", (root_id,)).fetchone()
+            if not row or row[0] != generation:
+                return False
+            db.execute("DELETE FROM memberships WHERE root_id=? AND (canonical=? OR substr(canonical,1,?)=?)"
+                + (" AND generation!=?" if retain_current else ""),
+                (root_id, canonical, len(prefix), prefix, *([generation] if retain_current else [])))
+            self._prune(db)
+        return True
+
     def apply_batch(self, root_id: str, generation: str, facts: list[dict]):
         with self.connect() as db:
             row = db.execute("SELECT generation FROM roots WHERE id=?", (root_id,)).fetchone()
