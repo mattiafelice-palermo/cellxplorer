@@ -1,6 +1,6 @@
 [package]
 name = "cellxplorer"
-version = "0.28.0-alpha.3"
+version = "0.28.0-alpha.4"
 description = "CellXplorer desktop app"
 authors = ["CellXplorer"]
 edition = "2021"

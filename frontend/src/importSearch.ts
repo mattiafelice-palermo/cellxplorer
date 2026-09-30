@@ -14,11 +14,18 @@ export interface FileSearchSettings { config: FileSearchConfig; roots: SearchRoo
 export interface IndexedFile extends ImportBrowseEntry {
   canonical: string; relative_path: string; root_id: string; root_path: string; root_status: string; extension: string;
   supplier: string; recognition: string; metadata_state: string; metadata: Record<string, string>; registered: boolean;
+  cells?: { id: number; name: string }[]; analyses?: { id: number; name: string }[]; replicates?: { id: number; name: string }[];
+  folder_count?: number; folder_count_partial?: boolean; file_created_at?: string | null; first_indexed_at?: string | null;
+  matched_conditions?: number[];
+  condition_values?: Record<string, string>;
+  indexed_values?: Record<string, number | null>;
+  library_matches?: string[];
 }
 export interface FileSearchResults {
   items: Omit<IndexedFile, "kind">[]; total: number; offset: number; limit: number;
   has_more: boolean; roots: Omit<SearchRootState, "count" | "pending">[];
   techniques?: string[];
+  relationships?: { analyses: { id: number; name: string }[]; replicates: { id: number; name: string }[] };
 }
 export function indexedFileAvailable(file: IndexedFile) {
   return file.recognition === "recognized" && !file.registered && file.root_status !== "offline";
@@ -46,6 +53,7 @@ export function indexedMatchExplanation(file: IndexedFile, query: string) {
   const matches = (value: string) => terms.some((term) => normalize(value).includes(normalize(term)));
   const metadata = Object.entries(file.metadata).filter(([, value]) => matches(value));
   const explanation: string[] = [];
+  explanation.push(...(file.library_matches ?? []));
   if (matches(file.name)) explanation.push("Filename");
   explanation.push(...metadata.map(([key, value]) => `File header “${METADATA_LABELS[key] ?? key}”: ${value}`));
   const folder = file.path.replace(/[\\/][^\\/]*$/, "");

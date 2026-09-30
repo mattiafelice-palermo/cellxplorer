@@ -220,6 +220,7 @@ Cellxplorer/
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── import_file_hints.py Optional concurrent header-only import-browser hints
 │           ├── import_search_catalog.py Disposable SQLite filename/metadata catalog (Spec 060)
+│           ├── import_search_filters.py Whole-catalog filters, current library snapshot and bounded regex (Spec 064)
 │           ├── import_search_index.py Search preferences and cancellable scan coordination
 │           ├── import_search_live.py Bounded live roots, recovery and fallback scheduling (Spec 063)
 │           ├── import_search_watch.py Stoppable recursive Windows change subscriptions (Spec 063)
@@ -246,6 +247,7 @@ Cellxplorer/
 │   │   │   ├── cellPreviewPlotModel.ts Shared voltage/capacity layouts, traces, and CE range
 │   │   │   ├── ImportSourcePreview.tsx Staged source voltage and cycle preview
 │   │   │   ├── IndexedSourceSearch.tsx Virtualized indexed discovery in the import picker (Spec 060)
+│   │   │   ├── IndexedSearchFilters.tsx Searchable filter sections and saved searches (Spec 064)
 │   │   │   ├── FileSearchSettings.tsx Chosen roots, indexing and refresh controls
 │   │   │   ├── NavigationWarmupDebugButton.tsx Temporary Cell-preparation progress/debug panel
 │   │   │   ├── DestructiveImpactModal.tsx
@@ -319,6 +321,7 @@ Cellxplorer/
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_import_file_hints.py    Optional header-only import-browser hint tests
 │   ├── test_import_search.py        Catalog, worker lifecycle, freshness and recovery tests (Spec 060)
+│   ├── test_import_search_filters.py Global filters, source facts, relationships, presets and regex limits (Spec 064)
 │   ├── test_import_search_live.py   Native changes, safe deltas, fallback and interval gates (Spec 063)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
@@ -379,6 +382,7 @@ Cellxplorer/
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── profile_time_capacity_refinement.py Focused adaptive-refinement S25 measurement (Spec 050.15)
 │   ├── profile_import_search.py     Disposable indexed-search catalog benchmark (Spec 060)
+│   ├── profile_import_search_filters.py Disposable whole-catalog filter/relationship benchmark (Spec 064)
 │   ├── smoke_import_search.py       Frozen-backend indexing/recovery smoke in disposable data
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
 │   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Specs 050.12/050.14)

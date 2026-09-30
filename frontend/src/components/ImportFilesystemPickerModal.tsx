@@ -198,6 +198,9 @@ export function ImportFilesystemPickerModal({
   const [indexedScope, setIndexedScope] = useState(initialScope === "indexed");
   const [searchDialogOpen, setSearchDialogOpen] = useState(false);
   const [indexedPreviewEntry, setIndexedPreviewEntry] = useState<IndexedFile | null>(null);
+  const [searchPanelTab, setSearchPanelTab] = useState("preview");
+  const [searchFilterHost, setSearchFilterHost] = useState<HTMLDivElement | null>(null);
+  const [searchFilterCount, setSearchFilterCount] = useState(0);
   const [requestedPath, setRequestedPath] = useState<string | null>(() =>
     typeof window === "undefined" ? null : window.localStorage.getItem(IMPORT_LAST_FOLDER_STORAGE_KEY),
   );
@@ -1389,7 +1392,7 @@ export function ImportFilesystemPickerModal({
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
-              {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onSelection={(next, files) => {
+              {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
                 setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (next.has(file.path) && file.recognition === "recognized") hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
               }} /></Box>}
@@ -1514,7 +1517,7 @@ export function ImportFilesystemPickerModal({
                   {!previewCollapsed && (
                     <Tooltip label={selectedPreviewEntry?.path ?? "Select a source file to preview it."} withArrow>
                       <Text size="sm" fw={700} truncate style={{ minWidth: 0 }}>
-                        {selectedPreviewEntry ? `Preview · ${selectedPreviewEntry.name}` : "Preview"}
+                        {indexedScope && searchPanelTab === "filters" ? "Search filters" : selectedPreviewEntry ? `Preview · ${selectedPreviewEntry.name}` : "Preview"}
                       </Text>
                     </Tooltip>
                   )}
@@ -1526,7 +1529,9 @@ export function ImportFilesystemPickerModal({
                     onClick={() => setPreviewCollapsed((current) => !current)}
                   >{previewCollapsed ? <IconChevronRight size={15} /> : <IconChevronDown size={15} />}</ActionIcon>
                 </Group>
-                {!previewCollapsed && (
+                {indexedScope && !previewCollapsed && <SegmentedControl aria-label="Indexed search panel" mb="xs" value={searchPanelTab} onChange={setSearchPanelTab} data={[{ value: "preview", label: "Preview" }, { value: "filters", label: `Filters (${searchFilterCount})` }]} />}
+                <div ref={setSearchFilterHost} style={{ display: indexedScope && !previewCollapsed && searchPanelTab === "filters" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }} />
+                {!previewCollapsed && (!indexedScope || searchPanelTab === "preview") && (
                   <Stack ref={previewScrollRef} gap="xs" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable" }}>
                     {selectedPreviewEntry ? (
                       <>

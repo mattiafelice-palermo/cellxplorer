@@ -1,5 +1,9 @@
 # Feature specs
 
+- [064-indexed-search-filters.md](064-indexed-search-filters.md) adds searchable grouped filters,
+  Preview / Filters tabs, library relationships, text conditions and saved searches.
+  **Implemented; Astra high review clean, full preflight and local browser acceptance passed.**
+
 - [063-live-search-index.md](063-live-search-index.md) adds recursive directory notifications,
   safe recovery and scheduled refresh-only fallback with network-load acknowledgement.
   **Implemented; Astra review clean. Actual NAS and installed WebView acceptance remain deferred.**

@@ -13,10 +13,11 @@ from pathlib import Path
 from ..config import APP_DATA_DIR
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
-SCHEMA_VERSION = 1
-METADATA_VERSION = 1
+SCHEMA_VERSION = 2
+METADATA_VERSION = 2
 FORMATS = (".ndax", ".mpr", ".xlsx")
-METADATA_FIELDS = ("barcode", "remarks", "part_number", "start_time", "technique")
+METADATA_FIELDS = ("barcode", "remarks", "part_number", "start_time", "technique",
+                   "active_mass_mg", "nominal_capacity_mah", "cycle_count", "duration_s", "device_info", "channel")
 
 
 def now() -> str:
@@ -74,7 +75,7 @@ class Catalog:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
+            if version not in (0, 1, SCHEMA_VERSION):
                 raise ValueError("Search catalog version changed; rebuild the search index.")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS roots (
@@ -100,6 +101,12 @@ class Catalog:
                 CREATE INDEX IF NOT EXISTS entry_search_state ON entries(canonical,recognition,metadata_state);
                 CREATE INDEX IF NOT EXISTS entry_technique ON entries(technique);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(entries)")}
+            for column in ("file_created_at", "first_indexed_at", "folder_key"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE entries ADD COLUMN {column} TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS entry_folder ON entries(folder_key,recognition)")
+            db.execute("CREATE INDEX IF NOT EXISTS entry_modified ON entries(modified_at,canonical)")
             try:
                 existed = db.execute("SELECT 1 FROM sqlite_master WHERE name='search_fts'").fetchone()
                 db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(search_text, content='entries', content_rowid='id', tokenize='trigram')")
@@ -210,6 +217,9 @@ class Catalog:
                     metadata_json=excluded.metadata_json,metadata_version=excluded.metadata_version,
                     supplier=excluded.supplier,technique=excluded.technique,search_text=excluded.search_text""", values)
                 db.execute("INSERT INTO memberships VALUES(?,?,?) ON CONFLICT(root_id,canonical) DO UPDATE SET generation=excluded.generation", (root_id, fact["canonical"], generation))
+                folder = ntpath.dirname(fact["canonical"]) if "\\" in fact["canonical"] else os.path.dirname(fact["canonical"])
+                db.execute("UPDATE entries SET file_created_at=?, first_indexed_at=coalesce(first_indexed_at,?), folder_key=? WHERE canonical=?",
+                           (fact.get("file_created_at"), now(), folder, fact["canonical"]))
             return True
 
     def reconcile(self, root_id: str, generation: str):

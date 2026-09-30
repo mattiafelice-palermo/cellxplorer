@@ -14,6 +14,13 @@ from .import_search_transport import BatchSpool
 from .import_search_catalog import METADATA_FIELDS, METADATA_VERSION, path_key
 
 
+def file_created_at(value):
+    birth = getattr(value, "st_birthtime", None)
+    if birth is None and os.name == "nt":
+        birth = value.st_ctime  # Windows Python <3.12 creation-time compatibility.
+    return datetime.fromtimestamp(birth, timezone.utc).isoformat() if birth is not None else None
+
+
 def canonical_root(path: str) -> str:
     # Resolve mapped drives once here, never on the query/request thread.
     if os.name == "nt" and not path.startswith("\\\\"):
@@ -46,6 +53,13 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
                     fact["recognition"] = "unsupported"
                 fact["metadata_state"] = "unavailable"
             else:
+                # This is the *recorded* count in the already-read bounded Test
+                # information header, not a plan loop count or a record scan.
+                # Keep the shared scientific parsing facade unchanged.
+                if fact["extension"] == ".xlsx":
+                    recorded = (header.get("raw") or {}).get("Excel.Original.Test.CycleCount.Value")
+                    if recorded is not None and str(recorded).strip().isdigit():
+                        header["cycle_count"] = int(str(recorded).strip())
                 fact["metadata"] = {key: str(header[key])[:512] for key in METADATA_FIELDS
                                     if header.get(key) is not None and isinstance(header[key], (str, int, float))}
                 fact["metadata_state"] = "ready"
@@ -114,7 +128,7 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
                             relative = os.path.relpath(entry.path, root["path"])
                             key = path_key(os.path.join(resolved, relative))
                             fact = dict(canonical=key, path=entry.path, name=entry.name, extension=extension,
-                                        size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                                        size=stat.st_size, mtime_ns=stat.st_mtime_ns, file_created_at=file_created_at(stat),
                                         modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
                                         recognition="pending" if extension == ".xlsx" else "recognized",
                                         metadata_state="pending" if config["metadata_enabled"] else "disabled",
@@ -217,7 +231,7 @@ def scan_changes(root: dict, config: dict, catalog_path: str, spool_path: str) -
         else:
             raise OSError("Source is still being written")
         fact = dict(canonical=key(path), path=path, name=Path(path).name, extension=extension,
-            size=value.st_size, mtime_ns=value.st_mtime_ns,
+            size=value.st_size, mtime_ns=value.st_mtime_ns, file_created_at=file_created_at(value),
             modified_at=datetime.fromtimestamp(value.st_mtime, timezone.utc).isoformat(),
             recognition="pending" if extension == ".xlsx" else "recognized", metadata={}, metadata_version=0,
             metadata_state="pending" if config["metadata_enabled"] else "disabled",

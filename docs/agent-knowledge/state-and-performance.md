@@ -1387,9 +1387,24 @@ before replacing this boundary with a separate invalidation-sensitive cache.
 Search indexing also obeys the global background-automation pause; its separate indexing switch
 can keep scans paused after global automation resumes. Explicit search and previews remain usable.
 
-Indexed match explanations label source-export header fields explicitly. The catalog searches
-barcode, remarks, part number, start time and technique; it does not search editable database Cell
-names/notes or curated scientific Cell metadata. Do not infer chemistry/material from a part number.
+Indexed match explanations label source-export header fields explicitly. Advanced search also
+joins current Cell names/notes, curated metadata and shared analysis/replicate membership through
+a temporary relational snapshot. Never copy these relationships into the disposable catalog.
+SQLite legacy SELECT mode needs an explicit read BEGIN for a consistent multi-query snapshot;
+release the owned read snapshot before waiting on an isolated regex process. Do not infer
+chemistry/material from a part number. Persisted source cycling facts are usable only for an online
+adopted source whose size/observed mtime matches the indexed version. A changed source's observed
+mtime can advance before adoption, so timestamp equality alone does not establish scientific
+freshness. Header-only recorded facts and Unknown remain separate from continued Cell totals.
+
+Advanced filter requests operate on catalog facts and current local relationships; they never
+stat/hash/parse sources or create scientific caches. Filter/count/sort before pagination. Regex
+runs in at most two spawned stoppable processes with a three-second deadline. Retain literal
+Unicode/path matching after trigram candidate lookup. Index upgrades add nullable disposable
+columns without replacing entries; old facts remain Unknown until ordinary reconciliation.
+Preview/Filters shares the loader panel; explicit result activation opens Preview, checkbox
+inclusion and query refetch do not. Chips retain original draft-condition indices when removing
+an applied condition. Profile with scripts/profile_import_search_filters.py using isolated data.
 
 Live subtree enrichment publishes progress before every header and streams partial result batches
 (16 facts or 0.5 seconds). The coordinator's silence watchdog must measure one stalled header,
