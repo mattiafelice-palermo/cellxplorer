@@ -1719,7 +1719,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             original_hash = library.parsing.compute_hash
             original_update = library.scanner.update_source_from_path
 
-            def adopt_source(update_db, update_source):
+            def adopt_source(update_db, update_source, **_):
                 update_source.hash = "new-hash"
                 update_source.location_status = "online"
                 update_source.parse_status = "parsed"
@@ -1915,7 +1915,7 @@ class SourceAndReplicateTests(unittest.TestCase):
         db.flush()
 
         original_update = scanner.update_source_from_path
-        scanner.update_source_from_path = lambda session, sf: (
+        scanner.update_source_from_path = lambda session, sf, **_: (
             setattr(sf, "location_status", "online") or sf
         )
         try:

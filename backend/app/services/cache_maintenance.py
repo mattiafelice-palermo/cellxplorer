@@ -25,6 +25,7 @@ from ..models import (
 )
 from . import background_jobs
 from .activity_log import record_activity
+from .analysis_updates import record_analysis_update
 from .lazy_module import LazyModule
 
 
@@ -736,6 +737,35 @@ class WarmupCoordinator:
                 and task["analysis_modified_at"] == expected_analysis_modified_at
             )
 
+    def analysis_activity_states(self, analysis_ids: set[int]) -> dict[int, str]:
+        """Cheap current preparation state; no cache or source-file probes."""
+        with self._lock:
+            job = background_jobs.get_job(self._job_id) if self._job_id is not None else None
+            if not job:
+                return {}
+            items = {item["id"]: item for item in job.get("items", [])}
+            # Processing details are capped at 200; task outcomes are compact
+            # queue bookkeeping and cover every plot, including omitted rows.
+            latest = {}
+            for task in self._tasks:
+                if task["analysis_id"] in analysis_ids:
+                    latest[(task["analysis_id"], task.get("plot_id", task["id"]))] = task
+            result = {}
+            for analysis_id in analysis_ids:
+                states = [task.get("activity_state", items.get(task["id"], {}).get("status", "queued"))
+                          for task in latest.values() if task["analysis_id"] == analysis_id]
+                if not states:
+                    continue
+                if any(state in {"failed", "skipped"} for state in states):
+                    result[analysis_id] = "needs_attention"
+                elif any(state in {"queued", "processing"} for state in states):
+                    result[analysis_id] = "paused" if job["status"] == "paused" else "refreshing"
+                elif "superseded" in states:
+                    result[analysis_id] = "changed_since_update"
+                else:
+                    result[analysis_id] = "ready"
+            return result
+
     def foreground_ready(self, analysis_id: int, plot_id: str) -> int:
         """Retire matching idle work after the user has generated this plot."""
         retired = 0
@@ -744,6 +774,7 @@ class WarmupCoordinator:
             if self._active is not None and (
                 self._active["analysis_id"], self._active["plot_id"]
             ) == (analysis_id, plot_id):
+                self._active["activity_state"] = "ready"
                 if job_id is not None:
                     background_jobs.record_result(
                         job_id,
@@ -761,6 +792,7 @@ class WarmupCoordinator:
                 ) != (analysis_id, plot_id):
                     continue
                 task["cancelled"] = True
+                task["activity_state"] = "ready"
                 if job_id is not None:
                     background_jobs.record_result(
                         job_id,
@@ -800,6 +832,7 @@ class WarmupCoordinator:
                 with self._lock:
                     if self._active is None or self._active["id"] != task["id"]:
                         continue
+                    self._active["activity_state"] = "processing"
                     if self._job_id is not None:
                         background_jobs.update_item(
                             self._job_id,
@@ -814,6 +847,8 @@ class WarmupCoordinator:
                     return task
             with self._lock:
                 if self._active is not None and self._active["id"] == task["id"]:
+                    if not task.get("cancelled"):
+                        self._active["activity_state"] = "superseded"
                     if not task.get("cancelled") and self._job_id is not None:
                         background_jobs.record_result(
                             self._job_id,
@@ -887,6 +922,7 @@ class WarmupCoordinator:
                 # missing item instead of returning this failed job forever.
                 self._fingerprint = None
                 self._probe = None
+            completed_task["activity_state"] = "failed" if error else status
             if job_id is not None:
                 background_jobs.record_result(
                     job_id,
@@ -1000,8 +1036,11 @@ def invalidate_cell_dependents(
     cell_id: int,
     *,
     source_id: int | None = None,
+    source_ids: list[int] | None = None,
     queue_warmup: bool = True,
     reason: str = "source_update",
+    update_batch_key: str | None = None,
+    added_cycles: int | None = None,
 ) -> dict[str, Any]:
     """Invalidate visual caches after the cell's data-affecting inputs changed.
 
@@ -1027,6 +1066,12 @@ def invalidate_cell_dependents(
     if affected and queue_warmup and load_policy(db).warmup_enabled:
         queued = warmup.enqueue_analyses(db, affected)
     if affected:
+        if reason in {"source_update", "continuation_attached"}:
+            record_analysis_update(
+                db, cell_id=cell_id, source_id=source_id, source_ids=source_ids,
+                analysis_titles=affected_titles, batch_key=update_batch_key,
+                added_cycles=added_cycles,
+            )
         cause_labels = {
             "source_update": "Source update",
             "cell_edit": "Cell property change",

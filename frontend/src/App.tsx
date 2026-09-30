@@ -1,5 +1,4 @@
 import {
-  Accordion,
   ActionIcon,
   Alert,
   AppShell,
@@ -7,7 +6,6 @@ import {
   Button,
   Code,
   Group,
-  Modal,
   NavLink,
   Paper,
   Progress,
@@ -44,6 +42,9 @@ import {
   type DatabaseStatus,
   type SourceCheckJob,
 } from "./api";
+import { ActivityCenter } from "./components/ActivityCenter";
+import { AnalysisUpdateIndicator } from "./components/AnalysisUpdateIndicator";
+import { ANALYSIS_UPDATES_VIEWED, acknowledgeUpdates, readSeenUpdates, unreadUpdates } from "./analysisUpdateNoticePolicy";
 import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
@@ -325,16 +326,14 @@ export default function App({
     [backgroundJobs.data]
   );
 
-  // Acknowledge failed jobs when the activity drawer opens, but only if there's a new high-water mark
-  useEffect(() => {
-    if (!activityOpen || failedJobIds.length === 0) return;
+  const acknowledgeFailedJobs = () => {
+    if (failedJobIds.length === 0) return;
     const highestFailedId = Math.max(...failedJobIds);
-    // Only write to storage if this is a higher ID than what we've already acknowledged
     if (highestFailedId > (acknowledgedFailedJobId ?? -1)) {
       writeAcknowledgedFailedJobId(window.localStorage, highestFailedId);
       setAcknowledgedFailedJobId(highestFailedId);
     }
-  }, [activityOpen, failedJobIds, acknowledgedFailedJobId]);
+  };
   const sourceCheckJob = useQuery({
     queryKey: ["source-check-job"],
     queryFn: () => get<SourceCheckJob | null>("/api/source-check-jobs/latest"),
@@ -596,6 +595,9 @@ export default function App({
             </Group>
           </Group>
           <Group gap="xs">
+            <AnalysisUpdateIndicator databaseId={databaseStatus.data?.compatible ? databaseStatus.data.database_instance_id : null}
+              activityOpen={activityOpen} onOpen={() => setActivityOpen(true)}
+              onSettings={() => guardedNavigate("/settings/notifications")}>
             <Button
               className="background-activity-button"
               size="compact-sm"
@@ -630,6 +632,7 @@ export default function App({
                 "Activity"
               )}
             </Button>
+            </AnalysisUpdateIndicator>
             <NavigationWarmupDebugButton />
             <DownloadsButton />
             <QuickSettingsMenu onOpenDebug={() => setDebugOpen(true)} />
@@ -731,6 +734,7 @@ export default function App({
               <Route path="/settings/plots" element={<SettingsPage />} />
               <Route path="/settings/desktop" element={<SettingsPage />} />
               <Route path="/settings/updates" element={<SettingsPage />} />
+              <Route path="/settings/notifications" element={<SettingsPage />} />
               <Route path="/settings/performance" element={<SettingsPage />} />
               <Route path="/settings/cache" element={<SettingsPage />} />
               <Route path="/settings/activity" element={<SettingsPage />} />
@@ -750,121 +754,26 @@ export default function App({
           events: getDebugEvents(),
         }}
       />
-      <Modal
+      <ActivityCenter
         opened={activityOpen}
+        onSettings={() => { setActivityOpen(false); guardedNavigate("/settings/notifications"); }}
         onClose={() => setActivityOpen(false)}
-        title="Background activity"
-        size="lg"
-      >
-        {backgroundJobs.isLoading ? (
-          <Text c="dimmed" size="sm">Loading background activity...</Text>
-        ) : backgroundJobs.isError ? (
-          <Alert color="red">Could not load background activity.</Alert>
-        ) : (backgroundJobs.data ?? []).length === 0 ? (
-          <Text c="dimmed" size="sm">No background work has run in this session.</Text>
-        ) : (
-          <Accordion
-            variant="separated"
-            defaultValue={
-              activeJob
-                ? String(activeJob.id)
-                : backgroundJobs.data?.[0]
-                  ? String(backgroundJobs.data[0].id)
-                  : null
-            }
-          >
-            {(backgroundJobs.data ?? []).map((job) => {
-              const progress = importProgressPercent(job) ?? (job.total ? 0 : 100);
-              const count = importProgressCount(job);
-              const jobColor = job.status === "failed" ? "red" : job.status === "running" ? "teal" : "gray";
-              return (
-                <Accordion.Item key={job.id} value={String(job.id)}>
-                  <Accordion.Control>
-                    <Group justify="space-between" wrap="nowrap" pr="sm">
-                      <div>
-                        <Group gap="xs">
-                          <Text fw={700}>{job.title}</Text>
-                          <Badge size="sm" variant="light" color={jobColor}>{job.status}</Badge>
-                        </Group>
-                        <Text size="sm" c="dimmed" mt={2}>{job.description}</Text>
-                      </div>
-                      <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
-                        {count.current} / {count.total}
-                      </Text>
-                    </Group>
-                  </Accordion.Control>
-                  <Accordion.Panel>
-                    <Stack gap="sm">
-                      <Progress
-                        value={progress}
-                        animated={job.status === "running"}
-                        color={jobColor}
-                      />
-                      <Group gap="xl">
-                        <Text size="xs" c="dimmed">
-                          Started {new Date(job.started_at).toLocaleString()}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {job.completed_at
-                            ? `Finished ${new Date(job.completed_at).toLocaleString()}`
-                            : "Still running"}
-                        </Text>
-                      </Group>
-                      {Object.keys(job.counters).length ? (
-                        <Group gap={6}>
-                          {Object.entries(job.counters).map(([label, count]) => (
-                            <Badge
-                              key={label}
-                              size="sm"
-                              variant="light"
-                              color={label === "failed" || label === "offline" ? "red" : label === "changed" || label === "reparsed" ? "orange" : label === "cached" ? "gray" : "teal"}
-                            >
-                              {count} {label === "reparsed" ? "re-parsed" : label === "cached" ? "from cache" : label}
-                            </Badge>
-                          ))}
-                        </Group>
-                      ) : null}
-                      {job.error ? <Alert color="red">{job.error}</Alert> : null}
-                      {job.items.length ? (
-                        <ScrollArea h={Math.min(300, Math.max(90, job.items.length * 43))} type="auto">
-                          <Stack gap={6}>
-                            {job.items.map((item) => (
-                              <Paper key={item.id} withBorder px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-                                <Group justify="space-between" wrap="nowrap">
-                                  <div style={{ minWidth: 0 }}>
-                                    <Text size="sm" truncate title={item.label}>{item.label}</Text>
-                                    {item.detail ? <Text size="xs" c="dimmed">{item.detail}</Text> : null}
-                                    {item.error ? <Text size="xs" c="red">{item.error}</Text> : null}
-                                  </div>
-                                  <Badge
-                                    size="sm"
-                                    variant="light"
-                                    color={
-                                      item.status === "ready"
-                                        ? "teal"
-                                        : item.status === "changed"
-                                          ? "orange"
-                                          : item.status === "failed" || item.status === "offline"
-                                            ? "red"
-                                            : "gray"
-                                    }
-                                  >
-                                    {item.status}
-                                  </Badge>
-                                </Group>
-                              </Paper>
-                            ))}
-                          </Stack>
-                        </ScrollArea>
-                      ) : null}
-                    </Stack>
-                  </Accordion.Panel>
-                </Accordion.Item>
-              );
-            })}
-          </Accordion>
-        )}
-      </Modal>
+        jobs={backgroundJobs.data ?? []}
+        databaseId={databaseStatus.data?.database_instance_id ?? null}
+        onUpdatesViewed={(notices) => {
+          const databaseId = databaseStatus.data?.database_instance_id;
+          if (!databaseId || !unreadUpdates(notices, readSeenUpdates(window.localStorage, databaseId)).length) return;
+          acknowledgeUpdates(window.localStorage, databaseId, notices);
+          window.dispatchEvent(new Event(ANALYSIS_UPDATES_VIEWED));
+        }}
+        loading={backgroundJobs.isLoading}
+        failed={backgroundJobs.isError}
+        onOpenAnalysis={(id) => {
+          setActivityOpen(false);
+          guardedNavigate(`/analyses/${id}`);
+        }}
+        onProcessingViewed={acknowledgeFailedJobs}
+      />
     </AppShell>
   );
 }

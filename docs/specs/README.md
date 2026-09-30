@@ -1,5 +1,11 @@
 # Feature specs
 
+- [061-activity-center-analysis-updates.md](061-activity-center-analysis-updates.md)
+  adds a default Updates tab with grouped, durable affected-analysis notices, alongside existing
+  Processing details, independent notification settings and Windows data-update toasts.
+  **Implemented; Astra review clean, preflight and browser checks passed. Native OS toast delivery
+  awaits verification in a rebuilt desktop app.**
+
 - [060-indexed-source-search.md](060-indexed-source-search.md)
   adds subsecond search across user-selected source roots in the import picker, backed by a
   local, rebuildable filename and header-metadata index. **Design spec; implementation not started.**

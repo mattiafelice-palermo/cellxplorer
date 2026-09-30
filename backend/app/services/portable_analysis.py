@@ -709,6 +709,7 @@ def update_original_sources(
         for source, cell in _analysis_sources(analysis, db)
     }
     updated_source_ids: list[int] = []
+    update_batch_key = uuid.uuid4().hex
     updated_cell_ids: set[int] = set()
     errors: list[dict] = []
     seen: set[int] = set()
@@ -734,6 +735,7 @@ def update_original_sources(
                 source,
                 expected_size=int(update["expected_size"]),
                 expected_mtime_ns=int(update["expected_mtime_ns"]),
+                update_batch_key=update_batch_key,
             )
         except scanner.SourceChangedDuringRead as exc:
             errors.append(

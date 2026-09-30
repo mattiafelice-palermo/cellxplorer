@@ -4276,12 +4276,14 @@ def _post_commit_source_invalidation(
     *,
     reason: str,
     source_id: int | None = None,
+    source_ids: list[int] | None = None,
     queue_warmup: bool = True,
 ) -> dict:
     invalidated = cache_maintenance.invalidate_cell_dependents(
         db,
         cell.id,
         source_id=source_id,
+        source_ids=source_ids,
         reason=reason,
         queue_warmup=queue_warmup,
     )
@@ -6015,6 +6017,7 @@ def attach_continuations(
         cell,
         reason="continuation_attached",
         source_id=attached_ids[-1] if attached_ids else None,
+        source_ids=attached_ids,
         queue_warmup=False,
     )
     db.refresh(test)

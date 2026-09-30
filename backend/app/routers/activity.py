@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ActivityEvent, ImportSubmission
 from ..services import background_jobs
+from ..services.analysis_updates import list_analysis_updates
 
 router = APIRouter(prefix="/api", tags=["activity"])
 
@@ -82,6 +83,11 @@ def list_activity(limit: int = 80, db: Session = Depends(get_db)):
         .all()
     )
     return [activity_dict(row) for row in rows]
+
+
+@router.get("/analysis-updates")
+def analysis_updates(limit: int = 30, db: Session = Depends(get_db)):
+    return list_analysis_updates(db, limit=limit)
 
 
 @router.get("/background-jobs")

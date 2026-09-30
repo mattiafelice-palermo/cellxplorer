@@ -201,6 +201,7 @@ Cellxplorer/
 │       │   └── beta_bootstrap.py   Shared Beta/Alpha first-launch setup routes (Specs 022/053.3)
 │       └── services/               Parsing, caches, calculations, analysis, imports, jobs
 │           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
+│           ├── analysis_updates.py Durable adopted-source update notices and cheap readiness summaries
 │           ├── beta_bootstrap.py   Shared Beta/Alpha first-launch library bootstrap (Specs 022/053.3)
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
@@ -232,6 +233,8 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
+│   │   │   ├── ActivityCenter.tsx   Updates notices and retained Processing job details
+│   │   │   ├── AnalysisUpdateIndicator.tsx  Persistent unread badge and anchored notification bubble
 │   │   │   ├── CellPreviewPlot.tsx Shared controls, legend, and Plotly surface for cell previews
 │   │   │   ├── cellPreviewPlotModel.ts Shared voltage/capacity layouts, traces, and CE range
 │   │   │   ├── ImportSourcePreview.tsx Staged source voltage and cycle preview
@@ -273,6 +276,9 @@ Cellxplorer/
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
+│   │   ├── notificationPreferences.ts  Independent notification preferences and native batch baseline
+│   │   ├── analysisUpdateNotifications.ts  Desktop data-update toast and activation bridge
+│   │   ├── analysisUpdateNoticePolicy.ts  Database-scoped update acknowledgement and counts
 │   │   ├── useImportJobProgress.ts   Tokenized staged import progress polling (Spec 035.6)
 │   │   ├── continuationPolicy.ts     Continuation ordering, findings, and submission policy
 │   │   ├── continuedImportWorkspacePolicy.ts  Continued-import workspace projection and source identity policy (Spec 047)
@@ -293,6 +299,7 @@ Cellxplorer/
 │   │   ├── golden_analysis/        Committed Neware sources + specs + expected JSON (Spec 015)
 │   │   └── rate_capability_corpus.json  Synthetic positive/negative protocol families
 │   ├── test_analysis_usage.py      Impact preview for cell/group removal
+│   ├── test_analysis_updates.py    Durable update batching, counts and preparation-state regressions
 │   ├── test_automation.py          Automation pause endpoint and source-monitor skip
 │   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
@@ -385,7 +392,7 @@ Cellxplorer/
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
 │       ├── beta_installer.rs       Channel-scoped install identity lookup (Specs 023/053.3)
 │       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
-│       └── update_notifications.rs Windows toast display and activation event (Spec 020)
+│       └── update_notifications.rs Windows app/data update toast display and activation events (Specs 020/061)
 ├── run.py                          Runs FastAPI with the built frontend
 ├── README.md                       Project overview and quick-start commands
 ├── spec.md                         Original domain specification

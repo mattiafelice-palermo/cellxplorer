@@ -1369,9 +1369,10 @@ def _remove_replaced_cache(db: Session, previous_hash: str, current_hash: str) -
         return 0
 
 
-def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
+def update_source_from_path(db: Session, sf: SourceFile, *, update_batch_key: str | None = None) -> SourceFile:
     """Replace a SourceFile identity/cache with the current bytes at its path."""
     previous_hash = sf.hash
+    previous_cycles = sf.cycle_count
     p = Path(sf.path)
     if not p.exists():
         sf.location_status = "offline"
@@ -1457,6 +1458,9 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
                 cell_id,
                 source_id=sf.id,
                 queue_warmup=sf.parse_status == "parsed",
+                update_batch_key=update_batch_key,
+                added_cycles=(max(0, sf.cycle_count - previous_cycles)
+                              if sf.cycle_count is not None and previous_cycles is not None else None),
             )
             db.commit()
         _remove_replaced_cache(db, previous_hash, sf.hash)
@@ -1469,9 +1473,11 @@ def update_source_from_path_if_stable(
     *,
     expected_size: int,
     expected_mtime_ns: int,
+    update_batch_key: str | None = None,
 ) -> SourceFile:
     """Adopt a source only if it remains unchanged throughout the full read."""
     previous_hash = sf.hash
+    previous_cycles = sf.cycle_count
     p = Path(sf.path)
     expected = (expected_size, expected_mtime_ns)
     if not parsing.source_filename_allowed(p.name):
@@ -1557,6 +1563,9 @@ def update_source_from_path_if_stable(
                 db,
                 cell_id,
                 source_id=sf.id,
+                update_batch_key=update_batch_key,
+                added_cycles=(max(0, sf.cycle_count - previous_cycles)
+                              if sf.cycle_count is not None and previous_cycles is not None else None),
             )
             db.commit()
         _remove_replaced_cache(db, previous_hash, sf.hash)

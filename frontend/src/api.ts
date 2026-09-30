@@ -1901,6 +1901,22 @@ export interface ActivityEvent {
   created_at: string;
 }
 
+export interface AnalysisUpdateNotice {
+  id: number;
+  message: string;
+  created_at: string;
+  finished_at: string;
+  cell_count: number;
+  analyses: {
+    id: number;
+    title: string;
+    cell_ids: number[];
+    cells: { id: number; name: string }[];
+    added_cycles: number | null;
+    status: "ready" | "refreshing" | "paused" | "preparing_data" | "needs_attention" | "on_demand" | "removed" | "changed_since_update";
+  }[];
+}
+
 export interface BackgroundJobItem {
   id: string;
   label: string;

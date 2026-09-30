@@ -28,6 +28,8 @@ import { IconActivityHeartbeat, IconBell, IconChartLine, IconDatabaseCog, IconDe
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
+import { loadNotificationPreferences, saveNotificationPreferences, NOTIFICATION_PREFERENCES_CHANGED } from "../notificationPreferences";
+
 import { APP_BRANDING } from "../appChannel";
 
 import {
@@ -206,10 +208,28 @@ export function SettingsPage() {
   const [updatePreferences, setUpdatePreferences] = useState<AppUpdatePreferences>(
     savedUpdatePreferences,
   );
+  const [savedNotifications, setSavedNotifications] = useState(() => loadNotificationPreferences(window.localStorage));
+  const [notificationPreferences, setNotificationPreferences] = useState(savedNotifications);
+  const [windowsAppUpdates, setWindowsAppUpdates] = useState(savedUpdatePreferences.notificationsEnabled);
+  const saveNotifications = () => {
+    try {
+      saveNotificationPreferences(window.localStorage, notificationPreferences);
+      const current = loadAppUpdatePreferences(window.localStorage);
+      saveAppUpdatePreferences(window.localStorage, { ...current, notificationsEnabled: windowsAppUpdates });
+      setSavedNotifications(notificationPreferences);
+      setSavedUpdatePreferences((value) => ({ ...value, notificationsEnabled: windowsAppUpdates }));
+      setUpdatePreferences((value) => ({ ...value, notificationsEnabled: windowsAppUpdates }));
+      window.dispatchEvent(new Event(NOTIFICATION_PREFERENCES_CHANGED));
+      window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED_EVENT));
+      notifications.show({ message: "Notification settings saved.", color: "teal" });
+    } catch { notifications.show({ message: "Could not save notification settings.", color: "red" }); }
+  };
   const appUpdate = useOptionalAppUpdate();
   const betaInstall = useBetaInstall();
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
+    : location.pathname.endsWith("/notifications")
+      ? "notifications"
     : location.pathname.endsWith("/cache")
       ? "cache"
     : location.pathname.endsWith("/monitoring")
@@ -813,6 +833,8 @@ export function SettingsPage() {
         onChange={(value) => navigate(
           value === "activity"
             ? "/settings/activity"
+            : value === "notifications"
+              ? "/settings/notifications"
             : value === "cache"
               ? "/settings/cache"
             : value === "monitoring"
@@ -836,11 +858,34 @@ export function SettingsPage() {
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
           <Tabs.Tab value="plots" leftSection={<IconChartLine size={15} />}>Plots & export</Tabs.Tab>
           <Tabs.Tab value="desktop" leftSection={<IconDeviceDesktop size={15} />}>Desktop</Tabs.Tab>
-          <Tabs.Tab value="updates" leftSection={<IconBell size={15} />}>App updates</Tabs.Tab>
+          <Tabs.Tab value="updates" leftSection={<IconRefresh size={15} />}>App updates</Tabs.Tab>
+          <Tabs.Tab value="notifications" leftSection={<IconBell size={15} />}>Notifications</Tabs.Tab>
           <Tabs.Tab value="performance" leftSection={<IconGauge size={15} />}>Performance</Tabs.Tab>
           <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
         </Tabs.List>
+
+        <Tabs.Panel value="notifications" pt="lg">
+          <Paper withBorder p="lg">
+            <Stack gap="md">
+              <div><Title order={4}>Notifications</Title><Text size="sm" c="dimmed">Choose how CellXplorer tells you about new data and application updates. Activity Center keeps the update history even when notifications are disabled.</Text></div>
+              <Paper withBorder p="md"><Group justify="space-between" wrap="nowrap">
+                <div><Text fw={600}>In-app data updates</Text><Text size="sm" c="dimmed">Highlight the Activity button and show a brief bubble when analyses receive new cell data.</Text></div>
+                <Switch checked={notificationPreferences.inAppEnabled} aria-label="In-app data updates" onChange={(event) => { const checked = event.currentTarget.checked; setNotificationPreferences((value) => ({ ...value, inAppEnabled: checked })); }} />
+              </Group></Paper>
+              <Paper withBorder p="md"><Group justify="space-between" wrap="nowrap">
+                <div><Text fw={600}>Windows data updates</Text><Text size="sm" c="dimmed">Show a Windows notification when analyses receive new cell data. Click it to open Activity Center; plot preparation may still be running.</Text></div>
+                <Switch checked={notificationPreferences.windowsDataUpdatesEnabled} aria-label="Windows data updates" onChange={(event) => { const checked = event.currentTarget.checked; setNotificationPreferences((value) => ({ ...value, windowsDataUpdatesEnabled: checked })); }} />
+              </Group></Paper>
+              <Paper withBorder p="md"><Group justify="space-between" wrap="nowrap">
+                <div><Text fw={600}>Windows app updates</Text><Text size="sm" c="dimmed">Show a Windows notification when an automatic check finds a new version. The power-menu update badge remains available.</Text></div>
+                <Switch checked={windowsAppUpdates} aria-label="Windows app updates" onChange={(event) => setWindowsAppUpdates(event.currentTarget.checked)} />
+              </Group></Paper>
+              <Text size="xs" c="dimmed">Windows notifications require the desktop app to be running, including when minimized. Windows notification settings and Do not disturb can silence them.{!isTauriApp() ? " These Windows preferences apply when using the desktop app; this browser cannot show Windows app notifications." : ""}</Text>
+              <Group justify="flex-end"><Button leftSection={<IconDeviceFloppy size={16} />} disabled={JSON.stringify(notificationPreferences) === JSON.stringify(savedNotifications) && windowsAppUpdates === savedUpdatePreferences.notificationsEnabled} onClick={saveNotifications}>Save notification settings</Button></Group>
+            </Stack>
+          </Paper>
+        </Tabs.Panel>
 
         <Tabs.Panel value="downloads" pt="lg">
           <Paper withBorder p="lg">
@@ -1807,31 +1852,7 @@ export function SettingsPage() {
                 </Stack>
               </Paper>
 
-              <Paper
-                withBorder
-                p="md"
-                bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
-              >
-                <Group justify="space-between" wrap="nowrap">
-                  <div>
-                    <Text fw={600}>Show Windows update notification</Text>
-                    <Text size="sm" c="dimmed">
-                      Show a Windows notification when an automatic check finds a new version.
-                      The power-menu update badge remains available when this is disabled.
-                    </Text>
-                  </div>
-                  <Switch
-                    checked={updatePreferences.notificationsEnabled}
-                    onChange={(event) =>
-                      setUpdatePreferences((current) => ({
-                        ...current,
-                        notificationsEnabled: event.currentTarget.checked,
-                      }))
-                    }
-                    aria-label="Show Windows update notification"
-                  />
-                </Group>
-              </Paper>
+
 
               {APP_BRANDING.channel === "stable" ? (
               <Paper

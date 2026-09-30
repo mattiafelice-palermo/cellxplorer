@@ -15,6 +15,22 @@ Regression coverage for these rules is in `tests/test_db_configuration.py`.
 
 ## Database list endpoints
 
+The Activity Center's Updates tab reads durable `ActivityEvent` records emitted by
+`invalidate_cell_dependents` for adopted source changes and attached continuations. Producer batch
+UUIDs group updates without combining unrelated runs. `/api/analysis-updates` reads bulk relational
+source states and the existing warmup coordinator's in-memory snapshot; never add cache probes,
+scientific signatures or preparation to notification polling. Readiness is current source/plot
+preparation state, not a historical claim that every saved plot was rendered. Source-cycle deltas
+are not stitched Cell cycle totals. Processing job acknowledgement occurs only on visiting
+Processing, not on opening the default Updates tab.
+
+Current readiness uses compact outcomes retained on every warmup task, independent of the
+Processing detail-row cap of 200. Reduce to the latest generation per plot: older failures must
+not override a new successful render. Foreground-prepared tasks stay ready even when the queue
+later drains their cancelled entries. Skipped completion denotes unavailable capability, not
+on-demand preparation. Notification source identities must still belong to their original Cell;
+checking only that the Cell retains some parsed source misreports a detached continuation.
+
 Opening the Cell Database or Analysis Database should only read compact relational summaries. It
 must not inspect source files, read Parquet caches, import the scientific stack, or recompute
 capacity totals. `/api/cells` uses aggregate SQL and bulk metadata loading; avoid restoring
@@ -1292,3 +1308,11 @@ Raw shape alone is insufficient: same-shape replacement may change time offsets 
 capabilities. Share frozen source facts, not mutable request envelopes or ORM metadata;
 missing/busy probes must still fall back. Source-plan reuse does not imply a complete-result
 cache hit: selected-window downsampling, serialization, transport and Plotly remain necessary.
+
+Data-update notifications share the cheap relational feed, never scientific preparation. In-app
+read state tracks event versions; Windows delivery tracks event IDs once per producer batch, both
+scoped to the database instance and bounded to 100 entries. First native setup baselines history;
+disabled notifications do not replay a backlog. Windows polling continues when minimized, but the
+app must remain running. Toast activation is a database-validated request to open Activity Center.
+The Notifications settings tab preserves the existing app-update preference key and only merges
+its notification flag, leaving update schedules and Beta discovery preferences intact.

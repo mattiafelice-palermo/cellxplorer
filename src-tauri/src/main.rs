@@ -639,6 +639,7 @@ fn main() {
             startup_mode,
             take_pending_deep_link,
             update_notifications::show_update_notification,
+            update_notifications::show_analysis_update_notification,
             update_notifications::show_beta_install_notification
         ])
         .setup(move |app| {

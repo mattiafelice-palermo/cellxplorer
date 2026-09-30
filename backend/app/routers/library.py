@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import sleep as _sleep
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
@@ -2387,6 +2388,7 @@ def _run_source_check_job(
             ready_cell_ids: set[int] = set()
             updated_file_ids: list[int] = []
             update_errors: list[dict] = []
+            update_batch_key = uuid4().hex
             for file_id in changed_ids:
                 sf = db.get(SourceFile, file_id)
                 source_job = next((item for item in jobs if item["id"] == file_id), None)
@@ -2418,9 +2420,10 @@ def _run_source_check_job(
                             sf,
                             expected_size=signature["size"],
                             expected_mtime_ns=signature["mtime_ns"],
+                            update_batch_key=update_batch_key,
                         )
                     else:
-                        updated_sf = scanner.update_source_from_path(db, sf)
+                        updated_sf = scanner.update_source_from_path(db, sf, update_batch_key=update_batch_key)
                     if updated_sf.parse_status == "error":
                         error = updated_sf.parse_error or "Cache rebuild failed"
                     else:
@@ -2980,9 +2983,10 @@ def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depe
     updated = []
     ready_cell_ids: set[int] = set()
     errors = []
+    update_batch_key = uuid4().hex
     for sf in source_files:
         try:
-            updated_sf = scanner.update_source_from_path(db, sf)
+            updated_sf = scanner.update_source_from_path(db, sf, update_batch_key=update_batch_key)
             updated.append(updated_sf.id)
             if updated_sf.test_link and updated_sf.test_link.test:
                 ready_cell_ids.add(updated_sf.test_link.test.cell_id)
