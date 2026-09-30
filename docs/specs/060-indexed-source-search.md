@@ -1,6 +1,8 @@
 # 060 — Indexed source search
 
-Status: Design spec; implementation not started.
+Status: Implemented; independent Astra review, browser checks, preflight and frozen-backend smoke passed.
+
+Review document: [060 review](reviews/060-indexed-source-search-review.md).
 
 ## User goal
 
@@ -215,3 +217,49 @@ palette searches CellXplorer database objects, not arbitrary source paths.
 - Indexing complete scientific datasets, capacities/CE, or plot previews for every file.
 - A mandatory Everything/Everything Server installation, custom Windows service, or cloud index.
 - Automatically importing, copying, attaching, or deleting search results.
+
+## Implemented design and verification
+
+The v1 provider is self-contained SQLite, rather than Everything. Everything was authorized as
+an optional dependency, but its network-folder traversal would still be needed and a separate
+header catalog would still be required. The bundled Python runtime provides FTS5 trigram search;
+literal substring search is the compatibility fallback. No installer option or external service
+is necessary.
+
+The derived catalog is `search-index/catalog.sqlite` beneath the active data root. Root settings
+use `AppSetting.import_search`. One cancellable spawned process discovers all candidates before
+header enrichment; atomic local spool batches avoid blocking cancellation on partial IPC frames.
+Header stalls are timed out and skipped while later files continue. Incomplete/offline scans keep
+unseen results. A changed file or failed identity check cannot publish newly extracted metadata.
+Queries use only local SQLite and stored registered paths; they do not stat, hash, or parse sources.
+
+The picker pages 100 results and mounts only visible rows plus the focused row. Selection works
+across the whole page and persists across filters and scopes. Existing preview and import gates
+remain authoritative. Search metadata is limited to barcode, remarks, part number, start time,
+and technique, when adapters provide them; capacity and CE are not indexed.
+
+Performance was measured against a synthetic 100,000-file catalog with UNC-shaped paths on this
+Windows host. These numbers measure an indexed catalog, not real SMB scan speed:
+
+| Measurement | Result |
+|---|---|
+| Full HTTP route, 9 rounds per query, concurrent four-row batch writes at 10 Hz | Exact/metadata/no-match medians 32–48 ms; broad medians 219–311 ms; worst observed p95 364 ms |
+| Browser input to visible settled results, 9 distinct queries, including 120 ms debounce | 251–488 ms after virtualization; 254–904 ms before |
+| Root counts, 100,000 entries | Covering index reduced approximately 900 ms to 45–55 ms; counts are excluded from result requests |
+
+`tests/test_import_search.py` covers local spawned scans, refresh/rename/deletion, unavailable roots,
+restart, cancellation, header timeout, overlap, normalized paths, concurrent catalog changes,
+format recognition, metadata freshness and derived-catalog recovery. Frontend policy tests cover
+cross-scope normalized staging and registered-source availability. `scripts/profile_import_search.py`
+provides the catalog benchmark; `scripts/smoke_import_search.py` verifies the frozen backend's
+spawned worker, pause/restart, rebuild, incompatible/corrupt catalog recovery, and scientific-library
+preservation in disposable data.
+
+Browser acceptance uses disposable application data and verifies metadata search, preview reuse,
+registered-source preview, range staging, scope changes, and existing Continue/Back routing.
+Light/dark themes and 1100×680 / 1280×720 / 1600×1000 viewports were checked; arrow navigation
+reveals its target even with a 56 px list viewport. Escape closes only the active search-settings
+dialog and preserves the loader. The rebuilt `0.28.0-alpha.1` frozen-backend smoke passed.
+Actual UNC/mapped-drive access and installed Tauri WebView delivery could not be exercised on this
+host: no test share was mounted and native application control was unavailable. Synthetic alias
+tests and the frozen-backend smoke are separate evidence and do not substitute for those checks.

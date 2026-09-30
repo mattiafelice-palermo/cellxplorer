@@ -198,6 +198,7 @@ Cellxplorer/
 │       ├── migrations/             Forward-only database migration registry and revisions
 │       ├── routers/                FastAPI `/api` endpoint modules
 │       │   ├── automation.py       Pause/resume for background automation
+│       │   ├── import_search.py    Indexed discovery and root-management API (Spec 060)
 │       │   └── beta_bootstrap.py   Shared Beta/Alpha first-launch setup routes (Specs 022/053.3)
 │       └── services/               Parsing, caches, calculations, analysis, imports, jobs
 │           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
@@ -218,6 +219,10 @@ Cellxplorer/
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── import_file_hints.py Optional concurrent header-only import-browser hints
+│           ├── import_search_catalog.py Disposable SQLite filename/metadata catalog (Spec 060)
+│           ├── import_search_index.py Search preferences and cancellable scan coordination
+│           ├── import_search_worker.py Spawned source discovery and header enrichment
+│           ├── import_search_transport.py Atomic local scan-batch spool
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           ├── continuation_preview.py  Display-only stitched cycle inference for Spec 047 previews
 │           ├── cell_folder_watch.py     Per-Cell continued-import folder tracking (Spec 047.4)
@@ -238,6 +243,8 @@ Cellxplorer/
 │   │   │   ├── CellPreviewPlot.tsx Shared controls, legend, and Plotly surface for cell previews
 │   │   │   ├── cellPreviewPlotModel.ts Shared voltage/capacity layouts, traces, and CE range
 │   │   │   ├── ImportSourcePreview.tsx Staged source voltage and cycle preview
+│   │   │   ├── IndexedSourceSearch.tsx Virtualized indexed discovery in the import picker (Spec 060)
+│   │   │   ├── FileSearchSettings.tsx Chosen roots, indexing and refresh controls
 │   │   │   ├── NavigationWarmupDebugButton.tsx Temporary Cell-preparation progress/debug panel
 │   │   │   ├── DestructiveImpactModal.tsx
 │   │   │   ├── FolderTree.tsx
@@ -273,6 +280,7 @@ Cellxplorer/
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisCellPreviewPolicy.ts Cycle preview range navigation policy
 │   │   ├── importFilePickerPolicy.ts Import-browser metadata filters and sorting policy
+│   │   ├── importSearch.ts          Indexed search result contract and staging policy
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
@@ -306,6 +314,7 @@ Cellxplorer/
 │   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_import_file_hints.py    Optional header-only import-browser hint tests
+│   ├── test_import_search.py        Catalog, worker lifecycle, freshness and recovery tests (Spec 060)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
 │   ├── test_biologic_cp_ocv.py       BioLogic CP/OCV curve and cycle-inference tests
@@ -364,6 +373,8 @@ Cellxplorer/
 │   ├── profile_analysis_families.py Cross-family production-route profiler (Spec 050.17)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── profile_time_capacity_refinement.py Focused adaptive-refinement S25 measurement (Spec 050.15)
+│   ├── profile_import_search.py     Disposable indexed-search catalog benchmark (Spec 060)
+│   ├── smoke_import_search.py       Frozen-backend indexing/recovery smoke in disposable data
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
 │   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Specs 050.12/050.14)
 │   ├── profile_time_capacity_composition.py Spec 050.11 execution-strategy composition benchmark

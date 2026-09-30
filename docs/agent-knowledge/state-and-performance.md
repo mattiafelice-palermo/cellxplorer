@@ -1,5 +1,30 @@
 # State, caching, and performance
 
+## Indexed source discovery
+
+Spec 060 owns a disposable local `search-index/catalog.sqlite` separate from the scientific
+database. Preferences use `AppSetting.import_search`; catalog corruption/schema mismatch can
+quarantine and rebuild this catalog without modifying Cells, SourceFiles, or scientific caches.
+`import_search_index.py` owns one cancellable spawned discovery/header worker. Discovery publishes
+all filename batches before headers, and atomic spool files allow bounded cancellation even when
+an SMB read or IPC batch stalls. Partial/offline traversal must retain unseen entries and previous
+mapped-drive/UNC identity. Header enrichment validates size/mtime again; failed identity checks
+clear unvalidated metadata and leave a retry state.
+
+Search requests use local data only: no recursive walk, source stat, header parse, or checksum.
+Metadata is an explicit scalar whitelist, never raw rows or scientific summaries. Cover root-count
+queries with `entry_search_state` and omit counts from result requests; random metadata-row lookups
+made a 100,000-entry count approximately 900 ms before the covering index reduced it to 45–55 ms.
+Benchmark the whole HTTP route and browser, not just the core catalog SQL. Use a proxy-free local
+HTTP client when measuring; Windows proxy discovery can add unrelated seconds to a benchmark.
+
+`IndexedSourceSearch` renders a bounded visible row window plus the focused option. Selection
+operates over the entire page, independent of mounted rows. Progress polls refetch a stable React
+Query identity so keyed rows/focus survive; progress counts must not become query-key components.
+Nearby offscreen focused rows must stay mounted, and Arrow navigation must reveal its target even
+when zoom leaves less than one row of viewport height. Search staging uses the shared normalized
+Windows path policy, preserving hidden selections across scope/filter changes.
+
 ## SQLite concurrency
 
 CellXplorer uses SQLite in WAL mode so readers can coexist with background writes. WAL is a

@@ -43,6 +43,19 @@ function selectedPaths(selected: ImportSelection): Set<string> {
   return new Set([...selected.keys()].map(normalizedPath));
 }
 
+export function isImportFileSelected(selected: ImportSelection, path: string): boolean {
+  return [...selected.keys()].some((key) => normalizedPath(key) === normalizedPath(path));
+}
+
+function deleteSelectedPath(selected: Map<string, ImportBrowseEntry>, path: string) {
+  for (const key of selected.keys()) if (normalizedPath(key) === normalizedPath(path)) selected.delete(key);
+}
+
+function includeSelectedPath(selected: Map<string, ImportBrowseEntry>, entry: ImportBrowseEntry) {
+  for (const key of selected.keys()) if (key !== entry.path && normalizedPath(key) === normalizedPath(entry.path)) selected.delete(key);
+  selected.set(entry.path, entry);
+}
+
 export function folderSelectionState(
   folder: ImportBrowseEntry,
   selected: ImportSelection,
@@ -92,7 +105,7 @@ function isShownEntrySelected(
 ): boolean {
   return entry.kind === "folder"
     ? folderSelectionState(entry, selected) === "all"
-    : selected.has(entry.path);
+    : isImportFileSelected(selected, entry.path);
 }
 
 export function importShownSelectionState(
@@ -125,7 +138,7 @@ export function toggleImportShownSelection(
       // Clearing the shown scope must not remove independently selected paths
       // hidden by the current search or directory. A folder's own path is the
       // visible selection representation; its descendants remain untouched.
-      next.delete(entry.path);
+      deleteSelectedPath(next, entry.path);
     });
     return next;
   }
@@ -135,7 +148,7 @@ export function toggleImportShownSelection(
       next.clear();
       selectedFolder.forEach((value, key) => next.set(key, value));
     } else {
-      next.set(entry.path, entry);
+      includeSelectedPath(next, entry);
     }
   });
   return next;
@@ -177,12 +190,12 @@ export function toggleImportFolderSelection(
     descendants.map((entry) => entry.path),
   );
   if (state === "all") {
-    next.delete(folder.path);
+    deleteSelectedPath(next, folder.path);
     [...next.keys()]
       .filter((path) => isImportPathDescendant(folder.path, path))
       .forEach((path) => next.delete(path));
   } else {
-    next.set(folder.path, folder);
+    includeSelectedPath(next, folder);
   }
   return next;
 }
@@ -212,20 +225,20 @@ export function toggleImportFileSelection(
   const next = new Map(selected);
   const visibleFiles = visibleEntries.filter((candidate) => candidate.kind === "file");
   if (modifiers.shiftKey && lastSelectedPath) {
-    const from = visibleFiles.findIndex((item) => item.path === lastSelectedPath);
-    const to = visibleFiles.findIndex((item) => item.path === entry.path);
+    const from = visibleFiles.findIndex((item) => normalizedPath(item.path) === normalizedPath(lastSelectedPath));
+    const to = visibleFiles.findIndex((item) => normalizedPath(item.path) === normalizedPath(entry.path));
     if (from >= 0 && to >= 0) {
       const [start, end] = from < to ? [from, to] : [to, from];
-      const shouldSelect = !next.has(entry.path);
+      const shouldSelect = !isImportFileSelected(next, entry.path);
       visibleFiles.slice(start, end + 1).forEach((candidate) =>
-        shouldSelect ? next.set(candidate.path, candidate) : next.delete(candidate.path),
+        shouldSelect ? includeSelectedPath(next, candidate) : deleteSelectedPath(next, candidate.path),
       );
       return { selected: next, lastSelectedPath: entry.path };
     }
   }
 
-  if (next.has(entry.path)) next.delete(entry.path);
-  else next.set(entry.path, entry);
+  if (isImportFileSelected(next, entry.path)) deleteSelectedPath(next, entry.path);
+  else includeSelectedPath(next, entry);
   return { selected: next, lastSelectedPath: entry.path };
 }
 

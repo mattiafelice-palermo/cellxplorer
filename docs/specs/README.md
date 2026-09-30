@@ -8,7 +8,9 @@
 
 - [060-indexed-source-search.md](060-indexed-source-search.md)
   adds subsecond search across user-selected source roots in the import picker, backed by a
-  local, rebuildable filename and header-metadata index. **Design spec; implementation not started.**
+  local, rebuildable filename and header-metadata index. **Implemented; Astra review, preflight,
+  browser checks and frozen-backend smoke passed. Real UNC and installed WebView checks remain unverified.**
+  Review: [060 review](reviews/060-indexed-source-search-review.md).
   UI concepts: [060 mockups](060-indexed-source-search-mockups.html).
 
 - [059-time-capacity-slider-latency.md](059-time-capacity-slider-latency.md)

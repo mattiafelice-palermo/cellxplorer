@@ -13,9 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from .config import APP_VERSION, CALC_VERSION, FRONTEND_DIST
 from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
-from .routers import activity, analyses, automation, beta_bootstrap, cache_management, diagnostics, files, library, replicates, settings, tree
+from .routers import activity, analyses, automation, beta_bootstrap, cache_management, diagnostics, files, import_search, library, replicates, settings, tree
 from .services.activity_log import record_activity
-from .services import cache_maintenance, database_identity, sessions, source_monitor
+from .services import cache_maintenance, database_identity, import_search_index, sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
@@ -61,6 +61,7 @@ async def _lifespan(_app: FastAPI):
         time_capacity_workers.start_time_capacity_worker_pool()
         source_monitor.start_source_monitor()
         cache_maintenance.start_cache_maintenance()
+        import_search_index.start_search_index()
     try:
         yield
     finally:
@@ -73,6 +74,7 @@ async def _lifespan(_app: FastAPI):
             time_capacity_workers.shutdown_time_capacity_worker_pool()
             source_monitor.stop_source_monitor()
             cache_maintenance.stop_cache_maintenance()
+            import_search_index.stop_search_index()
             sessions.finish_runtime_session("backend_shutdown")
 
 
@@ -188,6 +190,7 @@ if DATABASE_STATUS.compatible:
     _record_migration_activity()
 
 app.include_router(files.router)
+app.include_router(import_search.router)
 app.include_router(library.router)
 app.include_router(tree.router)
 app.include_router(analyses.router)

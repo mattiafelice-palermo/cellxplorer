@@ -125,3 +125,17 @@ test("import browser pane width stays within the layout limits", () => {
   assert.equal(maxImportBrowserLeftPaneWidth(850), 278);
   assert.equal(clampImportBrowserLeftPaneWidth(400, 850), 278);
 });
+
+
+test("production row, range and shown selection use normalized identity across scopes", () => {
+  const a = file("C:/Data/A.ndax");
+  const b = file("C:/Data/B.ndax");
+  const hidden = file("C:/Else/hidden.ndax");
+  const aliases = new Map([["c:\\data\\a.ndax", { ...a, path: "c:\\data\\a.ndax" }], [hidden.path, hidden]]);
+  assert.equal(importShownSelectionState([a], aliases).allSelected, true);
+  assert.deepEqual([...toggleImportShownSelection(aliases, [a]).keys()], [hidden.path]);
+  assert.deepEqual([...toggleImportFileSelection(a, [a, b], aliases, null).selected.keys()], [hidden.path]);
+  const range = toggleImportFileSelection(b, [a, b], aliases, "c:\\data\\a.ndax", { shiftKey: true }).selected;
+  assert.equal(range.size, 3);
+  assert.deepEqual([...range.keys()], [hidden.path, a.path, b.path]);
+});

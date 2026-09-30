@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.1 - 2026-09-30
+
+### New features
+
+- Search chosen source locations instantly by filename, path, and source metadata from the cell loader. Manage indexing, refresh, and pause in Settings > File search.
+
+### Bug fixes
+
+- Preserve staged sources across folder and indexed search scopes and keep registered sources previewable without importing them again.
+
 ## 0.27.1-alpha.36 - 2026-09-30
 
 ### New features

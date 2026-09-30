@@ -30,6 +30,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { loadNotificationPreferences, saveNotificationPreferences, NOTIFICATION_PREFERENCES_CHANGED } from "../notificationPreferences";
 
+import { FileSearchSettings } from "../components/FileSearchSettings";
+
 import { APP_BRANDING } from "../appChannel";
 
 import {
@@ -226,7 +228,7 @@ export function SettingsPage() {
   };
   const appUpdate = useOptionalAppUpdate();
   const betaInstall = useBetaInstall();
-  const activeTab = location.pathname.endsWith("/activity")
+  const activeTab = location.pathname.endsWith("/file-search") ? "file-search" : location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/notifications")
       ? "notifications"
@@ -831,7 +833,7 @@ export function SettingsPage() {
       <Tabs
         value={activeTab}
         onChange={(value) => navigate(
-          value === "activity"
+          value === "file-search" ? "/settings/file-search" : value === "activity"
             ? "/settings/activity"
             : value === "notifications"
               ? "/settings/notifications"
@@ -853,6 +855,7 @@ export function SettingsPage() {
         )}
       >
         <Tabs.List>
+          <Tabs.Tab value="file-search" leftSection={<IconFolderOpen size={15} />}>File search</Tabs.Tab>
           <Tabs.Tab value="downloads" leftSection={<IconDownload size={15} />}>Downloads</Tabs.Tab>
           <Tabs.Tab value="monitoring" leftSection={<IconActivityHeartbeat size={15} />}>Source monitoring</Tabs.Tab>
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
@@ -864,6 +867,8 @@ export function SettingsPage() {
           <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
         </Tabs.List>
+
+        <Tabs.Panel value="file-search" pt="lg">{activeTab === "file-search" && <FileSearchSettings />}</Tabs.Panel>
 
         <Tabs.Panel value="notifications" pt="lg">
           <Paper withBorder p="lg">
