@@ -30,6 +30,8 @@ Review document: [062 review](reviews/062-search-match-explanations-and-whats-ne
   Playback failure leaves a readable guide. Assets are bundled; no external media service or
   runtime encoding dependency is introduced.
 - The direct action opens indexed search via the existing Load cells route, with no new wizard.
+  The later user-approved [Spec 065 redesign](065-search-introduction-redesign.md)
+  replaces this CTA with Choose search folders, opening existing Settings → File search.
 
 ## Acceptance
 

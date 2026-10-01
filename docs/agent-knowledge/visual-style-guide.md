@@ -451,3 +451,15 @@ The loader explicitly disables its Escape handler while this nested popup is
 open. Mantine's window capture listener can otherwise run before a popup's own
 listener: stopping propagation alone is not sufficient. Escape closes Select
 choices first, then the saved-search popup, leaving the loader open.
+
+### File-search release introduction
+
+`SearchIntroduction` owns the static example, requested local walkthrough and
+expandable guide; `WhatsNewCoordinator` owns eligibility and dismissal. Mount
+the view only while opened so playback and guide state reset on close. The
+illustration is native HTML/CSS and clearly labelled as an example, never a
+catalog result or editable input. Keep the video toggle mounted while changing
+the stage so keyboard focus remains on the same button. The dialog header and
+action footer stay visible while its main region/guide scrolls. Use a container
+query for the folder/search layout so it follows actual dialog width at UI zoom,
+not just the physical viewport. The setup CTA opens Settings → File search.

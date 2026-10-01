@@ -6,6 +6,7 @@ user-facing impact.
 
 ## 0.28.0-alpha.6 - 2026-10-01
 
+- Redesign the file-search introduction with a clear folder-to-search example, an on-demand walkthrough and an expandable full guide.
 - Make filter discovery precise with synonyms, typo suggestions and match explanations, open Filters by default, and move saved searches to the search toolbar.
 
 ## 0.28.0-alpha.5 - 2026-10-01

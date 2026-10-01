@@ -1,5 +1,7 @@
 # Feature specs
 
+- [065-search-introduction-redesign.md](065-search-introduction-redesign.md) redesigns the search announcement around a minimal folder-to-search example and full guide. **Implemented; Astra high review clean, full preflight and browser acceptance passed.**
+
 - [064-indexed-search-filters.md](064-indexed-search-filters.md) adds searchable grouped filters,
   Preview / Filters tabs, library relationships, text conditions and saved searches.
   **Implemented; Astra high review clean, full preflight and local browser acceptance passed.**

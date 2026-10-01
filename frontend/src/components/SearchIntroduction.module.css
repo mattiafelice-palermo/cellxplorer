@@ -1,0 +1,30 @@
+.modalContent { display: flex; flex-direction: column; }
+.modalHeader { flex-shrink: 0; }
+.modalBody { display: flex; min-height: 0; overflow: hidden; }
+.surface { container-type: inline-size; flex: 1; min-width: 0; min-height: 0; }
+.work { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.work:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: -2px; }
+.intro { text-align: center; padding-block: var(--mantine-spacing-sm); }
+.headline { font-size: 1.875rem; line-height: 1.2; margin-bottom: var(--mantine-spacing-sm); }
+.example { display: grid; grid-template-columns: minmax(0, 0.85fr) 28px minmax(0, 1.15fr); gap: var(--mantine-spacing-lg); align-items: center; }
+.folders, .query { background: var(--mantine-color-default); }
+.tree { margin-top: var(--mantine-spacing-md); margin-left: 9px; border-left: 1px solid var(--mantine-color-default-border); }
+.branch { position: relative; padding-left: var(--mantine-spacing-lg); padding-block: 6px; }
+.branch::before { content: ""; position: absolute; left: 0; width: 15px; border-top: 1px solid var(--mantine-color-default-border); }
+.arrow { color: var(--mantine-color-dimmed); }
+.query { border-color: var(--mantine-primary-color-filled); }
+.query svg { color: var(--mantine-primary-color-filled); }
+.result { min-width: 0; }
+.filename { font-weight: 600; overflow-wrap: anywhere; }
+.filename mark { color: var(--mantine-primary-color-filled); background: transparent; }
+.video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: calc(40dvh / var(--cellxplorer-ui-zoom, 1)); object-fit: contain; background: var(--mantine-color-default); }
+.footer { flex-shrink: 0; border-top: 1px solid var(--mantine-color-default-border); padding-top: var(--mantine-spacing-md); }
+@container (max-width: 42rem) {
+  .example { grid-template-columns: minmax(0, 1fr); gap: var(--mantine-spacing-sm); }
+  .folders { padding: var(--mantine-spacing-sm); }
+  .tree { display: flex; flex-wrap: wrap; gap: 0 var(--mantine-spacing-sm); margin: var(--mantine-spacing-xs) 0 0; border: 0; }
+  .branch { padding-left: 0; }
+  .branch::before { display: none; }
+  .arrow { display: none; }
+  .headline { font-size: 1.625rem; }
+}

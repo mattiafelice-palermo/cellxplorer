@@ -565,7 +565,7 @@ export default function App({
       />
       <WhatsNewCoordinator opened={whatsNewOpen} onOpen={openWhatsNew} onClose={() => setWhatsNewOpen(false)}
         ready={databaseStatus.data?.compatible === true} version={databaseStatus.data?.app_version ?? null}
-        onTrySearch={() => guardedNavigate("/?loadCells=1&searchSources=1")} />
+        onTrySearch={() => guardedNavigate("/settings/file-search")} />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"
