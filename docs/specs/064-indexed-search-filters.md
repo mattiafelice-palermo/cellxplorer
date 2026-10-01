@@ -5,6 +5,28 @@ Branch: `codex/indexed-search-filters`.
 
 Review document: [064 review](reviews/064-indexed-search-filters-review.md).
 
+## Follow-up: sizing, filter discovery and direct ordering
+
+Use consistent `sm` inputs and selectors in Filters, with readable menu text and matching action
+sizes. Portal menu contents follow modal zoom without scaling their positioning box.
+Discovery automatically opens all matching sections without animation, resets the section
+scroll to the top, and preserves the user's manual expansion state when the search is cleared.
+The search and utility row must not shrink when matched content grows. No active filter is changed
+by discovery.
+
+Applied chips use taller split actions: label opens Filters, arrows choose ascending/descending
+ordering for numeric/date/single source-text fields, and a separate X removes only the filter.
+Selected direction is visible; clicking it again restores relevance. One global primary sort is
+used, unknown values always last, and filename/canonical identity break ties. Sorting remains
+independent of filter bounds, is applied before pagination, and is retained in saved searches.
+Multi-valued Cell relationships and unrestricted text fields have no ambiguous ordering arrows.
+The searchable Sort results selector includes all supported fields/directions; old saved order
+values remain accepted. Verify search after scrolling, clearing discovery, ordering, reset/undo,
+selection retention, light/dark sizing and review with Astra high.
+The applied-chip area scrolls vertically within a bounded fraction of the workspace; it never
+widens to its contents. Indexed mode omits the empty selected-source panel (the footer still shows
+the count), retaining result space at high zoom. A nonempty staged selection retains its panel.
+
 ## Locked scope
 
 Within loader step 1, Search indexed locations uses the existing right panel for Preview / Filters

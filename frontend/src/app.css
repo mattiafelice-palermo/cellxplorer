@@ -253,3 +253,10 @@ body {
 .js-plotly-plot .hovertext text.name {
   font-weight: 700;
 }
+
+/* Filter menus live outside the modal's CSS zoom. Keep option typography and
+   hit areas at the same visual scale without changing portal positioning. */
+.cx-indexed-filter-dropdown :where(.mantine-Select-option, .mantine-Select-empty) {
+  font-size: calc(var(--mantine-font-size-sm) * var(--cellxplorer-ui-zoom, 1));
+  padding: calc(6px * var(--cellxplorer-ui-zoom, 1)) calc(10px * var(--cellxplorer-ui-zoom, 1));
+}

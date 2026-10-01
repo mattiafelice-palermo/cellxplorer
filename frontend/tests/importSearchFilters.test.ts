@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activeSearchFilters, filterChips, removeSearchFilter, searchableFilterCategories } from "../src/importSearchFilters.ts";
+import { activeSearchFilters, chipSortField, filterChips, filterExpansion, normalizedSearchSort, removeSearchFilter, searchableFilterCategories, toggleSearchSort } from "../src/importSearchFilters.ts";
 
 test("filter discovery includes field aliases and never mutates active filters", () => {
   assert.ok(searchableFilterCategories("cycles").some((c) => c.id === "cycling"));
@@ -27,4 +27,31 @@ test("applied chips retain draft indices when removing a later condition", () =>
   const chips = filterChips(filters);
   assert.equal(chips[0].key, "condition:1");
   assert.equal(activeSearchFilters(removeSearchFilter(filters, chips[0].key)).conditions?.length, 0);
+});
+
+test("discovery expands every match and restores manual sections when cleared", () => {
+  const manual = ["dates", "app"];
+  assert.deepEqual(filterExpansion("cycles", manual), ["cycling"]);
+  assert.deepEqual(filterExpansion("filename", manual), ["file", "text"]);
+  assert.deepEqual(filterExpansion("unknown-filter", manual), []);
+  assert.deepEqual(filterExpansion("  ", manual), manual);
+  assert.deepEqual(manual, ["dates", "app"]);
+});
+
+test("chip sorting toggles one global sort independently of filter bounds", () => {
+  const filters = { ranges: { cycle_count: { min: 300, unknown: "include" as const } }, conditions: [{ field: "filename", operator: "contains", value: "BQV" }] };
+  assert.equal(chipSortField(filters, "range:cycle_count")?.value, "cycle_count");
+  assert.equal(chipSortField(filters, "condition:0")?.value, "filename");
+  assert.equal(chipSortField(filters, "registered"), undefined);
+  const ascending = toggleSearchSort(filters, "cycle_count", "asc");
+  assert.equal(ascending.sort, "cycle_count_asc");
+  const descending = toggleSearchSort(ascending, "cycle_count", "desc");
+  assert.equal(descending.sort, "cycle_count_desc");
+  assert.equal(toggleSearchSort(descending, "cycle_count", "desc").sort, "relevance");
+  assert.deepEqual(descending.ranges, filters.ranges);
+  assert.equal(filterChips(descending).some((chip) => chip.key === "sort"), false);
+  assert.equal(filterChips(removeSearchFilter(descending, "range:cycle_count")).some((chip) => chip.key === "sort"), true);
+  assert.equal(normalizedSearchSort("modified"), "modified_at_desc");
+  assert.equal(normalizedSearchSort("name"), "filename_asc");
+  assert.equal(filterChips({ sort: "cycle_count_desc" })[0].label, "Sort: Recorded source cycles: highest first");
 });

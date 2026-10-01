@@ -1508,7 +1508,7 @@ export function ImportFilesystemPickerModal({
                 </>}
               </Stack></Box></ScrollArea>)}
             </Paper>
-            {mode === "files" && selectedSourcesPanel}
+            {mode === "files" && (!indexedScope || selectedEntries.length > 0) && selectedSourcesPanel}
             </Stack>
             {mode === "files" && !previewCollapsed && !(indexedScope && searchDialogOpen) && <Box role="separator" aria-orientation="vertical" aria-label="Resize source preview" tabIndex={0} onPointerDown={beginPreviewResize} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setPreviewWidth((width) => Math.max(280, Math.min(640, (width ?? 350) + (event.key === "ArrowLeft" ? 16 : -16)))); } }} style={{ width: 8, flexShrink: 0, cursor: "col-resize", alignSelf: "stretch", borderLeft: "2px solid var(--mantine-color-default-border)" }} />}
             {mode === "files" && !(indexedScope && searchDialogOpen) && (

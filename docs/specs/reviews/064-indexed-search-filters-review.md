@@ -43,3 +43,25 @@ Reviewer: GPT 6 Astra, high reasoning. Independent review; implementer owns brow
   tests, version consistency, frontend type check and production bundle.
 - Final browser check: Show in folder opens the correct source directory; returning to indexed
   search preserves the applied filters and their effective-value explanations.
+
+## Sizing, discovery and ordering follow-up
+
+- Standardized controls and portal menu typography/spacing at modal UI zoom.
+- Filter discovery opens matching sections, resets stale scroll offsets and
+  preserves manual expansion for restoration when the query clears.
+- Taller chips expose separate edit, ascending/descending order and remove
+  actions; SQL ordering is whitelisted, global before pagination and places
+  unknown values last. Existing saved-sort aliases remain accepted.
+- Astra independently reran all seven frontend tests and the focused backend
+  ordering regression: clean code review. Its high-zoom results-space concern
+  was resolved with a bounded, independently scrolling chip area and omission
+  of the empty indexed staging panel. Rendered closure: clean at 100% and 160%.
+- Browser verification used disposable application data: automatic discovery,
+  manual expansion restoration, range editing, both sort directions, checkbox
+  staging, multiple chips, light/dark presentation and zoomed dropdown alignment.
+- Astra focused closure for the zoom-aware portal menu correction: clean; rendered alignment
+  and option typography verified at 130%.
+- Initial final preflight: existing live-monitor rename test exceeded its ten-second spawned
+  worker timeout under 16-worker load; filter tests, type check and production build passed.
+  Full no-cache preflight rerun at four-worker CPU budget: **4/4 stages passed**,
+  176.34 seconds, including the complete backend/frontend test suite.

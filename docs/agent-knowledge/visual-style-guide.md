@@ -421,3 +421,18 @@ Before considering UI work complete, check:
 
 When a new durable visual pattern is intentionally introduced, update this guide and its shared
 component in the same change. Do not document one-off exceptions as general rules.
+
+### Indexed filter controls and result ordering
+
+Use consistent `sm` inputs and menus in the filter panel. Its Select menus are
+portalled outside the modal CSS zoom: `FilterSelect` scopes option font size and
+padding to the UI zoom, leaving Floating UI positioning unscaled. Check both
+100% and increased zoom; scaling the entire dropdown can misalign its anchor.
+
+Applied filter chips separate editing, ascending/descending sorting and removal.
+Only one global result order is active; unknown values stay last in either
+direction. Bound the chip area with an independently scrolling
+`cx-vertical-scroll` container so many chips cannot consume the results viewport.
+Avoid `ScrollArea.Autosize` for wrapping chip rows: its content sizing can create
+horizontal overflow. The indexed picker omits an empty Selected sources panel;
+a nonempty selection retains its staging panel.

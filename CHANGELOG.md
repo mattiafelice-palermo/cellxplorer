@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.5 - 2026-10-01
+
+- Improve indexed-search filter sizing, automatic section discovery and direct chip sorting.
+
 ## 0.28.0-alpha.4 - 2026-09-30
 
 - Add searchable indexed-file filters with Preview/Filters tabs, date and cycling ranges, current Cell/analysis/replicate relationships, text conditions, bounded patterns and saved searches.

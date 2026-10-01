@@ -57,6 +57,19 @@ class FilterTests(unittest.TestCase):
             self.assertEqual(self.search({"conditions": [{"field": "filename", "operator": operation, "value": text}]})["total"], expected)
         self.assertEqual(self.search(q="C:/cycling/BQV")["total"], 1)
 
+    def test_chip_ordering_numeric_dates_text_and_unknown_last(self):
+        for direction, expected in (("asc", ["BQV_1.ndax", "ALAVA_2.xlsx", "z_unknown.mpr"]),
+                                    ("desc", ["ALAVA_2.xlsx", "BQV_1.ndax", "z_unknown.mpr"])):
+            with self.subTest(direction=direction):
+                self.assertEqual([row["name"] for row in self.search({"sort": f"cycle_count_{direction}"})["items"]], expected)
+        self.assertEqual(self.search({"sort": "start_time_asc"})["items"][0]["name"], "ALAVA_2.xlsx")
+        self.assertEqual(self.search({"sort": "file_created_at_desc"})["items"][0]["name"], "BQV_1.ndax")
+        self.assertEqual(self.search({"sort": "filename_desc"})["items"][0]["name"], "z_unknown.mpr")
+        self.assertEqual(self.search({"sort": "part_number_desc"})["items"][0]["name"], "BQV_1.ndax")
+        self.assertEqual(self.search({"sort": "cycle_count_desc", "ranges": {"cycle_count": {"min": 190, "unknown": "include"}}}, limit=1)["items"][0]["name"], "ALAVA_2.xlsx")
+        with self.assertRaises(ValueError):
+            validate_filters({"sort": "size_desc;DROP TABLE entries"})
+
     def test_global_filter_before_pagination_and_folder_count_before_filters(self):
         for offset in (0, 1, 2):
             result = self.search({"ranges": {"size": {"min": 2 * 1048576}}}, offset=offset, limit=1)

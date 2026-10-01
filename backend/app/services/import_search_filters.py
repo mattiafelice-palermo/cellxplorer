@@ -19,7 +19,10 @@ TEXT_FIELDS = ("any", "filename", "path", "folder", "barcode", "remarks", "part_
 NUMBER_FIELDS = ("size", "cycle_count", "active_mass_mg", "nominal_capacity_mah", "duration_s", "folder_count")
 DATE_FIELDS = ("modified_at", "file_created_at", "start_time", "first_indexed_at")
 OPERATORS = ("contains", "not_contains", "equals", "not_equals", "starts", "ends", "present", "missing", "regex")
-SORTS = ("relevance", "name", "modified", "created", "indexed", "started", "size_asc", "size_desc")
+SORT_FIELDS = NUMBER_FIELDS + DATE_FIELDS + ("filename", "path", "folder", "barcode", "remarks", "part_number",
+                                           "technique", "device_info", "channel", "extension", "supplier")
+SORTS = ("relevance", "name", "modified", "created", "indexed", "started") + tuple(
+    f"{field}_{direction}" for field in SORT_FIELDS for direction in ("asc", "desc"))
 REGEX_SLOTS = threading.BoundedSemaphore(2)
 
 
@@ -278,12 +281,15 @@ def _query(catalog_path, config, q, filters, offset, limit, library):
     if text_clauses:
         clauses.append("(" + (" OR " if filters.get("match") == "any" else " AND ").join(text_clauses) + ")")
     sort = filters.get("sort", "relevance")
-    sort_expression = {"modified": numbers["modified_at"], "created": numbers["file_created_at"],
-                       "indexed": numbers["first_indexed_at"], "started": numbers["start_time"],
-                       "size_asc": "e.size", "size_desc": "e.size"}.get(sort)
+    normalized_sort = {"name": "filename_asc", "modified": "modified_at_desc", "created": "file_created_at_desc",
+                       "indexed": "first_indexed_at_desc", "started": "start_time_desc"}.get(sort, sort)
+    sort_field, _, direction = normalized_sort.rpartition("_")
+    sort_expressions = {**{field: f"casefold(nullif({fields[field]},''))" for field in fields if field != "any"}, **numbers,
+                        "extension": "casefold(nullif(e.extension,''))", "supplier": "casefold(nullif(e.supplier,''))"}
+    sort_expression = sort_expressions.get(sort_field) if sort_field in SORT_FIELDS else None
     ordering = "e.name_fold,e.canonical"
     if sort_expression:
-        ordering = f"{sort_expression} IS NULL,{sort_expression} {'ASC' if sort == 'size_asc' else 'DESC'}," + ordering
+        ordering = f"{sort_expression} IS NULL,{sort_expression} {'ASC' if direction == 'asc' else 'DESC'}," + ordering
     elif sort == "relevance" and q.strip():
         ordering = "CASE WHEN e.name_fold=? THEN 0 WHEN instr(e.name_fold,?)>0 THEN 1 ELSE 2 END," + ordering
     from datetime import datetime, timezone

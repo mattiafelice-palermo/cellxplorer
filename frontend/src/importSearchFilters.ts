@@ -46,6 +46,35 @@ export function searchableFilterCategories(query: string) {
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   return FILTER_CATEGORIES.filter((c) => words.every((word) => `${c.label} ${c.aliases}`.toLocaleLowerCase().includes(word)));
 }
+export function filterExpansion(query: string, expanded: string[]) {
+  return query.trim() ? searchableFilterCategories(query).map((section) => section.id) : expanded;
+}
+
+export const SORT_FIELDS = [
+  ...RANGE_FIELDS.map((field) => ({ value: field.key, label: field.label, numeric: true })),
+  ...DATE_FIELDS.map((field) => ({ value: field.key, label: field.label, numeric: true })),
+  ...FILTER_FIELDS.filter((field) => !["any", "cell_name", "cell_notes", "cell_metadata", "analysis", "replicate"].includes(field.value))
+    .map((field) => ({ ...field, numeric: false })),
+  { value: "extension", label: "File format", numeric: false },
+  { value: "supplier", label: "Supplier", numeric: false },
+];
+export function normalizedSearchSort(sort = "relevance") {
+  return ({ name: "filename_asc", modified: "modified_at_desc", created: "file_created_at_desc",
+    indexed: "first_indexed_at_desc", started: "start_time_desc" } as Record<string, string>)[sort] ?? sort;
+}
+export const SORT_OPTIONS = [{ value: "relevance", label: "Relevance" }, ...SORT_FIELDS.flatMap((field) => [
+  { value: `${field.value}_asc`, label: `${field.label}: ${field.numeric ? "lowest first" : "A–Z"}` },
+  { value: `${field.value}_desc`, label: `${field.label}: ${field.numeric ? "highest first" : "Z–A"}` },
+])];
+export function chipSortField(filters: SearchFilters, key: string) {
+  const field = key.startsWith("range:") ? key.slice(6)
+    : key.startsWith("condition:") ? filters.conditions?.[Number(key.slice(10))]?.field : key;
+  return SORT_FIELDS.find((candidate) => candidate.value === field);
+}
+export function toggleSearchSort(filters: SearchFilters, field: string, direction: "asc" | "desc"): SearchFilters {
+  const sort = `${field}_${direction}`;
+  return { ...filters, sort: normalizedSearchSort(filters.sort) === sort ? "relevance" : sort };
+}
 export function filterCategory(key: string) {
   if (key === "root_id" || key === "extension" || key === "supplier") return "file";
   if (key === "technique") return "header";
@@ -58,7 +87,7 @@ export function filterChips(filters: SearchFilters) {
   for (const [key, value] of Object.entries(filters)) {
     if (value == null || value === "any" || value === "relevance" || ["ranges", "conditions", "match"].includes(key)) continue;
     const labels: Record<string, string> = { root_id: "Location", extension: "Format", supplier: "Supplier", technique: "Technique", registered: "In Cell Database", analysis_usage: "Used in analysis", replicate_usage: "In replicate", analysis_id: "Analysis", replicate_id: "Replicate", sort: "Sort" };
-    chips.push({ key, label: `${labels[key] ?? key}: ${value}`, category: filterCategory(key) });
+    chips.push({ key, label: `${labels[key] ?? key}: ${key === "sort" ? SORT_OPTIONS.find((option) => option.value === normalizedSearchSort(String(value)))?.label ?? value : value}`, category: filterCategory(key) });
   }
   for (const [key, value] of Object.entries(filters.ranges ?? {})) {
     if (value.min == null && value.max == null && !["only", "exclude"].includes(value.unknown ?? "")) continue;
@@ -73,7 +102,12 @@ export function filterChips(filters: SearchFilters) {
     chips.push({ key: `condition:${i}`, category: c.operator === "regex" ? "regex" : "text", label: `${FILTER_FIELDS.find((f) => f.value === c.field)?.label ?? c.field} ${c.operator === "regex" ? "matches pattern" : FILTER_OPERATORS.find((o) => o.value === c.operator)?.label ?? c.operator} ${c.value}` });
   });
   if (filters.match === "any" && (filters.conditions?.length ?? 0) > 1) chips.push({ key: "match", category: "text", label: "Match any text condition" });
-  return chips;
+  const sort = normalizedSearchSort(filters.sort);
+  const sortField = sort.slice(0, sort.lastIndexOf("_"));
+  // The selected arrow already identifies ordering on its filter chip.
+  // Show a standalone sort chip only when no matching applied filter exists.
+  return chips.some((chip) => chipSortField(filters, chip.key)?.value === sortField)
+    ? chips.filter((chip) => chip.key !== "sort") : chips;
 }
 export function removeSearchFilter(filters: SearchFilters, key: string): SearchFilters {
   if (key.startsWith("range:")) { const ranges = { ...filters.ranges }; delete ranges[key.slice(6)]; return { ...filters, ranges }; }
