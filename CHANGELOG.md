@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.6 - 2026-10-01
+
+- Make filter discovery precise with synonyms, typo suggestions and match explanations, open Filters by default, and move saved searches to the search toolbar.
+
 ## 0.28.0-alpha.5 - 2026-10-01
 
 - Improve indexed-search filter sizing, automatic section discovery and direct chip sorting.

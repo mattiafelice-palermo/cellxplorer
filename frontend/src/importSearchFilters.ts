@@ -1,3 +1,4 @@
+import { DISCOVERY_FIELDS, discoverFilters } from "./filterDiscovery.ts";
 import type { IndexedFile } from "./importSearch.ts";
 export type FilterRange = { min?: number; max?: number; unknown?: "exclude" | "include" | "only" };
 export type TextCondition = { field: string; operator: string; value: string; case_sensitive?: boolean };
@@ -28,7 +29,7 @@ export const FILTER_CATEGORIES = [
   { id: "text", label: "Text conditions", aliases: "contains starts ends equals missing any all case text filename filepath" },
   { id: "regex", label: "Advanced patterns", aliases: "regex regular expression pattern" },
   { id: "folder", label: "Folder context", aliases: "siblings number cycling files count same folder" },
-  { id: "saved", label: "Saved searches and sorting", aliases: "preset save sort order recently newest name relevance size" },
+  { id: "saved", label: "Ordering", aliases: "" },
 ];
 export const RANGE_FIELDS = [
   { key: "size", label: "File size", unit: "MB", scale: 1048576, category: "file" },
@@ -43,8 +44,8 @@ export const DATE_FIELDS = [
   { key: "start_time", label: "Test started (header)" }, { key: "first_indexed_at", label: "First indexed" },
 ];
 export function searchableFilterCategories(query: string) {
-  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return FILTER_CATEGORIES.filter((c) => words.every((word) => `${c.label} ${c.aliases}`.toLocaleLowerCase().includes(word)));
+  const categories = new Set(discoverFilters(query, DISCOVERY_FIELDS).matches.map((match) => match.field.category));
+  return FILTER_CATEGORIES.filter((category) => categories.has(category.id));
 }
 export function filterExpansion(query: string, expanded: string[]) {
   return query.trim() ? searchableFilterCategories(query).map((section) => section.id) : expanded;

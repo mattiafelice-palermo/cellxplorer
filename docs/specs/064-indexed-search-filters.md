@@ -27,6 +27,26 @@ The applied-chip area scrolls vertically within a bounded fraction of the worksp
 widens to its contents. Indexed mode omits the empty selected-source panel (the footer still shows
 the count), retaining result space at high zoom. A nonempty staged selection retains its panel.
 
+## Follow-up: precise filter discovery and saved-search toolbar
+
+Discovery searches individual visible field titles and curated field synonyms or actual
+semantic option labels; section titles and comparison operators never contribute matches.
+Show only matching controls, preserving their bounds and drafts. Automatically open matching
+sections, visually separate sections with bordered spaced panels, and restore manual expansion
+when discovery clears. Literal title matches bold the matching whole word. Explain nonliteral
+matches next to the field: synonym, singular/plural, or matched option. A conservative bounded
+edit-distance fallback (including transpositions) runs only when direct/normalized matching finds
+nothing; display the closest term below the discovery input. Never silently change the query.
+Dynamic option discovery may include indexed locations, techniques and actual analysis/replicate
+names. Missing-value choices, boolean choices and generic comparison verbs are not searchable.
+
+Entering indexed scope (including initial indexed opening) opens Filters and expands the panel.
+Explicit row preview still switches to Preview; checkbox inclusion and background refresh do not.
+Move saved-search creation/restoration/deletion into a Save search dropdown beside the main source
+search input. Keep the existing sort selector as its own Ordering section. No sorting changes were
+requested in this follow-up. Verify keyboard, long names, empty matches, typo/synonym/options,
+selection preservation, light/dark and increased zoom before Astra high review and final preflight.
+
 ## Locked scope
 
 Within loader step 1, Search indexed locations uses the existing right panel for Preview / Filters
@@ -35,8 +55,8 @@ or keyboard-activating a result reveals Preview; checkbox-only inclusion does no
 Background updates never steal the tab or focus. Filters, query, scroll and selections survive tab
 changes; result/filter changes reset pagination, not staged selections.
 
-Filters has a search box at its top that searches category names, field names and aliases (for
-example cycles, mass, dates, analysis, filename). Matching controls/categories are revealed;
+Filters has a search box at its top that searches individual field titles, curated aliases and
+actual semantic option labels (not section titles or comparison operators). Only matching controls are revealed;
 searching for a control never changes the applied search. Expand/collapse all, active section
 counts, removable chips above results, reset-all and undo-last-filter are provided. Follow the
 visual style guide: compact Mantine controls, channel/theme colors, stable scrollbars, keyboard

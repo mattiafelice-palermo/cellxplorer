@@ -436,3 +436,18 @@ direction. Bound the chip area with an independently scrolling
 Avoid `ScrollArea.Autosize` for wrapping chip rows: its content sizing can create
 horizontal overflow. The indexed picker omits an empty Selected sources panel;
 a nonempty selection retains its staging panel.
+
+Field discovery uses the explicit vocabulary in `filterDiscovery.ts`, not section
+names or generic comparison verbs. Hide unrelated controls and open matching
+sections without changing active filters. Use separated Accordion panels. Bold
+literal matched words; explain synonyms, plural forms and option matches beside
+the field. Only use conservative fuzzy matches when direct matching finds none,
+and show the closest term below the discovery input. Dynamic option vocabularies
+must come from the actual offered values, including configured formats.
+
+Saved-search actions live beside the source query in `SavedSearchMenu`. Its
+dropdown scales its contents, not its positioning box, and traps/returns focus.
+The loader explicitly disables its Escape handler while this nested popup is
+open. Mantine's window capture listener can otherwise run before a popup's own
+listener: stopping propagation alone is not sufficient. Escape closes Select
+choices first, then the saved-search popup, leaving the loader open.

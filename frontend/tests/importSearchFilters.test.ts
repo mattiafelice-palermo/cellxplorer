@@ -32,7 +32,7 @@ test("applied chips retain draft indices when removing a later condition", () =>
 test("discovery expands every match and restores manual sections when cleared", () => {
   const manual = ["dates", "app"];
   assert.deepEqual(filterExpansion("cycles", manual), ["cycling"]);
-  assert.deepEqual(filterExpansion("filename", manual), ["file", "text"]);
+  assert.deepEqual(filterExpansion("filename", manual), ["text"]);
   assert.deepEqual(filterExpansion("unknown-filter", manual), []);
   assert.deepEqual(filterExpansion("  ", manual), manual);
   assert.deepEqual(manual, ["dates", "app"]);

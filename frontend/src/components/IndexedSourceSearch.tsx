@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { get, post, type ImportBrowseEntry } from "../api";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
+import { SavedSearchMenu } from "./SavedSearchMenu";
 import { IndexedSearchFilters } from "./IndexedSearchFilters";
 import { activeSearchFilters, chipSortField, filterChips, filterMatchExplanation, normalizedSearchSort, removeSearchFilter, toggleSearchSort, type SearchFilters } from "../importSearchFilters";
 import { importPathsEqual } from "../importPathBreadcrumbs";
@@ -13,12 +14,13 @@ import { toggleImportFileSelection } from "../importBrowserSelection";
 import { indexedFileAvailable, indexedFileStatus, indexedMatchExplanation, searchLocationName, searchRootStatus, type FileSearchResults, type FileSearchSettings as Settings, type IndexedFile } from "../importSearch";
 import { FileSearchSettings } from "./FileSearchSettings";
 
-export function IndexedSourceSearch({ active, selected, currentPath, onPreview, onSelection, onDialogChange, onReveal, filterContainer, onFilterCount, onOpenFilters, onOpenEntity }: {
+export function IndexedSourceSearch({ active, selected, currentPath, onPreview, onSelection, onDialogChange, onPopupChange, onReveal, filterContainer, onFilterCount, onOpenFilters, onOpenEntity }: {
   active: boolean; onReveal: (file: IndexedFile) => void;
   selected: ReadonlyMap<string, ImportBrowseEntry>; currentPath?: string | null;
   onPreview: (file: IndexedFile) => void;
   onSelection: (next: Map<string, ImportBrowseEntry>, files: IndexedFile[]) => void;
   onDialogChange: (opened: boolean) => void;
+  onPopupChange: (opened: boolean) => void;
   filterContainer: HTMLDivElement | null; onFilterCount: (count: number) => void; onOpenFilters: () => void;
   onOpenEntity: () => void;
 }) {
@@ -140,12 +142,12 @@ export function IndexedSourceSearch({ active, selected, currentPath, onPreview, 
   const highlights = queryText.trim().split(/\s+/).filter(Boolean).slice(0, 8);
   const total = query.data?.total ?? 0;
   return <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
-    {filterContainer && createPortal(<IndexedSearchFilters active={active} filters={filters} onChange={changeFilters} config={config} techniques={query.data?.techniques ?? []} relationships={query.data?.relationships} queryText={text} onLoadSearch={(q, next) => { setText(q); changeFilters(next); }} />, filterContainer)}
+    {filterContainer && createPortal(<IndexedSearchFilters filters={filters} onChange={changeFilters} config={config} techniques={query.data?.techniques ?? []} relationships={query.data?.relationships} />, filterContainer)}
     {manage ? <>
       <Group justify="space-between"><Text fw={700} size="sm">Search locations</Text><Button size="sm" variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={() => setManage(false)}>Back to results</Button></Group>
       <ScrollArea style={{ flex: 1, minHeight: 0 }} offsetScrollbars><FileSearchSettings compact initialBrowse={addImmediately} initialPath={currentPath} onDialogChange={setSettingsDialogOpen} /></ScrollArea>
     </> : <>
-    <Group wrap="nowrap"><TextInput size="sm" aria-label="Search indexed locations" placeholder="Search files, source headers and linked Cells…" leftSection={<IconSearch size={16} />} value={text} onChange={(event) => setText(event.currentTarget.value)} style={{ flex: 1, minWidth: 0 }} /><Tooltip label="Search indexed filenames, paths, source-export metadata and linked Cell names, notes, analyses and replicates. Header fields remain distinct from editable Cell metadata." multiline w={340} withArrow events={{ hover: true, focus: true, touch: false }}><ActionIcon variant="subtle" size="sm" aria-label="Explain searchable metadata"><IconInfoCircle size={16} /></ActionIcon></Tooltip><Button size="sm" variant="default" leftSection={<IconSettings size={16} />} onClick={() => { setAddImmediately(false); setManage(true); }}>Locations</Button></Group>
+    <Group wrap="wrap"><TextInput size="sm" aria-label="Search indexed locations" placeholder="Search files, source headers and linked Cells…" leftSection={<IconSearch size={16} />} value={text} onChange={(event) => setText(event.currentTarget.value)} style={{ flex: "1 1 240px", minWidth: 160 }} /><SavedSearchMenu onPopupChange={onPopupChange} active={active} queryText={text} filters={filters} onLoad={(q, next) => { setText(q); changeFilters(next); }} /><Group gap="xs" wrap="nowrap" style={{ marginLeft: "auto" }}><Tooltip label="Search indexed filenames, paths, source-export metadata and linked Cell names, notes, analyses and replicates. Header fields remain distinct from editable Cell metadata." multiline w={340} withArrow events={{ hover: true, focus: true, touch: false }}><ActionIcon variant="subtle" size="sm" aria-label="Explain searchable metadata"><IconInfoCircle size={16} /></ActionIcon></Tooltip><Button size="sm" variant="default" leftSection={<IconSettings size={16} />} onClick={() => { setAddImmediately(false); setManage(true); }}>Locations</Button></Group></Group>
     {(chips.length > 0 || undo) && <Box className="cx-vertical-scroll" aria-label="Applied search filters" style={{ width: "100%", minWidth: 0, flexShrink: 0, maxHeight: "min(5.25rem, 25%)", scrollbarGutter: "stable" }}><Group gap="xs" align="center">
       {chips.map((chip) => {
         let label = chip.label;

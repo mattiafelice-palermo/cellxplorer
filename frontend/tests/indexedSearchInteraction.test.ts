@@ -27,6 +27,7 @@ function harness() {
     "@mantine/hooks": { useDebouncedValue: (value: any) => [value], useResizeObserver: () => [{ current: null }, { height: 600 }] },
     "@tanstack/react-query": { useQuery: ({ queryKey }: any) => queryKey[0] === "file-search-settings" ? { data: { config: { roots: [{ id: "root", path: "C:\\", enabled: true }], formats: [".ndax"], metadata_enabled: true }, roots: [{ id: "root", status: "ready" }] } } : { data: { items: [{ ...file }], total: 1 }, refetch: () => {} } },
     "../api": {}, "react-router-dom": { Link: "Link" },
+    "./SavedSearchMenu": { SavedSearchMenu: "SavedSearchMenu" },
     "./IndexedSearchFilters": { IndexedSearchFilters: "IndexedSearchFilters" },
     "./FileSearchSettings": {}, "../importSearchFilters": filtersPolicy, "../importSearch": searchPolicy,
     "../importPathBreadcrumbs": { importPathsEqual: (a: string, b: string) => a.toLowerCase() === b.toLowerCase() },

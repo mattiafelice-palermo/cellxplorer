@@ -65,3 +65,28 @@ Reviewer: GPT 6 Astra, high reasoning. Independent review; implementer owns brow
   worker timeout under 16-worker load; filter tests, type check and production build passed.
   Full no-cache preflight rerun at four-worker CPU budget: **4/4 stages passed**,
   176.34 seconds, including the complete backend/frontend test suite.
+
+## Precise discovery and saved-search toolbar follow-up
+
+- Entering indexed scope now opens Filters; explicit row preview still opens Preview.
+- Individual field discovery hides unrelated controls, opens matching separated
+  panels and preserves drafts/manual expansion. Titles highlight literal words;
+  synonym, plural and option matches explain their origin. Conservative fuzzy
+  fallback shows a closest-term suggestion without rewriting the query.
+- Saved-search creation/loading/deletion moved beside the main source query.
+- Astra high found two P2 cases: generic words inside meaningful option names
+  were rejected, and format discovery did not respect configured formats.
+  Both fixed with focused regressions. Independent closure verdict: **Clean**;
+  reviewer reran all 15 discovery/policy/result-handler tests.
+- Browser keyboard acceptance caught Mantine's owner Escape listener closing
+  the loader before the popup handled Escape. Explicit popup ownership now
+  disables the loader handler. Verified Select choices close first, then popup,
+  loader stays open and focus returns to Save search. Added two production
+  component regressions; **17 focused tests pass**.
+- Disposable-data browser checks: default Filters, size-only control, synonym/
+  plural/option/typo matches, manual expansion restoration, save/load/delete,
+  result checkbox staging and registered-row Preview, light/dark and 130% zoom.
+  Final evidence: `tmp/spec064-discovery-final.jpg`.
+- Final no-cache preflight at four-worker CPU budget: **4/4 stages passed**,
+  211.34 seconds. Astra independently reran all 17 focused tests and inspected
+  the final full preflight log: **Clean final review**.

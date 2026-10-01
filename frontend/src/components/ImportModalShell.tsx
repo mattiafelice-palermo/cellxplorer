@@ -31,6 +31,7 @@ export function ImportModalShell({
   progress,
   actions,
   closeDisabled = false,
+  escapeDisabled = false,
   fill = false,
   children,
 }: {
@@ -48,6 +49,8 @@ export function ImportModalShell({
   /** Footer buttons. Wrap trailing controls in `ImportModalPrimaryActions`. */
   actions?: ReactNode;
   closeDisabled?: boolean;
+  /** A nested popup owns Escape while leaving the loader's close button usable. */
+  escapeDisabled?: boolean;
   /**
    * Let the step own its scrolling. The work area then fills the dialog without
    * scrolling itself, and `children` must manage height (a column that ends in
@@ -61,6 +64,7 @@ export function ImportModalShell({
     <Modal
       opened={opened}
       onClose={closeDisabled ? () => undefined : onClose}
+      closeOnEscape={!closeDisabled && !escapeDisabled}
       // A plain string keeps the accessible name to the step itself. Step 2
       // previously nested its buttons here, so screen readers announced
       // "Choose files to importBackContinue with 12 files".
