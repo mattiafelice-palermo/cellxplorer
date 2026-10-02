@@ -53,17 +53,22 @@ def run(sidecar: Path):
             settings=request("/import-search/settings")["config"]
             settings["roots"]=[dict(id="fixture",path=str(ROOT/"tests/fixtures/golden_analysis/sources"),enabled=True)]
             settings["refresh_hours"]=0
-            request("/import-search/settings",settings,"PUT")
+            # Keep the server-validated root defaults as the recovery baseline.
+            settings=request("/import-search/settings",settings,"PUT")["config"]
+            expected_roots=settings["roots"]
+            print(f"Normalized roots after PUT: {json.dumps(expected_roots, sort_keys=True)}")
             assert wait_ready()["count"]==4
             assert request("/import-search/results?q=715")["total"]==2
             settings["paused"]=True
-            request("/import-search/settings",settings,"PUT")
+            settings=request("/import-search/settings",settings,"PUT")["config"]
             _terminate(process);process=None
             launch()
-            assert request("/import-search/settings")["config"]["paused"]
+            settings=request("/import-search/settings")["config"]
+            assert settings["paused"]
+            assert settings["roots"]==expected_roots, (expected_roots,settings["roots"])
             assert request("/import-search/results?q=715")["total"]==2
             settings["paused"]=False
-            request("/import-search/settings",settings,"PUT")
+            settings=request("/import-search/settings",settings,"PUT")["config"]
             wait_ready()
             request("/import-search/rebuild",{},"POST")
             assert wait_ready()["count"]==4
@@ -74,12 +79,16 @@ def run(sidecar: Path):
                 db.commit()
             launch()
             assert wait_ready()["count"]==4
-            assert request("/import-search/settings")["config"]["roots"]==settings["roots"]
+            recovered_roots=request("/import-search/settings")["config"]["roots"]
+            assert recovered_roots==expected_roots, (expected_roots,recovered_roots)
+            print(f"Normalized roots after incompatible-catalog recovery: {json.dumps(recovered_roots, sort_keys=True)}")
             assert request("/cells")==[]
             _terminate(process);process=None
             catalog.write_bytes(b"damaged derived search catalog")
             launch()
             assert wait_ready()["count"]==4
+            recovered_roots=request("/import-search/settings")["config"]["roots"]
+            assert recovered_roots==expected_roots, (expected_roots,recovered_roots)
             request("/import-search/rebuild",{},"POST")
             assert wait_ready()["count"]==4
             print("PASS: frozen worker scan, metadata query, pause/restart, rebuild, incompatible/corrupt catalog recovery; scientific library preserved")

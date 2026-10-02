@@ -4,6 +4,21 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.7 - 2026-10-02
+
+### New features
+
+- Search selected local, mapped, and UNC folders for supported Neware .ndax, BioLogic .mpr, and recognized Neware .xlsx files by filename, folder or path, and available source-header fields. Results use the existing preview and staging workflow; searching alone never imports or moves a file. .nda files and arbitrary Excel workbooks are not indexed.
+- Filter and sort by indexed file dates, size, source facts, and links to Cells, analyses, and replicates. Save search presets, combine text conditions or apply optional bounded regular expressions, and discover filters by field name, synonym, or available option, with typo suggestions. Missing cycling facts stay unknown; search does not calculate them.
+- Monitor chosen folders for changes when Windows notifications are available, with scheduled background refresh as a fallback. Disconnected roots or periods when the app is closed can leave results stale until a successful refresh.
+- Explain matches with highlighted filename, folder, or named source-header reasons, and add a one-time file-search introduction with an on-demand video, guide, and Choose search folders action; reopen it from the power/settings menu.
+
+### Bug fixes
+
+- Preserve staged sources and selections across folder/indexed scopes, filters, pages, and panel changes, and keep registered sources previewable without re-importing them; final import validation remains unchanged.
+- Retain the last known index across interrupted or unavailable-root scans, expose stale/error status and recovery actions, and avoid reporting partial scans as an empty successful index.
+- Keep keyboard focus and navigation stable while results refresh or virtualized rows move, and make search help and loader dialogs honor application zoom and nested-dialog behavior.
+
 ## 0.28.0-alpha.6 - 2026-10-01
 
 - Redesign the file-search introduction with a clear folder-to-search example, an on-demand walkthrough and an expandable full guide.
@@ -23,13 +38,6 @@ user-facing impact.
 
 - Indexed file search can monitor chosen Windows folders and mapped drives for changes, with safe scheduled refresh when live monitoring is unavailable.
 - Per-location fallback intervals include an explicit network-load acknowledgement for frequent scans.
-
-## Unreleased
-
-### Improvements
-
-- Explain indexed-search matches by filename, folder, or named source-header field, with highlighted terms and full explanations on focus or hover.
-- Introduce file search once at startup in the next desktop release, with a bundled video, expandable guide, and direct search action. Reopen the guide from the power/settings menu.
 
 ## 0.28.0-alpha.2 - 2026-09-30
 
