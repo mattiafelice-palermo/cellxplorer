@@ -99,8 +99,10 @@ body {
   max-height: none;
 }
 
-/* Mantine's stock indicator can drift by a pixel when a nested surface is
-   zoomed. Keep every mode selector on the same explicit geometry. */
+/* FloatingIndicator writes viewport getBoundingClientRect measurements back
+   into zoomed CSS coordinates, applying UI zoom twice. Paint the checked
+   label's own background instead: layout owns its geometry at every zoom,
+   during modal transitions, and in both browser and packaged WebView. */
 .mantine-SegmentedControl-root {
   padding: 3px !important;
   border-radius: 6px !important;
@@ -108,10 +110,37 @@ body {
 }
 
 .mantine-SegmentedControl-indicator {
-  inset: 0 auto auto 0 !important;
-  height: calc(100% - 6px) !important;
-  border-radius: 4px !important;
-  box-shadow: 0 1px 2px rgba(18, 24, 40, 0.12) !important;
+  display: none !important;
+}
+
+.mantine-SegmentedControl-label {
+  position: relative;
+}
+
+/* Keep Mantine's initial-render fallback after initialization as well. The
+   checked radio also preserves selection when the control is disabled;
+   data-active alone deliberately excludes disabled labels in Mantine. */
+.mantine-SegmentedControl-input:checked + .mantine-SegmentedControl-label::before {
+  content: '';
+  display: block !important;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 4px;
+  background-color: var(--sc-color, var(--cx-segmented-selected-bg));
+  box-shadow: var(--cx-segmented-selected-shadow);
+  border: var(--cx-segmented-selected-border, none);
+  pointer-events: none;
+}
+
+[data-mantine-color-scheme='light'] .mantine-SegmentedControl-root {
+  --cx-segmented-selected-bg: var(--mantine-color-white);
+  --cx-segmented-selected-shadow: var(--sc-shadow, none);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-SegmentedControl-root {
+  --cx-segmented-selected-bg: var(--mantine-color-dark-5);
+  --cx-segmented-selected-shadow: none;
 }
 
 .mantine-SegmentedControl-control,

@@ -4,6 +4,7 @@ Status: Implemented; independent Astra high review clean and full preflight pass
 Branch: `codex/indexed-search-filters`.
 
 Review document: [064 review](reviews/064-indexed-search-filters-review.md).
+Review document: [Segmented highlight geometry follow-up](reviews/064-segmented-highlight-followup.md).
 
 ## Follow-up: sizing, filter discovery and direct ordering
 

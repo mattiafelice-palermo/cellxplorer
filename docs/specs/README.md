@@ -5,6 +5,8 @@
 - [064-indexed-search-filters.md](064-indexed-search-filters.md) adds searchable grouped filters,
   Preview / Filters tabs, library relationships, text conditions and saved searches.
   **Implemented; Astra high review clean, full preflight and local browser acceptance passed.**
+  [Segmented highlight follow-up](reviews/064-segmented-highlight-followup.md)
+  fixes shared selected-tab geometry at application zoom; review and preflight passed.
 
 - [063-live-search-index.md](063-live-search-index.md) adds recursive directory notifications,
   safe recovery and scheduled refresh-only fallback with network-load acknowledgement.

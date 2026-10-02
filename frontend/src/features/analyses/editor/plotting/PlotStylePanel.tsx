@@ -1160,8 +1160,11 @@ export function PlotStylePanel({
                     ]}
                     value={style.legend_mode === "outside" ? "outside" : "inside"}
                     styles={{
-                      root: { padding: 3 },
-                      indicator: { boxShadow: "none", border: "1px solid var(--mantine-color-gray-3)" },
+                      root: {
+                        padding: 3,
+                        "--cx-segmented-selected-shadow": "none",
+                        "--cx-segmented-selected-border": "1px solid var(--mantine-color-default-border)",
+                      },
                       label: { paddingBlock: 6 },
                     }}
                     onChange={(value) =>

@@ -249,6 +249,13 @@ The application shell is an invariant:
   and 160% using Ctrl+-/Ctrl+0/Ctrl++ before changing this geometry.
 - Standing explanations belong in compact info buttons beside the relevant heading/control,
   with hover and keyboard-focus help. Keep actionable errors and current status visible.
+- SegmentedControl selection backgrounds use the checked label's CSS `::before`,
+  not Mantine's measured FloatingIndicator. At 90% UI zoom the latter writes an
+  already-scaled viewport width/offset into scaled layout coordinates: a measured
+  558.92px label became a 503.02px highlight. Keep selection geometry local to the
+  label, including during modal transitions. Channel colors, disabled selection
+  and radio keyboard behavior remain Mantine-owned; custom selection shadow/border
+  use `--cx-segmented-selected-shadow` / `--cx-segmented-selected-border` on the root.
 
 Pages normally begin with a title/action row, followed by one main work surface. Keep primary
 actions at the right side of the title row.
