@@ -4,6 +4,8 @@ import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import * as referenceLines from "../src/features/analyses/editor/plotting/plotReferenceLines.ts";
+import { normalizePlotStyle } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 
 type Props = Record<string, any>;
 
@@ -74,10 +76,12 @@ function makePlotHarness() {
     },
     async relayout(_graph: unknown, _update: Props) {
       calls.relayout++;
+      figureProps.onRelayout?.(_update);
       emitUpdate();
     },
   };
   const stubs: Record<string, unknown> = {
+    "../features/analyses/editor/plotting/plotReferenceLines": referenceLines,
     react,
     "react/jsx-runtime": { jsx: (_component: unknown, props: Props) => props },
     "plotly.js-dist-min": { default: plotly },
@@ -127,7 +131,7 @@ function makePlotHarness() {
   return {
     calls,
     graph,
-    async mount(visibility: boolean[], data = [{ type: "scatter", opacity: 0.6, showlegend: true }, { type: "scatter" }]) {
+    async mount(visibility: boolean[], data = [{ type: "scatter", opacity: 0.6, showlegend: true }, { type: "scatter" }], extra: Props = {}) {
       props = {
         data,
         layout: {},
@@ -136,6 +140,7 @@ function makePlotHarness() {
         traceVisibilityLayoutUpdate: { "xaxis.range": [0, 2] },
         traceVisibilityLayoutKey: JSON.stringify(visibility),
         onUpdate: () => calls.externalUpdates++,
+        ...extra,
       };
       graph.data = data;
       graph.layout = props.layout;
@@ -158,6 +163,8 @@ function makePlotHarness() {
       emitUpdate();
     },
     emitUpdate,
+    emitRelayout(event: Props) { figureProps.onRelayout?.(event); },
+    readConfig() { return figureProps.config; },
     pauseRestyle(callback: () => Promise<void>) { beforeRestyle = callback; },
     settle,
   };
@@ -170,6 +177,31 @@ test("a saved hidden sample settles after one restyle and one axis fit", async (
   assert.equal(harness.calls.relayout, 1);
   assert.equal(harness.calls.externalUpdates, 0);
   assert.equal(harness.graph.data[0].opacity, 0);
+});
+
+test("owned label dragging composes relayout and stays outside visibility/figure updates", async () => {
+  const axes = [referenceLines.referenceAxis("x", "cycle", "", "Cycle"), referenceLines.referenceAxis("y", "capacity", "mAh", "Capacity")];
+  const line = referenceLines.createReferenceLine(axes[1], axes[0], "threshold");
+  const layout = referenceLines.withReferenceLines({}, normalizePlotStyle({ reference_lines: [line] }), axes);
+  const harness = makePlotHarness();
+  let zoomCallbacks = 0;
+  const moves: referenceLines.ReferenceLabelMove[][] = [];
+  await harness.mount([true, true], undefined, {
+    layout, config: { edits: { legendPosition: true } },
+    onRelayout: () => zoomCallbacks++, onReferenceLabelMove: (value: referenceLines.ReferenceLabelMove[]) => moves.push(value),
+  });
+  (harness.graph as any)._fullLayout = { xaxis: { range: [1, 9], domain: [0, 1] }, yaxis: { range: [0, 100], domain: [0, 1] } };
+  assert.equal(harness.readConfig().edits.annotationPosition, true);
+  assert.equal(harness.readConfig().edits.legendPosition, true);
+  harness.emitRelayout({ "annotations[0].x": 0.25, "annotations[0].y": 50 });
+  assert.equal(zoomCallbacks, 1); assert.equal(moves.length, 1); assert.equal(moves[0][0].y, 0.5);
+  harness.pauseRestyle(async () => { harness.emitRelayout({ "annotations[0].x": 0.75, "annotations[0].y": 60 }); });
+  await harness.visibility([false, true]);
+  assert.equal(moves.length, 1, "internal visibility work cannot persist label changes");
+  assert.equal(harness.calls.restyle, 1); assert.equal(harness.calls.relayout, 1);
+  harness.queueFigure([{ type: "scatter", opacity: 0.4 }, { type: "scatter" }]);
+  harness.emitRelayout({ "annotations[0].x": 0.75, "annotations[0].y": 60 });
+  assert.equal(moves.length, 1, "a pending replacement cannot persist a stale annotation index");
 });
 
 test("hide and show restore authored style without axis-update feedback", async () => {

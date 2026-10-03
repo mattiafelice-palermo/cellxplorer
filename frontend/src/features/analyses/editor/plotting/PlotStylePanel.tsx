@@ -57,6 +57,7 @@ import {
   type SeriesDescriptor,
 } from "./seriesStyling";
 import { SeriesStyleModal, type SeriesPreviewBuilder } from "./SeriesStyleModal";
+import { ReferenceLinesEditor } from "./ReferenceLinesEditor";
 import {
   PLOT_PALETTES,
   applyPaletteToStyle,
@@ -159,6 +160,7 @@ export function PlotStylePanel({
   );
   const [presetDefault, setPresetDefault] = useState(false);
   const [seriesStyleOpen, setSeriesStyleOpen] = useState(false);
+  const [referenceLinesOpen, setReferenceLinesOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<string[]>(() =>
     readRememberedPlotStyleSections(plotKey),
   );
@@ -501,6 +503,10 @@ export function PlotStylePanel({
         </Group>
       </Stack>
       <Accordion multiple value={expandedSections} onChange={handleAccordionChange}>
+        {buildSeriesPreview && <Accordion.Item value="reference_lines">
+          <Accordion.Control><Text fw={700} size="sm">Reference lines</Text></Accordion.Control>
+          <Accordion.Panel><Stack gap="xs"><Button variant="light" size="xs" onClick={() => setReferenceLinesOpen(true)}>Edit reference lines…</Button><Text size="xs" c="dimmed">{style.reference_lines?.length ?? 0} reference lines · positions follow their saved quantity and units</Text></Stack></Accordion.Panel>
+        </Accordion.Item>}
         <Accordion.Item value="lines">
           <Accordion.Control>
             <Text fw={700} size="sm">
@@ -1272,6 +1278,7 @@ export function PlotStylePanel({
           onRenamePalette={(id, name) => renamePalette.mutate({ id, name })}
         />
       )}
+      {buildSeriesPreview && <ReferenceLinesEditor opened={referenceLinesOpen} onClose={() => setReferenceLinesOpen(false)} style={style} buildPreview={buildSeriesPreview} onApply={(lines) => setStyle((next) => { next.reference_lines = lines; })} />}
       <Modal
         opened={savePresetOpen}
         onClose={() => setSavePresetOpen(false)}

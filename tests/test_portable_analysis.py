@@ -32,7 +32,7 @@ from app.models import (
     TestFile,
 )
 from app.routers.analyses import _portable_local_path
-from app.services import analysis_engine, cache, calc, parsing, portable_analysis
+from app.services import analysis_cache, analysis_engine, cache, calc, parsing, portable_analysis
 
 
 def raw_frame() -> pd.DataFrame:
@@ -773,6 +773,43 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(cycle_view["result"]["cell_series"][0]["x"], [1])
         self.assertEqual(time_view["result"]["cell_traces"][0]["label"], "Portable cell")
         self.assertGreater(len(time_view["result"]["cell_traces"][0]["time_s"]), 0)
+
+    def test_reference_lines_round_trip_in_saved_style_and_portable_figure(self):
+        db, analysis, *_ = self.create_analysis(include_saved_plots=True)
+        scientific_key = analysis_cache.result_key(db, "cycles", analysis.spec, analysis.provenance, use_current_versions=False)
+        reference = {
+            "id": "threshold-stable-id", "enabled": True,
+            "binding": {"axis": "y", "quantity": "cycles:discharge_capacity", "units": "mAh"},
+            "position": 0.9, "layer": "above", "color": "#ff0000", "opacity": 0.7,
+            "width": 3, "dash": "dash",
+            "span": {"mode": "domain", "binding": {"axis": "x", "quantity": "cycles:cycle", "units": ""}, "min": 0, "max": 1},
+            "label": {"text": "Threshold", "placement": "free", "x": 0.7, "y": 0.8},
+        }
+        changed = deepcopy(analysis.spec)
+        changed["saved_plots"][0]["presentation"]["plot_styles"] = {"cycles": {"reference_lines": [reference]}}
+        changed["presentation"]["plot_styles"] = {"cycles": {"reference_lines": [reference]}}
+        analysis.spec = changed
+        db.commit()
+        self.assertEqual(analysis_cache.result_key(db, "cycles", analysis.spec, analysis.provenance, use_current_versions=False), scientific_key)
+        views = portable_analysis._report_views(db, analysis)
+        figure = {
+            "data": [{"type": "scatter", "name": "Measured", "x": [1], "y": [0.95]}],
+            "layout": {
+                "shapes": [{"name": "cellxplorer-reference:threshold-stable-id", "type": "line", "xref": "x domain", "yref": "y", "x0": 0, "x1": 1, "y0": 0.9, "y1": 0.9, "layer": "above", "line": {"color": "#ff0000", "width": 3, "dash": "dash"}}],
+                "annotations": [{"name": "cellxplorer-reference:threshold-stable-id", "text": "Threshold 0.9 mAh", "xref": "x domain", "yref": "y domain", "x": 0.7, "y": 0.8, "showarrow": False}],
+            },
+        }
+        views[0]["figure"] = figure
+        destination = self.root / "references.html"
+        portable_analysis.export_analysis_html(db, analysis, destination, include_original_files=False, views=views)
+        report = self.read_report(destination)
+        self.assertEqual(report["views"][0]["figure"], figure)
+        self.assertEqual(report["views"][0]["presentation"]["plot_styles"]["cycles"]["reference_lines"], [reference])
+        self.assertEqual(report["views"][0]["figure"]["data"][0]["y"], [0.95])
+        with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
+            imported, _warnings = portable_analysis.import_analysis_html(self.make_session(), destination)
+        self.assertEqual(imported.spec["saved_plots"][0]["presentation"]["plot_styles"]["cycles"]["reference_lines"], [reference])
+        self.assertEqual(imported.spec["presentation"]["plot_styles"]["cycles"]["reference_lines"], [reference])
 
     def test_portable_export_rejects_snapshot_with_stale_scientific_identity(self):
         db, analysis, *_ = self.create_analysis(include_saved_plots=True)

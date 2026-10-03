@@ -4,6 +4,7 @@ import type { Figure, PlotParams } from "react-plotly.js";
 import factoryModule from "react-plotly.js/factory";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { resolvePlotlyFactory } from "./plotFactory";
+import { referenceDragConfig, referenceLabelMoves, type ReferenceLabelMove } from "../features/analyses/editor/plotting/plotReferenceLines";
 import {
   disposePlotlyCssZoomHoverCompensation,
   installPlotlyCssZoomHoverCompensation,
@@ -94,6 +95,8 @@ function holdVisibleScatterGlFrame(graphDiv: HTMLElement): PlotFrameHold | null 
 }
 
 type PlotProps = PlotParams & {
+  /** Persist moves of owned reference labels; every other relayout remains family-owned. */
+  onReferenceLabelMove?: (moves: ReferenceLabelMove[]) => void;
   /**
    * Optional display-only visibility applied without replacing the figure.
    * Plotly.react treats a changed trace count as a full replot, so callers
@@ -106,7 +109,7 @@ type PlotProps = PlotParams & {
   traceVisibilityLayoutKey?: string;
 };
 
-function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLayoutKey, ...props }: PlotProps) {
+function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLayoutKey, onReferenceLabelMove, ...props }: PlotProps) {
   const graphDivRef = useRef<HTMLElement | null>(null);
   const latestVisibilityRef = useRef<PlotTraceVisibility | undefined>(traceVisibility);
   latestVisibilityRef.current = traceVisibility;
@@ -137,6 +140,11 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
     () => disablePlotlyLegendVisibility(props.layout),
     [props.layout],
   );
+  const hasReferenceLabelMove = Boolean(onReferenceLabelMove);
+  const referenceConfig = useMemo(
+    () => hasReferenceLabelMove ? referenceDragConfig(props.config, passiveLayout) : props.config,
+    [hasReferenceLabelMove, passiveLayout, props.config],
+  );
 
   useLayoutEffect(() => {
     const previous = previousFigureRef.current;
@@ -157,7 +165,7 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
     }
     if (
       previous &&
-      (previous.data !== props.data || previous.layout !== passiveLayout || previous.config !== props.config)
+      (previous.data !== props.data || previous.layout !== passiveLayout || previous.config !== referenceConfig)
     ) {
       // Wait until react-plotly.js has completed its Plotly.react call before
       // restyling visibility; otherwise a result replacement could race the
@@ -168,9 +176,9 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
     previousFigureRef.current = {
       data: props.data,
       layout: passiveLayout,
-      config: props.config,
+      config: referenceConfig,
     };
-  }, [passiveLayout, props.config, props.data]);
+  }, [passiveLayout, referenceConfig, props.data]);
 
   useEffect(() => {
     const graphDiv = graphDivRef.current;
@@ -330,6 +338,14 @@ function Plot({ traceVisibility, traceVisibilityLayoutUpdate, traceVisibilityLay
     <PlotlyComponent
       {...props}
       layout={passiveLayout}
+      config={referenceConfig}
+      onRelayout={(event) => {
+        props.onRelayout?.(event);
+        const graphDiv = graphDivRef.current as PlotlyGraphDiv | null;
+        if (!onReferenceLabelMove || !graphDiv || internalVisibilityUpdateDepthRef.current > 0 || figureUpdatePendingRef.current) return;
+        const moves = referenceLabelMoves(event, passiveLayout, graphDiv._fullLayout);
+        if (moves.length) onReferenceLabelMove(moves);
+      }}
       onLegendClick={(event) => {
         props.onLegendClick?.(event);
         return blockPlotlyLegendVisibility();

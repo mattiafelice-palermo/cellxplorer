@@ -1,6 +1,6 @@
 # 068 — Customizable plot reference lines
 
-Status: Planned.
+Status: Implemented; Astra Medium review, focused regressions, browser acceptance and full preflight passed.
 Branch: `codex/alpha-analysis-improvements`.
 Review document: [068 review](reviews/068-customizable-reference-lines-review.md).
 
@@ -42,3 +42,17 @@ references, saved/portable roundtrip and old plot compatibility. Browser checks
 creation/editing/duplicate/reorder, front/back layering, label positioning,
 save/restore and export, in light/dark. Astra Medium review, full preflight and
 commit/push checkpoint. Axis breaks are explicitly declined by the user.
+
+## Verification
+
+70 focused frontend tests and 36 portable-analysis tests passed. Production-family
+regressions cover numeric axes, stacked current axes, categorical C-rate suppression,
+derivatives, units and voltage-channel changes. The portable HTML roundtrip preserves
+references and measured values without changing scientific cache identity.
+
+Browser acceptance used disposable application data: creation, Cancel/Apply/Escape,
+duplicate/order, precise and dragged labels, save/reload, PNG export, light/dark,
+unit suppression/restoration, WebGL front/back layers, and stable adaptive zoom and
+cycle navigation. A lower-panel stacked label retained its paper Y=0.2 after drag
+and reopening. Canonical preflight passed all 4 stages (113.03 seconds, 4 workers).
+Native desktop acceptance is not claimed.

@@ -1,3 +1,4 @@
+import { referenceAxis, referenceUnits, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
@@ -55,6 +56,7 @@ import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import { usePlotSizeSync } from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
+  writeScopedStyle,
   markerSymbol,
   plotPalette,
 } from "../../plotting/plotStyle";
@@ -722,6 +724,10 @@ export function rateCapabilityLayoutForSpec(
         ? 100
         : null;
   return simpleCartesianLayout(style, spec, {
+    referenceAxes: [
+      referenceAxis("x", `crate:${effectiveXAxis(view)}`, effectiveXAxis(view) === "c_rate" ? "C" : referenceUnits(xTitle(view)), xTitle(view), !equalSpacing),
+      referenceAxis("y", `crate:${view.y_axis}`, view.y_axis === "asymmetry_ratio" ? "" : referenceUnits(yTitle(view)), yTitle(view)),
+    ],
     traces,
     xTitle: xTitle(view),
     yTitle: yTitle(view),
@@ -1737,6 +1743,7 @@ export function RateCapabilityPlotCard({
                 data={traces}
                 layout={layout}
                 config={plotConfig}
+                onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "crate", (next) => applyReferenceLabelMoves(next, moves)))}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {

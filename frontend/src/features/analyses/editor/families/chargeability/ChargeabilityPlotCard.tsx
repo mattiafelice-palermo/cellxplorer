@@ -1,3 +1,4 @@
+import { referenceAxis, referenceUnits, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
@@ -42,6 +43,7 @@ import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import { usePlotSizeSync } from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
+  writeScopedStyle,
   markerSymbol,
   plotPalette,
 } from "../../plotting/plotStyle";
@@ -407,6 +409,10 @@ export function chargeabilityLayoutForSpec(
       ? cRateTicks(result)
       : null;
   return simpleCartesianLayout(style, spec, {
+    referenceAxes: [
+      referenceAxis("x", `chargeability:${view.x_axis}`, referenceUnits(xTitle(view)), xTitle(view)),
+      referenceAxis("y", `chargeability:${view.y_axis}`, view.y_axis === "c_rate" ? "C" : referenceUnits(yTitle(view)), yTitle(view)),
+    ],
     traces,
     xTitle: xTitle(view),
     yTitle: yTitle(view),
@@ -957,6 +963,7 @@ export function ChargeabilityPlotCard({
                 data={traces}
                 layout={layout}
                 config={plotConfig}
+                onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "chargeability", (next) => applyReferenceLabelMoves(next, moves)))}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {

@@ -15,6 +15,7 @@ import type {
   PlotStyle,
   PlotStylePresetFamily,
 } from "../../../../api";
+import { normalizeReferenceLines } from "./plotReferenceLines.ts";
 
 export const PALETTE = [
   "#12b886",
@@ -82,6 +83,7 @@ const DEFAULT_AXIS: PlotStyle["x_axis"] = {
 };
 
 export const DEFAULT_PLOT_STYLE: PlotStyle = {
+  reference_lines: [],
   palette: "app",
   palette_id: null,
   palette_colors: [],
@@ -203,6 +205,7 @@ export function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotS
   const normalized = {
     ...DEFAULT_PLOT_STYLE,
     ...(style ?? {}),
+    reference_lines: normalizeReferenceLines(style?.reference_lines),
     custom_colors: { ...(style?.custom_colors ?? {}) },
     ce_custom_colors: { ...(style?.ce_custom_colors ?? {}) },
     palette_colors: [...(style?.palette_colors ?? [])],

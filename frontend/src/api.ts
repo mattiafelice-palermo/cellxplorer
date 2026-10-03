@@ -1077,6 +1077,45 @@ export interface PlotAxisScope {
 }
 
 export type PlotLineDash = "solid" | "dot" | "dash" | "longdash";
+export type PlotReferenceAxisId = "x" | "y" | "y2" | "y3";
+export interface PlotReferenceBinding {
+  axis: PlotReferenceAxisId;
+  quantity: string;
+  units: string;
+}
+export interface PlotReferenceLine {
+  id: string;
+  enabled: boolean;
+  binding: PlotReferenceBinding;
+  position: number;
+  span: { mode: "domain" | "bounded"; binding: PlotReferenceBinding; min: number; max: number };
+  color: string;
+  opacity: number;
+  width: number;
+  dash: PlotLineDash;
+  layer: "below" | "above";
+  label: {
+    visible: boolean;
+    text: string;
+    include_value: boolean;
+    include_units: boolean;
+    placement: "line" | "free";
+    along: number;
+    side: "above" | "below" | "left" | "right";
+    align: "left" | "center" | "right";
+    angle: number;
+    x: number;
+    y: number;
+    xshift: number;
+    yshift: number;
+    font_size: number;
+    color: string;
+    background: string;
+    border_color: string;
+    border_width: number;
+    border_pad: number;
+  };
+}
 export type PlotMarkerSymbol =
   | "circle"
   | "square"
@@ -1128,6 +1167,8 @@ export interface SeriesStyleRule {
 }
 
 export interface PlotStyle {
+  /** Presentation-only thresholds, bound to exact axis quantity and units. */
+  reference_lines?: PlotReferenceLine[];
   palette: PlotPaletteKey;
   palette_id?: string | null;
   palette_colors?: string[];

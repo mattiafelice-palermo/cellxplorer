@@ -1,6 +1,7 @@
 import type { AnalysisSpec, PlotStyle } from "../../../../api";
 import { APP_BRANDING } from "../../../../appChannel.ts";
 import { axisLayout, numericTraceExtent } from "./plotAxisLayout.ts";
+import { withReferenceLines, type ReferenceAxis } from "./plotReferenceLines.ts";
 
 const HOVER_LABEL_CHANNEL_COLORS = {
   stable: "#e6fcf5",
@@ -177,6 +178,7 @@ export function hoverLabelLayout(style: PlotStyle) {
 }
 
 export interface SimpleCartesianLayoutOptions {
+  referenceAxes?: ReferenceAxis[];
   traces: Plotly.Data[];
   xTitle: string;
   yTitle: string;
@@ -229,7 +231,7 @@ export function simpleCartesianLayout(
   const leftGap = axisGapDelta(style.y_axis);
   const bottomGap = axisGapDelta(style.x_axis);
 
-  return {
+  return withReferenceLines({
     ...plotLayoutStyle(style, spec),
     ...extra,
     margin: {
@@ -261,5 +263,5 @@ export function simpleCartesianLayout(
     showlegend: spec.presentation.legend,
     legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
     hovermode: "closest",
-  };
+  }, style, options.referenceAxes ?? []);
 }

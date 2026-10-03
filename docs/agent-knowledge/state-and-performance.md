@@ -395,6 +395,32 @@ Tests live in `frontend/tests/startupQueryPersistence.test.ts` and
 
 ## Analysis plots and artifacts
 
+Reference lines are presentation-only `PlotStyle.reference_lines` JSON. The pure
+`plotting/plotReferenceLines.ts` normalizer bounds imported settings, repairs IDs
+deterministically and composes named shapes/annotations after family-owned geometry.
+Every layout builder publishes scientific axis descriptors in layout metadata;
+the editor uses that same metadata for its real-family draft preview. Bind numeric
+positions and bounded perpendicular spans to axis identity, quantity and units,
+never to editable title text. Unavailable or changed quantities hide a reference
+until the user explicitly rebinds it; categorical axes cannot hold numeric
+thresholds. Time/Capacity additionally binds voltage-channel selection, display
+coordinate semantics and derivative normalization, and distinguishes stacked
+lower-left `y2` from lower-right `y3`.
+
+Reference labels use local axis-domain coordinates for free placement, including
+stacked subplots. A full-domain vertical line spans the whole stacked figure;
+its free label keeps paper Y coordinates so dragging in the lower panel does
+not move the label into the upper voltage domain. The shared Plot wrapper converts completed owned annotation
+moves using the actual resident axis ranges/domains and preserves existing
+family relayout handlers and visibility-loop guards. Plotly 2.35 exposes only a
+global annotation-position edit flag: activate it only when every annotation is
+an owned reference label. Never enable shape or annotation-text editing, or
+reposition foreign annotations. The modal owns its draft and preview; Apply
+writes once, and Cancel/Escape discards it. Live, saved, thumbnail, image/PDF and
+portable figures share layout composition; scientific traces, data exports and
+cache identities remain unchanged. Tests include production-family layout
+evaluation and the production Plot wrapper's update-event lifecycle.
+
 Interactive plots may use WebGL for responsiveness, but saved thumbnails and portable-report
 fallbacks are persisted artifacts. Updating a saved plot must invalidate and regenerate every
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails

@@ -123,6 +123,7 @@ import {
   CyclePointSelectionOverlay,
 } from "./CyclePointInspector";
 import { useCyclePointSelection } from "./useCyclePointSelection";
+import { referenceAxis, referenceUnits, withReferenceLines, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 
 const CAPACITY_LIKE_KEYS = new Set([
   "discharge_capacity",
@@ -1058,7 +1059,7 @@ export function cyclePlotLayout(
   const yRange = numericTraceExtent(traces, "y", ["y"]);
   const y2Range = numericTraceExtent(traces, "y", ["y2"]);
 
-  return {
+  return withReferenceLines({
     height: 500,
     margin: {
       l: 66 + lm.l + leftGap,
@@ -1117,7 +1118,11 @@ export function cyclePlotLayout(
       : {}),
     showlegend: spec.presentation.legend,
     legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
-  };
+  }, style, [
+    referenceAxis("x", "cycles:cycle", "", "Cycle"),
+    referenceAxis("y", `cycles:${quantityInfo.key}:${quantityInfo.column}`, referenceUnits(quantityInfo.label), quantityInfo.label),
+    ...(showCeOverlay ? [referenceAxis("y2", "cycles:ce", "%", "CE (%)")] : []),
+  ]);
 }
 
 function isPolarizationQuantity(quantity: string): boolean {
@@ -1877,6 +1882,7 @@ export function CyclePlotCard({
               data={traces}
               layout={layout}
               config={plotConfig}
+              onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "cycles", (next) => applyReferenceLabelMoves(next, moves)))}
               style={{ width: "100%", height: 500 }}
               useResizeHandler
               onRelayout={handlePlotRelayout}

@@ -1,3 +1,4 @@
+import { referenceAxis, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
@@ -62,6 +63,7 @@ import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import { usePlotSizeSync } from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
+  writeScopedStyle,
   markerSymbol,
   plotPalette,
 } from "../../plotting/plotStyle";
@@ -311,6 +313,10 @@ export function dcirLayoutForSpec(
   const yTitle = view.quantity === "relative" ? "DCIR change from first (%)" : "DCIR (mΩ)";
   const defaultXTitle = dcirXTitle(view.x_axis);
   return simpleCartesianLayout(style, spec, {
+    referenceAxes: [
+      referenceAxis("x", `dcir:${view.x_axis}`, view.x_axis === "time" ? "h" : "", defaultXTitle),
+      referenceAxis("y", `dcir:${view.quantity}`, view.quantity === "relative" ? "%" : "mΩ", yTitle),
+    ],
     traces,
     xTitle: defaultXTitle,
     yTitle,
@@ -1367,6 +1373,7 @@ export function DcirPlotCard({
                 data={traces}
                 layout={layout}
                 config={plotConfig}
+                onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "dcir", (next) => applyReferenceLabelMoves(next, moves)))}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {

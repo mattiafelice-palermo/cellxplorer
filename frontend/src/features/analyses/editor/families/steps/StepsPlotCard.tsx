@@ -1,3 +1,4 @@
+import { referenceAxis, referenceUnits, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
@@ -61,6 +62,7 @@ import {
 } from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
+  writeScopedStyle,
   markerSymbol,
   plotPalette,
 } from "../../plotting/plotStyle";
@@ -815,6 +817,10 @@ export function stepsLayoutForSpec(
   const defaultXTitle = xTitle(view.x_axis);
   const yLabel = quantityLabel(view);
   return simpleCartesianLayout(style, spec, {
+    referenceAxes: [
+      referenceAxis("x", `steps:${view.x_axis}`, view.x_axis === "time" ? "h" : "", defaultXTitle),
+      referenceAxis("y", `steps:${quantityColumn(view)}`, referenceUnits(yLabel), yLabel),
+    ],
     traces,
     xTitle: defaultXTitle,
     yTitle: yLabel,
@@ -1061,6 +1067,7 @@ export function StepsPlotCard({
                 data={traces}
                 layout={layout}
                 config={plotConfig}
+                onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "steps", (next) => applyReferenceLabelMoves(next, moves)))}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
                 onInitialized={(_, graphDiv) => {
