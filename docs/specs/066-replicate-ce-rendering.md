@@ -1,6 +1,6 @@
 # 066 — CE curves for displayed replicate members
 
-Status: Planned.
+Status: Implemented; independent review and preflight passed.
 Branch: `codex/alpha-analysis-improvements` (shared sequential batch, explicitly requested).
 Review document: [066 review](reviews/066-replicate-ce-rendering-review.md).
 
@@ -22,3 +22,11 @@ CE and hidden CE with visible primary. Live, saved, image and portable rendering
 use the same trace builder. Browser check a disposable replicate analysis.
 GPT-6 Astra Medium independently reviews implementation; resolve findings,
 run canonical preflight, commit and push this checkpoint before the next spec.
+
+## Verification
+
+81 focused frontend tests passed, including trace rendering, visibility and
+Appearance descriptors; TypeScript passed. Canonical preflight passed all four
+stages with a four-worker budget. Browser verification in a disposable library
+showed both members' CE curves in Cells only mode. Mean-only and mean-plus-members
+were verified by renderer regressions. No scientific calculation changed.

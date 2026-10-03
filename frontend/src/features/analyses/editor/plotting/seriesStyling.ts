@@ -15,6 +15,7 @@
  * tested in `frontend/tests/seriesStyling.test.ts`.
  */
 import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "../../../../api";
+import { cycleCellIsDisplayed, hasFiniteCycleValues } from "../families/cycles/cycleDisplayPolicy.ts";
 import { plotlySafeText } from "../policies/voltageChannelPolicy.ts";
 
 export type SeriesKind = "cell" | "group";
@@ -188,6 +189,7 @@ export function seriesSelectionResult(
  * API types so they can be unit tested without a compute result.
  */
 export interface CellSeriesLike {
+  quantities?: Record<string, (number | null)[]>;
   cell_id: number;
   cell_name: string;
   label: string;
@@ -197,6 +199,7 @@ export interface CellSeriesLike {
 }
 
 export interface AggregateSeriesLike {
+  quantities?: Record<string, { mean: (number | null)[] }>;
   group_id: number;
   group_name: string;
 }
@@ -244,20 +247,17 @@ export function cyclesSeriesDescriptors(
     if (primaryMeasureLabel) descriptor.measureLabel = primaryMeasureLabel;
     out.push(descriptor);
   }
-  const showIndividual = showIndividualCells || aggregates.length === 0;
   for (const s of cellSeries) {
     if (s.excluded) continue;
-    if (s.group_id !== null && !showIndividual) continue;
+    if (!cycleCellIsDisplayed({ aggregates }, s, showIndividualCells)) continue;
     const descriptor = cellSeriesDescriptor(s);
     descriptor.visibilityKey = `cycles:${descriptor.key}`;
     if (primaryMeasureLabel) descriptor.measureLabel = primaryMeasureLabel;
     out.push(descriptor);
   }
   if (includeCoulombicEfficiency) {
-    // CE overlays always draw for aggregates, but only for solo (ungrouped)
-    // cells — grouped members rely on their group's aggregate CE line, same
-    // rule the trace builder applies regardless of showIndividualCells.
     for (const agg of aggregates) {
+      if (agg.quantities && !hasFiniteCycleValues(agg.quantities.coulombic_efficiency_pct?.mean)) continue;
       const primary = aggregateSeriesDescriptor(agg);
       const sourceKey = `g${agg.group_id}`;
       out.push({
@@ -280,7 +280,8 @@ export function cyclesSeriesDescriptors(
       });
     }
     for (const s of cellSeries) {
-      if (s.excluded || s.group_id !== null) continue;
+      if (s.excluded || !cycleCellIsDisplayed({ aggregates }, s, showIndividualCells) ||
+          (s.quantities && !hasFiniteCycleValues(s.quantities.coulombic_efficiency_pct))) continue;
       const primary = cellSeriesDescriptor(s);
       const sourceKey = `c${s.cell_id}`;
       out.push({

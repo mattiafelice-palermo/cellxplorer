@@ -450,6 +450,21 @@ test("Cycles first-class CE descriptors have an independent visibility identity"
   assert.notEqual(seriesVisibilityKey(descriptors[0]), seriesVisibilityKey(descriptors[1]));
 });
 
+test("Cycles Appearance targets every displayed replicate CE with finite data", () => {
+  const member = { ...traceLike({ cell_id: 1, group_id: 7, group_name: "LFP" }),
+    quantities: { coulombic_efficiency_pct: [98, 99] } };
+  const group = { group_id: 7, group_name: "LFP",
+    quantities: { coulombic_efficiency_pct: { mean: [98, 99] } } };
+  const ce = (rows: ReturnType<typeof cyclesSeriesDescriptors>) => rows.filter((row) => row.axis === "y2");
+  assert.equal(ce(cyclesSeriesDescriptors([], [member], false, true)).length, 1);
+  assert.equal(ce(cyclesSeriesDescriptors([group], [member], false, true)).length, 1);
+  assert.equal(ce(cyclesSeriesDescriptors([group], [member], true, true)).length, 2);
+  const other = { ...member, group_id: 8 };
+  assert.equal(ce(cyclesSeriesDescriptors([group], [other], false, true)).length, 2);
+  assert.equal(ce(cyclesSeriesDescriptors([], [{ ...member,
+    quantities: { coulombic_efficiency_pct: [null, null] } }], false, true)).length, 0);
+});
+
 test("channel overrides win while legacy Cell overrides remain the fallback", () => {
   const descriptor = timeCapacityVoltageSeriesDescriptor(
     traceLike({ cell_id: 1 }),

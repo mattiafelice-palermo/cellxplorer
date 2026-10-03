@@ -111,6 +111,7 @@ import {
   cycleCeSeriesKey,
   cycleCeVisibilityKey,
   cycleSeriesVisibilityCandidatesForResult,
+  cycleCellIsDisplayed,
   cycleTraceEmissionPlan,
   cycleTraceVisibility,
   cycleVisibilityKey,
@@ -602,10 +603,7 @@ export function cycleTracesForResult(
   };
 
   const soloOrIndividual = (s: ComputeResult["cell_series"][number]) =>
-    compact ||
-    s.group_id === null ||
-    spec.presentation.show_individual_cells ||
-    result.aggregates.length === 0;
+    compact || cycleCellIsDisplayed(result, s, Boolean(spec.presentation.show_individual_cells));
 
   const ceDescriptorFor = (
     primary: SeriesDescriptor,
@@ -646,7 +644,7 @@ export function cycleTracesForResult(
     descriptor.visibilityKey = cycleVisibilityKey(descriptor.key);
     colorKeyFor.set(descriptor.key, grouped ? `g${s.group_id}` : `c${s.cell_id}`);
     descriptors.push(descriptor);
-    if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
+    if (showCeOverlay && s.quantities["coulombic_efficiency_pct"]?.some((value) => value !== null && Number.isFinite(value))) {
       descriptors.push(ceDescriptorFor(descriptor, `c${s.cell_id}`, `${s.label} CE`));
     }
   }
@@ -878,7 +876,6 @@ export function cycleTracesForResult(
       primary: Boolean(resolved && !resolved.hidden),
       ce: Boolean(
         showCeOverlay &&
-          !grouped &&
           s.quantities["coulombic_efficiency_pct"] &&
           ceResolved &&
           !ceResolved.hidden,

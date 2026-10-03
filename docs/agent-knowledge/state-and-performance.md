@@ -400,6 +400,12 @@ fallbacks are persisted artifacts. Updating a saved plot must invalidate and reg
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails
 during every report export when the valid saved artifact already exists.
 
+Cycles member rendering, CE Appearance entries and visibility targets share
+`cycleDisplayPolicy.ts`. An individual belongs to the displayed set when its
+own group lacks an aggregate or individual members are enabled. Do not suppress
+all grouped cells merely because another group has an aggregate. CE visibility
+is independent of the primary quantity, and absent/nonfinite CE has no trace.
+
 User-level series visibility is presentation state in
 `AnalysisSpec.presentation.hidden_series_ids`, separate from scientific selection and cache
 identity. The shared `frontend/src/components/Plot.tsx` wrapper keeps Plotly legends passive by

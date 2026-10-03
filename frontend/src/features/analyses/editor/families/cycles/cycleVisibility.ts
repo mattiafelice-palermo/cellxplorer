@@ -1,6 +1,8 @@
 import type { AnalysisSpec, ComputeResult } from "../../../../../api.ts";
 import { isAnalysisSampleHidden, isSeriesHidden } from "../../policies/analysisVisibility.ts";
 import { composeSeriesKey } from "../../plotting/seriesStyling.ts";
+import { cycleCellIsDisplayed } from "./cycleDisplayPolicy.ts";
+export { cycleCellIsDisplayed } from "./cycleDisplayPolicy.ts";
 
 const CYCLES_VISIBILITY_PREFIX = "cycles:";
 
@@ -41,6 +43,7 @@ export function cycleTraceEmissionPlan(
 
 type CycleVisibilityCandidate = { key: string; label: string };
 
+
 /**
  * Build first-class Cycles visibility targets from the already display-filtered
  * result. Plotly helper traces are deliberately not represented here.
@@ -79,7 +82,7 @@ export function cycleSeriesVisibilityCandidatesForResult(
   for (const series of result.cell_series) {
     if (
       isAnalysisSampleHidden(spec, series) ||
-      (series.group_id !== null && !options.showIndividual) ||
+      !cycleCellIsDisplayed(result, series, options.showIndividual) ||
       !series.quantities[options.column]?.some(
         (value) => value !== null && Number.isFinite(value),
       )

@@ -3,6 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { AnalysisSpec, ComputeResult } from "../src/api.ts";
+import { cycleCeVisibilityKey, cycleSeriesVisibilityCandidatesForResult } from "../src/features/analyses/editor/families/cycles/cycleVisibility.ts";
 
 type CycleTraceRenderer = (
   result: ComputeResult,
@@ -181,6 +182,53 @@ function cellResult(): ComputeResult {
     ],
   } as unknown as ComputeResult;
 }
+
+test("group members render CE in Cells only, including independent visibility", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = cellResult();
+  result.cell_series[0].group_id = 7;
+  const spec = cycleSpec();
+  spec.selection.entries = [{ kind: "replicate_group", ref_id: 7 }];
+  spec.presentation.show_individual_cells = false;
+  assert.ok(render(result, spec).some((trace) => trace.name === "Cell A CE"));
+  assert.ok(cycleSeriesVisibilityCandidatesForResult(result, spec, {
+    column: "capacity", showIndividual: false, includeCoulombicEfficiency: true,
+  }).some((candidate) => candidate.label === "Cell A CE"));
+  assert.deepEqual(render(result, { ...spec, presentation: { ...spec.presentation,
+    hidden_series_ids: ["cycles:c1"],
+  } }).map((trace) => trace.name), ["Cell A CE"]);
+  const hiddenCe = render(result, { ...spec, presentation: { ...spec.presentation,
+    hidden_series_ids: [cycleCeVisibilityKey("c1")],
+  } });
+  assert.ok(hiddenCe.some((trace) => trace.name === "Cell A"));
+  assert.equal(hiddenCe.some((trace) => trace.name === "Cell A CE"), false);
+});
+
+test("mean mode draws member CE only when members are shown", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = aggregateResult();
+  result.cell_series = cellResult().cell_series;
+  result.cell_series[0].group_id = 7;
+  const spec = cycleSpec();
+  spec.selection.entries = [{ kind: "replicate_group", ref_id: 7 }];
+  spec.presentation.show_individual_cells = false;
+  assert.deepEqual(render(result, spec).filter((trace) => trace.yaxis === "y2").map((trace) => trace.name), ["LFP CE"]);
+  spec.presentation.show_individual_cells = true;
+  assert.deepEqual(render(result, spec).filter((trace) => trace.yaxis === "y2").map((trace) => trace.name), ["LFP CE", "Cell A CE"]);
+});
+
+test("a missing aggregate elsewhere does not hide a member or invent missing CE", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = aggregateResult();
+  result.cell_series = cellResult().cell_series;
+  result.cell_series[0].group_id = 8;
+  const spec = cycleSpec();
+  spec.selection.entries = [{ kind: "replicate_group", ref_id: 7 }, { kind: "replicate_group", ref_id: 8 }];
+  spec.presentation.show_individual_cells = false;
+  assert.ok(render(result, spec).some((trace) => trace.name === "Cell A CE"));
+  result.cell_series[0].quantities.coulombic_efficiency_pct = [null, null, null];
+  assert.equal(render(result, spec).some((trace) => trace.name === "Cell A CE"), false);
+});
 
 test("Cycles renderer emits aggregate CE independently of primary helpers", async () => {
   const render = await loadCycleTraceRenderer();
