@@ -43,7 +43,7 @@ This performs the complete frontend, backend sidecar, and NSIS build. See
 | Product name | CellXplorer | CellXplorer Beta | CellXplorer Alpha |
 | Identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` | `com.cellxplorer.desktop.alpha` |
 | Deep link | `cellxplorer://` | `cellxplorer-beta://` | `cellxplorer-alpha://` |
-| Default install folder | `Program Files\CellXplorer` | `Program Files\CellXplorer Beta` | `Program Files\CellXplorer Alpha` |
+| Fresh default folder | `%LOCALAPPDATA%\CellXplorer` | `%LOCALAPPDATA%\CellXplorer Beta` | `%LOCALAPPDATA%\CellXplorer Alpha` |
 | Updater | `release-channels/stable/latest.json` | `release-channels/beta/latest.json` | `release-channels/alpha/latest.json` |
 
 All three editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
@@ -51,6 +51,80 @@ kill only processes whose executable path is under the installation directory be
 by shared image name alone. After the last matching process disappears, the helper requires five
 consecutive quiet checks before NSIS overwrites binaries; this covers the short Windows image-release
 race without killing the other channel.
+
+### Installation scope and updates (Spec 070)
+
+The shared NSIS configuration uses `currentUser` and an `asInvoker` manifest.
+Fresh setup defaults to the original user's LocalAppData folder. Fresh user
+copies may choose a direct local writable folder; junction/short-name alias
+paths are rejected before installation. Existing registered destinations are
+locked. The explicit All users action requests Windows approval and uses a
+fixed Program Files product folder for a fresh machine installation.
+
+`installation_scope.nsh` discovers both registry views. It cross-checks quoted
+Uninstall `InstallLocation`, manufacturer path, binary, product and optional
+channel/scope metadata. Conflicting, incomplete or ambiguous registrations stop
+the action. A unique legacy HKLM installation retains its machine scope and
+exact directory and legitimately elevates. An update never falls back to a
+fresh user copy. Command-line scope/directory options select and verify the
+registry identity; they cannot authorize an arbitrary elevated destination.
+Old keep-data uninstallers may leave a manufacturer path: it is ignored only
+when neither application nor uninstaller exists and the Uninstall record is
+absent. New uninstallers remove matching installation registration in both
+views independently of scientific-data deletion.
+
+Elevated current-user setup/uninstall is declined: alternate administrator
+credentials cannot identify the original user's HKCU or profile. Machine
+installation/removal preserves user data and avoids writing/deleting the
+elevated account's startup entry. Manage startup from the normal application.
+Normal user uninstall retains the existing explicit data-deletion choice;
+all updates preserve data, startup choices and shortcuts. Temporary current
+uninstaller launches inherit validated scope and `/UPDATE`, with `_?=` last.
+
+On Windows, `installation_scope.rs` identifies the running executable against
+the registered destination (resolving filesystem aliases for equivalence) and
+launches only the bytes returned by Tauri's unchanged signature-verifying
+download. A unique staged file is re-read and compared while locked against
+write/delete sharing. Checked `ShellExecuteExW` uses `open` for user scope and
+`runas` for machine scope before stopping the backend. Declining UAC or an
+immediate launch failure returns a retryable error while this new client stays
+open. Successful process launch means handoff, not completed installation.
+Restart arguments are bounded hex-encoded JSON and decoded by the installed
+trusted helper under `RunAsUser`; they cannot become installer scope options.
+NSIS's 1024-unit command limit is checked before handoff.
+
+**Transition limit:** already released clients still use their old updater,
+which exits before the new installer self-elevates. The first update from such
+a client can therefore close the application on UAC cancellation. The checked
+handoff applies after the new client is installed. Existing machine copies
+continue to need UAC; to change scope, uninstall while keeping data and then
+run fresh setup normally. No automatic scope migration is performed. Normal
+future user updates avoid installer elevation when prerequisites are ready;
+repairing a machine-owned WebView2 prerequisite can still require approval.
+
+**Verification limit:** compiler fixtures and isolated policy checks do not
+prove native signed install/update behavior. The pending disposable matrix must
+cover all channels, standard/admin users, alternate credentials, user/machine
+fresh install, old-client to new-installer transition, new-client signed update,
+UAC cancellation, exact directory retention, restart arguments/token, shortcuts,
+startup, keep-data uninstall/reinstall and WebView2 repair. Native computer
+controls are unavailable in this task; no real installed application or user
+database was changed. Compiler fixtures deliberately use a placeholder payload
+and must never be installed.
+
+Focused checks:
+
+```powershell
+python -m unittest tests.test_installer_scope tests.test_updater_configuration tests.test_installation_process_scope
+cargo test --offline --manifest-path src-tauri/Cargo.toml installation_scope::tests
+python scripts/check_installer_scope.py --run-policy-tests
+```
+
+The last command compiles the production template for all three channels using
+cached NSIS/support files and executes policy-only binaries against unique
+disposable HKCU test keys. The filesystem sandbox can deny those fixture writes;
+run with approved access when needed. It never executes the compiled setup
+fixtures or accesses real installed-product registry keys.
 
 **Data root:** Stable defaults to `%USERPROFILE%\.cellxplorer`; Beta defaults to
 `%USERPROFILE%\.cellxplorer-beta`; Alpha defaults to `%USERPROFILE%\.cellxplorer-alpha`.

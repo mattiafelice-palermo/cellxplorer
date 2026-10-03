@@ -174,6 +174,34 @@ and pyarrow 84MB.
 
 ### Updater signing and release checks
 
+Windows scope and handoff are owned by `installation_scope.nsh` and
+`src/installation_scope.rs` (Spec 070); see the scope section in
+`docs/windows-packaging.md`. Keep the NSIS manifest asInvoker and default
+currentUser. Runtime machine actions authenticate both-view HKLM identity and
+elevate explicitly. Stock `both`/Highest elevates fresh user setup too. Never
+trust scope/path flags as arbitrary machine write targets, or elevated HKCU/
+LocalAppData/profile as the original standard user's state.
+
+Tauri updater 2.10.1's Windows install method ignores ShellExecuteW's result
+and exits after its before-exit hook. The standard self-updater therefore keeps
+Tauri check/download signature verification but uses a checked Windows launcher
+on those exact verified bytes before backend shutdown. Keep the staged file's
+READ-only deny-write/delete lock through launch, compare bytes after reopening,
+and bound the full NSIS command (bundled NSIS has 1024 UTF-16 units). Successful
+launch is only handoff. Older clients retain their old first-update cancellation
+behavior until the new client is installed.
+
+Use the compiler/policy harness in `scripts/check_installer_scope.py` to execute
+actual NSIS normalization/discovery/registration cleanup against disposable
+HKCU keys; textual contracts alone missed a scratch-register clobber. Win32
+GetFullPathNameW with a separate output buffer supports nonexistent fresh
+folders; aliased NSIS GetFullPathName input/output cleared that fixture path.
+PowerShell5 JSON arrays must be assigned directly before foreach; wrapping
+ConvertFrom-Json's pipeline in `@(...)` can nest the array. The restart helper's
+Windows parser regression includes empty, quoted, backslash and Unicode args.
+Native signed UAC/restart acceptance remains a separate disposable matrix;
+compilation and these fixture executions do not establish it.
+
 1. Confirm `bundle.createUpdaterArtifacts` is `true` and the committed updater public key in
    `src-tauri/tauri.conf.json` is real, not a placeholder or file path.
 2. Never commit the private updater key, its password, or GitHub release tokens.

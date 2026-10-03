@@ -30,6 +30,7 @@ ManifestDPIAwareness PerMonitorV2
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
+${UnStrLoc}
 
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
@@ -124,6 +125,8 @@ Var CxBrandFont
 Var CxLaunchMark
 Var CxLaunchText
 Var CxEstimatedMb
+!include "${CELLXPLORER_HOOK_SOURCE_DIR}\installation_scope.nsh"
+
 Var CxInstallInstanceId
 
 Name "${PRODUCTNAME}"
@@ -152,31 +155,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !uninstfinalize '${UNINSTALLERSIGNCOMMAND}'
 !endif
 
-; Handle install mode, `perUser`, `perMachine` or `both`
-!if "${INSTALLMODE}" == "perMachine"
-  RequestExecutionLevel admin
-!endif
-
-!if "${INSTALLMODE}" == "currentUser"
-  RequestExecutionLevel user
-!endif
-
-!if "${INSTALLMODE}" == "both"
-  !define MULTIUSER_MUI
-  !define MULTIUSER_INSTALLMODE_INSTDIR "${PRODUCTNAME}"
-  !define MULTIUSER_INSTALLMODE_COMMANDLINE
-  !if "${ARCH}" == "x64"
-    !define MULTIUSER_USE_PROGRAMFILES64
-  !else if "${ARCH}" == "arm64"
-    !define MULTIUSER_USE_PROGRAMFILES64
-  !endif
-  !define MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_KEY "${UNINSTKEY}"
-  !define MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_VALUENAME "CurrentUser"
-  !define MULTIUSER_INSTALLMODEPAGE_SHOWUSERNAME
-  !define MULTIUSER_INSTALLMODE_FUNCTION RestorePreviousInstallLocation
-  !define MULTIUSER_EXECUTIONLEVEL Highest
-  !include MultiUser.nsh
-!endif
+; Runtime scope is validated separately. A fresh current-user launch never
+; prompts for elevation; machine actions explicitly request Windows approval.
+RequestExecutionLevel user
 
 ; Installer icon
 !if "${INSTALLERICON}" != ""
@@ -937,6 +918,21 @@ Function CellXplorerInstallPage
   Pop $CxBrowseButton
   SendMessage $CxBrowseButton ${WM_SETFONT} $CxBodyFont 1
   ${NSD_OnClick} $CxBrowseButton CellXplorerBrowseInstallPath
+  ; Existing paths and fresh machine destinations are authenticated/fixed.
+  ; Fresh user copies default to their original user's LocalAppData folder.
+  ${If} $CxExisting == 1
+  ${OrIf} $CxScope == "machine"
+    EnableWindow $CxInstallPath 0
+    EnableWindow $CxBrowseButton 0
+  ${EndIf}
+  ${NSD_CreateButton} 62% 198u 38% 20u "All users (Windows approval)"
+  Pop $CxScopeButton
+  SendMessage $CxScopeButton ${WM_SETFONT} $CxSmallFont 1
+  ${NSD_OnClick} $CxScopeButton CellXplorerChooseAllUsers
+  ${If} $CxScope == "machine"
+    ${NSD_SetText} $CxScopeButton "All users installation"
+    EnableWindow $CxScopeButton 0
+  ${EndIf}
 
   ${If} $CxDesktopState == ""
     StrCpy $CxDesktopState ${BST_CHECKED}
@@ -967,6 +963,14 @@ Function CellXplorerInstallPage
   ${NSD_OnClick} $CxStartupText CellXplorerToggleStartupOption
   Call CellXplorerPaintDesktopOption
   Call CellXplorerPaintStartupOption
+  ${If} $CxScope == "machine"
+    ; Elevated HKCU is not the original user's startup state.
+    StrCpy $CxStartupState ${BST_UNCHECKED}
+    EnableWindow $CxStartupMark 0
+    EnableWindow $CxStartupText 0
+    ${NSD_SetText} $CxStartupText "Startup: manage from the application"
+    Call CellXplorerPaintStartupOption
+  ${EndIf}
 
   ${NSD_CreateLabel} 0 252u 100% 14u "Requires approximately $CxEstimatedMb MB"
   Pop $0
@@ -1027,7 +1031,25 @@ Function CellXplorerBrowseInstallPath
 FunctionEnd
 
 Function CellXplorerInstallLeave
-  ${NSD_GetText} $CxInstallPath $INSTDIR
+  ${If} $CxExisting != 1
+  ${AndIf} $CxScope == "user"
+    ${NSD_GetText} $CxInstallPath $CxRecordDir
+    Call CxNormalizeDirectory
+    StrCpy $INSTDIR $CxRecordDir
+    ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+      MessageBox MB_ICONSTOP|MB_OK "This folder contains an unregistered application. Choose an empty installation folder or repair its registration first."
+      Abort
+    ${EndIf}
+    ClearErrors
+    CreateDirectory "$INSTDIR"
+    GetTempFileName $0 "$INSTDIR"
+    ${If} ${Errors}
+      MessageBox MB_ICONEXCLAMATION|MB_OK "Choose a local folder writable by your current Windows user."
+      Abort
+    ${EndIf}
+    Delete "$0"
+    Call CxValidateFreshDirectory
+  ${EndIf}
   ${If} $INSTDIR == ""
     MessageBox MB_ICONEXCLAMATION|MB_OK "Choose an install location."
     Abort
@@ -1224,6 +1246,10 @@ Function un.CellXplorerUninstallPage
   Pop $CxDeleteDataRadio
   SetCtlColors $CxDeleteDataRadio "202124" "FFFFFF"
   SendMessage $CxDeleteDataRadio ${WM_SETFONT} $CxBodyFont 1
+  ${If} $CxScope == "machine"
+    EnableWindow $CxDeleteDataRadio 0
+    ${NSD_SetText} $CxDeleteDataRadio "User data is preserved for all-users removal"
+  ${EndIf}
   ${NSD_CreateLabel} 18u 174u 70% 13u "Cells, analyses, folders and settings will be deleted."
   Pop $0
   !insertmacro CxStyleText $0 "FA5252" "FFFFFF" $CxSmallFont
@@ -1317,31 +1343,7 @@ Function .onInit
     StrCpy $CxEstimatedMb 1
   ${EndIf}
 
-  ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
-    ; Set default install location
-    !if "${INSTALLMODE}" == "perMachine"
-      ${If} ${RunningX64}
-        !if "${ARCH}" == "x64"
-          StrCpy $INSTDIR "$PROGRAMFILES64\${PRODUCTNAME}"
-        !else if "${ARCH}" == "arm64"
-          StrCpy $INSTDIR "$PROGRAMFILES64\${PRODUCTNAME}"
-        !else
-          StrCpy $INSTDIR "$PROGRAMFILES\${PRODUCTNAME}"
-        !endif
-      ${Else}
-        StrCpy $INSTDIR "$PROGRAMFILES\${PRODUCTNAME}"
-      ${EndIf}
-    !else if "${INSTALLMODE}" == "currentUser"
-      StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
-    !endif
-
-    Call RestorePreviousInstallLocation
-  ${EndIf}
-
-
-  !if "${INSTALLMODE}" == "both"
-    !insertmacro MULTIUSER_INIT
-  !endif
+  Call CxInitializeScope
 FunctionEnd
 
 
@@ -1465,9 +1467,23 @@ Section Install
     InitPluginsDir
     WriteUninstaller "$PLUGINSDIR\cellxplorer-current-uninstall.exe"
     ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    StrCpy $CxRecordDir $4
+    Call CxNormalizeDirectory
+    StrCpy $4 $CxRecordDir
+    ${If} $4 != $INSTDIR
+      Call CxScopeError
+    ${EndIf}
     StrCpy $R1 "$\"$PLUGINSDIR\cellxplorer-current-uninstall.exe$\""
+    ${If} $CxScope == "machine"
+      StrCpy $R1 "$R1 /CXALLUSERS"
+    ${EndIf}
     ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|}
+    ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|}
     StrCpy $R1 "$R1 _?=$4"
+    StrLen $0 $R1
+    ${If} $0 >= 1000
+      Call CxScopeError
+    ${EndIf}
 
     HideWindow
     ClearErrors
@@ -1495,6 +1511,7 @@ Section Install
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
+  File /oname=restart_application.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\restart_application.ps1"
 
   ; Copy resources
   {{#each resources_dirs}}
@@ -1545,6 +1562,8 @@ Section Install
 
   ; Save current MAINBINARYNAME for future updates
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
+  WriteRegStr SHCTX "${UNINSTKEY}" "BundleId" "${BUNDLEID}"
+  WriteRegStr SHCTX "${UNINSTKEY}" "InstallScope" "$CxScope"
 
   ; Every completed installer run is a distinct installation, even when the
   ; version is unchanged. Beta uses this value to ask how to handle an
@@ -1588,10 +1607,12 @@ Section Install
       Delete "$DESKTOP\${PRODUCTNAME}.lnk"
     ${EndIf}
 
+    ${If} $CxScope == "user"
     ${If} $CxStartupState == ${BST_CHECKED}
       WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --hidden"
     ${Else}
       DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    ${EndIf}
     ${EndIf}
   ${EndIf}
 
@@ -1619,8 +1640,14 @@ Function .onInstSuccess
   ${OrIf} ${Silent}
     ${GetOptions} $CMDLINE "/R" $R0
     ${IfNot} ${Errors}
+      ${If} $CxRestartArgs != ""
+        ; An opaque argv array cannot inject NSIS options. RunAsUser restores
+        ; the original standard desktop token after a machine update.
+        nsis_tauri_utils::RunAsUser "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\restart_application.ps1" -ArgumentsHex "$CxRestartArgs"'
+      ${Else}
       ${GetOptions} $CMDLINE "/ARGS" $R0
       nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 FunctionEnd
@@ -1650,9 +1677,21 @@ Function un.onInit
   ${IfNot} ${Errors}
     StrCpy $UpdateMode 1
   ${EndIf}
+  Call un.CxInitializeScope
 FunctionEnd
 
 Section Uninstall
+  ; Revalidate before any file/registry mutation, after the user confirmation.
+  Call un.CxDiscoverScope
+  ${If} $CxScope == "machine"
+  ${AndIf} $CxMachineDir != $INSTDIR
+    Call un.CxScopeError
+  ${EndIf}
+  ${If} $CxScope == "user"
+  ${AndIf} $CxUserDir != $INSTDIR
+    Call un.CxScopeError
+  ${EndIf}
+  Call un.CxApplyScope
 
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
     ; The path-scoped hook protects its own uninstaller ancestry and stops the
@@ -1663,6 +1702,7 @@ Section Uninstall
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+  Delete "$INSTDIR\restart_application.ps1"
 
   ; Delete resources
   {{#each resources}}
@@ -1728,19 +1768,16 @@ Section Uninstall
   ${EndIf}
 
   ; Remove registry information for add/remove programs
-  !if "${INSTALLMODE}" == "both"
-    DeleteRegKey SHCTX "${UNINSTKEY}"
-  !else if "${INSTALLMODE}" == "perMachine"
-    DeleteRegKey HKLM "${UNINSTKEY}"
-  !else
-    DeleteRegKey HKCU "${UNINSTKEY}"
-  !endif
+  ; Remove only the authenticated installation registration, independently
+  ; of scientific-data preservation. Do not leave a stale reinstall target.
+  Call un.CxRemoveRegistration
 
   ; Removes the Autostart entry for ${PRODUCTNAME} from the HKCU Run key if it exists.
   ; This ensures the program does not launch automatically after uninstallation if it exists.
   ; If it doesn't exist, it does nothing.
   ; We do this when not updating (to preserve the registry value on updates)
   ${If} $UpdateMode <> 1
+  ${AndIf} $CxScope == "user"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
   ${EndIf}
 
@@ -1748,6 +1785,7 @@ Section Uninstall
   ; and if not updating
   ${If} $DeleteAppDataCheckboxState = 1
   ${AndIf} $UpdateMode <> 1
+  ${AndIf} $CxScope == "user"
     ; Clear the install location $INSTDIR from registry
     DeleteRegKey SHCTX "${MANUPRODUCTKEY}"
     DeleteRegKey /ifempty SHCTX "${MANUKEY}"

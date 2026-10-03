@@ -341,9 +341,29 @@ pub fn install_app_update(
         })?
     };
 
+    #[cfg(windows)]
+    {
+        // Download already verified these exact bytes against the unchanged updater
+        // public key. Resolve the running installation again at the moment of launch.
+        let handoff = crate::installation_scope::running_installation(channel)
+            .and_then(|identity| crate::installation_scope::launch_verified_update(&identity, &bytes));
+        match handoff {
+            Ok(_) => {
+                crate::prepare_exit_for_update(&app);
+                app.exit(0);
+                return Ok(());
+            }
+            Err(error) => {
+                if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
+                return Err(error);
+            }
+        }
+    }
+    // Non-Windows platforms retain the plugin's installation implementation.
     // Pre-hook failures can return here with the backend still alive. Once the updater plugin
     // runs `on_before_exit` on Windows it stops the sidecar and exits the process regardless of
     // whether ShellExecuteW opened the installer successfully — that path does not return.
+    #[cfg(not(windows))]
     match update.install(&bytes) {
         Ok(()) => Ok(()),
         Err(error) => {

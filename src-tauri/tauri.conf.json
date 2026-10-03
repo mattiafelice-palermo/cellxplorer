@@ -59,7 +59,7 @@
         "installerHooks": "nsis-hooks.nsh",
         "headerImage": "nsis-header.bmp",
         "sidebarImage": "nsis-sidebar.bmp",
-        "installMode": "perMachine",
+        "installMode": "currentUser",
         "compression": "zlib"
       },
       "wix": {

@@ -22,13 +22,12 @@ sha2 = "0.10"
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 semver = "1.0.28"
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.18"
 winreg = "0.55"
-
-[dev-dependencies]
-tempfile = "3"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # Local packaging runs rebuild this crate every time (tauri-build re-runs its
 # build script), and the release default of no incremental data meant a full

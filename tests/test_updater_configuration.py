@@ -113,7 +113,11 @@ class UpdaterConfigurationTests(unittest.TestCase):
                 self.assertEqual(updater["windows"]["installMode"], "passive")
                 self.assertNotIn(updater["windows"]["installMode"], {"basicUi", "quiet"})
                 self.assertEqual(updater["endpoints"], [expected_endpoints[channel]])
-        self.assertEqual(self.conf["bundle"]["windows"]["nsis"]["installMode"], "perMachine")
+        self.assertEqual(self.conf["bundle"]["windows"]["nsis"]["installMode"], "currentUser")
+        scope = (ROOT / "src-tauri" / "installation_scope.nsh").read_text(encoding="utf-8")
+        self.assertIn('StrCpy $INSTDIR $CxMachineDir', scope)
+        self.assertIn('ExecShell "runas" "$EXEPATH"', scope)
+        self.assertIn('${If} $CxRequestedScope == "user"', scope)
 
     def test_update_handoff_is_visible_and_install_retry_is_wired(self):
         coordinator = APP_UPDATE_COORDINATOR.read_text(encoding="utf-8")
