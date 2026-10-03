@@ -63,7 +63,7 @@ RESULT_SCHEMA_VERSIONS = {
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,
-    "rate_capability": 4,
+    "rate_capability": 5,
 }
 PLOT_ARTIFACT_CACHE_VERSION = 2
 # Spec 041.5: thumbnail records now carry the scientific data signature that

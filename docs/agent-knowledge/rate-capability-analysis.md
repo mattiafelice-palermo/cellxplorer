@@ -99,7 +99,7 @@ so it does not use a direction pattern.
 
 The backend endpoint is `POST /api/analyses/{id}/rate-capability`. Its cache family is
 `rate_capability`, with an independent entry in
-`backend/app/services/analysis_cache.py::RESULT_SCHEMA_VERSIONS`. Schema version 3 preserves every
+`backend/app/services/analysis_cache.py::RESULT_SCHEMA_VERSIONS`. Schema version 5 preserves every
 resolved `(cell_id, entry_kind, entry_ref_id)` selection context. The C-rate response still
 contains one scientific series per physical cell, but the frontend hides that shared series only
 when every occurrence of the cell is hidden. A scoped exclusion in one replicate must not hide a
@@ -123,6 +123,34 @@ and portable figures use the same dedicated endpoint and trace/layout builders a
 
 Focused scientific regression coverage is in `tests/test_rate_capability.py`.
 Context-aware visibility coverage is in `frontend/tests/analysisVisibility.test.ts`.
+
+## Guidance and diagnostic evidence
+
+The contextual help explains the fixed/variable direction pattern, CC-only
+capacity, voltage completion and current recognition limits. A missing Cell
+nominal capacity is not a universal prerequisite: protocol reconstruction can
+use declared C-rates or recover nominal capacity from current/rate pairs.
+
+Each cell response includes bounded `recognition_evidence`. Missing nominal
+conversion evidence counts only supported current-controlled measurement steps
+with no declared/resolved C-rate and no usable reconstruction or Cell capacity
+basis. Family counts come from executed rows: completed distinct rates use the
+detector's rate tolerance; unverified voltage counts use existing validation
+flags. Positive completed rates are sorted before tolerance clustering to avoid
+undercounting non-transitive tolerance clusters in protocol order. These are
+observations, not a diagnosis of why a sweep failed. A count
+across completed pairs is an upper bound and does not prove that the pairs form
+one compatible sweep. Do not derive an insufficient-rate diagnosis from
+`available` arrays: those contain only detected blocks, so empty arrays give no
+evidence about protocol rates. Missing capacity alone must not be described as
+a voltage-completion failure. Schema version 5 refreshes cached results for
+these additive fields without changing scientific calculations.
+
+`rateCapabilityGuidance.ts` owns testable plain-language evidence copy. The
+settings and plot show no-match guidance only after recognition supplies a
+result; draft, loading, failed, disabled and hidden-series states have distinct
+messages. Evidence details are suppressed during pending recomputation so
+counts from an earlier request are not paired with new rules.
 
 ## Multi-source continuation safety
 

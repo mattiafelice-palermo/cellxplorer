@@ -23,6 +23,12 @@ synthetic tests and must not be loosened to hide missing `CALC_VERSION` bumps.
 Sources are complete binaries under `tests/fixtures/golden_analysis/sources/`. Expected JSON stores
 stable scientific projections only — never PNG/SVG/Plotly layout.
 
+For Rate Capability, the projection omits only `cells[*].recognition_evidence`,
+which supplies contextual-help observations and has focused evidence/copy tests.
+Family match status, detected blocks, rates, capacities, comparisons and all
+other scientific keys remain in the projection. Adding help evidence requires
+neither an expected-output refresh nor a numerical-tolerance change.
+
 ## File contract
 
 - `manifest.json` — schema version, source checksums, fixture entities, case list, tolerances.

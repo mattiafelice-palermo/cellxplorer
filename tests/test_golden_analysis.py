@@ -241,6 +241,36 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
         with self.assertRaises(NonFiniteProjectionError):
             project_result(shaped, projection="cycles_absolute")
 
+    def test_rate_guidance_projection_excludes_only_cell_diagnostics(self):
+        shaped = {
+            "type": "rate_capability",
+            "cells": [{
+                "cell_id": 1, "cell_name": "Example",
+                "families": {"charge": {"status": "matched", "rate_count": 3}},
+                "recognition_evidence": {"missing_nominal_rate_step_count": 0},
+            }],
+            "points": [{"rate_c": 1.0, "capacity_mah": 42.0}],
+            "comparison": {"reference_rate_c": 0.2, "points": [{"asymmetry_ratio": 1.1}]},
+            "config": {"min_points": 3},
+            "recognition_evidence": {"unrelated_top_level_contract": 1},
+        }
+        original = copy.deepcopy(shaped)
+        expected = copy.deepcopy(shaped)
+        expected["cells"][0].pop("recognition_evidence")
+        projected = project_result(shaped)
+        self.assertEqual(projected, expected)
+        self.assertEqual(shaped, original)
+        changed = copy.deepcopy(projected)
+        changed["points"][0]["capacity_mah"] = 43.0
+        with self.assertRaises(ComparisonError):
+            compare_values(expected, changed)
+        changed = copy.deepcopy(projected)
+        changed["cells"][0]["families"]["charge"]["status"] = "not_detected"
+        with self.assertRaises(ComparisonError):
+            compare_values(expected, changed)
+        shaped["type"] = "another_family"
+        self.assertIn("recognition_evidence", project_result(shaped)["cells"][0])
+
     def test_comparator_reports_precise_path(self):
         expected = {"metrics": {"ce_pct": 99.1}}
         actual = {"metrics": {"ce_pct": 99.2}}

@@ -1,4 +1,7 @@
 import unittest
+from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 from numpy.testing import assert_equal
@@ -281,6 +284,77 @@ class SweepDetectionTests(unittest.TestCase):
             rate_capability.detect_sweep_blocks(rows, "discharge", config),
             [],
         )
+
+
+class RecognitionEvidenceTests(unittest.TestCase):
+    def test_missing_nominal_is_specific_to_missing_current_conversion(self):
+        current_only = {"type_id": 1, "current_ma": 25, "c_rate": None}
+        self.assertEqual(rate_capability._missing_nominal_rate_steps({"steps": [current_only]}, None), 1)
+        self.assertEqual(rate_capability._missing_nominal_rate_steps({"steps": [current_only]}, 50), 0)
+        self.assertEqual(rate_capability._missing_nominal_rate_steps({"steps": [current_only], "nominal_capacity_mah": 50}, None), 0)
+        declared = {**current_only, "c_rate": 0.5}
+        self.assertEqual(rate_capability._missing_nominal_rate_steps({"steps": [declared]}, None), 0)
+        self.assertEqual(rate_capability._missing_nominal_rate_steps({"steps": [{**current_only, "current_ma": None}]}, None), 0)
+        self.assertEqual(rate_capability._missing_nominal_rate_steps({"steps": [{**current_only, "type_id": 4}]}, None), 0)
+
+    def test_counts_only_verified_rates_with_configured_tolerance(self):
+        rows = [execution(index, rate) for index, rate in enumerate([0.5, 0.51, 1.0])]
+        incomplete = {**execution(3, 2.0), "valid": False, "validation": {"reference_phase_completed": False}}
+        config = rate_capability._merged_config({"computation": {}})
+        evidence = rate_capability._recognition_evidence([*rows, incomplete], config)
+        self.assertEqual(evidence["discharge"]["completed_rate_count"], 2)
+        self.assertEqual(evidence["discharge"]["unverified_voltage_execution_count"], 1)
+        self.assertEqual(evidence["charge"]["execution_count"], 0)
+        config["rate_tolerance_fraction"] = 0.1
+        rows[1]["rate_c"] = 0.54
+        self.assertEqual(rate_capability._recognition_evidence(rows, config)["discharge"]["completed_rate_count"], 2)
+
+    def test_missing_capacity_does_not_claim_unverified_voltage(self):
+        row = {**execution(1, 1), "valid": False, "validation": {
+            "measurement_cutoff_reached": True, "phase_completed": True, "reference_phase_completed": True,
+        }}
+        evidence = rate_capability._recognition_evidence([row], rate_capability.DEFAULT_CONFIG)
+        self.assertEqual(evidence["discharge"]["completed_rate_count"], 0)
+        self.assertEqual(evidence["discharge"]["unverified_voltage_execution_count"], 0)
+
+    def test_nontransitive_rate_tolerance_does_not_understate_available_distinct_rates(self):
+        rows = [execution(index, rate) for index, rate in enumerate([0.50, 0.49, 0.51])]
+        evidence = rate_capability._recognition_evidence(rows, rate_capability.DEFAULT_CONFIG)
+        self.assertEqual(evidence["discharge"]["completed_rate_count"], 2)
+
+    def test_evidence_does_not_claim_both_varying_rates_form_a_sweep(self):
+        rows = [execution(i, rate, fixed_rate=rate) for i, rate in enumerate([0.2, 0.5, 1.0])]
+        config = rate_capability._merged_config({"computation": {}})
+        original = deepcopy(rows)
+        self.assertEqual(rate_capability._recognition_evidence(rows, config)["discharge"]["completed_rate_count"], 3)
+        self.assertEqual(rate_capability.detect_sweep_blocks(rows, "discharge", config), [])
+        self.assertEqual(rows, original)
+
+    def test_compute_adds_cell_evidence_without_changing_scientific_output(self):
+        from backend.app.services import analysis_engine as engine
+        cell = Cell(id=1, name="Example")
+        source = SourceFile(id=2, hash="a" * 64, path="missing.ndax", filename="missing.ndax", size=1, ext="ndax")
+        rows = [execution(i, rate) for i, rate in enumerate([0.2, 0.5, 1.0])]
+        context = SimpleNamespace(
+            protocol_cache={}, units=[{"cell": cell, "entry_kind": "cell", "entry_ref_id": 1}],
+            missing_refs=[], cells=[cell], labels_by_cell={1: "Example"}, scalar_metadata={1: {}},
+            hashes_by_cell={1: [source.hash]}, files_by_cell={1: [source]},
+            parser_versions_by_cell={1: {source.hash: "test"}},
+            protocol_by_source={source.hash: charge_pair_protocol()},
+        )
+        with patch.object(engine, "ensure_canonical_cycling_available"), \
+             patch.object(engine, "cell_nominal_capacity_mah", return_value=None), \
+             patch.object(engine, "cell_active_mass_mg", return_value=None), \
+             patch.object(engine, "cell_electrode_area_cm2", return_value=None), \
+             patch.object(engine, "current_parser_identity", return_value="test"), \
+             patch.object(rate_capability.cache, "load_raw", return_value=pd.DataFrame({"step_index": []})), \
+             patch.object(rate_capability, "extract_pair_executions", return_value=rows):
+            result = rate_capability.compute(None, {"computation": {}}, None, request_context=context)
+            with patch.object(rate_capability, "_recognition_evidence", return_value={}):
+                without_evidence = rate_capability.compute(None, {"computation": {}}, None, request_context=context)
+        self.assertEqual(result["cells"][0]["recognition_evidence"]["families"]["discharge"]["completed_rate_count"], 3)
+        for key in ("blocks", "points", "comparison", "available", "compatibility", "invalid_execution_count"):
+            self.assertEqual(result[key], without_evidence[key], key)
 
 
 def comparison_block(

@@ -6,7 +6,7 @@ The user explicitly requested one branch, `codex/alpha-analysis-improvements`,
 with independent GPT-6 Astra Medium review after each of these five specs:
 
 - [066 — Replicate CE rendering](066-replicate-ce-rendering.md). Implemented; Astra Medium review, focused regressions, browser check and preflight passed.
-- [067 — Understandable C-rate guidance](067-understandable-rate-capability-guidance.md). Planned.
+- [067 — Understandable C-rate guidance](067-understandable-rate-capability-guidance.md). Implemented; Astra Medium review, focused regressions, browser check and preflight passed.
 - [068 — Customizable reference lines](068-customizable-reference-lines.md). Planned.
 - [069 — Voltage/Capacity cycle shading](069-voltage-capacity-cycle-shading.md). Planned.
 - [070 — User-scope updates](070-user-scope-updates.md). Planned.

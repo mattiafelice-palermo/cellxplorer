@@ -726,6 +726,12 @@ def project_result(
     projected = walk(deepcopy(result), path)
     if isinstance(projected, dict):
         projected.pop("sources", None)
+        if projected.get("type") == "rate_capability":
+            # Contextual-help observations are covered by focused recognition
+            # evidence tests. Preserve all family matches and scientific values.
+            for cell in projected.get("cells") or []:
+                if isinstance(cell, dict):
+                    cell.pop("recognition_evidence", None)
         for traces_key in ("cell_traces", "cell_series"):
             traces = projected.get(traces_key)
             if isinstance(traces, list):

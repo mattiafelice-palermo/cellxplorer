@@ -883,6 +883,49 @@ def _distinct(values: list[float], tolerance: float) -> list[float]:
     return result
 
 
+def _missing_nominal_rate_steps(reconstructed: dict, nominal: float | None) -> int:
+    """Count only proven current-to-rate conversions lacking a capacity basis."""
+    basis = _finite(reconstructed.get("nominal_capacity_mah")) or _finite(nominal)
+    if basis is not None and basis > 0:
+        return 0
+    return sum(
+        1
+        for step in reconstructed.get("steps") or []
+        if int(step.get("type_id") or 0) in {1, 2, 7, 20}
+        and step.get("c_rate") is None
+        and (current := _finite(step.get("current_ma"))) is not None
+        and abs(current) > 0
+    )
+
+
+def _recognition_evidence(executions: list[dict], config: dict) -> dict:
+    """Summarize executed evidence without attributing a failed sweep to a cause.
+
+    The distinct-rate count is an upper bound across completed pairs, not a
+    claim that those pairs form one compatible fixed-rate sweep.
+    """
+    evidence = {}
+    for family in ("charge", "discharge"):
+        rows = [row for row in executions if row["family"] == family]
+        evidence[family] = {
+            "execution_count": len(rows),
+            "completed_rate_count": len(_distinct(
+                # Ascending positive rates give the maximum separated set.
+                # Protocol order can undercount a non-transitive tolerance
+                # cluster (e.g. 0.50, 0.49, 0.51), so cannot prove scarcity.
+                sorted(row["rate_c"] for row in rows if row["valid"]),
+                config["rate_tolerance_fraction"],
+            )),
+            "unverified_voltage_execution_count": sum(
+                1 for row in rows
+                if any(row.get("validation", {}).get(key) is False for key in (
+                    "measurement_cutoff_reached", "phase_completed", "reference_phase_completed"
+                ))
+            ),
+        }
+    return evidence
+
+
 def _compatible_pair(
     previous: dict,
     current: dict,
@@ -1285,6 +1328,8 @@ def compute(
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
         all_current_versions.extend(engine.current_parser_identity(f) for f in files)
         cell_blocks: list[dict] = []
+        cell_executions: list[dict] = []
+        missing_nominal_rate_steps = 0
         if progress:
             progress(base + 1, total_units, cell.name, "Detecting rate sweeps")
         for source in files:
@@ -1338,6 +1383,7 @@ def compute(
                 "reconstructed_protocol_steps",
                 len(reconstructed.get("steps") or []),
             )
+            missing_nominal_rate_steps += _missing_nominal_rate_steps(reconstructed, nominal)
             started = _profile_started(profiling)
             pairs = build_rate_pairs(reconstructed)
             _profile_finished(profiling, "rate_pair_building", started)
@@ -1363,6 +1409,7 @@ def compute(
                     )
                     _profile_finished(profiling, "execution_extraction", started)
             all_executions.extend(executions)
+            cell_executions.extend(executions)
             _profile_count(profiling, "execution_rows", len(executions))
             _profile_count(
                 profiling,
@@ -1434,6 +1481,10 @@ def compute(
             {
                 "cell_id": cell.id,
                 "cell_name": cell.name,
+                "recognition_evidence": {
+                    "missing_nominal_rate_step_count": missing_nominal_rate_steps,
+                    "families": _recognition_evidence(cell_executions, config),
+                },
                 "families": {
                     family: next(
                         (

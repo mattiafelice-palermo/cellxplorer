@@ -9,6 +9,7 @@ import {
   Center,
   Divider,
   Group,
+  Modal,
   MultiSelect,
   NumberInput,
   Paper,
@@ -19,7 +20,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
-import { IconListSearch } from "@tabler/icons-react";
+import { IconInfoCircle, IconListSearch } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -76,6 +77,12 @@ import {
 import Plot from "../../../../../components/Plot";
 import { ProtocolStructureViewer } from "../../protocol/ProtocolStructureViewer";
 import { RecognitionProgress } from "../../recognition/RecognitionProgress.tsx";
+import {
+  rateCapabilityEvidenceMessages,
+  rateCapabilityLimits,
+  rateCapabilityNoMatchGuidance,
+  type RateCapabilityRecognitionEvidence,
+} from "./rateCapabilityGuidance";
 
 export interface RateCapabilityPoint {
   id: string;
@@ -127,6 +134,7 @@ export interface RateCapabilityBlock {
 interface RateCapabilityCellResult {
   cell_id: number;
   cell_name: string;
+  recognition_evidence?: RateCapabilityRecognitionEvidence;
   families: Record<
     "charge" | "discharge",
     {
@@ -153,6 +161,7 @@ interface RateCapabilityComparisonPoint {
 }
 
 export interface RateCapabilityResult {
+  config?: RateCapabilityComputationSpec;
   blocks: RateCapabilityBlock[];
   detected_blocks: Omit<RateCapabilityBlock, "points">[];
   points: RateCapabilityPoint[];
@@ -760,6 +769,83 @@ function compatibilityLabel(
   return "Protocol mismatch";
 }
 
+function RateCapabilityHelp({ computation }: { computation: RateCapabilityComputationSpec }) {
+  const [opened, setOpened] = useState(false);
+  const { minimum, voltage, ratePercent } = rateCapabilityLimits(computation);
+  return (
+    <>
+      <Button size="compact-xs" variant="subtle" leftSection={<IconInfoCircle size={14} />}
+        onClick={() => setOpened(true)}>
+        How rate capability works
+      </Button>
+      <Modal opened={opened} onClose={() => setOpened(false)} title="Rate capability" size="lg">
+        <Stack gap="sm">
+          <Text size="sm">
+            Compare how much capacity a cell delivers at different charging or discharging speeds.
+            For a charge sweep, charging speed varies and the following discharge speed stays fixed.
+            For a discharge sweep, discharging speed varies and the preceding charge speed stays fixed.
+          </Text>
+          <Text size="sm">
+            Your current rules require at least {minimum} distinct rates. A rate such as 1C expresses
+            current relative to nominal capacity; 2C is twice that current and C/2 is half.
+          </Text>
+          <Accordion variant="separated">
+            <Accordion.Item value="completion">
+              <Accordion.Control>Completion and capacity details</Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap="xs">
+                  <Text size="sm">
+                    Both the measurement and the opposite phase must reach their declared voltage
+                    limits, using your {voltage} V cutoff tolerance. A timed step that ends before
+                    its voltage limit is reached cannot supply a capability point.
+                  </Text>
+                  <Text size="sm">
+                    Charge capacity comes from the constant-current (CC) portion only. A following
+                    constant-voltage (CV) hold helps verify completion; its capacity is excluded.
+                    Discharge capacity comes from the swept discharge step.
+                  </Text>
+                  <Text size="sm">
+                    Declared protocol C-rates can be used directly. Nominal capacity is needed when
+                    the app must convert programmed current to C-rate; it may also be reconstructed
+                    from a protocol containing both current and C-rate. Missing nominal capacity
+                    alone does not prevent a sweep with declared rates.
+                  </Text>
+                  <Text size="sm">
+                    Rates are compared using your {ratePercent}% matching tolerance, with a minimum
+                    difference allowance of 0.01C. Voltage limits and charge structure must also
+                    agree within a sweep. Edit recognition rules to review rate order, fixed speed,
+                    and repeated rests or controls. Show detected steps opens the protocol for inspection.
+                  </Text>
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        </Stack>
+      </Modal>
+    </>
+  );
+}
+
+function RateCapabilityEvidenceDetails({ result, computation }: {
+  result: RateCapabilityResult;
+  computation: RateCapabilityComputationSpec;
+}) {
+  const messages = rateCapabilityEvidenceMessages(result.cells, result.config ?? computation);
+  if (!messages.length) return null;
+  return (
+    <Accordion variant="separated" mt="xs" style={{ width: "100%" }}>
+      <Accordion.Item value="evidence">
+        <Accordion.Control><Text size="xs" fw={700}>What the data shows</Text></Accordion.Control>
+        <Accordion.Panel>
+          <Stack gap="xs">
+            {messages.map((message) => <Text key={message} size="xs">{message}</Text>)}
+          </Stack>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
+
 function FamilyRecognitionRules({
   family,
   computation,
@@ -963,10 +1049,11 @@ export function RateCapabilitySettings({
           <div>
             <Text size="sm" fw={700}>Automatic identification</Text>
             <Text size="xs" c="dimmed">
-              Finds fixed-rate/variable-rate sequences and validates their cutoffs.
+              Compares capacity as one direction changes speed and the opposite stays fixed.
             </Text>
           </div>
           <Group gap="xs">
+            <RateCapabilityHelp computation={computation} />
             <Button
               size="compact-xs"
               variant="light"
@@ -988,6 +1075,10 @@ export function RateCapabilitySettings({
             >
               {result.isLoading
                 ? "Detecting"
+                : !result.data && !recognitionEnabled
+                  ? "Not started"
+                : !spec.selection.entries.length
+                  ? "No cells"
                 : `${Number(Boolean(chargeBlock)) + Number(Boolean(dischargeBlock))} detected`}
             </Badge>
           </Group>
@@ -1027,11 +1118,27 @@ export function RateCapabilitySettings({
                       .join(", ")} · ${
                       family === "charge" ? "discharge" : "charge"
                     } fixed at ${cRate(block.fixed_rate_c)}`
-                  : "No confident completed sweep detected."}
+                  : !computation.families[family].enabled
+                    ? "Detection is turned off for this direction."
+                    : !spec.selection.entries.length
+                      ? "Add cells or replicates to identify a sweep."
+                    : !result.data && !recognitionEnabled
+                      ? "Start a plot to identify charge and discharge sweeps."
+                    : result.isError
+                      ? "Recognition failed. See the error in the plot."
+                      : result.isLoading || result.isFetching
+                        ? "Checking the protocol and completed steps…"
+                        : !result.data
+                          ? "Waiting to identify the protocol and completed steps."
+                        : "No supported completed sweep matched. Review rules and inspect the steps."}
               </Text>
             </Box>
           );
         })}
+
+        {result.data && !result.isFetching && !result.isError && (
+          <RateCapabilityEvidenceDetails result={result.data} computation={computation} />
+        )}
 
         {Boolean(result.data?.invalid_execution_count) && (
           <Text size="xs" c="orange">
@@ -1338,6 +1445,7 @@ export function RateCapabilityPlotCard({
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const result = useRateCapabilityResult(analysisId, spec, recognitionEnabled);
   const view = rateCapabilityViewFor(spec);
+  const computation = rateCapabilityComputationFor(spec);
   const style = currentPlotStyle(spec, "crate");
   const viewSignature = useMemo(() => familyPlotViewSignature(spec), [spec]);
   const plotConfig = useMemo(() => ({ displaylogo: false, responsive: true }), []);
@@ -1547,6 +1655,9 @@ export function RateCapabilityPlotCard({
           viewSize={plotSize}
           canExport={traces.length > 0}
         />
+        <Group justify="flex-end" mb="xs">
+          <RateCapabilityHelp computation={computation} />
+        </Group>
         {result.isError && (
           <Alert color="red">
             {(result.error as Error).message ||
@@ -1576,13 +1687,32 @@ export function RateCapabilityPlotCard({
               />
             ) : null}
           </Center>
+        ) : result.isError && !traces.length ? (
+          <Center h={480}><Text size="sm" c="dimmed">Recognition could not finish. See the error above.</Text></Center>
+        ) : result.isFetching && !traces.length ? (
+          <Center h={480}><Text size="sm" c="dimmed">Checking the protocol and completed steps…</Text></Center>
+        ) : !result.data ? (
+          <Center h={480}>
+            <Text size="sm" c="dimmed" ta="center">
+              {recognitionEnabled
+                ? "Waiting to identify the protocol and completed steps."
+                : "Start a plot to identify charge and discharge sweeps."}
+            </Text>
+          </Center>
         ) : !traces.length ? (
           <Center h={480}>
-            <Text size="sm" c="dimmed" ta="center" maw={440}>
-              {usesCommonReference && comparison?.reason
-                ? comparison.reason
-                : "No completed rate-capability sweep satisfies the current recognition rules and selected rates."}
-            </Text>
+            <Stack gap="xs" maw={480} style={{ maxHeight: 460, overflowY: "auto" }}>
+              <Text size="sm" c="dimmed" ta="center">
+                {usesCommonReference && comparison?.reason
+                  ? comparison.reason
+                  : result.data?.blocks.length
+                    ? "A sweep matched, but no points are visible with these series, axes, and selected rates. Review those controls and series visibility."
+                    : !computation.families.charge.enabled && !computation.families.discharge.enabled
+                      ? "Rate-capability detection is turned off for both directions. Enable a direction in Edit recognition rules."
+                      : rateCapabilityNoMatchGuidance(result.data?.config ?? computation)}
+              </Text>
+              {result.data && <RateCapabilityEvidenceDetails result={result.data} computation={computation} />}
+            </Stack>
           </Center>
         ) : (
           <>
