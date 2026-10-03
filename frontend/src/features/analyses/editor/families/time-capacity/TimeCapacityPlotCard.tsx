@@ -115,6 +115,7 @@ import {
   writeScopedStyle,
 } from "../../plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
+import { cycleShadedColor, cycleShadingSupported, resolvedCycleShading, withCycleShadingKey } from "../../plotting/cycleShading";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
@@ -858,6 +859,13 @@ export function timeCapacityTracesForResult(
         const { channelLabel, channelKey, channelResolved, legendKey } = channelStyle;
         if (channelResolved.hidden) continue;
         const channelName = channelResolved.name;
+        const shadeConfig = cycleShadingSupported(cfg.view, cfg.x_axis)
+          ? resolvedCycleShading(style.cycle_shading, seriesKey) : undefined;
+        // Capacity segments have one canonical cycle. Ignore null gap rows and
+        // leave display-only/unknown-cycle curves in their original color.
+        const shadeCycle = segment.displayOnlyCycle.some(Boolean)
+          ? null : segment.cycle.find((cycle) => cycle != null && Number.isFinite(cycle) && cycle >= 1);
+        const voltageColor = cycleShadedColor(channelResolved.color, shadeCycle, shadeConfig);
         const showlegend = !legendShown.has(legendKey) && channelResolved.showInLegend;
         legendShown.add(legendKey);
         out.push({
@@ -869,19 +877,20 @@ export function timeCapacityTracesForResult(
           legendrank: legendRanks.get(legendKey),
           opacity: channelResolved.opacity,
           line: {
-            color: channelResolved.color,
+            color: voltageColor,
             width: channelResolved.lineWidth,
             dash: channelResolved.lineDash,
             shape: channelResolved.lineShape,
           },
           marker: {
-            color: channelResolved.color,
+            color: voltageColor,
             size: channelResolved.markerSize,
             symbol: seriesPlotlySymbol(channelResolved),
           },
           mode: seriesPlotlyMode(channelResolved),
           type: traceType,
           connectgaps: false,
+          cellxplorer_cycle_shading: shadeConfig?.enabled && shadeCycle != null ? shadeConfig : undefined,
           cellxplorer_analysis_sample: analysisSample,
           customdata: segmentCustomdata,
           cellxplorer_export_columns: includeExportColumns ? sourceExportColumnsFromPoints(
@@ -1046,7 +1055,7 @@ export function timeCapacityLayout(
       referenceAxis("y", `time_capacity:${cfg.view}:y:${specific ? "specific" : "absolute"}`, referenceUnits(yTitle), yTitle),
     ]);
   }
-  return withReferenceLines({
+  return withCycleShadingKey(withReferenceLines({
     height: cfg.stacked ? 620 : 560,
     hovermode: "closest",
     // Keep one compact nearest-point label while allowing the pointer to
@@ -1189,7 +1198,7 @@ export function timeCapacityLayout(
     referenceAxis("y", `time_capacity:voltage:${[...cfg.voltage_channels].sort().join(",")}`, "V", `Voltage (${voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)}) (V)`),
     ...(cfg.stacked ? [referenceAxis("y2", `time_capacity:left:${cfg.current_left}`, referenceUnits(leftCurrentLabel), leftCurrentLabel)] : []),
     ...(hasRightCurrent ? [referenceAxis(cfg.stacked ? "y3" : "y2", `time_capacity:right:${cfg.current_right}`, referenceUnits(rightCurrentLabel), rightCurrentLabel)] : []),
-  ]);
+  ]), traces);
 }
 
 function TimeCapacityVoltageChannelSelector({
@@ -3841,6 +3850,8 @@ function TimeCapacityPlotCardView({
         axisScope="time_capacity"
         plotKey={plotKey ?? `analysis:${analysisId}:time_capacity`}
         buildSeriesPreview={buildSeriesPreview}
+        cycleShadingSupported={cycleShadingSupported(cfg.view, cfg.x_axis)}
+        availableCycleMaximum={maxAvailableCycle}
         timeCapacityStacked={cfg.stacked}
          yTitlePlaceholder={voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}
       />

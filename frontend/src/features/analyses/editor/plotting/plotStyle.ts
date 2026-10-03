@@ -16,6 +16,7 @@ import type {
   PlotStylePresetFamily,
 } from "../../../../api";
 import { normalizeReferenceLines } from "./plotReferenceLines.ts";
+import { normalizeCycleShading } from "./cycleShading.ts";
 
 export const PALETTE = [
   "#12b886",
@@ -206,6 +207,7 @@ export function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotS
     ...DEFAULT_PLOT_STYLE,
     ...(style ?? {}),
     reference_lines: normalizeReferenceLines(style?.reference_lines),
+    cycle_shading: normalizeCycleShading(style?.cycle_shading),
     custom_colors: { ...(style?.custom_colors ?? {}) },
     ce_custom_colors: { ...(style?.ce_custom_colors ?? {}) },
     palette_colors: [...(style?.palette_colors ?? [])],

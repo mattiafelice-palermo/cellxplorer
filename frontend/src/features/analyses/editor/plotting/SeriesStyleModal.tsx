@@ -77,6 +77,7 @@ import type {
   PlotMarkerMode,
   PlotMarkerSymbol,
   PlotStyle,
+  PlotCycleShading,
   SeriesStyleOverride,
   SeriesStyleRule,
 } from "../../../../api";
@@ -138,6 +139,9 @@ import {
   generatePalettePreviewChartElements,
   palettePreviewPath,
 } from "./palettePreview";
+import { CycleShadingEditor } from "./CycleShadingEditor";
+import { cycleShadingSampleKey, normalizeCycleShading } from "./cycleShading";
+import { seriesAppearancePreviewLayout } from "./seriesPreviewLayout";
 
 /** The real plot, rebuilt with the draft styling applied. */
 export type SeriesPreviewBuilder = (draft: {
@@ -269,6 +273,8 @@ export function SeriesStyleModal({
   onOverwritePalette,
   onDeletePalette,
   onRenamePalette,
+  cycleShadingSupported = false,
+  availableCycleMaximum = null,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -313,6 +319,8 @@ export function SeriesStyleModal({
   onDeletePalette?: (id: string) => void;
   /** Renames a saved palette, leaving its id, kind and colours untouched. */
   onRenamePalette?: (id: string, name: string) => void;
+  cycleShadingSupported?: boolean;
+  availableCycleMaximum?: number | null;
 }) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
@@ -363,6 +371,7 @@ export function SeriesStyleModal({
   // control re-renders the whole analysis page and rebuilds the main plot on
   // every drag tick.
   const [draftBaseStyle, setDraftBaseStyle] = useState(baseStyle);
+  const [scratchShading, setScratchShading] = useState<PlotCycleShading | undefined>(() => normalizeCycleShading(baseStyle.cycle_shading));
   /**
    * Series hidden in the modal's preview only, so the user can temporarily
    * isolate series while judging line and marker styling. This never reaches
@@ -386,6 +395,7 @@ export function SeriesStyleModal({
     setDraftOverrides(overrides);
     setDraftRules(rules);
     setDraftBaseStyle(baseStyle);
+    setScratchShading(normalizeCycleShading(baseStyle.cycle_shading));
     setSelectedKeys(new Set());
     setSelectionAnchor(null);
     setActiveKey(ALL_SERIES_KEY);
@@ -399,6 +409,10 @@ export function SeriesStyleModal({
     // the debounce and undo edits mid-typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened]);
+
+  useEffect(() => {
+    if (!cycleShadingSupported && tab === "cycle_shading") setTab("series");
+  }, [cycleShadingSupported, tab]);
 
   const descriptorKeySet = useMemo(
     () => new Set(descriptors.map((descriptor) => descriptor.key)),
@@ -650,6 +664,15 @@ export function SeriesStyleModal({
     onClose();
   };
 
+  const applyScratchShading = () => {
+    flush();
+    const shading = normalizeCycleShading(scratchShading);
+    setDraftBaseStyle((current) => ({ ...current, cycle_shading: shading }));
+    onBaseChangeRef.current((next) => { next.cycle_shading = shading; });
+  };
+
+  const shadingSelectedSamples = useMemo(() => [...new Set([...selectedKeys].map(cycleShadingSampleKey).filter((key): key is string => key !== null))], [selectedKeys]);
+
   const isAllSeries = activeKey === ALL_SERIES_KEY && selectedKeys.size === 0;
 
   const active = useMemo(
@@ -739,7 +762,7 @@ export function SeriesStyleModal({
     setSelectedKeys(next);
     setSelectionAnchor(anchor);
     setActiveKey(next.size === 1 ? Array.from(next)[0] : null);
-    setTab("series");
+    setTab((current) => current === "cycle_shading" ? current : "series");
   };
 
   const selectSeries = (key: string, modifiers: SeriesSelectionModifiers) => {
@@ -778,7 +801,7 @@ export function SeriesStyleModal({
     setSelectedKeys(new Set());
     setSelectionAnchor(null);
     setActiveKey(ALL_SERIES_KEY);
-    setTab("series");
+    setTab((current) => current === "cycle_shading" ? current : "series");
   };
 
   const bulkTargetKeys = useMemo(
@@ -1068,32 +1091,42 @@ export function SeriesStyleModal({
   // Plotly previews before their debounced parent commit. A scratch palette is
   // layered last because it is intentionally not persisted until Apply.
   const previewStyleOverlay = useMemo<Partial<PlotStyle>>(
-    () => ({ ...draftBaseStyle, ...(paletteOverlay ?? {}) }),
-    [draftBaseStyle, paletteOverlay],
+    () => ({ ...draftBaseStyle, ...(paletteOverlay ?? {}), ...(tab === "cycle_shading" && cycleShadingSupported ? { cycle_shading: scratchShading } : {}) }),
+    [draftBaseStyle, paletteOverlay, tab, cycleShadingSupported, scratchShading],
   );
   // Build one unhidden figure for the detached legend. The scientific preview
   // may omit traces when the modal eye is used, but that eye is deliberately
   // independent from persisted legend membership.
+  const lastUnhiddenPreview = useRef<ReturnType<SeriesPreviewBuilder>>({ data: [], layout: {} });
+  const lastVisiblePreview = useRef<ReturnType<SeriesPreviewBuilder>>({ data: [], layout: {} });
   const unhiddenPreview = useMemo(
-    () =>
-      opened
-        ? buildPreview({
+    () => {
+      if (!opened) return lastUnhiddenPreview.current;
+      const next = buildPreview({
             overrides: previewOverrides,
             rules: previewRules,
             styleOverlay: previewStyleOverlay,
-          })
-        : { data: [], layout: {} },
+          });
+      lastUnhiddenPreview.current = next;
+      return next;
+    },
     [opened, buildPreview, previewOverrides, previewRules, previewStyleOverlay],
   );
   const preview = useMemo(
-    () =>
-      !opened || previewHidden.size === 0
+    () => {
+      // Keep the last figure through the modal's exit animation, including
+      // preview-only hiding. Closing must not flash an empty plot.
+      if (!opened) return lastVisiblePreview.current;
+      const next = previewHidden.size === 0
         ? unhiddenPreview
         : buildPreview({
             overrides: previewOverridesWithHiding,
             rules: previewRules,
             styleOverlay: previewStyleOverlay,
-          }),
+          });
+      lastVisiblePreview.current = next;
+      return next;
+    },
     [
       opened,
       buildPreview,
@@ -1115,15 +1148,7 @@ export function SeriesStyleModal({
    * That, not the state updates, was the lag.
    */
   const previewLayout = useMemo(
-    () => ({
-      ...preview.layout,
-      autosize: false,
-      width: PREVIEW_WIDTH,
-      height: PREVIEW_HEIGHT,
-      showlegend: false,
-      legend: undefined,
-      margin: { l: 64, r: 64, t: 16, b: 56 },
-    }),
+    () => seriesAppearancePreviewLayout(preview.layout, PREVIEW_WIDTH, PREVIEW_HEIGHT),
     [preview.layout],
   );
   const previewConfig = useMemo(() => ({ displayModeBar: false, responsive: true }), []);
@@ -1323,18 +1348,22 @@ export function SeriesStyleModal({
         </PanelShell>
 
         <PanelShell
-          title={tab === "rules" ? "Rules" : tab === "palettes" ? "Palettes" : "Appearance"}
+          title={tab === "rules" ? "Rules" : tab === "palettes" ? "Palettes" : tab === "cycle_shading" ? "Cycle shading" : "Appearance"}
           // minWidth 0 matters: without it the wider Rules controls set the
           // panel's min-content width and stole space from the plot.
           style={{ flex: "1 1 0", minWidth: 0 }}
           bodyPadding={0}
-          right={
-            <Tabs value={tab} onChange={setTab} variant="pills">
+        >
+            <Tabs value={tab} onChange={setTab} variant="pills" styles={{
+              root: { flex: "none", padding: 6, borderBottom: "1px solid var(--mantine-color-default-border)" },
+              tab: { padding: "5px 8px", fontSize: "var(--mantine-font-size-xs)" },
+            }}>
               <Tabs.List>
                 <Tabs.Tab value="series">Series</Tabs.Tab>
                 <Tabs.Tab value="rules">
                   Rules{draftRules.length ? ` (${draftRules.length})` : ""}
                 </Tabs.Tab>
+                {cycleShadingSupported && <Tabs.Tab value="cycle_shading">Cycle shading</Tabs.Tab>}
                 {onApplyPalette && (
                   <>
                     <Box
@@ -1359,9 +1388,10 @@ export function SeriesStyleModal({
                 )}
               </Tabs.List>
             </Tabs>
-          }
-        >
-          {tab === "rules" ? (
+          {tab === "cycle_shading" && cycleShadingSupported ? (
+            <CycleShadingEditor scratch={scratchShading} selectedSampleKeys={shadingSelectedSamples}
+              availableMaximum={availableCycleMaximum} onPreview={setScratchShading} onApply={applyScratchShading} />
+          ) : tab === "rules" ? (
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="sm" p="xs">
                 <Group justify="space-between" wrap="nowrap">

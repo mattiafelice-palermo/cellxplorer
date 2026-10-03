@@ -302,6 +302,31 @@ keeps manual ranges, tick modes, title standoffs, legend placement, dynamic marg
 saved previews on the same path. Numeric X controls should be hidden when a family deliberately
 uses categorical X positions.
 
+### Cycle shading in Series appearance
+
+Time/Capacity offers Cycle shading only for Voltage/Capacity. The optional
+`PlotStyle.cycle_shading` is presentation state: default settings plus stable
+`cN`/`gN` sample exceptions. Resolve normal palette, rule, sample and channel
+colors first, then vary HSL lightness/saturation while preserving that resolved
+hue (and alpha). Gray colors remain neutral. Current/time/derivative curves keep
+their ordinary colors; switching views retains dormant shading settings.
+
+Automatic bounds freeze `1..maxAvailableCycle` from the selected samples' full
+scientific summaries. Never derive them from rows, source-local labels, displayed
+cycle windows or decimated traces. Unknown full bounds require explicit manual
+bounds before enabling. New source data does not rebalance stored bounds; only
+the explicit Update full range action does. Canonical-cycle capacity segments
+already split by phase, so reuse their traces and share each cycle's shade across
+charge/discharge. Unknown and display-only cycles keep their base color.
+
+The editor owns a local preview with explicit Apply/reset. Scoped style updates
+must preserve reference lines and other concurrent presentation fields. Keep
+the last scientific/legend preview through the modal's close transition. The
+shared layout adds a bounded multiline mapping annotation, preserving existing
+reference annotations/shapes and adding no legend traces. Production trace
+regressions compare scientific export columns unchanged and exported/interactive
+colors equal. `cycleShading.ts` owns normalization and color/key policy.
+
 ### Cell preview figures
 
 The Analysis sample picker and import previews share `components/CellPreviewPlot.tsx` for the

@@ -3,6 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { AnalysisSpec, TimeCapacityResult, TimeCapacityTrace } from "../src/api.ts";
+import { cycleShadedColor, defaultCycleShadingConfig } from "../src/features/analyses/editor/plotting/cycleShading.ts";
 
 type RenderedTrace = Plotly.Data & {
   cellxplorer_export_columns?: { header: string; values: unknown[] }[];
@@ -329,4 +330,103 @@ test("series/channel and analysis-sample visibility do not depend on export meta
   const retained = await assertParity(result, unselected, false, true);
   assert.equal(retained.interactive.length, 1);
   assert.deepEqual(retained.interactive[0].cellxplorer_analysis_sample, { cell_id: 1, group_id: null, excluded: false });
+});
+
+function shadedSpec(settings: Partial<Settings> = {}) {
+  const spec = makeSpec({ x_axis: "capacity_mah", ...settings });
+  spec.presentation.plot_styles = { time_capacity: {
+    custom_colors: { c1: "#2e86ab" },
+    cycle_shading: { defaults: { ...defaultCycleShadingConfig(193), enabled: true } },
+  } } as never;
+  return spec;
+}
+
+test("cycle shading reuses capacity traces, shares phase colors and preserves scientific export columns", async () => {
+  const spec = shadedSpec();
+  const { exported, interactive } = await assertParity(makeResult(), spec);
+  const baseSpec = structuredClone(spec);
+  delete baseSpec.presentation.plot_styles!.time_capacity!.cycle_shading;
+  const base = await assertParity(makeResult(), baseSpec);
+  assert.equal(interactive.length, base.interactive.length);
+  assert.equal(interactive.length, 4);
+  const colors = interactive.map((trace) => trace.line!.color);
+  assert.equal(colors[0], colors[1]);
+  assert.equal(colors[2], colors[3]);
+  assert.notEqual(colors[0], colors[2]);
+  assert.deepEqual(interactive.map((trace) => trace.showlegend), base.interactive.map((trace) => trace.showlegend));
+  assert.deepEqual(exported.map((trace) => trace.cellxplorer_export_columns), base.exported.map((trace) => trace.cellxplorer_export_columns));
+  assert.deepEqual(interactive.map((trace) => trace.customdata), base.interactive.map((trace) => trace.customdata));
+  const frozen = spec.presentation.plot_styles!.time_capacity!.cycle_shading!.defaults!;
+  assert.equal(colors[2], cycleShadedColor("#2e86ab", 2, frozen));
+  // Source-local cycle 1 repeats, but canonical cycle 2 receives its own shade.
+  assert.equal(colors[0], cycleShadedColor("#2e86ab", 1, frozen));
+});
+
+test("navigation does not recolor a canonical cycle and palette/channel overrides regenerate shades", async () => {
+  const render = await loadRenderer();
+  const result = makeResult();
+  const spec = shadedSpec();
+  const full = render(result, spec);
+  const window = structuredClone(result);
+  for (const [key, value] of Object.entries(window.cell_traces[0])) {
+    if (Array.isArray(value) && value.length === 8) (window.cell_traces[0] as unknown as Record<string, unknown>)[key] = value.slice(4);
+  }
+  const channels = window.cell_traces[0].voltage_v_by_channel!;
+  for (const key of Object.keys(channels)) channels[key] = channels[key].slice(4);
+  assert.deepEqual(render(window, spec).map((trace) => trace.line!.color), full.slice(2).map((trace) => trace.line!.color));
+  const multi = shadedSpec({ voltage_channels: ["voltage", "working_potential"] });
+  multi.presentation.plot_styles!.time_capacity!.custom_colors = { "c1|voltage": "red", "c1|working_potential": "blue" };
+  const configs = multi.presentation.plot_styles!.time_capacity!.cycle_shading!;
+  configs.samples = { c1: { ...configs.defaults!, reverse: true } };
+  const traces = render(result, multi);
+  assert.equal(traces[0].line!.color, cycleShadedColor("red", 1, configs.samples.c1));
+  assert.equal(traces[1].line!.color, cycleShadedColor("blue", 1, configs.samples.c1));
+  const paletteSpec = shadedSpec();
+  const style = paletteSpec.presentation.plot_styles!.time_capacity!;
+  style.custom_colors = {}; style.palette = "custom"; style.palette_colors = ["red"];
+  const red = render(result, paletteSpec)[0].line!.color;
+  style.palette_colors = ["blue"];
+  assert.notEqual(render(result, paletteSpec)[0].line!.color, red);
+});
+
+test("time/current/derivative traces keep base colors; unknown and display-only cycles remain unshaded", async () => {
+  const render = await loadRenderer();
+  for (const settings of [{ x_axis: "time" }, { view: "dqdv" }, { view: "dvdq" }] as Partial<Settings>[]) {
+    const spec = shadedSpec(settings);
+    const base = structuredClone(spec);
+    delete base.presentation.plot_styles!.time_capacity!.cycle_shading;
+    assert.deepEqual(render(makeResult(), spec), render(makeResult(), base));
+  }
+  const stacked = shadedSpec({ stacked: true, current_left: "current_ma", current_right: "c_rate" });
+  const baseStacked = structuredClone(stacked);
+  delete baseStacked.presentation.plot_styles!.time_capacity!.cycle_shading;
+  const current = (traces: RenderedTrace[]) => traces.filter((trace) => trace.yaxis === "y2" || trace.yaxis === "y3");
+  assert.deepEqual(current(render(makeResult(), stacked)), current(render(makeResult(), baseStacked)));
+  const unknown = makeResult();
+  unknown.cell_traces[0].cycle = Array(8).fill(null);
+  const unknownTraces = render(unknown, shadedSpec());
+  assert.ok(unknownTraces.length > 0);
+  for (const trace of unknownTraces) assert.equal(trace.line!.color, "#2e86ab");
+  const displayOnly = makeResult();
+  displayOnly.cell_traces[0].display_only_cycle = Array(8).fill(true);
+  const displayTraces = render(displayOnly, shadedSpec());
+  assert.ok(displayTraces.length > 0);
+  for (const trace of displayTraces) assert.equal(trace.line!.color, "#2e86ab");
+});
+
+test("replicate-group shading resolves the group sample key and ignores inserted null break rows", async () => {
+  const result = makeResult();
+  const source = result.cell_traces[0];
+  source.group_id = 2; source.group_name = "Group B";
+  source.display_break_before = [1];
+  const spec = shadedSpec();
+  spec.selection.entries = [{ kind: "replicate_group", ref_id: 2 }];
+  const style = spec.presentation.plot_styles!.time_capacity!;
+  style.custom_colors = { g2: "red" };
+  style.cycle_shading!.samples = { g2: { ...style.cycle_shading!.defaults!, reverse: true } };
+  const { interactive } = await assertParity(result, spec);
+  assert.equal(interactive.length, 4);
+  assert.deepEqual(interactive[0].x, [0, null, 1]);
+  assert.equal(interactive[0].line!.color, cycleShadedColor("red", 1, style.cycle_shading!.samples.g2));
+  assert.equal(interactive[0].line!.color, interactive[1].line!.color);
 });

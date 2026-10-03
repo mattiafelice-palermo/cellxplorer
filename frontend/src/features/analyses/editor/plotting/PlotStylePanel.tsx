@@ -107,6 +107,8 @@ export function PlotStylePanel({
   xAxisNumeric = true,
   yTitlePlaceholder,
   seriesDescriptors: seriesDescriptorsProp,
+  cycleShadingSupported = false,
+  availableCycleMaximum = null,
 }: {
   opened: boolean;
   spec: AnalysisSpec;
@@ -138,6 +140,10 @@ export function PlotStylePanel({
    * instead.
    */
   seriesDescriptors?: SeriesDescriptor[];
+  /** Cycle shading belongs only to the Voltage/Capacity view. */
+  cycleShadingSupported?: boolean;
+  /** Full selected-sample scientific extent, never the navigated window. */
+  availableCycleMaximum?: number | null;
 }) {
   const queryClient = useQueryClient();
   const presetQuery = useQuery({
@@ -1268,6 +1274,8 @@ export function PlotStylePanel({
           }
           baseStyle={style}
           onBaseChange={setStyle}
+          cycleShadingSupported={axisScope === "time_capacity" && cycleShadingSupported}
+          availableCycleMaximum={availableCycleMaximum}
           palettes={paletteQuery.data?.palettes ?? []}
           onApplyPalette={(colors, paletteId) =>
             setStyle((next) => applyPaletteToStyle(next, colors, paletteId))

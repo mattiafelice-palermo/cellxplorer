@@ -1166,7 +1166,34 @@ export interface SeriesStyleRule {
   style: SeriesStyleOverride;
 }
 
+export interface CycleShadingConfig {
+  enabled: boolean;
+  mode: "lightness" | "saturation" | "both";
+  first_lightness: number;
+  last_lightness: number;
+  first_saturation: number;
+  last_saturation: number;
+  reverse: boolean;
+  progression: "smooth" | "stepped";
+  bands: number;
+  /** Frozen canonical scientific cycle bounds, never the selected window. */
+  cycle_start: number;
+  cycle_end: number;
+  /** Source of the frozen bounds; full ranges change only on an explicit update. */
+  range_source?: "full" | "manual";
+  /** False only for an unconfirmed editor default when full bounds are unavailable. */
+  range_confirmed?: boolean;
+}
+
+export interface PlotCycleShading {
+  defaults?: CycleShadingConfig;
+  /** Sample identities c<cell_id> / g<group_id>, shared by voltage channels. */
+  samples?: Record<string, CycleShadingConfig>;
+}
+
 export interface PlotStyle {
+  /** Applied only to Voltage/Capacity; dormant in other views. */
+  cycle_shading?: PlotCycleShading;
   /** Presentation-only thresholds, bound to exact axis quantity and units. */
   reference_lines?: PlotReferenceLine[];
   palette: PlotPaletteKey;
