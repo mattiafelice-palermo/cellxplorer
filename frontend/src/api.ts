@@ -2169,6 +2169,7 @@ export interface ImportInspectResult {
     path: string;
     filename: string;
     error: string;
+    source_error_kind?: "unsupported" | "invalid";
   }[];
 }
 
@@ -2274,6 +2275,7 @@ export interface ContinuationPreviewSegment {
   x: number[];
   y: number[];
   current_ma?: (number | null)[];
+  display_break_before?: number[];
   charge_capacity_x?: number[];
   charge_capacity_y?: number[];
   discharge_capacity_x?: number[];
@@ -2328,6 +2330,7 @@ export interface ContinuationInspectSource {
   active_mass_mg: number | null;
   inspection_status: ContinuationInspectionStatus;
   inspection_error?: string | null;
+  source_error_kind?: "unsupported" | "invalid" | null;
   cache_build_status?: "ready" | "started" | "building" | "failed" | "unavailable";
   location_status?: "online" | "offline" | "changed" | "changing" | null;
   parse_status?: "unparsed" | "parsing" | "parsed" | "metadata_only" | "error" | null;

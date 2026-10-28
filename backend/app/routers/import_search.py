@@ -32,6 +32,12 @@ def query_sources(value: dict, db: Session = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     result.update(roots=states, relationships=options, techniques=service.catalog.techniques(config, filters.get("root_id")))
+    from ..services import source_readability
+
+    for item in result.get("items", []):
+        rejection = source_readability.known_rejection(item["path"])
+        if rejection is not None:
+            item.update(readability_error=rejection.error, source_error_kind=rejection.kind)
     return result
 
 

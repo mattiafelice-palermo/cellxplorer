@@ -20,6 +20,12 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import {
+  importSourceVersion, importSourcePathKey, importSourceRejection,
+  recordImportSourceRejection, pruneRejectedImportSelection, ImportSourceRejectedError,
+  resetImportSourceRejections,
+  type ImportSourceRejection,
+} from "../importSourceReadability";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useElementSize } from "@mantine/hooks";
 import {
@@ -195,6 +201,12 @@ export function ImportFilesystemPickerModal({
   initialScope?: "folder" | "indexed";
 }) {
   const queryClient = useQueryClient();
+  const [sourceRejections, setSourceRejections] = useState<Map<string, ImportSourceRejection>>(new Map());
+  const sourceRejectionsRef = useRef(sourceRejections);
+  sourceRejectionsRef.current = sourceRejections;
+  const knownSourceEntries = useRef(new Map<string, ImportBrowseEntry>());
+  const [readabilityRefreshEpoch, setReadabilityRefreshEpoch] = useState(0);
+  const readabilityRefreshEpochRef = useRef(0);
   const [indexedScope, setIndexedScope] = useState(initialScope === "indexed");
   const [searchDialogOpen, setSearchDialogOpen] = useState(false);
   const [searchPopupOpen, setSearchPopupOpen] = useState(false);
@@ -251,8 +263,21 @@ export function ImportFilesystemPickerModal({
     return new Map(entries.map((entry) => [entry.path, entry]));
   });
   const setSelected = useCallback((update: SetStateAction<Map<string, ImportBrowseEntry>>) => {
-    setRawSelected((current) => mergeIndexedSelection(new Map(), typeof update === "function" ? update(current) : update));
+    setRawSelected((current) => pruneRejectedImportSelection(
+      mergeIndexedSelection(new Map(), typeof update === "function" ? update(current) : update),
+      sourceRejectionsRef.current,
+    ));
   }, []);
+  const rejectSource = useCallback((rejection: ImportSourceRejection) => {
+    const entry = knownSourceEntries.current.get(importSourcePathKey(rejection.path));
+    const next = recordImportSourceRejection(sourceRejectionsRef.current,
+      { ...rejection, requestGeneration: readabilityRefreshEpoch }, entry, readabilityRefreshEpochRef.current);
+    sourceRejectionsRef.current = next;
+    setSourceRejections(next);
+  }, [readabilityRefreshEpoch]);
+  useEffect(() => {
+    setSelected((current) => pruneRejectedImportSelection(current, sourceRejections));
+  }, [sourceRejections, setSelected]);
   const [selectedSearch, setSelectedSearch] = useState("");
   const [selectedPreviewPath, setSelectedPreviewPath] = useState<string | null>(null);
   const xlsxHoverPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -323,7 +348,13 @@ export function ImportFilesystemPickerModal({
       ?? null
     : null;
   const selectedPreviewVersion = selectedPreviewEntry
-    ? `${selectedPreviewEntry.size ?? "unknown"}:${selectedPreviewEntry.modified_at ?? "unknown"}`
+    ? importSourceVersion(selectedPreviewEntry)
+    : undefined;
+  const selectedSourceRejection = selectedPreviewEntry
+    ? importSourceRejection(selectedPreviewEntry, sourceRejections)
+    : undefined;
+  const selectedPreviewHeaderError = selectedPreviewEntry && headerHints.get(selectedPreviewEntry.path)?.compatible === false
+    ? headerHints.get(selectedPreviewEntry.path)?.error ?? "This source format is not supported."
     : undefined;
   const selectedPreviewFallbackKey = selectedPreviewEntry?.path
     ? `${selectedPreviewEntry.path}\u0000${selectedPreviewVersion ?? "unknown"}`
@@ -373,7 +404,7 @@ export function ImportFilesystemPickerModal({
     }, 180);
   };
   const selectedPreviewQuery = useQuery<ImportPreview>({
-    queryKey: ["import-picker-selected-preview", selectedPreviewEntry?.path],
+    queryKey: ["import-picker-selected-preview", selectedPreviewEntry?.path, selectedPreviewVersion, readabilityRefreshEpoch],
     queryFn: async ({ signal }) => {
       const path = selectedPreviewEntry?.path;
       if (!path) throw new Error("Select a file to preview it.");
@@ -382,7 +413,9 @@ export function ImportFilesystemPickerModal({
       }, { signal });
       const preview = result.files[0];
       if (!preview) {
-        throw new Error(result.failures[0]?.error ?? "This file could not be inspected for preview.");
+        const failure = result.failures[0];
+        if (failure?.source_error_kind) throw new ImportSourceRejectedError(failure.error, failure.source_error_kind);
+        throw new Error(failure?.error ?? "This file could not be inspected for preview.");
       }
       return preview;
     },
@@ -397,6 +430,13 @@ export function ImportFilesystemPickerModal({
     staleTime: Infinity,
     retry: false,
   });
+  useEffect(() => {
+    const error = selectedPreviewQuery.error;
+    if (selectedPreviewEntry && error instanceof ImportSourceRejectedError && selectedPreviewVersion) {
+      rejectSource({ path: selectedPreviewEntry.path, version: selectedPreviewVersion,
+        kind: error.sourceErrorKind, error: error.message });
+    }
+  }, [selectedPreviewEntry?.path, selectedPreviewVersion, selectedPreviewQuery.error, rejectSource]);
   const previewMatchesSelection = Boolean(
     selectedPreviewEntry?.kind === "file"
     && selectedPreviewQuery.data?.source_path
@@ -410,7 +450,8 @@ export function ImportFilesystemPickerModal({
   });
   const headerHintMutation = useMutation({
     mutationFn: ({ paths }: { paths: string[]; generation: number }) => post<{ files: ImportHeaderHint[] }>("/api/imports/header-hints", { paths }),
-    onSuccess: ({ files }) => {
+    onSuccess: ({ files }, variables) => {
+      if (variables.generation !== headerHintGeneration.current) return;
       setHeaderHints((current) => {
       const next = new Map(current);
       for (const hint of files) next.set(hint.path, hint);
@@ -432,6 +473,10 @@ export function ImportFilesystemPickerModal({
   const headerHintsPending = headerHintMutation.isPending;
   const submitHeaderHints = headerHintMutation.mutate;
   const directoryEntries = browseData?.entries ?? [];
+  // Browsed identities override older staged/indexed observations of this path.
+  for (const entry of [...selected.values(), ...directoryEntries, ...(indexedScope && indexedPreviewEntry ? [indexedPreviewEntry] : [])]) {
+    knownSourceEntries.current.set(importSourcePathKey(entry.path), entry);
+  }
   const visibleEntries = useMemo(
     () => filterAndSortImportEntries(directoryEntries, headerHints, search, fileFilters, fileSort, showFolders),
     [directoryEntries, fileFilters, fileSort, headerHints, search, showFolders],
@@ -446,18 +491,19 @@ export function ImportFilesystemPickerModal({
     const hint = headerHints.get(entry.path);
     return headerScanPending(entry)
       || hint?.registered === true
-      || hint?.compatible === false;
+      || hint?.compatible === false
+      || Boolean(importSourceRejection(entry, sourceRejections));
   };
   const isRegisteredFile = (entry: ImportBrowseEntry) =>
     entry.kind === "file" && headerHints.get(entry.path)?.registered === true;
   const canPreviewFile = (entry: ImportBrowseEntry) =>
-    entry.kind === "file" && (headerScanPending(entry) || !unavailableFile(entry) || isRegisteredFile(entry));
+    entry.kind === "file";
   const displayedEntries = useMemo(() => hideUnavailable
     ? visibleEntries.filter((entry) => {
         const hint = headerHints.get(entry.path);
-        return entry.kind === "folder" || !(hint?.registered === true || hint?.compatible === false);
+        return entry.kind === "folder" || !(hint?.registered === true || hint?.compatible === false || importSourceRejection(entry, sourceRejections));
       })
-    : visibleEntries, [headerHints, hideUnavailable, visibleEntries]);
+    : visibleEntries, [headerHints, hideUnavailable, visibleEntries, sourceRejections]);
   const selectableVisibleEntries = displayedEntries.filter((entry) => entry.kind === "folder" || !unavailableFile(entry));
   const filesInDirectory = useMemo(() => directoryEntries.filter((entry) =>
     entry.kind === "file" && headerHints.get(entry.path)?.compatible !== false,
@@ -707,10 +753,15 @@ export function ImportFilesystemPickerModal({
   };
 
   const refreshFolder = () => {
+    readabilityRefreshEpochRef.current += 1;
+    setReadabilityRefreshEpoch(readabilityRefreshEpochRef.current);
     headerHintGeneration.current += 1;
     headerHintInFlight.current.clear();
     headerHintFailed.current.clear();
     const paths = new Set(directoryEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path));
+    const failures = resetImportSourceRejections(sourceRejectionsRef.current, [...paths]);
+    sourceRejectionsRef.current = failures;
+    setSourceRejections(failures);
     setHeaderHints((current) => new Map([...current].filter(([path]) => !paths.has(path))));
     void browseQuery.refetch();
   };
@@ -844,7 +895,8 @@ export function ImportFilesystemPickerModal({
     else toggleFile(entry);
   };
 
-  const selectedEntries = [...selected.values()];
+  const selectedEntries = [...selected.values()].filter((entry) => !importSourceRejection(entry, sourceRejections)
+    && (entry.kind !== "file" || (headerHints.get(entry.path)?.compatible !== false && !headerHints.get(entry.path)?.registered)));
   const visibleSelectedEntries = selectedEntries.filter((entry) =>
     `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(selectedSearch.trim().toLocaleLowerCase()),
   );
@@ -907,8 +959,9 @@ export function ImportFilesystemPickerModal({
     if (!batch.length) return;
     batch.forEach((path) => headerHintInFlight.current.add(path));
     const generation = headerHintGeneration.current;
-      submitHeaderHints({ paths: batch, generation }, {
+    submitHeaderHints({ paths: batch, generation }, {
       onSettled: (_result, error) => {
+        if (generation !== headerHintGeneration.current) return;
         batch.forEach((path) => {
           headerHintInFlight.current.delete(path);
           if (error) headerHintFailed.current.add(path);
@@ -1196,10 +1249,14 @@ export function ImportFilesystemPickerModal({
               <Button
                 loading={loading}
                 disabled={selectedEntries.length === 0 || selectedFileResolutionPending}
-                onClick={() => onConfirm?.({
-                  filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
-                  folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path),
-                })}
+                onClick={() => {
+                  const current = selectedEntries.filter((entry) => !importSourceRejection(entry, sourceRejectionsRef.current));
+                  if (!current.length || selectedFileResolutionPending) return;
+                  onConfirm?.({
+                    filePaths: current.filter((entry) => entry.kind === "file").map((entry) => entry.path),
+                    folderPaths: current.filter((entry) => entry.kind === "folder").map((entry) => entry.path),
+                  });
+                }}
               >
                 Continue
               </Button>
@@ -1395,7 +1452,7 @@ export function ImportFilesystemPickerModal({
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
-              {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
+              {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch sourceRejections={sourceRejections} onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
                 setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (next.has(file.path) && file.recognition === "recognized") hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
               }} /></Box>}
@@ -1425,12 +1482,11 @@ export function ImportFilesystemPickerModal({
                   const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
                   const cellStyle: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", alignSelf: "center" };
                   const scanPending = headerScanPending(entry);
-                  const disabledReason = registeredFile
+                  const sourceRejection = importSourceRejection(entry, sourceRejections);
+                  const disabledReason = sourceRejection ? `Cannot import: ${sourceRejection.error}. Click to view the error.` : registeredFile
                     ? "Already registered in CellXplorer. Click to preview; this file cannot be imported again."
                     : hint?.compatible === false
-                      ? importEntryExtension(entry) === ".mpr"
-                        ? "The protocol is not supported by CellXplorer."
-                        : "This workbook is not supported by the Neware Excel parser."
+                      ? `${hint.error ?? "This source format is not supported."} Click to view the error.`
                       : hint?.error
                         ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
                         : scanPending ? "Checking whether this file can be imported. Click to preview while the check finishes." : null;
@@ -1438,6 +1494,8 @@ export function ImportFilesystemPickerModal({
                     ? `Double-click or press Enter to open ${entry.name}. Press Space or Ctrl-click to include its files.`
                     : registeredFile
                       ? `Already registered. Click or press Enter to preview ${entry.name}; it cannot be imported again.`
+                      : sourceRejection || hint?.compatible === false
+                        ? `Cannot import ${entry.name}. Click or press Enter to view the error.`
                       : scanPending
                         ? `Import eligibility is being checked. Click or press Enter to preview ${entry.name}; selection will be available if the file can be imported.`
                         : `Click to preview ${entry.name}. Press Space or Ctrl-click to include it; Shift-click selects a range; double-click includes it.`;
@@ -1452,7 +1510,7 @@ export function ImportFilesystemPickerModal({
                     aria-current={previewActive ? "true" : undefined}
                     tabIndex={0}
                     title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : rowInstructions}
-                    style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: hint?.compatible === false ? "not-allowed" : "pointer", opacity: disabledFile && !scanPending ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, userSelect: "none" }}
+                    style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: "pointer", opacity: disabledFile && !scanPending ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, userSelect: "none" }}
                     onMouseEnter={() => prefetchHoveredExcelPreview(entry)}
                     onMouseLeave={() => {
                       if (xlsxHoverPrefetchTimer.current !== null) {
@@ -1497,7 +1555,7 @@ export function ImportFilesystemPickerModal({
                     />
                     <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, width: "var(--import-name-width)", minWidth: 0, boxSizing: "border-box", overflow: "hidden", background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
-                      {!isFolder && hint?.compatible === false && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
+                      {!isFolder && (hint?.compatible === false || sourceRejection) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
                       <Text size="md" truncate title={entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
                     </Group>
                     <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntryExtension(entry)} style={cellStyle}>{isFolder ? "" : importEntryExtension(entry)}</Text>
@@ -1538,12 +1596,18 @@ export function ImportFilesystemPickerModal({
                   <Stack ref={previewScrollRef} gap="xs" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable" }}>
                     {selectedPreviewEntry ? (
                       <>
-                        {previewMatchesSelection || /\.(ndax|xlsx)$/i.test(selectedPreviewEntry.path) ? (
+                        {selectedSourceRejection || selectedPreviewHeaderError ? (
+                          <Alert color="red" title="This file cannot be imported">
+                            {selectedSourceRejection?.error ?? selectedPreviewHeaderError}
+                          </Alert>
+                        ) : previewMatchesSelection || /\.(ndax|xlsx)$/i.test(selectedPreviewEntry.path) ? (
                           <ImportSourcePreview
+                            key={`${selectedPreviewEntry.path}\u0000${readabilityRefreshEpoch}`}
                             source={previewMatchesSelection ? selectedPreviewQuery.data! : null}
                             quickSourcePath={selectedPreviewEntry.path}
                             quickSourceVersion={selectedPreviewVersion}
                             onQuickPreviewSettled={markQuickPreviewSettled}
+                            onSourceRejected={rejectSource}
                             validateQuickExcel={selected.has(selectedPreviewEntry.path)}
                             sourceInspectionLoading={Boolean(
                               (selectedPreviewFallbackKey && quickPreviewFallbackKey === selectedPreviewFallbackKey

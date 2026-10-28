@@ -201,8 +201,14 @@ export function paddedEfficiencyRange(values: readonly (number | null | undefine
   return [min - padding, max + padding];
 }
 
+export function withPreviewBreaks(values: Array<number | null>, breakBefore?: readonly number[]): Array<number | null> {
+  if (!breakBefore?.length) return values;
+  const breaks = new Set(breakBefore.filter((index) => Number.isInteger(index) && index > 0 && index < values.length));
+  return values.flatMap((value, index) => breaks.has(index) ? [null, value] : [value]);
+}
+
 export function cellPreviewVoltageTraces(
-  series: Array<{ x: Array<number | null>; voltage: Array<number | null>; current?: Array<number | null>; name?: string; voltageColor?: string; currentColor?: string; opacity?: number }>,
+  series: Array<{ x: Array<number | null>; voltage: Array<number | null>; current?: Array<number | null>; name?: string; voltageColor?: string; currentColor?: string; opacity?: number; breakBefore?: readonly number[] }>,
 ): CellPreviewTrace[] {
   return series.flatMap((item) => {
     const voltageName = item.name ? `Voltage — ${item.name}` : "Voltage";
@@ -211,8 +217,8 @@ export function cellPreviewVoltageTraces(
       type: "scatter",
       mode: "lines",
       name: voltageName,
-      x: item.x,
-      y: item.voltage,
+      x: withPreviewBreaks(item.x, item.breakBefore),
+      y: withPreviewBreaks(item.voltage, item.breakBefore),
       line: { color: item.voltageColor ?? APP_COLORS.voltage, width: 2.6 },
       ...(item.opacity === undefined ? {} : { opacity: item.opacity }),
       connectgaps: false,
@@ -223,8 +229,8 @@ export function cellPreviewVoltageTraces(
       type: "scatter",
       mode: "lines",
       name: currentName,
-      x: item.x,
-      y: item.current,
+      x: withPreviewBreaks(item.x, item.breakBefore),
+      y: withPreviewBreaks(item.current, item.breakBefore),
       yaxis: "y2",
       line: { color: item.currentColor ?? APP_COLORS.current, width: 2 },
       ...(item.opacity === undefined ? {} : { opacity: item.opacity }),

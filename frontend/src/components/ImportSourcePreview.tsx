@@ -3,6 +3,7 @@ import { useElementSize } from "@mantine/hooks";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import type { ImportSourceRejection } from "../importSourceReadability";
 
 import {
   ContinuationPreviewResult,
@@ -288,6 +289,7 @@ export function ImportSourcePreview({
   quickSourcePath,
   quickSourceVersion,
   onQuickPreviewSettled,
+  onSourceRejected,
   validateQuickExcel = false,
   sourceInspectionLoading = false,
   inspectionError,
@@ -302,6 +304,7 @@ export function ImportSourcePreview({
   quickSourcePath?: string;
   quickSourceVersion?: string;
   onQuickPreviewSettled?: (path: string, sourceVersion: string | undefined, requiresFullInspection: boolean) => void;
+  onSourceRejected?: (rejection: ImportSourceRejection) => void;
   /** Run full XLSX validation after a quick plot when included or when the quick preview failed. */
   validateQuickExcel?: boolean;
   /** Keep the loading skeleton visible while the picker starts a full fallback inspection. */
@@ -514,6 +517,14 @@ export function ImportSourcePreview({
         ? inspectionQuery.error.message
         : "Source inspection failed."
       : null;
+  useEffect(() => {
+    if (quickSourcePath && quickSourceVersion && inspectionFailure?.source_error_kind
+      && inspectionFailure.hash === source.hash) {
+      onSourceRejected?.({ path: quickSourcePath, version: quickSourceVersion,
+        error: inspectionFailureMessage, kind: inspectionFailure.source_error_kind });
+    }
+  }, [quickSourcePath, quickSourceVersion, inspectionFailure?.source_error_kind,
+    inspectionFailure?.hash, source.hash, inspectionFailureMessage, onSourceRejected]);
   const quickExcelDiagnosticMessage = quickNewareExcelPath
     ? sourceInspectionError ?? inspectionError ?? null
     : null;
@@ -645,6 +656,7 @@ export function ImportSourcePreview({
         x: segment.x,
         voltage: segment.y,
         current: segment.current_ma,
+        breakBefore: segment.display_break_before,
         name: segment.filename,
       })))
     : [], [voltagePreview]);

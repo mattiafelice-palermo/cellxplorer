@@ -2241,14 +2241,20 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
         failures: list[dict[str, str]] = []
         for index, outcome in enumerate(inspections):
             path_string = outcome.path
-            if outcome.inspection is None:
+            from ..services import source_readability
+
+            rejection = source_readability.known_rejection(path_string)
+            if outcome.inspection is None or rejection is not None:
                 failure_path = Path(outcome.path)
-                error = outcome.error or f"Could not inspect {failure_path.name or outcome.path}."
+                error = rejection.error if rejection is not None else outcome.error or f"Could not inspect {failure_path.name or outcome.path}."
                 failure = {
                     "path": outcome.path,
                     "filename": failure_path.name or outcome.path,
                     "error": error,
                 }
+                kind = rejection.kind if rejection is not None else outcome.error_kind
+                if kind is not None:
+                    failure["source_error_kind"] = kind
                 failures.append(failure)
                 if job_id is not None:
                     background_jobs.update_item(
@@ -2501,6 +2507,9 @@ def _continuation_staged_source(
     )
     if meta is None:
         meta = parsing.read_header_metadata(source_path)
+    # Keep the established content identity on terminal semantic failures too;
+    # the preview binds rejection notifications to this hash before pruning.
+    source["hash"] = file_hash
     try:
         parsing.ensure_supported_source_metadata(source_path, meta)
     except ValueError as exc:
@@ -2508,6 +2517,8 @@ def _continuation_staged_source(
         source["inspection_error"] = str(exc)
         source["unreadable"] = True
         source["unreadable_message"] = str(exc)
+        if isinstance(exc, parsing.SourceFormatError):
+            source["source_error_kind"] = "unsupported" if isinstance(exc, parsing.UnsupportedSourceFormatError) else "invalid"
         return source
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
@@ -3030,6 +3041,7 @@ def _build_fast_neware_voltage_preview(
                 "x": preview["x"],
                 "y": preview["y"],
                 **({"current_ma": preview["current_ma"]} if "current_ma" in preview else {}),
+                **({"display_break_before": preview["display_break_before"]} if "display_break_before" in preview else {}),
                 "global_cycle_start": 1 if cycle_count else None,
                 "global_cycle_end": cycle_count or None,
                 "source_cycle_start": 1 if cycle_count else None,
@@ -3238,6 +3250,7 @@ def _build_fast_neware_excel_voltage_preview_pair(
                     "x": axis_preview["x"],
                     "y": axis_preview["y"],
                     **({"current_ma": axis_preview["current_ma"]} if "current_ma" in axis_preview else {}),
+                **({"display_break_before": axis_preview["display_break_before"]} if "display_break_before" in axis_preview else {}),
                     "global_cycle_start": cycle_start_value,
                     "global_cycle_end": cycle_end_value,
                     "source_cycle_start": cycle_start_value,
@@ -3278,6 +3291,16 @@ def _build_continuation_preview(
         for source in ordered_sources
     ]
     cycle_count: int | None = None
+    if stitch._has_interleaved_gcpl_pair(refs):
+        # A proven interleaved acquisition has one scientific interpretation,
+        # shared by import and analysis. Do not concatenate its files end to end.
+        result = _build_stitched_continuation_preview(
+            ordered_sources, quantity=quantity, voltage_x_axis=voltage_x_axis,
+            cycle_start=cycle_start, cycle_end=cycle_end,
+        )
+        result["interpretation"] = interpretation
+        result["cycle_identity_source"] = "acquisition_charge_discharge_pairs"
+        return result
     if quantity == "voltage":
         # Voltage is a raw-measurement view and must remain available even
         # when canonical cycle summaries are absent or metadata-only.
@@ -3554,6 +3577,7 @@ def _build_continuation_preview(
                 "y": segment_preview["y"],
                 **capacity_preview_fields,
                 **({"current_ma": segment_preview["current_ma"]} if "current_ma" in segment_preview else {}),
+                **({"display_break_before": segment_preview["display_break_before"]} if "display_break_before" in segment_preview else {}),
                 "global_cycle_start": metadata["cycle_start"],
                 "global_cycle_end": metadata["cycle_end"],
                 "source_cycle_start": metadata["source_cycle_start"],
@@ -3705,6 +3729,8 @@ def _build_stitched_continuation_preview(
             if "cycle" in full_segment_frame.columns
             else pd.Series(dtype="float64")
         )
+        if merged.attrs.get("cross_source_gcpl_cycle_ids"):
+            global_cycles = global_cycles[global_cycles.gt(0)]
         if selected_quantity == "voltage":
             segment_preview = continuation_preview.voltage_preview_from_raw(
                 segment_frame,
@@ -3766,6 +3792,7 @@ def _build_stitched_continuation_preview(
                 "y": segment_preview["y"],
                 **capacity_preview_fields,
                 **({"current_ma": segment_preview["current_ma"]} if "current_ma" in segment_preview else {}),
+                **({"display_break_before": segment_preview["display_break_before"]} if "display_break_before" in segment_preview else {}),
                 "global_cycle_start": int(global_cycles.min()) if not global_cycles.empty else None,
                 "global_cycle_end": int(global_cycles.max()) if not global_cycles.empty else None,
                 "source_cycle_start": local_labels[0] if local_labels else None,

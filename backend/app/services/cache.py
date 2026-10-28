@@ -71,6 +71,7 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
         "explicit_full_cycle",
         "protocol_loop_reconstruction",
         "non_repeating_cycle_1",
+        "verified_repeated_executions",
     }
 )
 
@@ -974,6 +975,9 @@ def _build_raw_layout_index(
         ),
     }
     result["biologic_cp_half_cycle"] = _biologic_cp_half_cycle_summary(frame)
+    from . import biologic_gcpl_executions
+
+    result[biologic_gcpl_executions.SUMMARY_KEY] = biologic_gcpl_executions.summary_from_frame(frame)
     biologic_attrs = frame.attrs.get("biologic_gcpl") if hasattr(frame, "attrs") else None
     biologic_cycle_source = (
         str(biologic_attrs.get("cycle_source"))
@@ -1117,6 +1121,50 @@ def load_biologic_cp_half_cycle_summary(
     return _biologic_cp_half_cycle_summary(frame) if frame is not None else None
 
 
+def load_biologic_gcpl_execution_summary(file_hash: str, parser_version: str) -> dict[str, Any] | None:
+    """Read bounded execution evidence from a validated immutable raw index."""
+    if not parser_version.startswith("bm:"):
+        return None
+    from . import biologic_gcpl_executions as executions
+
+    try:
+        index = try_load_raw_layout_index(file_hash, parser_version)
+    except (OSError, ValueError):
+        return None
+    if index is None:
+        path = raw_path(file_hash, parser_version)
+        if not path.is_file():
+            return None
+        # A legacy/busy sidecar must not give Cycles a different scientific
+        # answer from the exact raw fallback. Read records only after the
+        # Parquet footer proves this exceptional execution profile.
+        try:
+            import pyarrow.parquet as pq
+
+            attributes = _raw_gcpl_attributes(pq.ParquetFile(path))
+            if attributes.get("execution_profile") != executions.PROFILE:
+                return None
+            summary = executions.summary_from_frame(pd.read_parquet(path))
+            return summary if summary is not None else {"pairing_unavailable": True}
+        except (OSError, ValueError, TypeError):
+            return {"pairing_unavailable": True}
+    summary = index.get(executions.SUMMARY_KEY)
+    # The index loader already validates/memoizes this immutable summary using
+    # raw+index stat tokens; do not rewalk every execution on hot requests.
+    if summary is not None:
+        return summary
+    return {"pairing_unavailable": True} if index.get("biologic_cycle_identity_source") == "verified_repeated_executions" else None
+
+
+def _raw_gcpl_attributes(parquet) -> dict[str, Any]:
+    metadata = parquet.schema_arrow.metadata or {}
+    encoded = metadata.get(b"pandas", b"{}")
+    if len(encoded) > 262144:
+        raise RawLayoutError("raw GCPL provenance metadata exceeds its bound")
+    value = json.loads(encoded).get("attributes", {}).get("biologic_gcpl", {})
+    return value if isinstance(value, dict) else {}
+
+
 def _coerce_index_cycle(value: object, name: str) -> int:
     if isinstance(value, bool):
         raise RawLayoutError(f"raw index {name} contains a boolean cycle label")
@@ -1233,6 +1281,11 @@ def _validate_raw_layout_index(
     biologic_cycle_source = index.get("biologic_cycle_identity_source")
     if biologic_cycle_source is not None and biologic_cycle_source not in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
         raise RawLayoutError("raw layout index has invalid BioLogic cycle provenance")
+    from . import biologic_gcpl_executions as executions
+
+    execution_summary = index.get(executions.SUMMARY_KEY)
+    if execution_summary is not None and not executions.validate_summary(execution_summary):
+        raise RawLayoutError("raw layout index has invalid repeated GCPL execution provenance")
 
     try:
         raw_row_count = int(index["raw_row_count"])
@@ -1498,6 +1551,20 @@ def _validate_raw_layout_index(
     if raw_row_count > 0 and raw_row_group_count == 0:
         raise RawLayoutError("non-empty raw cache has no row groups")
 
+    if execution_summary is not None and (
+        execution_summary["row_count"] != raw_row_count or complete_cycles
+        or observed_cycles != list(range(1, len(execution_summary["episodes"]) + 1))
+        or not {"measurement_type", "current_ma", "cycle_complete", "timestamp", "total_time_s"}.issubset(column_names)
+        or biologic_cycle_source != "verified_repeated_executions"
+    ):
+        raise RawLayoutError("raw layout index repeated executions disagree with raw source metadata")
+    if execution_summary is not None:
+        attributes = _raw_gcpl_attributes(parquet)
+        if (attributes.get("execution_profile") != executions.PROFILE
+                or attributes.get("execution_acquisition") != execution_summary["identity"]
+                or attributes.get("execution_count") != len(execution_summary["episodes"])
+                or attributes.get("execution_row_count") != raw_row_count):
+            raise RawLayoutError("raw layout index repeated acquisition identity disagrees with Parquet provenance")
     normalized = dict(index)
     normalized["raw_row_count"] = raw_row_count
     normalized["raw_row_group_count"] = raw_row_group_count

@@ -36,6 +36,10 @@ _header_cache_lock = threading.Lock()
 class SourceInspectionRejection(ValueError):
     """A selected source is invalid, unsupported, or moving during inspection."""
 
+    def __init__(self, message: str, *, kind: str | None = None):
+        super().__init__(message)
+        self.kind = kind
+
 
 def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata: dict) -> None:
     key = (file_hash, size, mtime_ns)
@@ -125,6 +129,7 @@ class FileInspectionOutcome:
     path: str
     inspection: FileInspection | None
     error: str | None
+    error_kind: str | None = None
 
 
 def build_identity_snapshot(db: Session) -> ImportIdentitySnapshot:
@@ -241,7 +246,8 @@ def inspect_file(path_string: str) -> FileInspection:
     try:
         parsing.ensure_supported_source_metadata(path, metadata)
     except ValueError as exc:
-        raise SourceInspectionRejection(str(exc)) from exc
+        kind = "unsupported" if isinstance(exc, parsing.UnsupportedSourceFormatError) else "invalid" if isinstance(exc, parsing.InvalidSourceFormatError) else None
+        raise SourceInspectionRejection(str(exc), kind=kind) from exc
     try:
         # capture_source_fingerprint already performed the single digest read
         # for this inspection; this boundary only needs a cheap stat guard.
@@ -277,6 +283,7 @@ def _inspect_file_outcome(path_string: str) -> FileInspectionOutcome:
             path=path_string,
             inspection=None,
             error=message,
+            error_kind=exc.kind,
         )
 
 

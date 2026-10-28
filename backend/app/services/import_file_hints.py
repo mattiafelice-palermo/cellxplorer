@@ -58,6 +58,14 @@ def inspect_header_hint(
     }
     metadata: dict[str, Any] = {}
     try:
+        from . import source_readability
+
+        rejection = source_readability.known_rejection(path)
+        if rejection is not None:
+            result.update(compatible=False, error=rejection.error,
+                          source_error_kind=rejection.kind, size=rejection.identity.size,
+                          mtime_ns=rejection.identity.mtime_ns)
+            return result
         before = path.stat()
         if not path.is_file() or not parsing.source_filename_allowed(path.name):
             raise ValueError("File is no longer a supported source.")
@@ -115,8 +123,9 @@ def inspect_header_hint(
         # explicitly classifies the workbook as unsupported. I/O races,
         # permissions, and malformed-but-recognized exports leave the hint
         # unknown so an optional scan failure cannot hide a selectable file.
-        if path.suffix.casefold() in {".xlsx", ".mpr"} and metadata.get("error_kind") == "unsupported":
+        if path.suffix.casefold() in {".xlsx", ".mpr"} and metadata.get("error_kind") in {"unsupported", "invalid"}:
             result["compatible"] = False
+            result["source_error_kind"] = metadata["error_kind"]
         result["error"] = str(exc)[:300] or "Header metadata is unavailable."
     return result
 

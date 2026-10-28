@@ -1828,6 +1828,8 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     which offsets x per half-cycle — a CV hold re-drew from x=0 as a flat
     line at the cutoff voltage. Each drop adds the pre-drop value as a
     running offset, turning per-step time into cumulative elapsed time."""
+    if "_stitch_time_s" in frame.columns:
+        return frame.assign(time_s=frame["_stitch_time_s"].to_numpy(dtype=float))
     if "time_s" not in frame.columns or len(frame) < 2:
         return frame
     t = frame["time_s"].to_numpy(dtype="float64")
@@ -4301,6 +4303,7 @@ def compute_time_capacity(
 
         if canonical_time and not indexed_path:
             raw = raw.sort_values(
+                ["_stitch_order"] if "_stitch_order" in raw.columns else
                 ["cycle", "segment", "record_index"] if "record_index" in raw.columns
                 else ["cycle", "segment"]
             )
@@ -4358,6 +4361,7 @@ def compute_time_capacity(
                     ]
 
             raw = raw.sort_values(
+                ["_stitch_order"] if "_stitch_order" in raw.columns else
                 ["cycle", "segment", "record_index"]
                 if "record_index" in raw.columns
                 else ["cycle", "segment"]

@@ -1,5 +1,10 @@
 # Feature specs
 
+- [071 — BioLogic repeated executions and import eligibility](071-biologic-repeated-executions-and-import-eligibility.md).
+  **Implemented.** Verified repeated GCPL executions, acquisition-proven Cell
+  pairing/capacity/CE, and rejection-aware source selection; Astra Medium review
+  clean, real-file production parity, browser acceptance and preflight passed.
+
 ## Alpha feedback improvements (shared sequential branch)
 
 The user explicitly requested one branch, `codex/alpha-analysis-improvements`,

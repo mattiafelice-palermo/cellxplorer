@@ -49,7 +49,7 @@ from .source_format_errors import (
 # allows only the measured f64 ID-13/ID-7 active-counter rounding residual.
 # gcpl14 counts a cycle only when its rows include both active directions.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl14"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl15"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -1486,6 +1486,65 @@ def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
         )
 
 
+def _repeated_execution_ids(
+    settings: Mapping[str, Any] | None, ns: np.ndarray, ns_changed: np.ndarray,
+    mode: np.ndarray, current_ma: np.ndarray, total_time_s: np.ndarray,
+) -> np.ndarray | None:
+    """Verify document-backed same-Ns returns without weakening ordinary GCPL.
+
+    EC-Lab may revisit a GCPL technique from an outer acquisition program. Its
+    source then has one programmed Ns, but separate active/rest executions and
+    source-clock gaps while another technique runs. These labels address halves;
+    they are never full-cycle or CE evidence by themselves.
+    """
+    if len(ns) < 2:
+        return None
+    if not settings or settings.get("settings_profile") != _PRIMARY_GCPL_SETTINGS_PROFILE.profile_id:
+        return None
+    active_sequences = [item for item in settings.get("sequences", ())
+                        if item.get("direction") in {"charge", "discharge"}]
+    if len(active_sequences) != 1 or _declared_loop_structure(settings) is not None:
+        return None
+    operation = active_sequences[0]
+    if np.any(ns != int(operation["step_index"])) or np.any(~np.isin(mode, (MPR_MODE_GALVANOSTATIC, MPR_MODE_REST))):
+        return None
+    active = mode == MPR_MODE_GALVANOSTATIC
+    starts = np.flatnonzero(active & ~np.r_[False, active[:-1]])
+    flagged = np.flatnonzero(np.asarray(ns_changed, dtype=bool))
+    if len(starts) < 2 or starts[0] != 0:
+        return None
+    cadences = [operation.get(key) for key in ("record_interval_s", "rest_record_interval_s")]
+    if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 for value in cadences):
+        return None
+    if not isinstance(operation.get("rest_duration_s"), (int, float)) or operation["rest_duration_s"] <= 0:
+        return None
+    cadence = max(cadences)
+    # Source clock quantization can put a declared 60 s interval ~0.2 ms
+    # above its target. This admission tolerance never changes recorded time.
+    cadence_tolerance = max(0.001, cadence * 0.0001)
+    gaps = np.diff(total_time_s)
+    reentry = np.zeros(len(ns) - 1, dtype=bool)
+    reentry[starts[1:] - 1] = True
+    if not np.array_equal(starts, flagged):
+        if np.any(gaps[reentry] > cadence + cadence_tolerance):
+            raise UnsupportedBiologicGcplError(
+                "Repeated GCPL acquisitions are missing unambiguous execution markers; "
+                "their charge/discharge phases cannot be assigned safely."
+            )
+        return None
+    if np.any(gaps[reentry] <= cadence + cadence_tolerance):
+        return None
+    # A long hole inside an operation is not an independently identified
+    # technique return. Do not silently connect or summarize such raw rows.
+    if np.any(gaps[~reentry] > cadence + cadence_tolerance):
+        return None
+    if np.any(np.abs(current_ma[~active]) > _CURRENT_TOLERANCE_MA):
+        return None
+    labels = np.zeros(len(ns), dtype=np.int64)
+    labels[starts] = 1
+    return np.cumsum(labels)
+
+
 def _validate_one_record_late_ns_changed_flags(
     ns: np.ndarray,
     ns_changed: np.ndarray,
@@ -2399,9 +2458,13 @@ def map_gcpl_to_canonical(
 
     ns_changed = _flag_column(records, flags, "ns_changed")
     ns_change_policy = str((declared_settings or {}).get("ns_change_policy") or "strict")
+    execution_ids = (
+        _repeated_execution_ids(declared_settings, ns, ns_changed, mode, current_ma, total_time_s)
+        if cycle is None and ns_change_policy == "strict" else None
+    )
     if ns_change_policy == "one_record_late":
         _validate_one_record_late_ns_changed_flags(ns, ns_changed)
-    else:
+    elif execution_ids is None:
         _validate_ns_changed_flags(ns, ns_changed)
     counter_incremented = _flag_column(records, flags, "counter_incremented")
     if np.any(counter_incremented):
@@ -2482,7 +2545,10 @@ def map_gcpl_to_canonical(
         for direction, (start, end) in zip(directions, ranges)
     ]
     block_step_indices = [int(ns[start]) for start, _ in ranges]
-    if cycle is None:
+    if execution_ids is not None:
+        cycle = execution_ids
+        cycle_identity_source = "verified_repeated_executions"
+    elif cycle is None:
         loop = declared_loop
         if loop is None and declared_settings is not None:
             loop = _infer_execution_loop_structure(
@@ -2593,6 +2659,8 @@ def map_gcpl_to_canonical(
             else "reconstructed from validated GCPL loop start/control Ns progression and "
             "charge/discharge execution"
             if cycle_identity_source == "protocol_loop_reconstruction"
+            else "verified source-local active/rest execution labels; full cycles require acquisition-proven opposite phases"
+            if cycle_identity_source == "verified_repeated_executions"
             else "assigned source-local cycle 1 to one validated non-repeating cycling episode"
         ),
         "half_cycle_policy": "decoded_diagnostic_only",
@@ -2610,6 +2678,15 @@ def map_gcpl_to_canonical(
         },
         "timestamp_timezone": "local_wall_clock_naive" if start_timestamp is not None else None,
     }
+    if execution_ids is not None:
+        from . import biologic_gcpl_executions as executions
+
+        frame["measurement_type"] = executions.MEASUREMENT_TYPE
+        frame.attrs["biologic_gcpl"].update(
+            execution_profile=executions.PROFILE,
+            execution_acquisition=executions.acquisition_identity(decode_gcpl_log(source.vmp_log)),
+            execution_count=int(execution_ids[-1]), execution_row_count=len(frame),
+        )
     canonical_cycling.validate_raw_timeseries(frame)
     return frame
 

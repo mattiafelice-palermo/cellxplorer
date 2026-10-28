@@ -57,6 +57,8 @@ INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").stri
 # 1.6.2: protocol identity includes source-declared termination/control conditions
 #        and resolves the prior condition-free signature as a compatibility alias.
 # 1.6.4: adjacent opposite-polarity BioLogic CP half-sources complete one Cell cycle.
-CALC_VERSION = "1.6.4"
+# 1.6.5: acquisition-proven repeated GCPL executions pair charge to following discharge;
+#        invalidate derived Cell results alongside the gcpl15 source adapter identity.
+CALC_VERSION = "1.6.5"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

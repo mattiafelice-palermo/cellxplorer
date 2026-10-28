@@ -377,6 +377,11 @@ def build_time_capacity_stitch_plan(
     # per-source maps cannot represent that shared identity, so use the
     # established raw stitch path for these chains to keep Time/Capacity cycle
     # numbering consistent with Cycles and Library.
+    if len(ordered_refs) > 1 and stitch._has_interleaved_gcpl_pair(list(ordered_refs)):
+        return _fallback_plan(
+            ordered_refs, indexed_sources=(),
+            reason="interleaved_gcpl_requires_acquisition_cycle_mapping", diagnostics=diagnostics,
+        )
     if len(ordered_refs) > 1 and stitch._has_adjacent_opposite_cp_halves(list(ordered_refs)):
         return _fallback_plan(
             ordered_refs,

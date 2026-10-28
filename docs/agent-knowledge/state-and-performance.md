@@ -1,5 +1,23 @@
 # State, caching, and performance
 
+## Import readability and source identity
+
+Header hints remain cheap and provisional. A terminal adapter `SourceFormatError`
+from canonical parsing is retained in the bounded, process-local
+`source_readability.py` registry, tied to path, size, mtime, ctime and inode.
+Transport failures, cancellation, cache-write failures and readable sources with
+no complete cycles do not establish unreadability. Header hints, inspection and
+indexed results must respect a known semantic rejection of that exact identity.
+
+The picker shares rejection state across filesystem and indexed results and
+prunes inclusion before Continue. Error rows remain focusable/clickable. Refresh
+rechecks server identity and advances a request generation so late previews or
+header callbacks cannot reapply obsolete state, including a same-size/same-mtime
+replacement. Every terminal continuation inspection must retain its established
+content hash even when metadata eligibility fails: the preview callback uses it
+to bind the error to the focused source before removing selection. Verify this
+through an actual preview/import-picker interaction, not policy tests alone.
+
 ## Indexed source discovery
 
 Spec 060 owns a disposable local `search-index/catalog.sqlite` separate from the scientific

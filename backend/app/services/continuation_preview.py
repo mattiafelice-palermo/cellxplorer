@@ -147,6 +147,24 @@ def prepare_segmented_raw(
 def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
     """Return ordered raw rows with preview-only inferred cycles and provenance."""
 
+    from . import biologic_gcpl_executions as executions
+
+    summaries = [executions.pairing_summary_from_frame(frame) for frame in source_frames]
+    if executions.eligible_pair_positions(summaries):
+        # The acquisition-backed interpretation is scientific and shared with
+        # analyses, unlike the ordinary optional contiguous preview below.
+        from . import stitch
+
+        refs = [stitch.CachedSourceRef(str(index), "preview-frame") for index in range(len(source_frames))]
+        merged, _segments, missing = stitch._stitch_ordered(
+            refs, lambda ref: source_frames[int(ref.file_hash)], sort_output=False,
+            execution_summaries=summaries,
+        )
+        if missing:
+            raise ValueError("The interleaved GCPL acquisition is incomplete.")
+        merged["preview_time_s"] = merged["_stitch_time_s"]
+        return merged
+
     merged = prepare_segmented_raw(source_frames)
     if merged.empty:
         return merged
@@ -264,6 +282,11 @@ def voltage_preview_from_raw(
             "y": pd.to_numeric(frame["voltage_v"], errors="coerce"),
         }
     ).dropna()
+    from . import biologic_gcpl_executions as executions
+
+    if executions.is_repeated_frame(frame):
+        identity_column = "source_cycle" if "source_cycle" in frame.columns else "cycle"
+        rows["_execution"] = pd.to_numeric(frame[identity_column], errors="coerce")
     if "current_ma" in frame.columns:
         rows["current_ma"] = pd.to_numeric(frame["current_ma"], errors="coerce")
     if rows.empty:
@@ -281,6 +304,9 @@ def voltage_preview_from_raw(
     return {
         "x": [float(value) for value in rows["x"]],
         "y": [float(value) for value in rows["y"]],
+        **({"display_break_before": [index for index in range(1, len(rows))
+                                      if rows["_execution"].iloc[index] != rows["_execution"].iloc[index - 1]]}
+           if "_execution" in rows.columns else {}),
         **({"current_ma": [None if pd.isna(value) else float(value) for value in rows["current_ma"]]} if "current_ma" in rows.columns else {}),
         "quantity": "voltage",
         "label": "Voltage (V)",

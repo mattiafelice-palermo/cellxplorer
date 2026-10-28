@@ -22,8 +22,9 @@ from functools import lru_cache
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
-from . import cache, canonical_cycling
+from . import cache, canonical_cycling, biologic_gcpl_executions as gcpl_executions
 
 _CP_CURRENT_TOLERANCE_MA = 1e-6
 
@@ -96,6 +97,15 @@ def _has_adjacent_opposite_cp_halves(ordered_sources: list[CachedSourceRef]) -> 
         and left.get("direction") != right.get("direction")
         for left, right in zip(summaries, summaries[1:])
     )
+
+
+def _has_interleaved_gcpl_pair(ordered_sources: list[CachedSourceRef]) -> bool:
+    """Keep ordinary sources on their existing fast path; inspect compact facts."""
+    if len(ordered_sources) < 2:
+        return False
+    summaries = [cache.load_biologic_gcpl_execution_summary(source.file_hash, source.parser_version)
+                 for source in ordered_sources]
+    return bool(gcpl_executions.eligible_pair_positions(summaries))
 
 
 def stitch_metadata(frame: pd.DataFrame) -> dict[str, Any]:
@@ -229,6 +239,7 @@ def _stitch_ordered(
     load_fn: Callable[[CachedSourceRef], pd.DataFrame | None],
     *,
     sort_output: bool,
+    execution_summaries: list[dict | None] | None = None,
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
     frames: list[pd.DataFrame] = []
     segments: list[dict] = []
@@ -244,10 +255,20 @@ def _stitch_ordered(
     continuation_blocked = False
     pending_cp_half: tuple[int, int, int, int] | None = None
     paired_cp_cycle_ids: set[int] = set()
+    paired_gcpl_cycle_ids: set[int] = set()
+    preloaded: dict[int, pd.DataFrame | None] = {}
+    consumed: set[int] = set()
+    eligible_executions = (
+        set(gcpl_executions.eligible_pair_positions(execution_summaries))
+        if execution_summaries is not None else None
+    )
+    gcpl_cohorts: list[list[int]] = []
 
     for segment, source_ref in enumerate(ordered_sources):
+        if segment in consumed:
+            continue
         file_hash = source_ref.file_hash
-        loaded = load_fn(source_ref)
+        loaded = preloaded.pop(segment) if segment in preloaded else load_fn(source_ref)
         if loaded is None:
             missing.append(file_hash)
             missing_positions.append(segment)
@@ -256,6 +277,39 @@ def _stitch_ordered(
         if continuation_blocked:
             skipped_segments.append(segment)
             continue
+
+        if not sort_output and gcpl_executions.is_repeated_frame(loaded) and eligible_executions is None:
+            # In-memory callers (notably import preview) do not have index
+            # summaries. Inspect the whole remaining cohort once, never a
+            # greedy pair that could hide an overlapping third source.
+            summaries: list[dict | None] = [None] * segment
+            summaries.append(gcpl_executions.pairing_summary_from_frame(loaded))
+            for position in range(segment + 1, len(ordered_sources)):
+                value = load_fn(ordered_sources[position])
+                preloaded[position] = value
+                summaries.append(gcpl_executions.pairing_summary_from_frame(value) if value is not None else {"pairing_unavailable": True})
+            eligible_executions = set(gcpl_executions.eligible_pair_positions(summaries))
+
+        if not sort_output and eligible_executions is not None and segment in eligible_executions:
+            next_ref = ordered_sources[segment + 1]
+            following = preloaded[segment + 1] if segment + 1 in preloaded else load_fn(next_ref)
+            preloaded[segment + 1] = following
+            combined = gcpl_executions.combine_pair(
+                [loaded, following], global_start=global_next,
+                source_hashes=[file_hash, next_ref.file_hash], segment_start=segment,
+            ) if following is not None else None
+            if combined is not None:
+                merged, cohort_segments, cycle_count = combined
+                frames.append(merged)
+                segments.extend(cohort_segments)
+                timestamp_starts.append(pd.Timestamp(merged.attrs["raw_timestamp_start"]))
+                paired_gcpl_cycle_ids.update(range(global_next, global_next + cycle_count))
+                gcpl_cohorts.append([segment, segment + 1])
+                global_next += cycle_count
+                consumed.add(segment + 1)
+                preloaded.pop(segment + 1, None)
+                pending_cp_half = None
+                continue
 
         raw_timestamp_start = loaded.attrs.get("_raw_timestamp_start")
         if raw_timestamp_start is not None:
@@ -369,7 +423,27 @@ def _stitch_ordered(
     if not frames:
         result = pd.DataFrame()
     else:
+        if paired_gcpl_cycle_ids:
+            # These are display-only scratch coordinates. Scientific step
+            # clocks remain untouched. Inside a cohort preserve source gaps;
+            # outside it retain established step-reset continuation behavior.
+            offset = 0.0
+            for frame in frames:
+                column = "preview_time_s" if frame.attrs.get("cross_source_gcpl_cycle_ids") else "time_s"
+                time = pd.to_numeric(frame.get(column, pd.Series(range(len(frame)), index=frame.index)), errors="coerce").to_numpy(dtype=float)
+                if column == "time_s" and len(time) > 1:
+                    delta = pd.Series(time).diff().to_numpy()
+                    resets = np.flatnonzero(np.isfinite(delta) & (delta < 0))
+                    additions = np.zeros(len(time))
+                    additions[resets] = time[resets - 1]
+                    time = time + np.cumsum(additions)
+                finite = time[np.isfinite(time)]
+                frame["_stitch_time_s"] = time - (finite[0] if len(finite) else 0.0) + offset
+                if len(finite):
+                    offset += max(0.0, float(finite[-1] - finite[0]))
         result = pd.concat(frames, ignore_index=True)
+        if paired_gcpl_cycle_ids:
+            result["_stitch_order"] = np.arange(len(result))
         if sort_output and not result.empty and "source_cycle" in result.columns:
             result = result.sort_values(["segment", "source_cycle"], kind="stable").reset_index(
                 drop=True
@@ -385,6 +459,9 @@ def _stitch_ordered(
         result.attrs["raw_step_rows_read"] = selective_rows_read
     if paired_cp_cycle_ids:
         result.attrs["cross_source_cp_cycle_ids"] = sorted(paired_cp_cycle_ids)
+    if paired_gcpl_cycle_ids:
+        result.attrs["cross_source_gcpl_cycle_ids"] = sorted(paired_gcpl_cycle_ids)
+        result.attrs["interleaved_gcpl_cohorts"] = gcpl_cohorts
     return result, segments, missing
 
 
@@ -392,6 +469,18 @@ def stitch_cycles(
     ordered_sources: list[CachedSourceRef], calc_version: str
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
     """Stitch per-cycle caches, each source loaded at its own pinned identity."""
+    if _has_interleaved_gcpl_pair(ordered_sources):
+        # A source-local half has no cycle cache summary. This exceptional
+        # cohort acquires full-cycle identity only at the Cell boundary.
+        raw, segments, missing = stitch_raw(ordered_sources)
+        from . import calc
+
+        cycles = calc.per_cycle(raw)
+        if not cycles.empty:
+            owners = raw.loc[raw["cycle"].gt(0), ["cycle", "segment", "source_cycle"]].drop_duplicates("cycle")
+            cycles = cycles.merge(owners, on="cycle", how="left", validate="one_to_one")
+        cycles.attrs.update(raw.attrs)
+        return cycles, segments, missing
     stitched, segments, missing = _stitch_ordered(
         ordered_sources,
         lambda ref: cache.load_cycles(ref.file_hash, ref.parser_version, calc_version),
@@ -485,10 +574,12 @@ def stitch_raw(
     ordered_sources: list[CachedSourceRef],
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
     """Stitch raw caches, each source loaded at its own pinned identity."""
+    summaries = [cache.load_biologic_gcpl_execution_summary(ref.file_hash, ref.parser_version) for ref in ordered_sources]
     return _stitch_ordered(
         ordered_sources,
         lambda ref: cache.load_raw(ref.file_hash, ref.parser_version),
         sort_output=False,
+        execution_summaries=summaries if any(value is not None for value in summaries) else None,
     )
 
 
@@ -498,6 +589,8 @@ def stitch_raw_steps(
     columns: list[str],
 ) -> tuple[pd.DataFrame, list[dict], list[str]] | None:
     """Read selected raw step rows, or return ``None`` for safe fallback."""
+    if _has_interleaved_gcpl_pair(ordered_sources):
+        return None
 
     def load(ref: CachedSourceRef) -> pd.DataFrame | None:
         loaded = cache.load_raw_step_rows(

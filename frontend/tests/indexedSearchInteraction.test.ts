@@ -5,6 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 import * as searchPolicy from "../src/importSearch.ts";
 import * as filtersPolicy from "../src/importSearchFilters.ts";
+import * as readabilityPolicy from "../src/importSourceReadability.ts";
 
 /** Exercise actual result handlers; stubs represent controls, not interaction policy. */
 function harness() {
@@ -27,6 +28,7 @@ function harness() {
     "@mantine/hooks": { useDebouncedValue: (value: any) => [value], useResizeObserver: () => [{ current: null }, { height: 600 }] },
     "@tanstack/react-query": { useQuery: ({ queryKey }: any) => queryKey[0] === "file-search-settings" ? { data: { config: { roots: [{ id: "root", path: "C:\\", enabled: true }], formats: [".ndax"], metadata_enabled: true }, roots: [{ id: "root", status: "ready" }] } } : { data: { items: [{ ...file }], total: 1 }, refetch: () => {} } },
     "../api": {}, "react-router-dom": { Link: "Link" },
+    "../importSourceReadability": readabilityPolicy,
     "./SavedSearchMenu": { SavedSearchMenu: "SavedSearchMenu" },
     "./IndexedSearchFilters": { IndexedSearchFilters: "IndexedSearchFilters" },
     "./FileSearchSettings": {}, "../importSearchFilters": filtersPolicy, "../importSearch": searchPolicy,

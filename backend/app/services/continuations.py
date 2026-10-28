@@ -740,6 +740,7 @@ def _continuation_chain_response(
                 "active_mass_mg": source.get("active_mass_mg"),
                 "inspection_status": source.get("inspection_status", "pending"),
                 "inspection_error": source.get("inspection_error"),
+                "source_error_kind": source.get("source_error_kind"),
                 "cache_build_status": source.get("cache_build_status"),
                 "location_status": source.get("location_status"),
                 "parse_status": source.get("parse_status"),
@@ -830,6 +831,14 @@ def _maybe_schedule_cache_build(file_hash: str, source_path) -> dict[str, str | 
 
 def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[str, Any]:
     """Fill timing/cycle fields from existing caches when available."""
+    if source_path is not None:
+        from . import source_readability
+
+        rejection = source_readability.known_rejection(source_path)
+        if rejection is not None:
+            source.update(inspection_status="error", inspection_error=rejection.error,
+                          source_error_kind=rejection.kind, unreadable=True)
+            return source
     if source.get("metadata_only") or (
         source.get("canonical_cycling") is False
         and not source.get("canonical_cycling_pending")
@@ -923,6 +932,12 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
                 "Cache preparation failed."
             )
             source["inspection_error"] = source["cache_build_error"]
+            if source_path is not None:
+                from . import source_readability
+
+                rejection = source_readability.known_rejection(source_path)
+                if rejection is not None:
+                    source["source_error_kind"] = rejection.kind
         else:
             source["inspection_status"] = "pending"
         return source

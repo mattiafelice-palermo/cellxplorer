@@ -1,4 +1,5 @@
 import type { Data, Layout } from "plotly.js";
+import { withPreviewBreaks } from "./components/cellPreviewPlotModel.ts";
 
 import type {
   ContinuationPreviewRequest,
@@ -145,8 +146,9 @@ export function buildContinuationPreviewTraces(
     const selected = Boolean(selectedSourceKey && selectedSourceKey === segment.source_key);
     const voltage = preview.quantity === "voltage";
     return {
-      x: segment.x,
-      y: segment.y,
+      x: withPreviewBreaks(segment.x, voltage ? segment.display_break_before : undefined),
+      y: withPreviewBreaks(segment.y, voltage ? segment.display_break_before : undefined),
+      connectgaps: false,
       type: "scatter",
       mode: "lines+markers",
       line: { width: selected ? (voltage ? 4 : 3) : 2, color },

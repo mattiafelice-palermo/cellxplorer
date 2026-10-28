@@ -11,11 +11,13 @@ import { IndexedSearchFilters } from "./IndexedSearchFilters";
 import { activeSearchFilters, chipSortField, filterChips, filterMatchExplanation, normalizedSearchSort, removeSearchFilter, toggleSearchSort, type SearchFilters } from "../importSearchFilters";
 import { importPathsEqual } from "../importPathBreadcrumbs";
 import { toggleImportFileSelection } from "../importBrowserSelection";
+import { importSourceRejection, type ImportSourceRejection } from "../importSourceReadability";
 import { indexedFileAvailable, indexedFileStatus, indexedMatchExplanation, searchLocationName, searchRootStatus, type FileSearchResults, type FileSearchSettings as Settings, type IndexedFile } from "../importSearch";
 import { FileSearchSettings } from "./FileSearchSettings";
 
-export function IndexedSourceSearch({ active, selected, currentPath, onPreview, onSelection, onDialogChange, onPopupChange, onReveal, filterContainer, onFilterCount, onOpenFilters, onOpenEntity }: {
+export function IndexedSourceSearch({ active, selected, sourceRejections, currentPath, onPreview, onSelection, onDialogChange, onPopupChange, onReveal, filterContainer, onFilterCount, onOpenFilters, onOpenEntity }: {
   active: boolean; onReveal: (file: IndexedFile) => void;
+  sourceRejections?: ReadonlyMap<string, ImportSourceRejection>;
   selected: ReadonlyMap<string, ImportBrowseEntry>; currentPath?: string | null;
   onPreview: (file: IndexedFile) => void;
   onSelection: (next: Map<string, ImportBrowseEntry>, files: IndexedFile[]) => void;
@@ -91,7 +93,11 @@ export function IndexedSourceSearch({ active, selected, currentPath, onPreview, 
   useEffect(() => { viewport.current?.scrollTo({ top: 0 }); setScrollTop(0); }, [page]);
   useEffect(() => { if (active && !manage) requestAnimationFrame(() => viewport.current?.scrollTo({ top: scrollTop })); }, [active, manage]);
   useEffect(() => { if (query.data && page && page * 100 >= query.data.total) setPage(Math.max(0, Math.ceil(query.data.total / 100) - 1)); }, [query.data, page]);
-  const files: IndexedFile[] = (query.data?.items ?? []).map((file) => ({ ...file, kind: "file", root_status: settings.data?.roots.find((r) => r.id === file.root_id)?.status ?? file.root_status }));
+  const files: IndexedFile[] = (query.data?.items ?? []).map((file) => {
+    const entry: IndexedFile = { ...file, kind: "file", root_status: settings.data?.roots.find((r) => r.id === file.root_id)?.status ?? file.root_status };
+    const rejection = sourceRejections ? importSourceRejection(entry, sourceRejections) : undefined;
+    return rejection ? { ...entry, readability_error: rejection.error, source_error_kind: rejection.kind } : entry;
+  });
   const available = files.filter(indexedFileAvailable);
   const rowHeight = 76;
   const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight) - 2);
@@ -181,7 +187,7 @@ export function IndexedSourceSearch({ active, selected, currentPath, onPreview, 
           px="xs" py={6} style={{ position: "absolute", top: rowIndex * rowHeight, height: rowHeight, width: "100%", boxSizing: "border-box", userSelect: "none", cursor: "pointer", borderBottom: "1px solid var(--mantine-color-default-border)", background: isSelected(file) ? "var(--mantine-primary-color-light)" : focused === file.path ? "light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5))" : undefined }}>
           <Group wrap="nowrap" gap="xs">
             <Checkbox aria-label={`Include ${file.name}`} disabled={!indexedFileAvailable(file)} checked={isSelected(file)} onClick={(event) => event.stopPropagation()} onChange={() => select(file)} />
-            <Stack gap={1} style={{ flex: 1, minWidth: 0 }}><Tooltip label={file.name}><Text size="sm" fw={500} c={file.registered || file.root_status === "offline" ? "dimmed" : undefined} truncate><Highlight component="span" highlight={highlights}>{file.name}</Highlight></Text></Tooltip><Text size="xs" c="dimmed" truncate title={file.path}>{searchLocationName(file.root_path)}{folder !== file.relative_path ? ` / ${folder}` : ""}</Text>{explanation && <Tooltip label={explanation} multiline w={420} withArrow events={{ hover: true, focus: true, touch: false }}><Text size="xs" c={queryText.trim() ? undefined : "dimmed"} truncate tabIndex={0} aria-label={explanation}><Highlight component="span" highlight={highlights}>{explanation}</Highlight></Text></Tooltip>}</Stack>
+            <Stack gap={1} style={{ flex: 1, minWidth: 0 }}><Tooltip label={file.name}><Text size="sm" fw={500} c={file.registered || file.root_status === "offline" || file.readability_error ? "dimmed" : undefined} truncate><Highlight component="span" highlight={highlights}>{file.name}</Highlight></Text></Tooltip><Text size="xs" c="dimmed" truncate title={file.path}>{searchLocationName(file.root_path)}{folder !== file.relative_path ? ` / ${folder}` : ""}</Text>{explanation && <Tooltip label={explanation} multiline w={420} withArrow events={{ hover: true, focus: true, touch: false }}><Text size="xs" c={queryText.trim() ? undefined : "dimmed"} truncate tabIndex={0} aria-label={explanation}><Highlight component="span" highlight={highlights}>{explanation}</Highlight></Text></Tooltip>}</Stack>
             <Stack gap={1} align="flex-end"><Text size="xs" c="dimmed">{((file.size ?? 0) / 1048576).toFixed(2)} MB</Text><Text size="xs" c="dimmed" title={file.modified_at ?? undefined}>{file.modified_at ? `Modified ${new Date(file.modified_at).toLocaleDateString()}` : ""}</Text><Badge size="xs" variant="light" color={file.root_status === "offline" ? "red" : file.metadata_state === "unavailable" ? "orange" : "gray"}>{status}</Badge></Stack>
             <Tooltip label="Show in folder"><ActionIcon size="sm" variant="subtle" aria-label={`Show ${file.name} in folder`} onClick={(event) => { event.stopPropagation(); onReveal(file); }}><IconFolder size={16} /></ActionIcon></Tooltip>
             <Popover position="bottom-end" width={300} withinPortal><Popover.Target><ActionIcon size="sm" variant="subtle" aria-label={`Details for ${file.name}`} onClick={(event) => event.stopPropagation()}><IconInfoCircle size={16} /></ActionIcon></Popover.Target><Popover.Dropdown onClick={(event) => event.stopPropagation()}><Stack gap={4}><Text size="sm" fw={600}>{file.name}</Text><Text size="xs">{file.folder_count ?? "Unknown"} indexed compatible files in this folder{file.folder_count_partial ? " (partial index)" : ""}</Text>{file.cells?.map((cell) => <Button key={cell.id} onClick={onOpenEntity} component={Link} to={`/?cell=${cell.id}`} variant="subtle" size="compact-xs">Open Cell: {cell.name}</Button>)}{file.analyses?.map((a) => <Button key={a.id} onClick={onOpenEntity} component={Link} to={`/analyses/${a.id}`} variant="subtle" size="compact-xs">Open analysis: {a.name}</Button>)}{file.replicates?.map((r) => <Text size="xs" key={r.id}>Replicate: {r.name}</Text>)}{!file.registered && <Text size="xs" c="dimmed">No registered source at this known path.</Text>}<Button variant="default" size="xs" onClick={() => onReveal(file)}>Show in folder</Button></Stack></Popover.Dropdown></Popover>

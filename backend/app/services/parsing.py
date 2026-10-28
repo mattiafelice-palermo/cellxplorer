@@ -382,6 +382,12 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
     concise user-facing taxonomy is carried in ``error_message``.
     """
 
+    from . import source_readability
+
+    rejection = source_readability.known_rejection(path)
+    if rejection is not None:
+        error_type = UnsupportedSourceFormatError if rejection.kind == "unsupported" else InvalidSourceFormatError
+        raise error_type(rejection.error)
     suffix = Path(path).suffix.casefold()
     if suffix not in {".xlsx", ".mpr"}:
         return
@@ -490,6 +496,7 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
         "explicit_full_cycle",
         "protocol_loop_reconstruction",
         "non_repeating_cycle_1",
+        "verified_repeated_executions",
     }
 )
 
@@ -980,7 +987,7 @@ def mark_biologic_mpr_canonical(
                 "BioLogic canonical promotion requires exact adapter cycle provenance"
             )
         single_direction_verified = (
-            verified_source == "non_repeating_cycle_1"
+            verified_source in {"non_repeating_cycle_1", "verified_repeated_executions"}
             and bool(capabilities.get("single_direction_cycle_candidate"))
         )
         capabilities.update(
@@ -1039,7 +1046,7 @@ def mark_biologic_mpr_canonical(
                     "BioLogic canonical promotion requires exact adapter cycle provenance"
                 )
             declared_single_direction_verified = (
-                declared_verified_source == "non_repeating_cycle_1"
+                declared_verified_source in {"non_repeating_cycle_1", "verified_repeated_executions"}
                 and bool(declared_capabilities.get("single_direction_cycle_candidate"))
             )
             declared_capabilities.update(
@@ -1334,6 +1341,20 @@ def source_presentation(source: object) -> dict[str, object]:
 
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
+    """Parse canonically and retain only identity-stable adapter rejections."""
+    from . import source_readability
+
+    before = source_readability.file_identity(path)
+    try:
+        frame = _parse_source_timeseries(path)
+    except SourceFormatError as exc:
+        source_readability.remember_rejection(path, before, exc)
+        raise
+    source_readability.clear_success(path, before)
+    return frame
+
+
+def _parse_source_timeseries(path: str | Path) -> pd.DataFrame:
     """Full parse of a supported cycling source into a normalized DataFrame.
 
     This is the shared dispatch point for both binary and Excel sources, but

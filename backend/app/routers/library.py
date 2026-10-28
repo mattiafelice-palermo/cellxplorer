@@ -908,7 +908,7 @@ def _add_cross_source_cp_cycles(
         .filter(
             Test.cell_id.in_(ready_ids),
             func.lower(SourceFile.ext).in_(("mpr", ".mpr")),
-            func.lower(technique) == "cp",
+            func.lower(technique).in_(("cp", "gcpl")),
         )
         .group_by(Test.cell_id)
         .having(
@@ -942,6 +942,7 @@ def _add_cross_source_cp_cycles(
 
     for cell_id, source_rows in by_cell.items():
         source_summaries: list[dict | None] = []
+        execution_summaries: list[dict | None] = []
         for row in source_rows:
             extension = str(row.extension or "").casefold().lstrip(".")
             raw_technique = row.technique
@@ -958,6 +959,11 @@ def _add_cross_source_cp_cycles(
                         or decoded.get("type")
                     )
             is_cp = extension == "mpr" and str(raw_technique or "").strip().casefold() == "cp"
+            is_gcpl = extension == "mpr" and str(raw_technique or "").strip().casefold() == "gcpl"
+            execution_summaries.append(
+                cache.load_biologic_gcpl_execution_summary(str(row.file_hash), str(row.parser_version))
+                if is_gcpl and row.file_hash and row.parser_version else None
+            )
             if is_cp and row.file_hash and row.parser_version:
                 raw_path = cache.raw_path(str(row.file_hash), str(row.parser_version))
                 if raw_path.is_file():
@@ -970,9 +976,18 @@ def _add_cross_source_cp_cycles(
                     source_summaries.append(None)
             else:
                 source_summaries.append(None)
-        if not any(value is not None for value in source_summaries):
+        if not any(value is not None for value in source_summaries + execution_summaries):
             continue
         paired = _cp_pair_capacity_totals(source_summaries)
+        from ..services import biologic_gcpl_executions
+
+        executions = biologic_gcpl_executions.paired_capacity_totals(execution_summaries)
+        paired["count"] = int(paired["count"] or 0) + int(executions["count"] or 0)
+        for key in ("total_charge_capacity_mah", "total_discharge_capacity_mah"):
+            values = [value for value in (paired[key], executions[key]) if value is not None]
+            paired[key] = sum(values) if values else None
+        maxima = [value for value in (paired["max_discharge_capacity_mah"], executions["max_discharge_capacity_mah"]) if value is not None]
+        paired["max_discharge_capacity_mah"] = max(maxima) if maxima else None
         summaries[cell_id]["total_cycles"] += int(paired["count"] or 0)
         if not summaries[cell_id]["summary_ready"]:
             continue

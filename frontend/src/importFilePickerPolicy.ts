@@ -9,6 +9,7 @@ export type ImportHeaderHint = {
   compatible?: boolean | null;
   registered?: boolean;
   error: string | null;
+  source_error_kind?: "unsupported" | "invalid" | null;
 };
 
 export type ImportBrowserSortKey =

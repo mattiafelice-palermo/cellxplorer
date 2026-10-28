@@ -486,6 +486,30 @@ actually drives the frontend selector. `cycling_rows`,
 `absolute_timestamps` and `declared_protocol` remain documentation-only
 reserved names; no consumer computes them yet.
 
+## Repeated BioLogic executions
+
+The `gcpl15` adapter can label independently evidenced returns to one declared
+active GCPL operation. These positive source-local labels identify executions,
+not complete cycles: each source remains display-only until pairing is proven.
+The bounded profile checks rest-to-active flags, clock gaps, direction and
+counter continuity. It preserves programmed `step_index` while assigning distinct
+executed `step` identities and resetting step-local time/capacity.
+
+`biologic_gcpl_executions.py` owns cross-source pairing. Only an adjacent, complete,
+two-source acquisition cohort with matching instrument/channel/clock provenance,
+non-overlapping ranges and alternating polarity can pair charge followed by the
+next discharge. Leading discharge and trailing charge stay incomplete. Extra
+same-acquisition fragments invalidate the whole cohort. Filenames, source order,
+equal execution counts and half-cycle parity never establish pairing.
+
+The raw-layout index stores bounded execution evidence checked against Parquet
+provenance. Stitching, Cycles, continued-import previews and analysis share the
+same pairing. Indexed Time/Capacity deliberately falls back to exact full stitch
+for eligible cohorts; ordinary sources retain their selective paths. Preview
+execution boundaries survive sampling as `display_break_before` indices and
+become null separators in both plot coordinates. `CALC_VERSION 1.6.5` conservatively
+invalidates derived Cell results for this acquisition-based cycle interpretation.
+
 ## Where validation runs
 
 `canonical_cycling.validate_raw_timeseries` is called in `cache.py`, in both

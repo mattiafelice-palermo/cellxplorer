@@ -484,6 +484,7 @@ export function ContinuedImportEditor({
         x: segment.x,
         voltage: segment.y,
         current: segment.current_ma,
+        breakBefore: segment.display_break_before,
         name: segment.filename,
         voltageColor: colors[segment.source_key] ?? "#12b886",
         opacity: segment.source_key === selectedSourceKey ? 1 : 0.62,

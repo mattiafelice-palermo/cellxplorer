@@ -12,6 +12,8 @@ export interface SearchRootState {
 }
 export interface FileSearchSettings { config: FileSearchConfig; roots: SearchRootState[]; revision?: number }
 export interface IndexedFile extends ImportBrowseEntry {
+  readability_error?: string | null;
+  source_error_kind?: "unsupported" | "invalid" | null;
   canonical: string; relative_path: string; root_id: string; root_path: string; root_status: string; extension: string;
   supplier: string; recognition: string; metadata_state: string; metadata: Record<string, string>; registered: boolean;
   cells?: { id: number; name: string }[]; analyses?: { id: number; name: string }[]; replicates?: { id: number; name: string }[];
@@ -28,10 +30,11 @@ export interface FileSearchResults {
   relationships?: { analyses: { id: number; name: string }[]; replicates: { id: number; name: string }[] };
 }
 export function indexedFileAvailable(file: IndexedFile) {
-  return file.recognition === "recognized" && !file.registered && file.root_status !== "offline";
+  return file.recognition === "recognized" && !file.registered && file.root_status !== "offline" && !file.readability_error;
 }
 export function indexedFileStatus(file: IndexedFile) {
   if (file.root_status === "offline") return "Location unavailable";
+  if (file.readability_error) return "Cannot import";
   if (file.registered) return "Already in Cell Database";
   if (file.recognition === "pending") return file.metadata_state === "unavailable" ? "Refresh to check format" : "Checking format";
   if (file.metadata_state === "pending") return "Indexing metadata";
