@@ -68,6 +68,15 @@ the action. A unique legacy HKLM installation retains its machine scope and
 exact directory and legitimately elevates. An update never falls back to a
 fresh user copy. Command-line scope/directory options select and verify the
 registry identity; they cannot authorize an arbitrary elevated destination.
+
+NSIS stores its installer-language preference in the HKCU manufacturer product
+key, including for machine installs, so that key can exist without an install
+location. The updater treats a missing default value as absent only when there
+is no matching Uninstall registration. If an Uninstall record exists, a missing
+manufacturer location remains an incomplete installation and is rejected;
+wrong value types, registry access errors, malformed paths, and conflicting
+records also remain fail-closed.
+
 Old keep-data uninstallers may leave a manufacturer path: it is ignored only
 when neither application nor uninstaller exists and the Uninstall record is
 absent. New uninstallers remove matching installation registration in both

@@ -182,6 +182,15 @@ elevate explicitly. Stock `both`/Highest elevates fresh user setup too. Never
 trust scope/path flags as arbitrary machine write targets, or elevated HKCU/
 LocalAppData/profile as the original standard user's state.
 
+The NSIS language preference can leave an HKCU manufacturer product key with
+no default install-location value, including alongside a machine install.
+Treat only a missing default as absent when no Uninstall record exists; keep an
+Uninstall record without that location fail-closed. Regression tests must run
+the registry reader against unique disposable HKCU fixtures, not only parsed
+`InstallationRecord` values. HKCU `Software` views were shared on the reviewed
+Windows host; conflict fixtures should use disjoint subkeys rather than depend
+on same-path values diverging between WOW64 views.
+
 Tauri updater 2.10.1's Windows install method ignores ShellExecuteW's result
 and exits after its before-exit hook. The standard self-updater therefore keeps
 Tauri check/download signature verification but uses a checked Windows launcher

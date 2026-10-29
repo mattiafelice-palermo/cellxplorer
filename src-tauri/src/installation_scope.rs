@@ -96,22 +96,43 @@ pub fn update_installer_arguments(identity: &InstallationIdentity, args: &[Strin
 fn encode_hex(bytes: &[u8]) -> String { bytes.iter().map(|byte| format!("{byte:02x}")).collect() }
 
 #[cfg(windows)]
-fn registered_records(channel: AppChannel) -> Result<Vec<InstallationRecord>, String> {
-    use winreg::{enums::*, RegKey};
+struct RegistryRoot {
+    root: winreg::RegKey,
+    scope: InstallScope,
+    uninstall_path: String,
+    manufacturer_path: String,
+}
+
+#[cfg(windows)]
+fn registry_key_if_present<T>(result: std::io::Result<T>) -> Result<Option<T>, String> {
+    match result {
+        Ok(key) => Ok(Some(key)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Could not read installation scope from the registry.".into()),
+    }
+}
+
+#[cfg(windows)]
+fn optional_manufacturer_location(key: Option<&winreg::RegKey>) -> Result<Option<String>, String> {
+    let Some(key) = key else { return Ok(None); };
+    match key.get_value::<String, _>("") {
+        Ok(location) => Ok(Some(location)),
+        // NSIS also stores its language preference in this product key. That
+        // metadata-only key has no default value and is not an installation.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("The registered installation location is invalid.".into()),
+    }
+}
+
+#[cfg(windows)]
+fn registered_records_from_roots(roots: &[RegistryRoot]) -> Result<Vec<InstallationRecord>, String> {
+    use winreg::enums::*;
     let mut records = Vec::new();
-    for (hive, scope) in [(HKEY_CURRENT_USER, InstallScope::User), (HKEY_LOCAL_MACHINE, InstallScope::Machine)] {
+    for registry_root in roots {
         for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
-            let root = RegKey::predef(hive);
-            let uninstall = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}", channel.product_name());
-            let manufacturer = format!("Software\\cellxplorer\\{}", channel.product_name());
-            let read = |path: &str| -> Result<Option<RegKey>, String> {
-                match root.open_subkey_with_flags(path, KEY_READ | view) {
-                    Ok(key) => Ok(Some(key)), Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                    Err(_) => Err("Could not read installation scope from the registry.".into()),
-                }
-            };
-            let key = read(&uninstall)?;
-            let location = read(&manufacturer)?.map(|key| key.get_value::<String, _>("")).transpose().map_err(|_| "The registered installation location is invalid.")?;
+            let key = registry_key_if_present(registry_root.root.open_subkey_with_flags(&registry_root.uninstall_path, KEY_READ | view))?;
+            let manufacturer = registry_key_if_present(registry_root.root.open_subkey_with_flags(&registry_root.manufacturer_path, KEY_READ | view))?;
+            let location = optional_manufacturer_location(manufacturer.as_ref())?;
             if key.is_none() && location.is_none() { continue; }
             if key.is_none() {
                 // Legacy keep-data uninstallers left this value. Ignore only
@@ -121,12 +142,12 @@ fn registered_records(channel: AppChannel) -> Result<Vec<InstallationRecord>, St
             }
             let key = key.ok_or("The installation registry record is incomplete.")?;
             match key.get_value::<String, _>("InstallScope") {
-                Ok(value) if value == if scope == InstallScope::User { "user" } else { "machine" } => {},
+                Ok(value) if value == if registry_root.scope == InstallScope::User { "user" } else { "machine" } => {},
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
                 _ => return Err("The registered installation scope conflicts with its registry hive.".into()),
             }
             records.push(InstallationRecord {
-                scope,
+                scope: registry_root.scope,
                 install_location: key.get_value("InstallLocation").map_err(|_| "The installation registry record has no location.")?,
                 manufacturer_location: location.ok_or("The installation manufacturer record is missing.")?,
                 main_binary: key.get_value("MainBinaryName").map_err(|_| "The installation registry record has no application identity.")?,
@@ -135,6 +156,18 @@ fn registered_records(channel: AppChannel) -> Result<Vec<InstallationRecord>, St
         }
     }
     Ok(records)
+}
+
+#[cfg(windows)]
+fn registered_records(channel: AppChannel) -> Result<Vec<InstallationRecord>, String> {
+    use winreg::{enums::*, RegKey};
+    let uninstall_path = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}", channel.product_name());
+    let manufacturer_path = format!("Software\\cellxplorer\\{}", channel.product_name());
+    let roots = [
+        RegistryRoot { root: RegKey::predef(HKEY_CURRENT_USER), scope: InstallScope::User, uninstall_path: uninstall_path.clone(), manufacturer_path: manufacturer_path.clone() },
+        RegistryRoot { root: RegKey::predef(HKEY_LOCAL_MACHINE), scope: InstallScope::Machine, uninstall_path, manufacturer_path },
+    ];
+    registered_records_from_roots(&roots)
 }
 
 #[cfg(windows)]
@@ -253,5 +286,184 @@ mod tests {
         assert!(quote_windows_argument("trailing\\").unwrap().ends_with("\\\\\""));
         assert!(update_installer_arguments(&identity, &["long".repeat(200)]).is_err());
         assert!(update_installer_arguments(&identity, &["€".repeat(200)]).is_err());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod registry_reader_tests {
+    use super::*;
+    use std::{sync::atomic::{AtomicU64, Ordering}, time::{SystemTime, UNIX_EPOCH}};
+    use winreg::{enums::*, RegKey};
+
+    // HKCU\Software can be shared across WOW64 views. Fixture identities use
+    // distinct subkeys so conflict coverage does not depend on view isolation.
+    const VIEWS: [u32; 2] = [KEY_WOW64_64KEY, KEY_WOW64_32KEY];
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    struct FixtureNamespace { path: String }
+
+    impl FixtureNamespace {
+        fn new() -> Self {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+            let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let path = format!("Software\\CellXplorerRegistryReaderTests-{}-{now}-{sequence}", std::process::id());
+            let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(&path).expect("create isolated HKCU fixture namespace");
+            drop(key);
+            Self { path }
+        }
+
+        fn root(&self, label: &str, scope: InstallScope) -> RegistryRoot {
+            let prefix = format!("{}\\{label}", self.path);
+            RegistryRoot {
+                root: RegKey::predef(HKEY_CURRENT_USER),
+                scope,
+                uninstall_path: format!("{prefix}\\Uninstall"),
+                manufacturer_path: format!("{prefix}\\Manufacturer"),
+            }
+        }
+    }
+
+    impl Drop for FixtureNamespace {
+        fn drop(&mut self) {
+            // Delete only the unique subtree created by this test fixture.
+            let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&self.path);
+        }
+    }
+
+    fn create_fixture_key(path: &str, view: u32) -> RegKey {
+        let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
+            .create_subkey_with_flags(path, KEY_READ | KEY_WRITE | view)
+            .expect("create key inside the disposable HKCU fixture namespace");
+        key
+    }
+
+    fn write_language_only_key(root: &RegistryRoot, view: u32) {
+        let key = create_fixture_key(&root.manufacturer_path, view);
+        key.set_value("Installer Language", &"1033".to_owned()).expect("write fixture language metadata");
+    }
+
+    fn write_registration(root: &RegistryRoot, view: u32, path: &str, manufacturer_default: bool) {
+        let uninstall = create_fixture_key(&root.uninstall_path, view);
+        let quoted_path = format!("\"{path}\"");
+        let scope = if root.scope == InstallScope::User { "user" } else { "machine" };
+        uninstall.set_value("InstallLocation", &quoted_path).unwrap();
+        uninstall.set_value("InstallScope", &scope).unwrap();
+        uninstall.set_value("MainBinaryName", &"cellxplorer.exe".to_owned()).unwrap();
+        uninstall.set_value("BundleId", &crate::app_channel::ALPHA_IDENTIFIER.to_owned()).unwrap();
+        if manufacturer_default {
+            let manufacturer = create_fixture_key(&root.manufacturer_path, view);
+            manufacturer.set_value("", &path.to_owned()).unwrap();
+        }
+    }
+
+    #[test]
+    fn language_only_hkcu_key_does_not_hide_machine_like_registration_in_either_view() {
+        let fixture = FixtureNamespace::new();
+        let user = fixture.root("UserFixture", InstallScope::User);
+        let machine = fixture.root("MachineFixture", InstallScope::Machine);
+        for view in VIEWS {
+            write_language_only_key(&user, view);
+            write_registration(&machine, view, "C:\\Alpha\\Fixture", true);
+        }
+
+        let records = registered_records_from_roots(&[user, machine]).unwrap();
+        assert_eq!(records.len(), 2, "the valid duplicate-view registration should be collected");
+        let identity = registered_identity(AppChannel::Alpha, &records).unwrap();
+        assert_eq!(identity.scope, InstallScope::Machine);
+        assert_eq!(identity.directory, "C:\\Alpha\\Fixture");
+    }
+
+    #[test]
+    fn absent_keys_and_language_key_without_default_are_not_installations() {
+        let fixture = FixtureNamespace::new();
+        let empty = fixture.root("EmptyFixture", InstallScope::User);
+        let metadata_only = fixture.root("MetadataFixture", InstallScope::User);
+        write_language_only_key(&metadata_only, KEY_WOW64_32KEY);
+
+        assert!(registered_records_from_roots(&[empty]).unwrap().is_empty());
+        assert!(registered_records_from_roots(&[metadata_only]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn uninstall_registration_without_manufacturer_default_remains_incomplete() {
+        let fixture = FixtureNamespace::new();
+        let machine = fixture.root("IncompleteFixture", InstallScope::Machine);
+        write_registration(&machine, KEY_WOW64_64KEY, "C:\\Alpha\\Fixture", false);
+        write_language_only_key(&machine, KEY_WOW64_64KEY);
+
+        let error = registered_records_from_roots(&[machine]).unwrap_err();
+        assert_eq!(error, "The installation manufacturer record is missing.");
+    }
+
+    #[test]
+    fn malformed_and_non_string_manufacturer_defaults_remain_rejected() {
+        let fixture = FixtureNamespace::new();
+        let malformed = fixture.root("MalformedFixture", InstallScope::User);
+        let malformed_key = create_fixture_key(&malformed.manufacturer_path, KEY_WOW64_64KEY);
+        malformed_key.set_value("", &"relative\\path".to_owned()).unwrap();
+        assert!(registered_records_from_roots(&[malformed]).is_err());
+
+        let non_string = fixture.root("NonStringFixture", InstallScope::User);
+        let non_string_key = create_fixture_key(&non_string.manufacturer_path, KEY_WOW64_32KEY);
+        non_string_key.set_value("", &1033u32).unwrap();
+        let error = registered_records_from_roots(&[non_string]).unwrap_err();
+        assert_eq!(error, "The registered installation location is invalid.");
+    }
+
+    #[test]
+    fn registry_access_errors_are_not_downgraded_to_missing_keys() {
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "fixture key missing");
+        assert!(registry_key_if_present::<()>(Err(missing)).unwrap().is_none());
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "fixture access denied");
+        assert_eq!(registry_key_if_present::<()>(Err(denied)).unwrap_err(), "Could not read installation scope from the registry.");
+    }
+
+    #[test]
+    fn restricted_registry_handle_cannot_turn_a_read_error_into_missing_location() {
+        let fixture = FixtureNamespace::new();
+        let machine = fixture.root("RestrictedFixture", InstallScope::Machine);
+        let writable = create_fixture_key(&machine.manufacturer_path, KEY_WOW64_64KEY);
+        writable.set_value("", &"C:\\Alpha\\Fixture".to_owned()).unwrap();
+        drop(writable);
+        let restricted = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey_with_flags(&machine.manufacturer_path, KEY_SET_VALUE | KEY_WOW64_64KEY)
+            .expect("reopen only the disposable fixture key with write-only value access");
+
+        let error = optional_manufacturer_location(Some(&restricted)).unwrap_err();
+        assert_eq!(error, "The registered installation location is invalid.");
+    }
+
+    #[test]
+    fn conflicting_disjoint_fixture_roots_remain_rejected() {
+        let fixture = FixtureNamespace::new();
+        let first = fixture.root("FirstMachineFixture", InstallScope::Machine);
+        let second = fixture.root("SecondMachineFixture", InstallScope::Machine);
+        write_registration(&first, KEY_WOW64_64KEY, "C:\\Alpha\\First", true);
+        write_registration(&second, KEY_WOW64_32KEY, "C:\\Alpha\\Second", true);
+
+        match RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(&first.uninstall_path, KEY_READ | KEY_WOW64_32KEY) {
+            Ok(_) => eprintln!("HKCU Software fixture keys are visible across WOW64 views on this host."),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => eprintln!("HKCU Software fixture keys are isolated by WOW64 view on this host."),
+            Err(error) => panic!("could not inspect the disposable fixture's alternate registry view: {error}"),
+        }
+
+        let records = registered_records_from_roots(&[first, second]).unwrap();
+        assert!(records.len() >= 2);
+        assert!(records.iter().any(|record| record.install_location.contains("First")));
+        assert!(records.iter().any(|record| record.install_location.contains("Second")));
+        assert!(registered_identity(AppChannel::Alpha, &records).is_err());
+    }
+
+    #[test]
+    fn dropping_fixture_removes_its_unique_hkcu_namespace() {
+        let fixture = FixtureNamespace::new();
+        let path = fixture.path.clone();
+        let key = create_fixture_key(&format!("{path}\\OwnedValue"), KEY_WOW64_64KEY);
+        key.set_value("Marker", &"test-only".to_owned()).unwrap();
+        drop(key);
+        drop(fixture);
+
+        let result = RegKey::predef(HKEY_CURRENT_USER).open_subkey(&path);
+        assert!(matches!(result, Err(ref error) if error.kind() == std::io::ErrorKind::NotFound));
     }
 }

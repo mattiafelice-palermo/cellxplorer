@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.10 - 2026-10-29
+
+### Bug fixes
+
+- Allow Alpha updates when the HKCU product key contains installer-language metadata but no default install location; incomplete, malformed, and conflicting registrations remain rejected.
+- Alpha 0.28.0-alpha.8 and .9 installations affected by this error need a one-time manual download and installer run to bootstrap future updates.
+
 ## 0.28.0-alpha.9 - 2026-10-29
 
 ### New features
