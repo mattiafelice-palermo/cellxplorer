@@ -290,9 +290,14 @@ Function CxPrepareRecovery
     ${EndIf}
     System::Call 'kernel32::PeekNamedPipe(p $CxRecoveryPipe, p 0, i 0, p 0, p 0, p 0)i.r1'
     ${If} $1 == 0
-      ; Handle simultaneous server closure/process exit without mistaking an
-      ; earlier cancellation for permission to install on some later user exit.
-      System::Call 'kernel32::WaitForSingleObject(p $CxRecoveryParent, i 0)i.r0'
+      ; E is final installation authorization. ExitProcess closes handles BEFORE
+      ; signaling the process object. Allow ONE 100-ms settlement wait after an
+      ; observed disconnect, never a renewed deadline or a later unrelated exit.
+      ; Pre-E disconnects still fail in CxRecoveryReadExpected without this wait.
+      !ifmacrodef CX_RECOVERY_TEST_EXIT_SETTLEMENT
+        !insertmacro CX_RECOVERY_TEST_EXIT_SETTLEMENT
+      !endif
+      System::Call 'kernel32::WaitForSingleObject(p $CxRecoveryParent, i 100)i.r0'
       ${If} $0 == 0
         ${ExitDo}
       ${EndIf}

@@ -37,6 +37,12 @@ ${{StrLoc}}
 {('!define CX_RECOVERY_ELEVATION_VERB "open"' if relay else '')}
 Var UpdateMode
 Var CxExisting
+; Diagnostic hook only in this harmless compiler fixture, never in production.
+!macro CX_RECOVERY_TEST_EXIT_SETTLEMENT
+  FileOpen $6 "{output / 'settlement-started.txt'}" w
+  FileWrite $6 "observed post-E disconnect; one settlement wait follows"
+  FileClose $6
+!macroend
 !include "{ROOT / 'src-tauri/update_recovery.nsh'}"
 OutFile "{executable}"
 Function CxScopeError
@@ -109,6 +115,9 @@ def run_case(output: Path, parent: Path, case: str) -> dict:
     # NSIS is allowed past the handshake; the outer Python process observes it.
     command = r'''
 $ErrorActionPreference = 'Stop'
+if ('CASE' -eq 'exit-inside-settlement') {
+  Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CxFixtureExit { [DllImport("kernel32.dll")] private static extern bool TerminateProcess(IntPtr process, uint code); public static void ExitNow() { if (!TerminateProcess(new IntPtr(-1), 0)) throw new InvalidOperationException("Fixture termination failed"); } }'
+}
 $nonce = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $pipe = [IO.Pipes.NamedPipeServerStream]::new(('CellXplorerRecovery-' + $nonce), [IO.Pipes.PipeDirection]::InOut, 1, [IO.Pipes.PipeTransmissionMode]::Message, [IO.Pipes.PipeOptions]::Asynchronous, 64, 64)
 $connection = $pipe.BeginWaitForConnection($null, $null)
@@ -143,7 +152,7 @@ if ('CASE' -like 'wrong-*') {
   $pipe.EndWaitForConnection($connection)
   if ((Read-One) -ne 82) { throw 'Readiness was not acknowledged' }
   if (Test-Path -LiteralPath 'MARKER') { throw 'Destructive phase ran before COMMIT' }
-  if ('CASE' -eq 'commit' -or 'CASE' -eq 'origin-hangs' -or 'CASE' -eq 'cancel-after-ack' -or 'CASE' -eq 'disconnect-after-exit-authorization') {
+  if ('CASE' -eq 'commit' -or 'CASE' -eq 'origin-hangs' -or 'CASE' -eq 'cancel-after-ack' -or 'CASE' -eq 'disconnect-after-exit-authorization' -or 'CASE' -eq 'exit-inside-settlement' -or 'CASE' -eq 'exit-after-settlement') {
     $pipe.WriteByte(67); $pipe.Flush()
     if ((Read-One) -ne 65) { throw 'COMMIT was not acknowledged' }
     if ('CASE' -eq 'cancel-after-ack') {
@@ -152,7 +161,18 @@ if ('CASE' -like 'wrong-*') {
       if (Test-Path -LiteralPath 'MARKER') { throw 'Cancelled attempt installed before later origin exit' }
     } else {
       $pipe.WriteByte(69); $pipe.Flush()
-      if ('CASE' -eq 'disconnect-after-exit-authorization') {
+      if ('CASE' -eq 'exit-inside-settlement') {
+        $pipe.Dispose()
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (-not [IO.File]::Exists('SETTLEMENT')) {
+          if ([DateTime]::UtcNow -ge $deadline) { throw 'Installer did not observe the final-E disconnect' }
+          [Threading.Thread]::Sleep(1)
+        }
+        if (Test-Path -LiteralPath 'MARKER') { throw 'Settlement installed before actual origin exit' }
+        [CxFixtureExit]::ExitNow()
+        throw 'Fixture process unexpectedly survived termination'
+      }
+      if ('CASE' -eq 'disconnect-after-exit-authorization' -or 'CASE' -eq 'exit-after-settlement') {
         $pipe.Dispose()
         Start-Sleep -Milliseconds 250
         if (-not $process.WaitForExit(10000) -or $process.ExitCode -ne 2) { throw 'Disconnected armed attempt survived until later origin exit' }
@@ -181,7 +201,7 @@ if ('CASE' -eq 'commit') {
   $pipe.SafePipeHandle.SetHandleAsInvalid()
 } else { $pipe.Dispose() }
 '''
-    for old, new in {"CASE": case, "EXECUTABLE": str(executable).replace("'", "''"), "MARKER": str(marker).replace("'", "''"), "OUTERPID": str(os.getpid()), "PAYLOADHASH": hashlib.sha256(executable.read_bytes()).hexdigest()}.items():
+    for old, new in {"CASE": case, "EXECUTABLE": str(executable).replace("'", "''"), "MARKER": str(marker).replace("'", "''"), "SETTLEMENT": str(output / 'settlement-started.txt').replace("'", "''"), "OUTERPID": str(os.getpid()), "PAYLOADHASH": hashlib.sha256(executable.read_bytes()).hexdigest()}.items():
         command = command.replace(old, new)
     encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
     result = subprocess.run([str(parent), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], capture_output=True, timeout=35)
@@ -190,12 +210,15 @@ if ('CASE' -eq 'commit') {
         diagnostic = evidence.read_text(encoding='utf-8', errors='replace') if evidence.exists() else 'no installer diagnostic'
         raise RuntimeError(f"Recovery {case} failed ({diagnostic}): {result.stdout!r} {result.stderr!r}")
     deadline = time.monotonic() + 5
-    while case == "commit" and not marker.exists() and time.monotonic() < deadline:
+    should_commit = case in {"commit", "exit-inside-settlement"}
+    while should_commit and not marker.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
-    if marker.exists() != (case == "commit"):
+    if marker.exists() != should_commit:
         evidence = output / 'recovery-error.txt'
         diagnostic = evidence.read_text(encoding='utf-8', errors='replace') if evidence.exists() else 'no installer diagnostic'
         raise RuntimeError(f"Recovery {case}: incorrect post-handshake file state ({diagnostic})")
+    if case in {"exit-inside-settlement", "exit-after-settlement"} and not (output / 'settlement-started.txt').exists():
+        raise RuntimeError(f"Recovery {case}: did not exercise the settlement branch")
     return {"case": case, "passed": True, "post_exit_commit": marker.exists()}
 
 
@@ -271,7 +294,7 @@ def main() -> None:
     scratch = ROOT / "tmp"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="recovery-policy-", dir=scratch) as directory:
-        rows = [run_case(Path(directory) / case, parent, case) for case in ["commit", "cancel", "wrong-origin", "wrong-process", "wrong-version", "wrong-channel", "wrong-hash", "invalid-commit", "disconnected", "origin-hangs", "cancel-after-ack", "disconnect-after-exit-authorization"]]
+        rows = [run_case(Path(directory) / case, parent, case) for case in ["commit", "cancel", "wrong-origin", "wrong-process", "wrong-version", "wrong-channel", "wrong-hash", "invalid-commit", "disconnected", "origin-hangs", "cancel-after-ack", "disconnect-after-exit-authorization", "exit-inside-settlement", "exit-after-settlement"]]
         rows.append(run_relay_case(Path(directory) / "relay", parent))
         rows.append(run_prelock_replacement_case(Path(directory) / "pre-lock", parent))
         # Exercise the actual Rust launcher, kernel peer authentication, byte and

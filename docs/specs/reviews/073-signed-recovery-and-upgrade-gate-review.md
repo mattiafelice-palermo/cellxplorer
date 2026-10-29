@@ -2,7 +2,7 @@
 
 Reviewer: GPT-6 Astra Medium. Date: 2026-10-29.
 Branch: `codex/signed-recovery-bootstrap`.
-Verdict: **BLOCKED for final integration.** Earlier checkpoint reviews passed, but hosted rehearsal exposed a confirmed process-exit ordering race. The final-E acceptance amendment below requires user decision before correction and re-review; the native matrix remains unaccepted.
+Verdict: **PASS for the final approved amendment.** Astra Medium found no remaining actionable code blockers. Hosted native install acceptance remains mandatory before integration.
 
 ## Reviewed scope
 
@@ -18,9 +18,9 @@ native installer gate, cryptographic artifact verification and publication order
   before installed-file mutation; rejected pre-section WiX recovery migration.
 - Added expected payload channel/version/hash binding, full command-length bounds,
   explicit original-user SID permissions and remote-client rejection.
-- Added ACK and post-ACK exit authorization; a disconnected/cancelled attempt
-  aborts immediately while the origin remains alive, rather than installing on
-  a later exit. Successful client ownership lasts through actual OS termination.
+- Added ACK and post-ACK exit authorization; pre-E cancellation aborts. The
+  user-approved final-E settlement contract below supersedes the initial
+  immediate post-E disconnect check. Ownership lasts through OS termination.
 - The relay locks its executable and staging directory, hashes its locked bytes
   before elevation, and supervises the checked elevated child's full lifetime.
 - Serialized in-flight preparation and restored verified state/revisions on failure.
@@ -115,13 +115,22 @@ immediate broken-pipe/Wait(0) check can false-abort an actual production exit.
 Astra Medium confirmed the issue and corrected the earlier immediate-check
 approval. Existing green runs do not establish reliability of this ordering.
 
-Proposed amendment awaiting explicit user decision: final E becomes irreversible
+User-approved amendment (2026-10-29): final E becomes irreversible
 installation authorization; after observing a post-E disconnect, allow exactly
 one non-resetting 100-ms wait on the authenticated origin handle. Install only if
 the process signals, otherwise permanently abort the session. This accepts an
 exit inside that observed-disconnect window; it is not unchanged immediate
 cancellation semantics and does not prove the disconnect was caused by exit.
-Pre-E cancellation stays strict. Review final-E placement so cancellable/fallible
-preparation precedes it. Tests must cover pre-E cancellation, no-exit disconnect,
-inside-window exit and later exit after permanent expiry. No amendment or grace
-has been implemented; no merge, tag, new release or feed change was performed.
+Pre-E cancellation stays strict. Rust commit now completes C/ACK only, with E
+sent by the calling thread after final peer validation and directly before
+backend/app shutdown. Failed E retains retry state and the backend; successful
+E has no restore-to-operational branch. Local native17 fixtures passed, including
+an observed disconnect followed by exit inside the settlement window and a later
+exit after permanent expiry. The diagnostic compile-time fixture hook is absent
+from production installers. Focused updater/gate/workflow tests passed (131).
+Final Astra Medium code review passed with no actionable blockers; reviewer also
+ran 19 updater-configuration tests and checked the diff independently. Full Rust73,
+three-channel NSIS compilation/policy, six repeated positive/observed-settlement
+cases and canonical no-cache preflight (4/4, 201 files/modules, four workers,
+133.84 seconds) passed. Hosted native matrix acceptance remains pending. No merge,
+tag, new release or feed change has been performed at this checkpoint.

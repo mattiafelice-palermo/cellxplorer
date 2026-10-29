@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut prepared = update_recovery::prepare_verified_recovery(&bytes, "1.0.0", "stable")
         .map_err(std::io::Error::other)?;
     prepared.commit().map_err(std::io::Error::other)?;
+    prepared.authorize_exit().map_err(std::io::Error::other)?;
     std::mem::forget(prepared);
     Ok(())
 }

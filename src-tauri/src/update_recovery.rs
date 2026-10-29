@@ -288,6 +288,7 @@ mod windows {
         _launcher: Handle,
         pipe: Handle,
         peer: Handle,
+        acknowledged: bool,
     }
     impl PreparedRecovery {
         pub fn is_alive(&self) -> bool {
@@ -319,9 +320,17 @@ mod windows {
             if !self.is_alive() {
                 return Err("The installer stopped before acknowledging handoff. The application remains open.".into());
             }
-            // A late ACK must not arm a cancelled attempt. Authorize waiting for
-            // exit only after this client actually consumed its acknowledgement.
-            written = 0;
+            self.acknowledged = true;
+            Ok(())
+        }
+        pub fn authorize_exit(&mut self) -> Result<(), String> {
+            // E is irreversible installation consent, not readiness. All
+            // cancellable/fallible preparation and ACK validation precede it.
+            // The caller must proceed straight to backend/app shutdown on success.
+            if !self.acknowledged || !self.is_alive() {
+                return Err("The installer is not ready for final authorization. The application remains open.".into());
+            }
+            let mut written = 0;
             if unsafe {
                 WriteFile(
                     self.pipe.0,
@@ -337,6 +346,7 @@ mod windows {
                     "Could not authorize application exit. The application remains open.".into(),
                 );
             }
+            self.acknowledged = false;
             Ok(())
         }
     }
@@ -445,6 +455,7 @@ mod windows {
         let peer = authenticate_peer(&pipe, &path)?;
         read_byte(&pipe, Some(&peer), b'R', Duration::from_secs(120))?;
         Ok(PreparedRecovery {
+            acknowledged: false,
             _stage: stage.keep(),
             _locked_bytes: file,
             _locked_directory: locked_directory,

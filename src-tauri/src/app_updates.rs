@@ -361,11 +361,13 @@ pub async fn install_app_update(
         }).await.unwrap_or_else(|error| Err(format!("Installer preparation could not finish: {error}")));
         let bytes = std::sync::Arc::try_unwrap(shared_bytes).unwrap_or_else(|shared| (*shared).clone());
         match handoff {
-            Ok(prepared) => {
-                if !prepared.is_alive() {
+            Ok(mut prepared) => {
+                if let Err(error) = prepared.authorize_exit() {
                     if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
-                    return Err("The installer stopped after acknowledgement. The application remains open.".into());
+                    return Err(error);
                 }
+                // Final consent succeeded. No retry/restore/cancellation branch
+                // is allowed beyond this point; shutdown itself is infallible.
                 crate::prepare_exit_for_update(&app);
                 // AppHandle::exit queues termination. Keep the authenticated pipe
                 // and staging locks owned until actual OS process termination.

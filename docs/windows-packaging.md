@@ -273,6 +273,15 @@ The relay hashes its locked executable before elevation and retains independent
 locks until its checked elevated child exits; client timeout alone cannot release
 the relay's pathname protection.
 
+Final E is irreversible installation authorization, sent only after C/ACK and
+all retryable preparation, immediately before backend/app shutdown. Windows
+closes process handles before signaling its process object, so an observed
+post-E pipe break allows exactly one non-resetting 100-ms wait on the authenticated
+origin process. Writes require that process to signal; expiry permanently aborts
+the session. Pre-E cancellation is unchanged. Native fixtures explicitly cover
+exit inside the settlement window and rejection after expiry; their diagnostic
+compile-time hook is absent from shipped installers.
+
 **Coverage boundary:** hosted Windows is elevated and UAC-disabled. The native
 matrix invokes the candidate installer `/UPDATE` path; it does **not** execute the
 prior installed Rust updater's reader/launcher or prove its pre-launch behavior.

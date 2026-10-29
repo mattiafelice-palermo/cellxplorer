@@ -206,8 +206,8 @@ after new-payload scope discovery and before any uninstall/process-stop/copy pha
 It binds the existing destination to the live originating process. A named pipe
 authenticates both process IDs; the client additionally pins the responder to the
 locked staged image. READY, COMMIT, explicit ACK and client exit authorization
-precede shutdown; cancellation/disconnection while the origin remains alive
-aborts rather than waiting for a later unrelated exit. The successful client keeps
+precede shutdown. Pre-E cancellation remains strict; final E is irreversible
+installation consent followed only by backend/app shutdown. The successful client keeps
 the pipe and locks owned until actual OS termination, not merely until Tauri queues
 exit. Launch/process liveness
 alone never counts as readiness. Keep the staged READ-only deny-write/delete lock
@@ -223,11 +223,12 @@ fixtures; it does not establish signed/installed-client/UAC acceptance.
 
 Windows `ExitProcess` closes object handles before signaling the process object.
 Consequently a broken pipe followed by an immediate unsignaled Wait(0) is NOT
-proof of cancellation rather than genuine process teardown. Spec 073's hosted
-rehearsal exposed this race; final integration is blocked pending an explicit
-final-authorization/exit-settlement contract and its tests. Do not claim the
-current immediate-check implementation is reliable, or silently add an unbounded
-wait that could accept a cancelled session on a later unrelated app exit.
+proof of cancellation rather than genuine process teardown. Under the explicit
+Spec 073 user amendment, an observed post-E disconnect permits exactly one
+100-ms wait on the authenticated origin process. Mutation still requires the
+process to signal; expiry permanently aborts, with no renewed deadline or later
+unrelated exit accepted. Do not describe this as unchanged immediate cancellation:
+an origin exiting inside that observed-disconnect window is authorized to install.
 
 Preflight's real signature-vector check uses the small locked Cargo package in
 `scripts/updater_signature_verifier`, reusing the production-equivalent verifier

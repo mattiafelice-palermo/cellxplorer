@@ -1,6 +1,6 @@
 # 073 — Signed recovery bootstrap and mandatory upgrade gate
 
-Status: Implementation checkpoint pushed; local verification passed. Hosted acceptance blocked by a confirmed process-exit ordering race; final-E semantics require user decision before correction and integration.
+Status: Approved 100-ms exit-settlement amendment implemented; Astra Medium final review and local checks passed. Hosted native acceptance pending before integration.
 Branch: `codex/signed-recovery-bootstrap`.
 Review document: [073 review](reviews/073-signed-recovery-and-upgrade-gate-review.md).
 
@@ -64,15 +64,17 @@ Hosted rehearsal 40957734314 exposed a real exit-ordering race: Windows closes
 process handles before signaling the process object, so the current immediate
 broken-pipe/zero-time process check can reject a genuine exit. Astra Medium
 confirmed the issue and withdrew acceptance of that immediate-check behavior.
-No grace window has been implemented. Proposed acceptance amendment, awaiting
-explicit user approval: final E is irreversible installation authorization;
+Explicit user amendment (2026-10-29): final E is irreversible installation authorization;
 after observing a subsequent disconnect, allow one non-resetting 100-ms wait on
 the authenticated origin process. Proceed only if it signals; otherwise abort
 permanently, never accepting a later exit. Pre-E cancellation remains unchanged.
-Review final-E placement and all fallible/cancellable preparation before adopting
-this contract; test inside-window exit and permanent rejection after expiry.
-The feature is not merged or release-ready until this decision, implementation,
-independent re-review and successful hosted native install matrix are complete.
+The Rust worker completes C/ACK only; the calling thread validates the final peer
+and sends E immediately before infallible backend/app shutdown, without any
+restore-to-operational branch after successful E. Native fixtures test both exit
+inside the observed-disconnect window and permanent rejection after expiry, plus
+unchanged pre-E cancellation. Integration still requires independent final review
+and a successful hosted native install matrix. Distribution is a separate release
+decision and must report the interactive/UAC acceptance limitations below.
 
 The first build-only rehearsal stopped safely in preflight because the signature
 integration test assumed an already-warm offline Cargo cache. The correction uses

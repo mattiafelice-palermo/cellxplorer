@@ -77,6 +77,15 @@ class InstallerScopeTests(unittest.TestCase):
         handoff = self.updates.split('let handoff =', 1)[1]
         self.assertLess(handoff.index('prepare_verified_recovery'), handoff.index('prepared.commit()'))
         self.assertLess(handoff.index('prepared.commit()'), handoff.index('prepare_exit_for_update'))
+        self.assertLess(handoff.index('prepared.commit()'), handoff.index('prepared.authorize_exit()'))
+        self.assertLess(handoff.index('prepared.authorize_exit()'), handoff.index('prepare_exit_for_update'))
+        shutdown = handoff.split('crate::prepare_exit_for_update(&app);', 1)[1].split('Err(error) =>', 1)[0]
+        self.assertNotIn('restore_failed_install', shutdown)
+        self.assertNotIn('return Err', shutdown)
+        ack_only = recovery.split('pub fn commit(', 1)[1].split('pub fn authorize_exit(', 1)[0]
+        self.assertNotIn('b"E"', ack_only)
+        self.assertIn('self.acknowledged = true', ack_only)
+        self.assertIn('if !self.acknowledged || !self.is_alive()', recovery)
         self.assertNotIn('running_installation(', handoff)
         self.assertIn('restore_failed_install(&mut pending, update, bytes)', handoff)
         self.assertIn('create_new(true)', recovery)
