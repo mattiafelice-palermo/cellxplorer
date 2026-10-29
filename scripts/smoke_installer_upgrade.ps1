@@ -54,6 +54,21 @@ function Assert-TempRoot([string]$Path) {
     Assert-True (-not ((Get-Item -LiteralPath $absolute).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Gate root cannot be a reparse point'
 }
 
+function Initialize-WorkerTemp([ValidateSet('user', 'machine')][string]$Scope) {
+    Assert-TempRoot $Root
+    $workerTemp = Join-Path $Root "temp-$Scope"
+    if (Test-Path -LiteralPath $workerTemp) {
+        Assert-True ((Get-Item -LiteralPath $workerTemp).PSIsContainer -and
+            -not ((Get-Item -LiteralPath $workerTemp).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Worker temp must be a real gate-root directory'
+    } else {
+        New-Item -ItemType Directory -Path $workerTemp | Out-Null
+    }
+    # Set before starting credentialed PowerShell as well as before Add-Type:
+    # Windows PowerShell's CodeDom compiler uses TEMP during helper loading.
+    $env:TEMP = $workerTemp
+    $env:TMP = $workerTemp
+}
+
 function Wait-CheckedProcess($Process, [int]$Timeout, [string]$Label, [int]$ExpectedExitCode = 0) {
     # In particular Start-Process -Credential can attach by PID. Cache its native
     # handle before it exits so ExitCode remains available after WaitForExit.
@@ -282,10 +297,6 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
         (Test-Path -LiteralPath $roamingData -PathType Container)) 'Windows did not initialize worker AppData directories'
     $env:LOCALAPPDATA = $localData
     $env:APPDATA = $roamingData
-    $workerTemp = Join-Path $Root "temp-$WorkerScope"
-    New-Item -ItemType Directory -Path $workerTemp | Out-Null
-    $env:TEMP = $workerTemp
-    $env:TMP = $workerTemp
     $isAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     Assert-True ($isAdmin -eq ($WorkerScope -eq 'machine')) 'Incorrect Windows token: user worker must NOT be elevated'
     return $isAdmin
@@ -401,6 +412,7 @@ function Invoke-Worker {
 Assert-CI
 if ($WorkerScope) {
     Assert-TempRoot $Root
+    Initialize-WorkerTemp $WorkerScope
     Remove-NativeCredentials
     Invoke-Worker
     exit 0
@@ -445,6 +457,7 @@ try {
     $accounts | ConvertTo-Json | Set-Content -LiteralPath "$Root\accounts.json"
     foreach ($scope in @('machine', 'user')) {
         # Real harmless credentialed exit-code probes, before any native installs.
+        Initialize-WorkerTemp $scope
         foreach ($expectedExit in @(0, 7)) {
             $probe = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList "-NoProfile -NonInteractive -Command `"Start-Sleep -Milliseconds 200; exit $expectedExit`""
             Wait-CheckedProcess $probe 30000 "$scope credentialed exit-code probe" $expectedExit

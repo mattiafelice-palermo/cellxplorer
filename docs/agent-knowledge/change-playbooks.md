@@ -248,6 +248,10 @@ the explicit profile-variable allowlist; always free the native block. Do not
 copy PATH, credentials or workflow-control variables. Resolve AppData with
 `DoNotVerify` and validate absolute normalized
 profile containment before `Create`, then validate the created directories again.
+Set each credentialed worker's TEMP/TMP to its validated, non-reparse gate-root
+scratch child before launching PowerShell and revalidate inside the worker before
+loading helpers. Windows PowerShell's Add-Type compiler can otherwise try the
+inherited controller temp directory before profile initialization and fail ACLs.
 Never fabricate AppData paths or create an inherited runner path before checking
 containment. The native gate logs empty and outside-profile failures distinctly.
 

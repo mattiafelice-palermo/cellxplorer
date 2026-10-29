@@ -252,6 +252,34 @@ class FinalAssetRecheckTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
 class PowerShellGateTests(unittest.TestCase):
+    def test_worker_temp_is_selected_before_credentialed_launch_and_helper_compilation(self):
+        source = SMOKE.read_text()
+        driver = source.split('\nAssert-CI\n', 1)[1]
+        worker = driver.split('if ($WorkerScope)', 1)[1].split('exit 0', 1)[0]
+        self.assertLess(worker.index('Initialize-WorkerTemp $WorkerScope'), worker.index('Invoke-Worker'))
+        launches = driver.split('# Real harmless credentialed exit-code probes', 1)[1]
+        self.assertLess(launches.index('Initialize-WorkerTemp $scope'), launches.index('Start-Process'))
+        self.assertNotIn('New-Item -ItemType Directory -Path $workerTemp', source.split('function Initialize-WorkerProfile', 1)[1])
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell compilation required')
+    def test_worker_temp_recovers_poisoned_controller_temp_before_native_helper_loading(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / ('cx-upgrade-' + 'a' * 32)
+            root.mkdir()
+            command = f"$Root = '{root}'\n$env:RUNNER_TEMP = '{parent}'\n" + r'''
+$env:TEMP = 'C:\missing-controller-temp'
+$env:TMP = 'C:\missing-controller-temp'
+Initialize-WorkerTemp 'user'
+Assert-True ($env:TEMP -ceq (Join-Path $Root 'temp-user') -and $env:TMP -ceq $env:TEMP) 'Controller temp survived'
+Assert-True (Test-Path -LiteralPath $env:TEMP -PathType Container) 'Worker temp was not created'
+Initialize-WorkerTemp 'user'
+$block = Get-TokenProfileEnvironment ([Security.Principal.WindowsIdentity]::GetCurrent())
+Assert-True (-not [string]::IsNullOrWhiteSpace($block['USERPROFILE'])) 'Native helper did not load'
+'''
+            result = self.run_functions(command, shell='powershell')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_fresh_profile_initializes_real_shell_folders_after_profile_validation(self):
         source = SMOKE.read_text().split('function Initialize-WorkerProfile', 1)[1].split('function Invoke-Worker', 1)[0]
         self.assertLess(source.index('$profile -ieq $profileRecord.ProfileImagePath'), source.index('Set-WorkerTokenProfileEnvironment $profile'))

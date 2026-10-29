@@ -134,3 +134,17 @@ three-channel NSIS compilation/policy, six repeated positive/observed-settlement
 cases and canonical no-cache preflight (4/4, 201 files/modules, four workers,
 133.84 seconds) passed. Hosted native matrix acceptance remains pending. No merge,
 tag, new release or feed change has been performed at this checkpoint.
+
+The seventh rehearsal, 40963830659, passed all 17 native recovery cases including
+both settlement branches, the real Rust probe, Rust73 and cryptographic candidate/
+predecessor verification. Worker initialization then stopped before installations:
+Windows PowerShell Add-Type tried the inherited controller TEMP and was denied.
+The focused correction establishes each scope's validated non-reparse scratch
+TEMP/TMP before credentialed launch and revalidates it before helper loading in
+the worker. The late duplicate initialization is removed. Root ACL inheritance
+is retained; controller provenance remains outside that root. Focused105 tests
+passed, including actual Windows PowerShell compilation with poisoned inherited
+TEMP and idempotent initialization. No installer policy or isolation check changed.
+Astra Medium re-review passed with no actionable blockers; both new tests passed
+independently. Canonical no-cache preflight passed all four stages and all 201
+files/modules with four workers (114.21 seconds). Next hosted run remains required.
