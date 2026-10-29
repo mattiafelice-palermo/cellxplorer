@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 import unittest
 
@@ -107,22 +108,85 @@ class InstallerScopeTests(unittest.TestCase):
         function = script.split('function Quote-Argument', 1)[1].split('$quoted =', 1)[0]
         values = ['simple', '', 'space & ` $(literal)', 'quote"backslash\\', 'end\\', 'Unicode €日本', '/CXALLUSERS']
         data = json.dumps(values, ensure_ascii=False).replace("'", "''")
-        command = "function Quote-Argument" + function + f"\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n$values = ConvertFrom-Json -InputObject '{data}'\n$quoted = @(foreach ($value in $values) {{ Quote-Argument $value }})\n[Console]::WriteLine((ConvertTo-Json -InputObject $quoted -Compress))"
+        command = (
+            "function Quote-Argument" + function
+            + "\n$phaseWatch = [Diagnostics.Stopwatch]::StartNew()"
+            + "\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)"
+            + "\n$phase = 'convert-from-json'"
+            + "\n[Console]::Error.WriteLine(('phase={0}; elapsed_ms={1:N0}' -f $phase, $phaseWatch.Elapsed.TotalMilliseconds))"
+            + "\n[Console]::Error.Flush()"
+            + f"\n$values = ConvertFrom-Json -InputObject '{data}'"
+            + "\n$phase = 'quote-arguments'"
+            + "\n[Console]::Error.WriteLine(('phase={0}; elapsed_ms={1:N0}' -f $phase, $phaseWatch.Elapsed.TotalMilliseconds))"
+            + "\n[Console]::Error.Flush()"
+            + "\n$workWatch = [Diagnostics.Stopwatch]::StartNew()"
+            + "\n$quoted = @(foreach ($value in $values) { Quote-Argument $value })"
+            + "\n$workWatch.Stop()"
+            + "\n$quoteWorkMs = $workWatch.Elapsed.TotalMilliseconds"
+            + "\nif ($quoteWorkMs -gt 10000) { [Console]::Error.WriteLine(('phase=quote-arguments-exceeded; elapsed_ms={0:N0}' -f $quoteWorkMs)); exit 124 }"
+            + "\n$phase = 'emit-json'"
+            + "\n[Console]::Error.WriteLine(('phase={0}; elapsed_ms={1:N0}' -f $phase, $phaseWatch.Elapsed.TotalMilliseconds))"
+            + "\n[Console]::Error.Flush()"
+            + "\n$payload = @{ quoted = $quoted; quote_work_ms = $quoteWorkMs }"
+            + "\n[Console]::WriteLine((ConvertTo-Json -InputObject $payload -Compress))"
+        )
         encoded_command = base64.b64encode(command.encode('utf-16le')).decode('ascii')
-        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded_command], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        quoted = json.loads(result.stdout)
+        process_startup_timeout_seconds = 30
+        process_started = time.monotonic()
+        try:
+            result = subprocess.run(
+                ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded_command],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=process_startup_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            elapsed_ms = (time.monotonic() - process_started) * 1000
+            captured_stdout = exc.stdout or ''
+            captured_stderr = exc.stderr or ''
+            if isinstance(captured_stdout, bytes):
+                captured_stdout = captured_stdout.decode('utf-8', errors='replace')
+            if isinstance(captured_stderr, bytes):
+                captured_stderr = captured_stderr.decode('utf-8', errors='replace')
+            phases = [line for line in captured_stderr.splitlines() if line.startswith('phase=')]
+            last_phase = phases[-1] if phases else 'PowerShell startup (script body not entered)'
+            self.fail(
+                f'PowerShell exceeded the {process_startup_timeout_seconds}s process/startup budget '
+                f'after {elapsed_ms:.0f} ms; last phase: {last_phase}; '
+                f'stdout={captured_stdout[-2000:]!r}; stderr={captured_stderr[-2000:]!r}'
+            )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f'stdout={result.stdout[-2000:]!r}; stderr={result.stderr[-2000:]!r}',
+        )
+        payload = json.loads(result.stdout)
+        quoted = payload['quoted']
+        quote_work_ms = float(payload['quote_work_ms'])
+        self.assertLessEqual(quote_work_ms, 10_000, f'PowerShell quoting exceeded 10s: {result.stderr}')
         count = ctypes.c_int()
         parser = ctypes.windll.shell32.CommandLineToArgvW
         parser.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
         parser.restype = ctypes.POINTER(ctypes.c_wchar_p)
+        roundtrip_started = time.monotonic()
         parsed = parser('fixture.exe ' + ' '.join(quoted), ctypes.byref(count))
         try:
             roundtrip = [parsed[i] for i in range(1, count.value)]
-            self.assertEqual(roundtrip, values)
         finally:
             ctypes.windll.kernel32.LocalFree.argtypes = [ctypes.c_void_p]
             ctypes.windll.kernel32.LocalFree(parsed)
+        roundtrip_ms = (time.monotonic() - roundtrip_started) * 1000
+        self.assertEqual(roundtrip, values)
+        self.assertLessEqual(
+            quote_work_ms + roundtrip_ms,
+            10_000,
+            f'Quote + Win32 round-trip work exceeded 10s: '
+            f'quote={quote_work_ms:.1f} ms, roundtrip={roundtrip_ms:.1f} ms, '
+            f'process={(time.monotonic() - process_started) * 1000:.1f} ms',
+        )
 
 
 if __name__ == '__main__': unittest.main()
