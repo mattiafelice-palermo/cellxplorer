@@ -52,6 +52,16 @@ def repeated_settings(direction: int) -> bytes:
     ])
 
 
+def interrupted_rows(direction: int = -1) -> list[dict]:
+    """A two-record first phase interrupted before any neutral rest record."""
+    rows = repeated_rows(direction)
+    removed_transfer = rows[2]["q_mAh"] - rows[1]["q_mAh"]
+    tail = deepcopy(rows[6:])
+    for row in tail:
+        row["q_mAh"] -= removed_transfer
+    return [*deepcopy(rows[:2]), *tail]
+
+
 def write_repeated(path: Path, direction: int, *, rows=None, **log) -> Path:
     return write_gcpl_mpr(path, repeated_rows(direction, offset=200.0 if direction > 0 else 0.0) if rows is None else rows,
                           settings_payload=repeated_settings(direction), include_log=True,
@@ -123,6 +133,44 @@ class RepeatedGcplTests(unittest.TestCase):
         for label, rows in cases.items():
             with self.subTest(label=label):
                 path = write_repeated(self.root / f"negative-{len(label)}-{label.replace(' ', '-')}.mpr", -1, rows=rows)
+                with self.assertRaises((gcpl.UnsupportedBiologicGcplError, gcpl.InvalidBiologicGcplError)):
+                    parsing.parse_timeseries(path)
+
+    def test_interrupted_active_phase_splits_steps_without_inventing_rest(self):
+        rows = interrupted_rows()
+        frame = parsing.parse_timeseries(write_repeated(self.root / "interrupted.mpr", -1, rows=rows))
+        canonical_cycling.validate_raw_timeseries(frame)
+        self.assertEqual(len(frame), len(rows))
+        self.assertEqual(frame["cycle"].unique().tolist(), [1, 2, 3])
+        self.assertEqual(frame["step"].nunique(), 5)
+        self.assertEqual(frame.loc[:2, "step"].tolist(), [1, 1, 2])
+        self.assertEqual(frame.loc[2, "time_s"], 0.0)
+        self.assertEqual(frame.loc[1, "time_s"], 7.5)
+        self.assertEqual(frame[frame["cycle"] == 1]["status"].tolist(), ["CC_DChg", "CC_DChg"])
+        self.assertEqual(frame.loc[2, "discharge_capacity_mah"], 0.0)
+        np.testing.assert_array_equal(frame["total_time_s"], [row["total_time_s"] for row in rows])
+        paired, _, count = self.combine([frame, self.frames[1]])
+        self.assertEqual(count, 2)
+        np.testing.assert_allclose(calc.per_cycle(paired)["coulombic_efficiency_pct"], [100.0, 80.0], rtol=0, atol=1e-12)
+
+    def test_interrupted_restart_still_requires_every_boundary_evidence_gate(self):
+        base = interrupted_rows()
+        cases = {}
+        cases["no execution flag"] = deepcopy(base); cases["no execution flag"][2]["ns_changed"] = False
+        cases["no control flag"] = deepcopy(base); cases["no control flag"][2]["control_changed"] = False
+        cases["no clock gap"] = deepcopy(base); cases["no clock gap"][2]["total_time_s"] = 8.0
+        cases["counter jump"] = deepcopy(base); cases["counter jump"][2]["q_mAh"] -= 0.01
+        cases["counter reset"] = deepcopy(base); cases["counter reset"][2]["q_mAh"] = 0.0
+        cases["incremental transfer"] = deepcopy(base); cases["incremental transfer"][2]["raw_dq_mAh"] = -0.01
+        cases["changed control"] = deepcopy(base); cases["changed control"][2]["control"] = -30.0
+        cases["changed direction"] = deepcopy(base); cases["changed direction"][2]["control"] = 60.0
+        cases["instrument error"] = deepcopy(base); cases["instrument error"][2]["error"] = True
+        cases["unsupported mode"] = deepcopy(base); cases["unsupported mode"][2]["mode"] = 0
+        cases["time regression"] = deepcopy(base); cases["time regression"][2]["total_time_s"] = -1.0
+        cases["changed step"] = deepcopy(base); cases["changed step"][2]["ns"] = 2
+        for label, rows in cases.items():
+            with self.subTest(label=label):
+                path = write_repeated(self.root / (label.replace(" ", "-") + ".mpr"), -1, rows=rows)
                 with self.assertRaises((gcpl.UnsupportedBiologicGcplError, gcpl.InvalidBiologicGcplError)):
                     parsing.parse_timeseries(path)
 

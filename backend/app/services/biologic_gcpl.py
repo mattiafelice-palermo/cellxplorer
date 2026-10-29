@@ -48,8 +48,10 @@ from .source_format_errors import (
 # gcpl13 admits verified CP/OCV metadata layouts at the MPR boundary and
 # allows only the measured f64 ID-13/ID-7 active-counter rounding residual.
 # gcpl14 counts a cycle only when its rows include both active directions.
+# gcpl15 identifies repeated executions; gcpl16 also admits marker/counter-proven
+# active-to-active returns after an interrupted phase, without inventing rest.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl15"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl16"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -1489,6 +1491,7 @@ def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
 def _repeated_execution_ids(
     settings: Mapping[str, Any] | None, ns: np.ndarray, ns_changed: np.ndarray,
     mode: np.ndarray, current_ma: np.ndarray, total_time_s: np.ndarray,
+    *, control_changed: np.ndarray, control: np.ndarray,
 ) -> np.ndarray | None:
     """Verify document-backed same-Ns returns without weakening ordinary GCPL.
 
@@ -1509,9 +1512,9 @@ def _repeated_execution_ids(
     if np.any(ns != int(operation["step_index"])) or np.any(~np.isin(mode, (MPR_MODE_GALVANOSTATIC, MPR_MODE_REST))):
         return None
     active = mode == MPR_MODE_GALVANOSTATIC
-    starts = np.flatnonzero(active & ~np.r_[False, active[:-1]])
+    start_mask = active & ~np.r_[False, active[:-1]]
     flagged = np.flatnonzero(np.asarray(ns_changed, dtype=bool))
-    if len(starts) < 2 or starts[0] != 0:
+    if not start_mask[0]:
         return None
     cadences = [operation.get(key) for key in ("record_interval_s", "rest_record_interval_s")]
     if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 for value in cadences):
@@ -1523,6 +1526,19 @@ def _repeated_execution_ids(
     # above its target. This admission tolerance never changes recorded time.
     cadence_tolerance = max(0.001, cadence * 0.0001)
     gaps = np.diff(total_time_s)
+    # A truncated phase may return directly to the same active operation,
+    # without a recorded rest. Both markers and a long clock gap must prove
+    # reentry; the later step-boundary validator still requires zero dQ and
+    # unchanged cumulative capacity. Never integrate the absent interval.
+    direct_return = (active[1:] & active[:-1]
+                     & np.asarray(ns_changed[1:], dtype=bool)
+                     & np.asarray(control_changed[1:], dtype=bool)
+                     & (gaps > cadence + cadence_tolerance)
+                     & (np.abs(control[1:] - control[:-1]) <= _CURRENT_TOLERANCE_MA))
+    start_mask[1:] |= direct_return
+    starts = np.flatnonzero(start_mask)
+    if len(starts) < 2:
+        return None
     reentry = np.zeros(len(ns) - 1, dtype=bool)
     reentry[starts[1:] - 1] = True
     if not np.array_equal(starts, flagged):
@@ -2459,7 +2475,10 @@ def map_gcpl_to_canonical(
     ns_changed = _flag_column(records, flags, "ns_changed")
     ns_change_policy = str((declared_settings or {}).get("ns_change_policy") or "strict")
     execution_ids = (
-        _repeated_execution_ids(declared_settings, ns, ns_changed, mode, current_ma, total_time_s)
+        _repeated_execution_ids(
+            declared_settings, ns, ns_changed, mode, current_ma, total_time_s,
+            control_changed=_flag_column(records, flags, "control_changed"), control=control,
+        )
         if cycle is None and ns_change_policy == "strict" else None
     )
     if ns_change_policy == "one_record_late":
@@ -2488,6 +2507,8 @@ def map_gcpl_to_canonical(
         mode=mode,
         step_time=step_time,
     )
+    if execution_ids is not None:
+        boundaries[1:] |= np.diff(execution_ids) != 0
     _validate_step_time_boundaries(step_time, boundaries)
     capacity_counter_profile, raw_capacity, detected_unassigned_rest_residuals = (
         _resolve_capacity_counter_profile(

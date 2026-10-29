@@ -266,7 +266,7 @@ class ImportFlowTests(unittest.TestCase):
 
             corrupt = root / "corrupt.mpr"
             corrupt.write_bytes(MPR_MAGIC + b"truncated")
-            with self.assertRaisesRegex(ValueError, r"Invalid BioLogic \.mpr"):
+            with self.assertRaisesRegex(ValueError, r"Incomplete BioLogic \.mpr.*complete block header"):
                 import_inspection.inspect_file(str(corrupt))
 
             wrong_container = root / "wrong-container.mpr"

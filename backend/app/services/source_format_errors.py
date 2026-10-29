@@ -48,3 +48,16 @@ class UnsupportedSourceFormatError(SourceFormatError):
 
 class InvalidSourceFormatError(SourceFormatError):
     """The source resembles a recognized instance of its format but is unsafe to map."""
+
+
+def source_rejection_kind(error: BaseException) -> str | None:
+    """Only concrete semantic failures establish source ineligibility.
+
+    Adapter base errors may wrap temporary open/access failures and must remain
+    retryable. CanonicalCyclingError and unexpected bugs are also excluded.
+    """
+    if isinstance(error, UnsupportedSourceFormatError):
+        return "unsupported"
+    if isinstance(error, InvalidSourceFormatError):
+        return "invalid"
+    return None

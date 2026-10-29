@@ -1,5 +1,10 @@
 # Feature specs
 
+- [072 — Interrupted BioLogic executions and readable source errors](072-interrupted-biologic-executions-and-readable-errors.md).
+  **Implemented.** Evidence-backed restart without a rest row and specific
+  readable source errors; Astra Medium review clean, real-file parity,
+  browser acceptance and canonical preflight passed.
+
 - [071 — BioLogic repeated executions and import eligibility](071-biologic-repeated-executions-and-import-eligibility.md).
   **Implemented.** Verified repeated GCPL executions, acquisition-proven Cell
   pairing/capacity/CE, and rejection-aware source selection; Astra Medium review

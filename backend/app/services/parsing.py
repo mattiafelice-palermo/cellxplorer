@@ -87,6 +87,7 @@ from .source_format_errors import (
     InvalidSourceFormatError,
     SourceFormatError,
     UnsupportedSourceFormatError,
+    source_rejection_kind,
 )
 
 logger = logging.getLogger(__name__)
@@ -400,7 +401,7 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
     if metadata.get("error_kind") == "invalid":
         raise InvalidSourceFormatError(message)
     if suffix == ".mpr":
-        raise InvalidSourceFormatError(message)
+        raise SourceFormatError(message)
     raise UnsupportedSourceFormatError(str(error))
 
 # Vectorized fast paths for NewareNDA — verified output-identical (see
@@ -1679,22 +1680,10 @@ def read_header_metadata(
             )
     except SourceFormatError as exc:
         logger.warning("metadata read failed for %s: %s", path, exc)
-        if isinstance(exc, UnsupportedSourceFormatError):
-            error_kind = "unsupported"
-        else:
-            error_kind = "invalid"
-        if suffix == ".mpr":
-            unrecognized = "is not a BioLogic MPR file" in str(exc)
-            error_message = (
-                "The selected .mpr file is not a BioLogic MPR container."
-                if unrecognized
-                else "Unsupported BioLogic .mpr technique or file layout; "
-                "CellXplorer does not support this source yet."
-                if error_kind == "unsupported"
-                else "Invalid BioLogic .mpr; the file is corrupt or could not be read safely."
-            )
-        else:
-            error_message = str(exc)
+        from .source_error_messages import source_error_message
+
+        error_kind = source_rejection_kind(exc)
+        error_message = source_error_message(path, exc)
         result = {
             "raw": {},
             "error": str(exc),

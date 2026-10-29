@@ -2517,8 +2517,8 @@ def _continuation_staged_source(
         source["inspection_error"] = str(exc)
         source["unreadable"] = True
         source["unreadable_message"] = str(exc)
-        if isinstance(exc, parsing.SourceFormatError):
-            source["source_error_kind"] = "unsupported" if isinstance(exc, parsing.UnsupportedSourceFormatError) else "invalid"
+        if (kind := parsing.source_rejection_kind(exc)) is not None:
+            source["source_error_kind"] = kind
         return source
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)

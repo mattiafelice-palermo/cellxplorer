@@ -16,6 +16,15 @@ Transport failures, cancellation, cache-write failures and readable sources with
 no complete cycles do not establish unreadability. Header hints, inspection and
 indexed results must respect a known semantic rejection of that exact identity.
 
+`source_error_messages.py` presents known BioLogic failures in scientific language
+while metadata `error` and the registry's `diagnostic` retain the raw reason.
+Incomplete blocks, unsupported layouts and ambiguous execution/capacity ownership
+are distinct explanations. Never use generic corruption claims for unsupported
+semantics. Only concrete `InvalidSourceFormatError`/`UnsupportedSourceFormatError`
+classes establish semantic rejection: base adapter errors can wrap temporary open
+or access failures. Those metadata failures retain `error_kind=None` and remain
+retryable through header hints, inspection, registry and route responses.
+
 The picker shares rejection state across filesystem and indexed results and
 prunes inclusion before Continue. Error rows remain focusable/clickable. Refresh
 rechecks server identity and advances a request generation so late previews or

@@ -1,6 +1,6 @@
 """Bounded process-local knowledge of confirmed canonical source rejection.
 
-Only adapter SourceFormatError outcomes belong here. A failed cache write,
+Only concrete invalid/unsupported adapter outcomes belong here. A failed cache write,
 network request, cancelled preview or absence of complete cycles is not a source
 rejection. Cheap header inspection remains header-only, but cannot contradict a
 semantic rejection already established for this exact on-disk identity.
@@ -13,7 +13,8 @@ import os
 from pathlib import Path
 import threading
 
-from .source_format_errors import SourceFormatError, UnsupportedSourceFormatError
+from .source_format_errors import SourceFormatError, source_rejection_kind
+from .source_error_messages import source_error_message
 
 MAX_REJECTIONS = 1024
 
@@ -32,6 +33,7 @@ class SourceRejection:
     identity: FileIdentity
     error: str
     kind: str
+    diagnostic: str
 
 
 _rejections: OrderedDict[str, SourceRejection] = OrderedDict()
@@ -81,10 +83,11 @@ def _remember_alias_locked(alias: str, path_key: str) -> None:
 
 
 def remember_rejection(path: str | Path, before: FileIdentity | None, error: SourceFormatError) -> None:
-    if not isinstance(error, SourceFormatError) or before is None or file_identity(path) != before:
+    kind = source_rejection_kind(error)
+    if kind is None or before is None or file_identity(path) != before:
         return
-    value = SourceRejection(before, str(error).strip()[:1000] or "This source cannot be read.",
-                            "unsupported" if isinstance(error, UnsupportedSourceFormatError) else "invalid")
+    value = SourceRejection(before, source_error_message(path, error)[:1000] or "This source cannot be read.",
+                            kind, str(error).strip()[:2000])
     with _lock:
         _drop_rejection_locked(before.path)
         _rejections[before.path] = value

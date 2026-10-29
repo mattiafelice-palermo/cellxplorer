@@ -488,12 +488,20 @@ reserved names; no consumer computes them yet.
 
 ## Repeated BioLogic executions
 
-The `gcpl15` adapter can label independently evidenced returns to one declared
+The `gcpl16` adapter can label independently evidenced returns to one declared
 active GCPL operation. These positive source-local labels identify executions,
 not complete cycles: each source remains display-only until pairing is proven.
 The bounded profile checks rest-to-active flags, clock gaps, direction and
 counter continuity. It preserves programmed `step_index` while assigning distinct
 executed `step` identities and resetting step-local time/capacity.
+
+A phase interrupted before recording rest can return directly to the same
+active operation. That boundary additionally requires both restart/control-change
+flags, a gap beyond declared cadence and unchanged control. Split executed steps
+using verified execution identity before validating zero boundary dQ/cumulative
+transfer; mode transitions alone miss an active-to-active return. Preserve the
+partial phase and missing time interval without synthesizing rest or integrating
+across the gap (Spec 072).
 
 `biologic_gcpl_executions.py` owns cross-source pairing. Only an adjacent, complete,
 two-source acquisition cohort with matching instrument/channel/clock provenance,
