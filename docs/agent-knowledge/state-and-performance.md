@@ -4,7 +4,14 @@
 
 Header hints remain cheap and provisional. A terminal adapter `SourceFormatError`
 from canonical parsing is retained in the bounded, process-local
-`source_readability.py` registry, tied to path, size, mtime, ctime and inode.
+`source_readability.py` registry, tied to resolved path, size, mtime, ctime and
+inode. At rejection/identity boundaries the registry binds both the supplied
+lexical path and resolved identity path to that one rejection. Lookups begin with
+the normalized lexical key and a miss performs no filesystem I/O, including for
+clean indexed-search rows; only an actual rejection hit resolves/stats the file
+to validate identity. Modification, replacement, successful parsing, eviction,
+and registry clearing remove every alias for the affected rejection. Keep the
+registry bounded by unique rejections and never resolve every queried row.
 Transport failures, cancellation, cache-write failures and readable sources with
 no complete cycles do not establish unreadability. Header hints, inspection and
 indexed results must respect a known semantic rejection of that exact identity.

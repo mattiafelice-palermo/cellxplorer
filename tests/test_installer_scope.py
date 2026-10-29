@@ -1,4 +1,5 @@
 """Read-only contracts; native signed UAC acceptance is a separate matrix."""
+import base64
 import json
 import os
 import subprocess
@@ -107,7 +108,8 @@ class InstallerScopeTests(unittest.TestCase):
         values = ['simple', '', 'space & ` $(literal)', 'quote"backslash\\', 'end\\', 'Unicode €日本', '/CXALLUSERS']
         data = json.dumps(values, ensure_ascii=False).replace("'", "''")
         command = "function Quote-Argument" + function + f"\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n$values = ConvertFrom-Json -InputObject '{data}'\n$quoted = @(foreach ($value in $values) {{ Quote-Argument $value }})\n[Console]::WriteLine((ConvertTo-Json -InputObject $quoted -Compress))"
-        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
+        encoded_command = base64.b64encode(command.encode('utf-16le')).decode('ascii')
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded_command], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         quoted = json.loads(result.stdout)
         count = ctypes.c_int()
