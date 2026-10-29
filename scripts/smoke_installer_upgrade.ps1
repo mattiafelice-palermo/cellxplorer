@@ -82,6 +82,50 @@ function Wait-CheckedProcess($Process, [int]$Timeout, [string]$Label, [int]$Expe
     Assert-True ($Process.ExitCode -eq $ExpectedExitCode) "$Label failed ($($Process.ExitCode)); expected $ExpectedExitCode"
 }
 
+function Invoke-ElevatedMachineWorker([pscredential]$Credential, [string]$Arguments) {
+    Assert-CI
+    Assert-TempRoot $Root
+    Assert-True ($Credential.UserName -match '\\cxg-[a-f0-9]{12}-m$') 'Highest task requires the dedicated machine account'
+    $taskName = 'CellXplorerGate-' + [guid]::NewGuid().ToString('N')
+    $executable = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $runnerTemporary = $env:RUNNER_TEMP.Replace("'", "''")
+    $machineTemporary = (Join-Path $Root 'temp-machine').Replace("'", "''")
+    # Task Scheduler creates its own environment. Forward only CI attestations
+    # already checked above and the validated scratch paths, never credentials.
+    $command = "`$env:GITHUB_ACTIONS='true'; `$env:RUNNER_ENVIRONMENT='github-hosted'; `$env:RUNNER_TEMP='$runnerTemporary'; `$env:TEMP='$machineTemporary'; `$env:TMP='$machineTemporary'; & `"$executable`" $Arguments *> `"$Root\machine-stdout.log`"; exit `$LASTEXITCODE"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $action = New-ScheduledTaskAction -Execute $executable -Argument "-NoProfile -NonInteractive -EncodedCommand $encoded" -WorkingDirectory $Root
+    # CI's separate credentialed logon can be filtered even when runneradmin is
+    # elevated. Task Scheduler provides a real full token for this admin account,
+    # without changing UAC policy or elevating the standard-user worker.
+    $registered = $false
+    try {
+        Register-ScheduledTask -TaskName $taskName -Action $action -User $Credential.UserName -Password ($Credential.GetNetworkCredential().Password) -RunLevel Highest | Out-Null
+        $registered = $true
+        Set-Content -LiteralPath "$Root\machine-stderr.log" -Value ''
+        $started = Get-Date
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = [DateTime]::UtcNow.AddMinutes(20)
+        do {
+            Start-Sleep -Milliseconds 250
+            $task = Get-ScheduledTask -TaskName $taskName
+            $info = Get-ScheduledTaskInfo -TaskName $taskName
+            $complete = $info.LastRunTime -ge $started.AddSeconds(-1) -and
+                [string]$task.State -notin @('Running', 'Queued') -and $info.LastTaskResult -ne 267011
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Machine scheduled worker timed out' }
+        } while (-not $complete)
+        Assert-True ($info.LastTaskResult -eq 0) "Machine scheduled worker failed ($($info.LastTaskResult))"
+    } finally {
+        if ($registered) {
+            try {
+                if ([string](Get-ScheduledTask -TaskName $taskName).State -in @('Running', 'Queued')) { Stop-ScheduledTask -TaskName $taskName }
+            } finally {
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            }
+        }
+    }
+}
+
 function Invoke-Setup([string]$Executable, [string]$Options, [string]$ExpectedHash = '') {
     $lock = $null
     try {
@@ -346,7 +390,7 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
     $env:LOCALAPPDATA = $folders.local
     $env:APPDATA = $folders.roaming
     $isAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    Assert-True ($isAdmin -eq ($WorkerScope -eq 'machine')) 'Incorrect Windows token: user worker must NOT be elevated'
+    Assert-True ($isAdmin -eq ($WorkerScope -eq 'machine')) "Incorrect $WorkerScope worker token: elevated=$isAdmin, expected=$($WorkerScope -eq 'machine')"
     return $isAdmin
 }
 
@@ -519,8 +563,14 @@ try {
         }
         $workerArguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Root\smoke_installer_upgrade.ps1`" -WorkerScope $scope -Root `"$Root`""
         if ($ProfileProbe) { $workerArguments += ' -ProfileProbe' } else { $workerArguments += " -Channel $Channel" }
-        $worker = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList $workerArguments -RedirectStandardOutput "$Root\$scope-stdout.log" -RedirectStandardError "$Root\$scope-stderr.log"
-        try { Wait-CheckedProcess $worker 1200000 "$scope worker" }
+        try {
+            if ($scope -eq 'machine') {
+                Invoke-ElevatedMachineWorker $credentials[$scope] $workerArguments
+            } else {
+                $worker = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList $workerArguments -RedirectStandardOutput "$Root\$scope-stdout.log" -RedirectStandardError "$Root\$scope-stderr.log"
+                Wait-CheckedProcess $worker 1200000 "$scope worker"
+            }
+        }
         finally {
             Get-Content -LiteralPath "$Root\$scope-stdout.log"
             Get-Content -LiteralPath "$Root\$scope-stderr.log"

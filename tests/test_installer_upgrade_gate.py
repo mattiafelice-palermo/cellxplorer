@@ -252,6 +252,45 @@ class FinalAssetRecheckTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
 class PowerShellGateTests(unittest.TestCase):
+    def test_machine_task_requires_dedicated_account_and_checks_exit_and_cleanup(self):
+        for outcome in ('success', 'exit-failure', 'launch-failure', 'wrong-account', 'cleanup-query-failure', 'cleanup-stop-failure'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary:
+                command = f"$Root = '{temporary}'\n$scenario = '{outcome}'\n" + r'''
+$env:RUNNER_TEMP = $Root
+function Assert-CI { }
+function Assert-TempRoot { }
+function Start-Sleep { }
+$script:registered = $false; $script:removed = $false; $script:taskQueries = 0
+function New-ScheduledTaskAction { param($Execute, $Argument, $WorkingDirectory)
+    $encoded = $Argument.Split(' ')[-1]
+    $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+    Assert-True ($decoded.Contains('GITHUB_ACTIONS') -and $decoded.Contains('temp-machine') -and -not $decoded.Contains('GH_TOKEN')) 'Wrong scheduled environment'
+    return [pscustomobject]@{ Execute = $Execute }
+}
+function Register-ScheduledTask { param($TaskName, $Action, $User, $Password, $RunLevel)
+    Assert-True ($RunLevel -ceq 'Highest' -and $User.EndsWith('-m')) 'Wrong machine task token selection'
+    $script:registered = $true
+}
+function Start-ScheduledTask { if ($scenario -ceq 'launch-failure') { throw 'fixture launch failure' } }
+function Get-ScheduledTask {
+    $script:taskQueries++
+    if ($script:taskQueries -gt 1 -and $scenario -ceq 'cleanup-query-failure') { throw 'fixture cleanup query failed' }
+    [pscustomobject]@{ State = $(if ($script:taskQueries -gt 1 -and $scenario -ceq 'cleanup-stop-failure') { 'Running' } else { 'Ready' }) }
+}
+function Get-ScheduledTaskInfo { [pscustomobject]@{ LastRunTime = (Get-Date); LastTaskResult = $(if ($scenario -ceq 'exit-failure') { 7 } else { 0 }) } }
+function Stop-ScheduledTask { throw 'Completed task should not be stopped' }
+function Unregister-ScheduledTask { param($TaskName, $Confirm) $script:removed = $true }
+$name = 'HOST' + [char]92 + $(if ($scenario -ceq 'wrong-account') { 'cxg-aaaaaaaaaaaa-u' } else { 'cxg-aaaaaaaaaaaa-m' })
+$credential = [pscredential]::new($name, (ConvertTo-SecureString 'fixture-not-a-real-password' -AsPlainText -Force))
+$failed = $false
+try { Invoke-ElevatedMachineWorker $credential '-NoProfile -Command exit' } catch { $failed = $true; Write-Host "Mock task outcome: $_" }
+Assert-True ($failed -eq ($scenario -cne 'success')) 'Task failure treated as success'
+Assert-True ($script:registered -eq ($scenario -cne 'wrong-account')) 'Unexpected task registration'
+Assert-True ($script:removed -eq $script:registered) 'Unique task not cleaned up'
+'''
+                result = self.run_functions(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_profile_probe_returns_before_loading_plan_or_running_installers(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

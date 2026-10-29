@@ -259,6 +259,12 @@ Set each credentialed worker's TEMP/TMP to its validated, non-reparse gate-root
 scratch child before launching PowerShell and revalidate inside the worker before
 loading helpers. Windows PowerShell's Add-Type compiler can otherwise try the
 inherited controller temp directory before profile initialization and fail ACLs.
+An administrators-group account launched with separate credentials can still
+receive a filtered token on a hosted runner. The CI machine worker uses a unique
+highest-privilege scheduled task under that dedicated account, checking actual
+SID/admin state, run-start evidence, terminal task result and bounded completion.
+Only validated non-secret CI/scratch context is forwarded; exact task cleanup is
+mandatory. The standard-user worker remains non-admin. This is not UAC acceptance.
 Never fabricate AppData paths or create an inherited runner path before checking
 containment. The native gate logs empty and outside-profile failures distinctly.
 

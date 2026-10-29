@@ -177,3 +177,20 @@ Astra Medium final review passed; four selected tests including both-shell
 read-only resolution and wrong-SID rejection passed independently. Canonical
 no-cache preflight passed 4/4 stages and 201 files/modules with four workers
 (136.04 seconds). No local profiles/folders or installations were created by probes.
+
+The tenth early probe, 40968857805, confirmed fresh-shell AppData correctness and
+then rejected the machine account's filtered token. The controller now launches
+only that dedicated machine worker through a unique highest-privilege scheduled
+task, propagates its real child exit status, requires this run's start time and
+terminal successful task result within a fixed bound, and cleans up exactly its
+own registered task. The task receives only checked non-secret CI/scratch context;
+credentials are provided only to registration, never arguments/files/environment.
+The standard-user worker retains its separate non-admin credentialed launch.
+No UAC policy is changed and this does not establish interactive UAC acceptance.
+Mocked task lifecycle tests cover success, exit failure, launch failure and wrong
+account rejection without creating any local task or account.
+Astra Medium caught and confirmed closure of a cleanup edge case: nested finally
+now attempts exact-task unregistration even if status lookup or stop fails.
+All six mocked lifecycle scenarios and 109 focused tests passed. Final Astra
+re-review passed, as did canonical no-cache preflight (4/4 stages, 201 files/
+modules, four workers, 154.81 seconds). Hosted token/matrix acceptance is pending.
