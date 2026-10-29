@@ -237,6 +237,14 @@ cache: fresh hosted runners may not have the registry/index even when production
 Rust artifacts were restored. Keep its crypto versions pinned to the root lock,
 and keep real candidate-byte verification mandatory before installer execution.
 
+Tauri CLI 2.11.4 packages an NSIS-specific main executable, then restores its
+unpatched `target/release/cellxplorer.exe`. Do not use that restored file's raw
+hash as the installed payload reference. The gate constructs the exact expected
+NSIS payload by the pinned single `__TAURI_BUNDLE_TYPE_VAR_UNK` to `..._NSS` change
+and compares the entire installed file hash. It rejects changed CLI versions,
+missing/multiple markers and Authenticode configuration until reviewed; it never
+normalizes installed bytes or uses their observed hash as the expected value.
+
 Fresh credentialed Windows CI accounts need genuine shell-folder initialization.
 Default .NET `GetFolderPath` may return empty when a folder does not exist.
 Validate the token SID's ProfileList profile before resetting inherited profile

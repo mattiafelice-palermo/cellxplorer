@@ -194,3 +194,19 @@ now attempts exact-task unregistration even if status lookup or stop fails.
 All six mocked lifecycle scenarios and 109 focused tests passed. Final Astra
 re-review passed, as did canonical no-cache preflight (4/4 stages, 201 files/
 modules, four workers, 154.81 seconds). Hosted token/matrix acceptance is pending.
+
+The eleventh rehearsal, 40970176834, passed both real token/profile probes and
+all build, recovery and signature checks. Actual machine installation reached
+the byte-equality assertion. The gate had hashed Tauri's restored unbundled EXE;
+the [pinned 2.11.4 bundler source](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs)
+explicitly patches UNK to NSS for NSIS and restores the unpatched build afterward.
+The correction computes the whole expected NSIS binary from the trusted local
+build using exactly that pinned transformation, rejects changed versions/ambiguous
+markers/Authenticode configuration, and retains the raw build digest separately.
+Installed bytes are not normalized or used to set their own expected reference.
+Per-case logs now include prior, expected and actual hashes, size and directory.
+Focused111 tests passed, including exact transformation and fail-closed cases.
+Astra Medium final review passed; five focused reconstruction/plan/identity tests
+passed independently. Canonical no-cache preflight passed 4/4 stages and 201
+files/modules with four workers (117.23 seconds). Hosted byte equality and all
+remaining matrix cases are still required before merge.

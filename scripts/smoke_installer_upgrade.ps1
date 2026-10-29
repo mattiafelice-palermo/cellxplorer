@@ -198,7 +198,11 @@ function Assert-Install([string]$Product, [string]$Scope, [string]$Directory, [s
     }
     Assert-True (Test-Path -LiteralPath "$Directory\uninstall.exe") 'Missing real uninstaller'
     Assert-True (Test-Path -LiteralPath "$Directory\cellxplorer.exe") 'Missing real application'
-    if ($BinaryHash) { Assert-True ((Get-Hash "$Directory\cellxplorer.exe") -ceq $BinaryHash) 'Installed binary differs from candidate build' }
+    if ($BinaryHash) {
+        $actualHash = Get-Hash "$Directory\cellxplorer.exe"
+        $size = (Get-Item -LiteralPath "$Directory\cellxplorer.exe").Length
+        Assert-True ($actualHash -ceq $BinaryHash) "Installed binary differs from candidate build: product=$Product scope=$Scope directory=$Directory expected=$BinaryHash actual=$actualHash bytes=$size"
+    }
 }
 
 function Get-IdentitySnapshot([string]$Product, [string]$Directory) {
@@ -448,6 +452,7 @@ function Invoke-Worker {
         Assert-True ((Get-Hash "$Root\previous-$($entry.Key).exe") -ceq $plan.previous.($entry.Key).sha256) 'Verified previous installer bytes changed'
         Invoke-Setup "$Root\previous-$($entry.Key).exe" "/S /NS $scopeFlag" $plan.previous.($entry.Key).sha256
         Assert-Install $entry.Value $WorkerScope $directories[$entry.Key] $plan.previous.($entry.Key).tag.Substring(1)
+        Write-Host "Verified baseline: scope=$WorkerScope product=$($entry.Value) tag=$($plan.previous.($entry.Key).tag) binary=$(Get-Hash "$($directories[$entry.Key])\cellxplorer.exe")"
     }
     $protected = @{}
     foreach ($entry in $products.GetEnumerator()) {
@@ -476,8 +481,11 @@ function Invoke-Worker {
         foreach ($operation in @('upgrade', 'same-version-reinstall')) {
             Assert-True ((Get-Hash "$Root\candidate.exe") -ceq $plan.candidate_sha256) 'Verified candidate bytes changed'
             $case = Get-InstallerCase $WorkerScope $layout $operation $hasBaseline $directory
+            $priorHash = if (Test-Path -LiteralPath "$directory\cellxplorer.exe") { Get-Hash "$directory\cellxplorer.exe" } else { 'absent' }
+            Write-Host "BEGIN $($case.Name): directory=$directory installer=$($plan.candidate_sha256) expectedBinary=$($plan.binary_sha256) priorBinary=$priorHash"
             Invoke-Setup "$Root\candidate.exe" $case.Options $plan.candidate_sha256
             Assert-Install $product $WorkerScope $directory $plan.version $plan.binary_sha256
+            Write-Host "PASS $($case.Name): binary=$(Get-Hash "$directory\cellxplorer.exe")"
             foreach ($entry in $protected.GetEnumerator()) {
                 Assert-True ((Get-IdentitySnapshot $products[$entry.Key] $directories[$entry.Key]) -ceq $entry.Value) 'Another channel identity changed'
             }

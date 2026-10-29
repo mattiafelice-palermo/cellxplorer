@@ -286,6 +286,14 @@ the session. Pre-E cancellation is unchanged. Native fixtures explicitly cover
 exit inside the settlement window and rejection after expiry; their diagnostic
 compile-time hook is absent from shipped installers.
 
+The installed application hash is compared to the exact NSIS-packaged build,
+not the restored unbundled executable left in `target/release` by Tauri CLI.
+For pinned CLI 2.11.4 the gate models its single bundle-marker patch, preserving
+full-byte equality and recording the unbundled digest separately. Unknown CLI
+versions, ambiguous markers or Authenticode configuration fail closed pending a
+reviewed reference strategy. Installer signatures and staged asset bindings remain
+independently mandatory; observed installed bytes never establish their own target.
+
 **Coverage boundary:** hosted Windows is elevated and UAC-disabled. The native
 matrix invokes the candidate installer `/UPDATE` path; it does **not** execute the
 prior installed Rust updater's reader/launcher or prove its pre-launch behavior.

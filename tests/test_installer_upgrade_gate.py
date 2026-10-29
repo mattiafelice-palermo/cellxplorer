@@ -1,5 +1,6 @@
 import base64
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,25 @@ SMOKE = ROOT / "scripts/smoke_installer_upgrade.ps1"
 
 def release(tag, *, draft=False, published=True):
     return {"tag_name": tag, "draft": draft, "published_at": "2026-01-01" if published else None}
+
+
+class PackagedApplicationReferenceTests(unittest.TestCase):
+    def test_expected_whole_binary_matches_exact_pinned_tauri_nsis_patch(self):
+        binary = b'MZ' + b'x' * 64 + b'__TAURI_BUNDLE_TYPE_VAR_UNK' + b'end'
+        expected = b'MZ' + b'x' * 64 + b'__TAURI_BUNDLE_TYPE_VAR_NSS' + b'end'
+        self.assertEqual(gate.expected_nsis_application_hash(binary, '2.11.4', {}), hashlib.sha256(expected).hexdigest())
+        self.assertNotEqual(gate.expected_nsis_application_hash(binary, '2.11.4', {}), hashlib.sha256(binary).hexdigest())
+        changed = binary.replace(b'end', b'bad')
+        self.assertNotEqual(gate.expected_nsis_application_hash(changed, '2.11.4', {}), hashlib.sha256(expected).hexdigest())
+
+    def test_unreviewed_versions_markers_and_signing_fail_closed(self):
+        binary = b'MZ' + b'x' * 64 + b'__TAURI_BUNDLE_TYPE_VAR_UNK'
+        for candidate, cli, config in ((binary, '2.12.0', {}), (binary + b'__TAURI_BUNDLE_TYPE_VAR_UNK', '2.11.4', {}),
+                                       (binary.replace(b'_UNK', b'_NSS'), '2.11.4', {}), (b'not PE', '2.11.4', {}),
+                                       (binary, '2.11.4', {'certificateThumbprint': 'configured'}),
+                                       (binary, '2.11.4', {'signCommand': 'configured'})):
+            with self.subTest(cli=cli, config=config), self.assertRaises(ValueError):
+                gate.expected_nsis_application_hash(candidate, cli, config)
 
 
 class ReleaseSelectionTests(unittest.TestCase):
@@ -145,13 +165,18 @@ class PreparationTests(unittest.TestCase):
                 repo = Path(temporary) / "repo"
                 bundle = repo / "src-tauri/target/release/bundle/nsis"
                 bundle.mkdir(parents=True)
-                (bundle.parent.parent / "cellxplorer.exe").write_bytes(b"candidate application")
+                application = b'MZ' + b'x' * 64 + b'__TAURI_BUNDLE_TYPE_VAR_UNK'
+                (bundle.parent.parent / "cellxplorer.exe").write_bytes(application)
+                cli = repo / 'node_modules/@tauri-apps/cli'
+                cli.mkdir(parents=True)
+                (cli / 'package.json').write_text(json.dumps({'version': '2.11.4'}))
                 candidate_name = "CellXplorer.Alpha_1.0.0-alpha.2_x64-setup.exe"
                 local_name = "CellXplorer Alpha_1.0.0-alpha.2_x64-setup.exe"
                 (bundle / local_name).write_bytes(b"candidate")
                 (bundle / (local_name + ".sig")).write_bytes(b"signed")
                 (repo / "uploaded-latest.json").write_bytes(b"manifest")
                 (repo / "src-tauri/tauri.conf.json").write_text(json.dumps({"plugins": {"updater": {"pubkey": "configured-key"}}}))
+                (repo / 'src-tauri/tauri.alpha.conf.json').write_text('{}')
                 output = Path(temporary) / "output"
                 output.mkdir()
                 controller = Path(temporary) / "controller"
@@ -186,6 +211,8 @@ class PreparationTests(unittest.TestCase):
                         self.assertEqual(verify.call_count, 4)
                         plan = json.loads((output / "plan.json").read_text())
                         self.assertEqual(plan["candidate_sha256"], gate.sha256(output / "candidate.exe"))
+                        self.assertEqual(plan['binary_sha256'], hashlib.sha256(application.replace(b'_UNK', b'_NSS')).hexdigest())
+                        self.assertEqual(plan['unbundled_binary_sha256'], hashlib.sha256(application).hexdigest())
                         self.assertEqual(set(plan["previous"]), {"stable", "beta", "alpha"})
                         self.assertEqual(plan["previous"]["alpha"]["supports_user_baseline"], mode != "selected-machine-only")
                         self.assertEqual(plan["previous"]["alpha"]["supports_machine_baseline"], mode != "selected-user-only")
@@ -466,6 +493,7 @@ $record = @{ InstallLocation = 'C:\fixture'; DisplayVersion = '1.0.0'; InstallSc
 function Get-Registration($Product, $Hive) { if ($Hive -eq 'CurrentUser') { [pscustomobject]@{ Values = $record; ManufacturerDirectory = 'C:\fixture' } } }
 function Test-Path { return $true }
 function Get-Hash { return 'expected' }
+function Get-Item { [pscustomobject]@{ Length = 123 } }
 '''
             if field:
                 command += f"\n$record['{field}'] = '{value}'"

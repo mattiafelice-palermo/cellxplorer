@@ -64,6 +64,22 @@ def require_equal_bytes(local: Path, staged: Path) -> str:
     return digest
 
 
+def expected_nsis_application_hash(binary: bytes, cli_version: str, windows: dict) -> str:
+    # Pinned upstream implementation: tauri-cli-v2.11.4, bundle.rs patch_binary
+    # replaces this one marker for NSIS, then restores the unpatched build file.
+    # Compute the EXPECTED whole payload, never normalize installed/candidate data.
+    # https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs
+    if cli_version != "2.11.4":
+        raise ValueError("Review NSIS binary patching for the new Tauri CLI before accepting installs")
+    if windows.get("certificateThumbprint") or windows.get("signCommand"):
+        raise ValueError("Authenticode packaging needs a captured signed payload reference")
+    marker = b"__TAURI_BUNDLE_TYPE_VAR_UNK"
+    if len(binary) < 64 or not binary.startswith(b"MZ") or binary.count(marker) != 1:
+        raise ValueError("Expected one unbundled Tauri application marker in the local PE build")
+    packaged = binary.replace(marker, b"__TAURI_BUNDLE_TYPE_VAR_NSS", 1)
+    return hashlib.sha256(packaged).hexdigest()
+
+
 def verify_installer(installer: Path, signature: Path, config: Path | None = None):
     subprocess.run([
         "cargo", "run", "--locked", "--manifest-path", str(ROOT / "scripts/updater_signature_verifier/Cargo.toml"),
@@ -184,8 +200,16 @@ def prepare(root: Path, channel: str, version: str, release_id: str | None,
     require_equal_bytes(Path(str(local) + ".sig"), signature)
     verify_installer(candidate, signature)
     rows = github.releases()
+    binary = (ROOT / "src-tauri/target/release/cellxplorer.exe").read_bytes()
+    cli_version = json.loads((ROOT / "node_modules/@tauri-apps/cli/package.json").read_text())["version"]
+    windows = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text()).get("bundle", {}).get("windows", {})
+    if channel != "stable":
+        overlay = json.loads((ROOT / f"src-tauri/tauri.{channel}.conf.json").read_text())
+        windows = {**windows, **overlay.get("bundle", {}).get("windows", {})}
     plan = {"channel": channel, "version": version, "candidate_sha256": digest,
-            "binary_sha256": sha256(ROOT / "src-tauri/target/release/cellxplorer.exe"),
+            "unbundled_binary_sha256": hashlib.sha256(binary).hexdigest(),
+            "binary_sha256": expected_nsis_application_hash(binary, cli_version, windows),
+            "binary_reference": "tauri-cli-2.11.4 exact NSIS marker patch",
             "previous": {}}
     for other, product in PRODUCTS.items():
         release = previous_release(rows, other, candidate_tag if other == channel else "")
