@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.9 - 2026-10-29
+
+### New features
+
+- In supported single-operation GCPL recordings, recognize a direct return to the same operation, direction, and control after an interruption only when restart/control-change markers, an above-cadence gap, zero boundary charge transfer, and continuous capacity counters confirm it. Preserve the gap as unmeasured; do not invent rest or capacity.
+
+### Bug fixes
+
+- Give BioLogic MPR import failures specific explanations for incomplete blocks, unsupported layouts, and ambiguous restart/capacity boundaries while retaining raw diagnostics. Temporary open/access failures remain retryable, not permanent source rejections.
+
 ## 0.28.0-alpha.8 - 2026-10-29
 
 ### New features
