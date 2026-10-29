@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from urllib.error import HTTPError
@@ -122,6 +123,8 @@ class GitHubArtifactTests(unittest.TestCase):
             args = run.call_args.args[0]
             self.assertEqual(args[:4], ["cargo", "run", "--locked", "--manifest-path"])
             self.assertIn("verify_updater_signature", args)
+            self.assertNotIn("--offline", args)
+            self.assertEqual(args[4], str(ROOT / 'scripts/updater_signature_verifier/Cargo.toml'))
             self.assertEqual(args[-2:], ["--config", str(ROOT / "src-tauri/tauri.conf.json")])
             self.assertTrue(run.call_args.kwargs["check"])
         with mock.patch.object(gate.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "verifier")):
@@ -385,6 +388,19 @@ foreach ($expected in @(0, 7)) {
 
 @unittest.skipUnless(shutil.which("cargo"), "Rust toolchain required")
 class RealSignatureVerifierTests(unittest.TestCase):
+    def test_minimal_verifier_reuses_source_and_locked_production_crypto(self):
+        manifest_path = ROOT / 'scripts/updater_signature_verifier/Cargo.toml'
+        manifest = tomllib.loads(manifest_path.read_text())
+        source = (manifest_path.parent / manifest['bin'][0]['path']).resolve()
+        self.assertEqual(source, (ROOT / 'src-tauri/examples/verify_updater_signature.rs').resolve())
+        production = tomllib.loads((ROOT / 'src-tauri/Cargo.lock').read_text())
+        minimal = tomllib.loads((manifest_path.parent / 'Cargo.lock').read_text())
+        production_versions = {(p['name'], p['version']) for p in production['package']}
+        for name in ('base64', 'minisign-verify', 'serde_json'):
+            version, = [p['version'] for p in minimal['package'] if p['name'] == name]
+            self.assertEqual(manifest['dependencies'][name], '=' + version)
+            self.assertIn((name, version), production_versions)
+
     def test_valid_signed_bytes_and_same_key_id_byte_tampering(self):
         # Public upstream minisign test vector; no private keys/secrets.
         key = 'untrusted comment: minisign public key\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\n'
@@ -397,11 +413,11 @@ class RealSignatureVerifierTests(unittest.TestCase):
             (fixture / 'installer.exe').write_bytes(b'test')
             (fixture / 'installer.sig').write_text(base64.b64encode(signature.encode()).decode())
             (fixture / 'config.json').write_text(json.dumps({'plugins': {'updater': {'pubkey': base64.b64encode(key.encode()).decode()}}}))
-            command = ['cargo', 'run', '--offline', '--locked', '--manifest-path', str(ROOT / 'src-tauri/Cargo.toml'), '--example', 'verify_updater_signature', '--', '--installer', str(fixture / 'installer.exe'), '--signature', str(fixture / 'installer.sig'), '--config', str(fixture / 'config.json')]
-            valid = subprocess.run(command, capture_output=True, text=True)
+            command = ['cargo', 'run', '--locked', '--manifest-path', str(ROOT / 'scripts/updater_signature_verifier/Cargo.toml'), '--target-dir', str(ROOT / 'src-tauri/target/signature-verifier'), '--bin', 'verify_updater_signature', '--', '--installer', str(fixture / 'installer.exe'), '--signature', str(fixture / 'installer.sig'), '--config', str(fixture / 'config.json')]
+            valid = subprocess.run(command, capture_output=True, text=True, timeout=180)
             self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
             (fixture / 'installer.exe').write_bytes(b'tesT')
-            invalid = subprocess.run(command, capture_output=True, text=True)
+            invalid = subprocess.run(command, capture_output=True, text=True, timeout=180)
             self.assertNotEqual(invalid.returncode, 0, invalid.stdout + invalid.stderr)
 
 

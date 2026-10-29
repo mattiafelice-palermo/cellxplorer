@@ -208,8 +208,9 @@ uses the controller-only verified manifest readback, not a workspace copy that
 native processes could have changed. Manual build-only dispatch has no publication
 provenance/recheck and cannot undraft or update a feed.
 Every installer is cryptographically verified against the configured updater public
-key with `cargo run --locked --manifest-path src-tauri/Cargo.toml --example
-verify_updater_signature`. This invokes the same `minisign-verify` API as Tauri's
+key with the locked, small `scripts/updater_signature_verifier` Cargo package.
+Its binary reuses `src-tauri/examples/verify_updater_signature.rs` and invokes
+the same `minisign-verify` API as Tauri's
 updater, including full payload verification; metadata and key-ID checks alone do
 not satisfy the gate. This is not Windows Authenticode verification.
 
@@ -512,8 +513,12 @@ The `.github/workflows/release.yml` workflow then:
    installer, `.sig`, and workspace-root `latest.json`;
 9. validates exact channel version/product/asset/signature against release metadata with
    `scripts/verify_updater_manifest.py`, reading the shared public key from the base Tauri config;
-10. undrafts as a normal Stable release or true Beta/Alpha prerelease only after verification;
-11. updates only the selected channel pointer through an atomic non-force Git-data-API ref move
+10. runs the full Rust and NSIS policy/transport checks, then the mandatory native
+    upgrade/reinstall matrix against the exact signature-verified staged candidate;
+11. re-downloads the same draft installer, signature and manifest, rejecting changed asset IDs
+    or digests, and cryptographically verifies the candidate again using controller provenance;
+12. undrafts as a normal Stable release or true Beta/Alpha prerelease only after both gates pass;
+13. updates only the selected channel pointer through an atomic non-force Git-data-API ref move
     based on the captured branch tip, verifies exact bytes through the Contents API and public raw
     endpoint, and proves every non-target blob is unchanged.
 

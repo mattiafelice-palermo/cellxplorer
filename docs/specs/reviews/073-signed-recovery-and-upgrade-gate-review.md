@@ -36,3 +36,14 @@ registry fixtures and harmless native recovery/relay/real-transport cases passed
 The hosted native account/install matrix has not yet run. Candidate `/UPDATE`
 coverage does not execute an old installed updater; real UAC/alternate credentials
 and end-to-end installed-client update/restart remain separate acceptance.
+
+## Cold-runner follow-up
+
+The first build-only rehearsal stopped in preflight because the signature test
+required an offline Cargo cache. The follow-up moves both test and artifact checks
+to a minimal locked Cargo package sharing the exact verifier source and pinned
+production crypto versions. Fresh empty-cache compilation and valid/tampered
+signature checks passed. Astra Medium re-review: **PASS**, no remaining blockers;
+six focused reviewer tests passed. Full local preflight passed again after resume
+from an unrelated Windows sleep interruption. The native Actions matrix still
+requires its next rehearsal; no gate was bypassed or weakened.

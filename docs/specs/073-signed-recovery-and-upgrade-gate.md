@@ -60,7 +60,11 @@ checkpoint. A separate release will deliver these changes to installed clients.
 
 ## Acceptance boundaries
 
-The native hosted install matrix still needs its build-only Actions rehearsal.
+The first build-only rehearsal stopped safely in preflight because the signature
+integration test assumed an already-warm offline Cargo cache. The correction uses
+a minimal locked verifier package sharing the same source and exact crypto
+versions, without desktop/sidecar dependencies. The hosted install matrix still
+needs its subsequent successful build-only rehearsal.
 It runs candidate installer `/UPDATE`, not the old installed client's Rust updater.
 Harmless transport probes are not signed installed-app or interactive UAC tests.
 Real UAC cancellation/alternate credentials and whole installed-client update/restart

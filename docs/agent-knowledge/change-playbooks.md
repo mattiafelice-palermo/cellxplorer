@@ -216,6 +216,13 @@ Old clients cannot retroactively gain this protocol. `scripts/check_update_recov
 executes production NSIS logic and the actual Rust transport against harmless
 fixtures; it does not establish signed/installed-client/UAC acceptance.
 
+Preflight's real signature-vector check uses the small locked Cargo package in
+`scripts/updater_signature_verifier`, reusing the production-equivalent verifier
+source without desktop build inputs. Do not require an already-warm/offline Cargo
+cache: fresh hosted runners may not have the registry/index even when production
+Rust artifacts were restored. Keep its crypto versions pinned to the root lock,
+and keep real candidate-byte verification mandatory before installer execution.
+
 Use the compiler/policy harness in `scripts/check_installer_scope.py` to execute
 actual NSIS normalization/discovery/registration cleanup against disposable
 HKCU keys; textual contracts alone missed a scratch-register clobber. Win32

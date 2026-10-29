@@ -66,10 +66,11 @@ def require_equal_bytes(local: Path, staged: Path) -> str:
 
 def verify_installer(installer: Path, signature: Path, config: Path | None = None):
     subprocess.run([
-        "cargo", "run", "--locked", "--manifest-path", str(ROOT / "src-tauri/Cargo.toml"),
-        "--example", "verify_updater_signature", "--", "--installer", str(installer),
+        "cargo", "run", "--locked", "--manifest-path", str(ROOT / "scripts/updater_signature_verifier/Cargo.toml"),
+        "--target-dir", str(ROOT / "src-tauri/target/signature-verifier"),
+        "--bin", "verify_updater_signature", "--", "--installer", str(installer),
         "--signature", str(signature), "--config", str(config or ROOT / "src-tauri/tauri.conf.json"),
-    ], check=True)
+    ], check=True, timeout=180)
 
 
 class GitHub:

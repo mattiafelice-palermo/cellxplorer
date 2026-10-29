@@ -1,0 +1,16 @@
+[package]
+name = "cellxplorer-updater-signature-verifier"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Same exact implementations resolved by the production Tauri updater. This
+# small package avoids a desktop/sidecar build during Python preflight.
+[dependencies]
+base64 = "=0.22.1"
+minisign-verify = "=0.2.5"
+serde_json = "=1.0.151"
+
+[[bin]]
+name = "verify_updater_signature"
+path = "../../src-tauri/examples/verify_updater_signature.rs"
