@@ -174,7 +174,12 @@ if ('CASE' -like 'wrong-*') {
     if (Test-Path -LiteralPath 'MARKER') { throw 'Uncommitted attempt changed files' }
   }
 }
-if ('CASE' -ne 'commit') { $pipe.Dispose() }
+if ('CASE' -eq 'commit') {
+  # Match Rust's mem::forget contract: retain the KERNEL handle until OS exit.
+  # CLR shutdown finalizers can otherwise close it while PowerShell is still
+  # alive, which correctly looks like cancellation to the production policy.
+  $pipe.SafePipeHandle.SetHandleAsInvalid()
+} else { $pipe.Dispose() }
 '''
     for old, new in {"CASE": case, "EXECUTABLE": str(executable).replace("'", "''"), "MARKER": str(marker).replace("'", "''"), "OUTERPID": str(os.getpid()), "PAYLOADHASH": hashlib.sha256(executable.read_bytes()).hexdigest()}.items():
         command = command.replace(old, new)
@@ -188,7 +193,9 @@ if ('CASE' -ne 'commit') { $pipe.Dispose() }
     while case == "commit" and not marker.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     if marker.exists() != (case == "commit"):
-        raise RuntimeError(f"Recovery {case}: incorrect post-handshake file state")
+        evidence = output / 'recovery-error.txt'
+        diagnostic = evidence.read_text(encoding='utf-8', errors='replace') if evidence.exists() else 'no installer diagnostic'
+        raise RuntimeError(f"Recovery {case}: incorrect post-handshake file state ({diagnostic})")
     return {"case": case, "passed": True, "post_exit_commit": marker.exists()}
 
 

@@ -47,3 +47,12 @@ signature checks passed. Astra Medium re-review: **PASS**, no remaining blockers
 six focused reviewer tests passed. Full local preflight passed again after resume
 from an unrelated Windows sleep interruption. The native Actions matrix still
 requires its next rehearsal; no gate was bypassed or weakened.
+
+The second rehearsal passed canonical preflight, signed packaging, the Rust suite
+and NSIS registry checks, then stopped at the harmless positive recovery fixture's
+missing post-exit marker. The fixture now marks its managed pipe handle invalid
+without closing the kernel handle on success, matching the real Rust client's
+OS-lifetime ownership; negative cancellation cases still dispose normally.
+Production transport is unchanged. Local native15/real transport and preflight
+passed; Astra Medium approved this bounded fixture change. CLR shutdown was a
+plausible explanation, not a proven cause; the next hosted run must confirm it.
