@@ -64,3 +64,22 @@ versus uploaded GitHub asset filename (dots). The focused fix preserves both exa
 names and their byte/signature binding; Astra Medium review and preparation tests
 passed. Full local no-cache preflight passed at the same four-worker CI budget
 (201 files/modules). The native install/account matrix remains pending.
+
+The fourth rehearsal passed all recovery/policy checks and cryptographic checks
+on the candidate plus all three previous-channel installers. It then stopped
+before installation because fresh-account AppData resolution failed containment.
+The old diagnostic did not distinguish an empty missing-directory result from
+an inherited outside-profile path, so neither is claimed as the proven cause.
+Worker initialization now validates the genuine token/ProfileList identity,
+resets profile-dependent environment, resolves with `DoNotVerify` and checks
+absolute normalized containment before `Create`, then checks containment and
+directory existence again. No fabricated AppData path or relaxed isolation gate
+is used. Focused tests cover missing, foreign, sibling-prefix, traversal and
+relative paths and the initialization order. Hosted rerun remains required.
+Astra Medium re-review: **PASS**, no actionable blockers; both new regressions
+and all seven folder-boundary cases passed independently. Local focused gate/
+workflow tests passed (101 tests).
+Canonical no-cache preflight outside the restrictive sandbox passed all four
+stages and 201 test files/modules with four workers (116.66 seconds). Sandboxed
+attempts exposed temporary-path limits and stalled native startup tests; no
+application code or test timeout was changed to accommodate that environment.

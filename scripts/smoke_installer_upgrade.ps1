@@ -194,6 +194,15 @@ function Move-LegacyFixture([string]$Product, [string]$Scope, [string]$From, [st
     }
 }
 
+function Assert-WorkerAppData([string]$Profile, [string]$LocalData, [string]$RoamingData) {
+    foreach ($folder in @(@{ Name = 'LocalAppData'; Path = $LocalData }, @{ Name = 'AppData'; Path = $RoamingData })) {
+        Assert-True (-not [string]::IsNullOrWhiteSpace($folder.Path)) "$($folder.Name) resolution was empty (profile '$Profile')"
+        Assert-True ($folder.Path -match '^[A-Za-z]:\\') "$($folder.Name) is not an absolute local path: '$($folder.Path)'"
+        $absolute = [IO.Path]::GetFullPath($folder.Path)
+        Assert-True ($absolute.StartsWith($Profile + '\', [StringComparison]::OrdinalIgnoreCase)) "$($folder.Name) escaped dedicated worker profile: '$absolute' (profile '$Profile')"
+    }
+}
+
 function Initialize-WorkerProfile([string]$ExpectedAccount) {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $accountName = $identity.Name.Split('\')[-1]
@@ -201,14 +210,27 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
     # Credentialed child processes can inherit the caller's environment. Resolve
     # genuine known folders under the logged-on token, never the runner's paths.
     $profile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
-    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
-    $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
     $profileRecord = Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($identity.User.Value)"
     Assert-True ($profile -ieq $profileRecord.ProfileImagePath -and (Split-Path $profile -Leaf) -like "$accountName*") 'Worker profile must be its genuine disposable Windows profile'
-    Assert-True ($localData.StartsWith($profile + '\', [StringComparison]::OrdinalIgnoreCase)) 'LocalAppData escaped dedicated worker profile'
-    Assert-True ($roamingData.StartsWith($profile + '\', [StringComparison]::OrdinalIgnoreCase)) 'AppData escaped dedicated worker profile'
+    # Expand shell-folder paths using the verified token profile, not inherited
+    # runner environment. Fresh LoadUserProfile accounts may not yet have AppData
+    # folders: the default GetFolderPath option returns empty for absent folders.
+    # Ask Windows to initialize its genuine known folders, then retain containment
+    # checks; never substitute a fabricated directory when resolution fails.
     $env:USERNAME = $accountName
     $env:USERPROFILE = $profile
+    $profileDrive = [IO.Path]::GetPathRoot($profile).TrimEnd('\')
+    Assert-True ($profileDrive -match '^[A-Za-z]:$') 'Worker profile must use a local drive'
+    $env:HOMEDRIVE = $profileDrive
+    $env:HOMEPATH = $profile.Substring($profileDrive.Length)
+    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
+    $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
+    Assert-WorkerAppData $profile $localData $roamingData
+    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::Create)
+    $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::Create)
+    Assert-WorkerAppData $profile $localData $roamingData
+    Assert-True ((Test-Path -LiteralPath $localData -PathType Container) -and
+        (Test-Path -LiteralPath $roamingData -PathType Container)) 'Windows did not initialize worker AppData directories'
     $env:LOCALAPPDATA = $localData
     $env:APPDATA = $roamingData
     $workerTemp = Join-Path $Root "temp-$WorkerScope"

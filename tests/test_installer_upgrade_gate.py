@@ -252,6 +252,28 @@ class FinalAssetRecheckTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
 class PowerShellGateTests(unittest.TestCase):
+    def test_fresh_profile_initializes_real_shell_folders_after_profile_validation(self):
+        source = SMOKE.read_text().split('function Initialize-WorkerProfile', 1)[1].split('function Invoke-Worker', 1)[0]
+        self.assertLess(source.index('$profile -ieq $profileRecord.ProfileImagePath'), source.index('$env:USERPROFILE = $profile'))
+        self.assertLess(source.index('$env:USERPROFILE = $profile'), source.index('::LocalApplicationData,'))
+        self.assertEqual(source.count('[Environment+SpecialFolderOption]::Create'), 2)
+        self.assertEqual(source.count('[Environment+SpecialFolderOption]::DoNotVerify'), 2)
+        self.assertLess(source.index('Assert-WorkerAppData $profile'), source.index('[Environment+SpecialFolderOption]::Create'))
+        self.assertIn('Assert-WorkerAppData $profile $localData $roamingData', source)
+        self.assertNotIn("Join-Path $profile 'AppData", source)
+
+    def test_profile_containment_still_rejects_missing_or_foreign_shell_folders(self):
+        for local, roaming, accepted in ((r'C:\Users\fixture\AppData\Local', r'C:\Users\fixture\AppData\Roaming', True),
+                                         ('', r'C:\Users\fixture\AppData\Roaming', False),
+                                         (r'C:\Users\runner\AppData\Local', r'C:\Users\fixture\AppData\Roaming', False),
+                                         (r'C:\Users\fixture\AppData\Local', '', False),
+                                         (r'C:\Users\fixture\..\runner\AppData\Local', r'C:\Users\fixture\AppData\Roaming', False),
+                                         (r'AppData\Local', r'C:\Users\fixture\AppData\Roaming', False),
+                                         (r'C:\Users\fixture-other\AppData\Local', r'C:\Users\fixture\AppData\Roaming', False)):
+            with self.subTest(local=local, roaming=roaming):
+                result = self.run_functions(f"Assert-WorkerAppData 'C:\\Users\\fixture' '{local}' '{roaming}'")
+                self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+
     def test_native_execution_strips_credentials_without_exposing_values(self):
         names = ['GH_TOKEN', 'GITHUB_TOKEN', 'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ID_TOKEN_TEST', 'GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_STATE', 'GITHUB_STEP_SUMMARY']
         assignments = '\n'.join(f"$env:{name} = 'not-a-real-secret'" for name in names)

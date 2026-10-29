@@ -228,6 +228,14 @@ cache: fresh hosted runners may not have the registry/index even when production
 Rust artifacts were restored. Keep its crypto versions pinned to the root lock,
 and keep real candidate-byte verification mandatory before installer execution.
 
+Fresh credentialed Windows CI accounts need genuine shell-folder initialization.
+Default .NET `GetFolderPath` may return empty when a folder does not exist.
+Validate the token SID's ProfileList profile before resetting inherited profile
+environment; resolve AppData with `DoNotVerify` and validate absolute normalized
+profile containment before `Create`, then validate the created directories again.
+Never fabricate AppData paths or create an inherited runner path before checking
+containment. The native gate logs empty and outside-profile failures distinctly.
+
 Use the compiler/policy harness in `scripts/check_installer_scope.py` to execute
 actual NSIS normalization/discovery/registration cleanup against disposable
 HKCU keys; textual contracts alone missed a scratch-register clobber. Win32
