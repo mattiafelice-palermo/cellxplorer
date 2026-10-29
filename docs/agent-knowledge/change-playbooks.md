@@ -248,6 +248,13 @@ the explicit profile-variable allowlist; always free the native block. Do not
 copy PATH, credentials or workflow-control variables. Resolve AppData with
 `DoNotVerify` and validate absolute normalized
 profile containment before `Create`, then validate the created directories again.
+The credentialed worker's already-started .NET resolver can still return the
+controller paths even after its native token block and assigned environment are
+correct. Resolve/validate/create known folders in a fresh same-token child that
+inherits those corrected variables, matching the installer launch conditions.
+Verify its SID/profile, validate both paths before either Create, bound its exit,
+and recheck typed JSON identity/path results in the parent. Do not accept stale
+parent results, fabricate directories, or rewrite user shell-folder registrations.
 Set each credentialed worker's TEMP/TMP to its validated, non-reparse gate-root
 scratch child before launching PowerShell and revalidate inside the worker before
 loading helpers. Windows PowerShell's Add-Type compiler can otherwise try the

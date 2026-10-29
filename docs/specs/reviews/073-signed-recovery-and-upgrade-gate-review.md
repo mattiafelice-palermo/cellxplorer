@@ -161,3 +161,19 @@ plan loading/install execution and early/full-gate separation checks.
 Astra Medium approved the diagnostic-only change; 80 selected tests passed
 independently. Canonical no-cache preflight passed 4/4 stages and 201 files/modules
 with four workers (120.59 seconds). Hosted profile diagnosis remains required.
+
+The ninth rehearsal's early probe, 40968016266, established the stage precisely:
+the native token block and assigned process environment both named the correct
+fresh worker, while subsequent parent .NET DoNotVerify resolved runneradmin's
+AppData. The correction runs that same default Windows resolver in a fresh
+same-token PowerShell child inheriting the validated environment, as an installer
+will. The child checks SID/profile and both paths before any Create, revalidates
+afterward, and returns typed JSON; the parent bounds execution to 30 seconds and
+rechecks identity/containment. No fake paths, resolver fallback, user hive edits
+or weakened isolation are introduced. Local probes use no-Create mode in both
+PowerShell runtimes; the wrong-SID case fails before folder creation. Hosted
+profile/bootstrap and full install matrix still require acceptance.
+Astra Medium final review passed; four selected tests including both-shell
+read-only resolution and wrong-SID rejection passed independently. Canonical
+no-cache preflight passed 4/4 stages and 201 files/modules with four workers
+(136.04 seconds). No local profiles/folders or installations were created by probes.

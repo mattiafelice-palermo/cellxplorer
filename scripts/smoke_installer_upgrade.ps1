@@ -272,6 +272,55 @@ function Set-WorkerTokenProfileEnvironment([string]$Profile, [Collections.IDicti
     $env:APPDATA = $roamingData
 }
 
+function Initialize-WorkerShellFolders([string]$Profile, [string]$Sid, [bool]$CreateFolders = $true) {
+    # PowerShell/CLR may have cached shell paths before token environment repair.
+    # A fresh same-token process consumes the corrected environment just as the
+    # installer will. Never replace a failed resolution with invented paths.
+    $quotedProfile = $Profile.Replace("'", "''")
+    $quotedSid = $Sid.Replace("'", "''")
+    $createLiteral = if ($CreateFolders) { '$true' } else { '$false' }
+    $command = "function Assert-True { ${function:Assert-True} }`nfunction Assert-WorkerAppData { ${function:Assert-WorkerAppData} }`n" + @"
+`$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+`$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+`$profile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+Assert-True (`$sid -ceq '$quotedSid' -and `$profile -ieq '$quotedProfile') 'Fresh shell process identity/profile mismatch'
+`$localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
+`$roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
+Assert-WorkerAppData `$profile `$localData `$roamingData
+if ($createLiteral) {
+    `$localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::Create)
+    `$roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::Create)
+    Assert-WorkerAppData `$profile `$localData `$roamingData
+    Assert-True ((Test-Path -LiteralPath `$localData -PathType Container) -and (Test-Path -LiteralPath `$roamingData -PathType Container)) 'Windows did not initialize worker AppData directories'
+}
+@{ sid = `$sid; profile = `$profile; local = `$localData; roaming = `$roamingData } | ConvertTo-Json -Compress
+"@
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $start.Arguments = "-NoProfile -NonInteractive -EncodedCommand $encoded"
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $child = [Diagnostics.Process]::Start($start)
+    $stdout = $child.StandardOutput.ReadToEndAsync()
+    $stderr = $child.StandardError.ReadToEndAsync()
+    try { Wait-CheckedProcess $child 30000 'Fresh worker shell-folder resolution' }
+    catch {
+        if ($child.HasExited) { Write-Host ($stderr.GetAwaiter().GetResult()) }
+        throw
+    }
+    $folders = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+    Assert-True ($folders -is [pscustomobject] -and $folders.sid -is [string] -and
+        $folders.profile -is [string] -and $folders.local -is [string] -and $folders.roaming -is [string]) 'Fresh shell result must be one typed JSON object'
+    Assert-True ($folders.sid -ceq $Sid -and $folders.profile -ieq $Profile) 'Fresh shell result identity mismatch'
+    Assert-WorkerAppData $Profile $folders.local $folders.roaming
+    $child.Dispose()
+    return $folders
+}
+
 function Initialize-WorkerProfile([string]$ExpectedAccount) {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $accountName = $identity.Name.Split('\')[-1]
@@ -292,18 +341,10 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
     Write-Host "Token block paths: profile=$($tokenEnvironment['USERPROFILE']) local=$($tokenEnvironment['LOCALAPPDATA']) roaming=$($tokenEnvironment['APPDATA'])"
     Set-WorkerTokenProfileEnvironment $profile $tokenEnvironment
     Write-Host "Assigned process paths: profile=$env:USERPROFILE local=$env:LOCALAPPDATA roaming=$env:APPDATA"
-    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
-    $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
-    Write-Host "DoNotVerify paths: local=$localData roaming=$roamingData"
-    Assert-WorkerAppData $profile $localData $roamingData
-    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::Create)
-    $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::Create)
-    Write-Host "Create paths: local=$localData roaming=$roamingData"
-    Assert-WorkerAppData $profile $localData $roamingData
-    Assert-True ((Test-Path -LiteralPath $localData -PathType Container) -and
-        (Test-Path -LiteralPath $roamingData -PathType Container)) 'Windows did not initialize worker AppData directories'
-    $env:LOCALAPPDATA = $localData
-    $env:APPDATA = $roamingData
+    $folders = Initialize-WorkerShellFolders $profile $identity.User.Value
+    Write-Host "Fresh shell paths: local=$($folders.local) roaming=$($folders.roaming)"
+    $env:LOCALAPPDATA = $folders.local
+    $env:APPDATA = $folders.roaming
     $isAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     Assert-True ($isAdmin -eq ($WorkerScope -eq 'machine')) 'Incorrect Windows token: user worker must NOT be elevated'
     return $isAdmin

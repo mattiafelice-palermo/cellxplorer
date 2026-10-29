@@ -310,11 +310,13 @@ Assert-True (-not [string]::IsNullOrWhiteSpace($block['USERPROFILE'])) 'Native h
     def test_fresh_profile_initializes_real_shell_folders_after_profile_validation(self):
         source = SMOKE.read_text().split('function Initialize-WorkerProfile', 1)[1].split('function Invoke-Worker', 1)[0]
         self.assertLess(source.index('$profile -ieq $profileRecord.ProfileImagePath'), source.index('Set-WorkerTokenProfileEnvironment $profile'))
-        self.assertLess(source.index('Set-WorkerTokenProfileEnvironment $profile'), source.index('::LocalApplicationData,'))
-        self.assertEqual(source.count('[Environment+SpecialFolderOption]::Create'), 2)
-        self.assertEqual(source.count('[Environment+SpecialFolderOption]::DoNotVerify'), 2)
-        self.assertLess(source.index('Assert-WorkerAppData $profile'), source.index('[Environment+SpecialFolderOption]::Create'))
-        self.assertIn('Assert-WorkerAppData $profile $localData $roamingData', source)
+        self.assertLess(source.index('Set-WorkerTokenProfileEnvironment $profile'), source.index('Initialize-WorkerShellFolders $profile'))
+        fresh = SMOKE.read_text().split('function Initialize-WorkerShellFolders', 1)[1].split('function Initialize-WorkerProfile', 1)[0]
+        self.assertEqual(fresh.count('[Environment+SpecialFolderOption]::Create'), 2)
+        self.assertEqual(fresh.count('[Environment+SpecialFolderOption]::DoNotVerify'), 2)
+        self.assertLess(fresh.index('Assert-WorkerAppData `$profile'), fresh.index('[Environment+SpecialFolderOption]::Create'))
+        self.assertIn('Wait-CheckedProcess $child 30000', fresh)
+        self.assertIn('Fresh shell result identity mismatch', fresh)
         self.assertNotIn("Join-Path $profile 'AppData", source)
 
     def test_token_environment_replaces_inherited_profile_paths_only_after_validation(self):
@@ -346,8 +348,8 @@ $block = Get-TokenProfileEnvironment $identity
 Assert-True ($block['LOCALAPPDATA'] -cne $env:LOCALAPPDATA -and $block['APPDATA'] -cne $env:APPDATA) 'Native token block inherited controller paths'
 Assert-True (-not [string]::IsNullOrWhiteSpace($block['USERPROFILE']) -and $block['USERPROFILE'] -cne $env:USERPROFILE) 'Token environment has no genuine loaded profile'
 Set-WorkerTokenProfileEnvironment $block['USERPROFILE'] $block
-$resolved = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
-Assert-True ($resolved -ieq $block['LOCALAPPDATA']) 'Shell resolver still uses inherited LocalAppData'
+$folders = Initialize-WorkerShellFolders $block['USERPROFILE'] $identity.User.Value $false
+Assert-True ($folders.local -ieq $block['LOCALAPPDATA'] -and $folders.roaming -ieq $block['APPDATA']) 'Fresh shell resolver uses inherited AppData'
 '''
         for shell in ('pwsh', 'powershell'):
             if not shutil.which(shell):
@@ -355,6 +357,17 @@ Assert-True ($resolved -ieq $block['LOCALAPPDATA']) 'Shell resolver still uses i
             with self.subTest(shell=shell):
                 result = self.run_functions(command, shell=shell)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == 'nt', 'Native Windows identity required')
+    def test_fresh_shell_child_rejects_wrong_expected_sid_before_folder_creation(self):
+        result = self.run_functions(r'''
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$block = Get-TokenProfileEnvironment $identity
+Set-WorkerTokenProfileEnvironment $block['USERPROFILE'] $block
+Initialize-WorkerShellFolders $block['USERPROFILE'] 'S-1-0-0' $false
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('identity/profile mismatch', result.stdout + result.stderr)
 
     def test_profile_containment_still_rejects_missing_or_foreign_shell_folders(self):
         for local, roaming, accepted in ((r'C:\Users\fixture\AppData\Local', r'C:\Users\fixture\AppData\Roaming', True),
