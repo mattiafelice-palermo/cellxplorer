@@ -149,7 +149,10 @@ def prepare(root: Path, channel: str, version: str, release_id: str | None,
     version = version.removeprefix("v")
     candidate_tag = f"v{version}"
     name = f'{PRODUCTS[channel].replace(" ", ".")}_{version}_x64-setup.exe'
-    local = ROOT / "src-tauri/target/release/bundle/nsis" / name
+    # Tauri's on-disk bundle retains product spaces; GitHub sanitizes uploaded
+    # release-asset names to dots. Bind the two exact names by bytes, never glob.
+    local_name = f'{PRODUCTS[channel]}_{version}_x64-setup.exe'
+    local = ROOT / "src-tauri/target/release/bundle/nsis" / local_name
     candidate = root / "candidate.exe"
     signature = root / "candidate.sig"
     provenance = None

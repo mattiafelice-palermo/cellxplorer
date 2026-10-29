@@ -151,6 +151,11 @@ The expected installers are channel-specific: `CellXplorer_<version>_x64-setup.e
 `CellXplorer.Alpha_<version>_x64-setup.exe`. Packaging must derive the expected filename from the
 selected overlay and fail if that exact artifact is absent.
 
+Direct Tauri bundling leaves spaces in local Beta/Alpha NSIS filenames (for
+example `CellXplorer Alpha_<version>_x64-setup.exe`); GitHub upload sanitizes the
+release-asset name to dots. Release-gate provenance must map these two exact names
+and compare bytes/signatures, not assume the uploaded name is also the local path.
+
 ### Packaging cost, measured
 
 A full `scripts/build-app.ps1` run is roughly a minute when nothing forces a sidecar rebuild:

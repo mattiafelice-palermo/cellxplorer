@@ -56,3 +56,11 @@ OS-lifetime ownership; negative cancellation cases still dispose normally.
 Production transport is unchanged. Local native15/real transport and preflight
 passed; Astra Medium approved this bounded fixture change. CLR shutdown was a
 plausible explanation, not a proven cause; the next hosted run must confirm it.
+
+The third rehearsal passed all 15 native recovery cases, the actual Rust-to-NSIS
+probe, full Rust tests, policy compilation and signed packaging on the hosted
+runner. Artifact preparation then exposed the direct-Tauri local filename (spaces)
+versus uploaded GitHub asset filename (dots). The focused fix preserves both exact
+names and their byte/signature binding; Astra Medium review and preparation tests
+passed. Full local no-cache preflight passed at the same four-worker CI budget
+(201 files/modules). The native install/account matrix remains pending.

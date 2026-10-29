@@ -147,8 +147,9 @@ class PreparationTests(unittest.TestCase):
                 bundle.mkdir(parents=True)
                 (bundle.parent.parent / "cellxplorer.exe").write_bytes(b"candidate application")
                 candidate_name = "CellXplorer.Alpha_1.0.0-alpha.2_x64-setup.exe"
-                (bundle / candidate_name).write_bytes(b"candidate")
-                (bundle / (candidate_name + ".sig")).write_bytes(b"signed")
+                local_name = "CellXplorer Alpha_1.0.0-alpha.2_x64-setup.exe"
+                (bundle / local_name).write_bytes(b"candidate")
+                (bundle / (local_name + ".sig")).write_bytes(b"signed")
                 (repo / "uploaded-latest.json").write_bytes(b"manifest")
                 (repo / "src-tauri/tauri.conf.json").write_text(json.dumps({"plugins": {"updater": {"pubkey": "configured-key"}}}))
                 output = Path(temporary) / "output"
