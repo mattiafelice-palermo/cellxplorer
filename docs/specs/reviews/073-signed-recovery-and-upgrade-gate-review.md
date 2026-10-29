@@ -148,3 +148,16 @@ TEMP and idempotent initialization. No installer policy or isolation check chang
 Astra Medium re-review passed with no actionable blockers; both new tests passed
 independently. Canonical no-cache preflight passed all four stages and all 201
 files/modules with four workers (114.21 seconds). Next hosted run remains required.
+
+The eighth rehearsal, 40965854406, passed recovery and artifact checks but still
+rejected a runneradmin AppData path before installations; the old shared assertion
+did not identify which resolution stage failed. The follow-up logs only selected
+SID/profile/path values at each validation stage and adds an early profile-only
+CI probe using the exact same credential mode, TEMP initialization and profile
+code. It cannot accept draft provenance or native installation cases; the later
+full gate is unchanged and mandatory. No resolver or containment check was changed
+without evidence. Focused107 tests passed, including profile-only return before
+plan loading/install execution and early/full-gate separation checks.
+Astra Medium approved the diagnostic-only change; 80 selected tests passed
+independently. Canonical no-cache preflight passed 4/4 stages and 201 files/modules
+with four workers (120.59 seconds). Hosted profile diagnosis remains required.

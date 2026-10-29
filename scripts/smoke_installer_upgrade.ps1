@@ -4,7 +4,8 @@ param(
     [string]$ReleaseId,
     # Internal worker entry point, always authenticated against the generated account plan.
     [ValidateSet('', 'user', 'machine')][string]$WorkerScope = '',
-    [string]$Root
+    [string]$Root,
+    [switch]$ProfileProbe
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -280,18 +281,24 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
     $profile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     $profileRecord = Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($identity.User.Value)"
     Assert-True ($profile -ieq $profileRecord.ProfileImagePath -and (Split-Path $profile -Leaf) -like "$accountName*") 'Worker profile must be its genuine disposable Windows profile'
+    Write-Host "Profile identity verified: account=$accountName SID=$($identity.User.Value) profile=$profile"
     # Expand shell-folder paths using the verified token profile, not inherited
     # runner environment. Fresh LoadUserProfile accounts may not yet have AppData
     # folders: the default GetFolderPath option returns empty for absent folders.
     # Ask Windows to initialize its genuine known folders, then retain containment
     # checks; never substitute a fabricated directory when resolution fails.
     $env:USERNAME = $accountName
-    Set-WorkerTokenProfileEnvironment $profile (Get-TokenProfileEnvironment $identity)
+    $tokenEnvironment = Get-TokenProfileEnvironment $identity
+    Write-Host "Token block paths: profile=$($tokenEnvironment['USERPROFILE']) local=$($tokenEnvironment['LOCALAPPDATA']) roaming=$($tokenEnvironment['APPDATA'])"
+    Set-WorkerTokenProfileEnvironment $profile $tokenEnvironment
+    Write-Host "Assigned process paths: profile=$env:USERPROFILE local=$env:LOCALAPPDATA roaming=$env:APPDATA"
     $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
     $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
+    Write-Host "DoNotVerify paths: local=$localData roaming=$roamingData"
     Assert-WorkerAppData $profile $localData $roamingData
     $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::Create)
     $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::Create)
+    Write-Host "Create paths: local=$localData roaming=$roamingData"
     Assert-WorkerAppData $profile $localData $roamingData
     Assert-True ((Test-Path -LiteralPath $localData -PathType Container) -and
         (Test-Path -LiteralPath $roamingData -PathType Container)) 'Windows did not initialize worker AppData directories'
@@ -305,6 +312,10 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
 function Invoke-Worker {
     $accounts = Get-Content -LiteralPath "$Root\accounts.json" -Raw | ConvertFrom-Json
     $isAdmin = Initialize-WorkerProfile $accounts.$WorkerScope
+    if ($ProfileProbe) {
+        @{ completed = @('profile-bootstrap'); token_elevated = $isAdmin; account = $env:USERNAME } | ConvertTo-Json | Set-Content -LiteralPath "$Root\$WorkerScope-result.json"
+        return
+    }
     $plan = Get-Content -LiteralPath "$Root\plan.json" -Raw | ConvertFrom-Json
     $hasBaseline = [bool]$plan.previous.$Channel.("supports_${WorkerScope}_baseline")
     $machineResult = $null
@@ -417,23 +428,26 @@ if ($WorkerScope) {
     Invoke-Worker
     exit 0
 }
-Assert-True ($Channel -and $Version) 'Channel and Version required'
+Assert-True ($ProfileProbe -or ($Channel -and $Version)) 'Channel and Version required'
+Assert-True (-not ($ProfileProbe -and $ReleaseId)) 'Profile-only probe cannot verify draft release provenance'
 $Root = Join-Path $env:RUNNER_TEMP ('cx-upgrade-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Root | Out-Null
 Assert-TempRoot $Root
 Write-Host "Installer gate evidence: $Root"
-$prepare = @("$PSScriptRoot\installer_upgrade_gate.py", '--root', $Root, '--channel', $Channel, '--version', $Version)
 $evidence = $null
-if ($ReleaseId) {
-    $evidence = New-ControllerEvidence
-    $prepare += @('--release-id', $ReleaseId, '--evidence', $evidence)
+if (-not $ProfileProbe) {
+    $prepare = @("$PSScriptRoot\installer_upgrade_gate.py", '--root', $Root, '--channel', $Channel, '--version', $Version)
+    if ($ReleaseId) {
+        $evidence = New-ControllerEvidence
+        $prepare += @('--release-id', $ReleaseId, '--evidence', $evidence)
+    }
+    & python @prepare
+    Assert-True ($LASTEXITCODE -eq 0) 'Artifact provenance / production signature verification failed'
 }
-& python @prepare
-Assert-True ($LASTEXITCODE -eq 0) 'Artifact provenance / production signature verification failed'
 $controllerOutput = $env:GITHUB_OUTPUT
 $controllerSummary = $env:GITHUB_STEP_SUMMARY
 Remove-NativeCredentials
-Get-Content -LiteralPath "$Root\plan.json"
+if (-not $ProfileProbe) { Get-Content -LiteralPath "$Root\plan.json" }
 Copy-Item -LiteralPath $PSCommandPath -Destination "$Root\smoke_installer_upgrade.ps1"
 $accounts = @{}
 $credentials = @{}
@@ -462,20 +476,27 @@ try {
             $probe = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList "-NoProfile -NonInteractive -Command `"Start-Sleep -Milliseconds 200; exit $expectedExit`""
             Wait-CheckedProcess $probe 30000 "$scope credentialed exit-code probe" $expectedExit
         }
-        $worker = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Root\smoke_installer_upgrade.ps1`" -Channel $Channel -WorkerScope $scope -Root `"$Root`"" -RedirectStandardOutput "$Root\$scope-stdout.log" -RedirectStandardError "$Root\$scope-stderr.log"
+        $workerArguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Root\smoke_installer_upgrade.ps1`" -WorkerScope $scope -Root `"$Root`""
+        if ($ProfileProbe) { $workerArguments += ' -ProfileProbe' } else { $workerArguments += " -Channel $Channel" }
+        $worker = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList $workerArguments -RedirectStandardOutput "$Root\$scope-stdout.log" -RedirectStandardError "$Root\$scope-stderr.log"
         try { Wait-CheckedProcess $worker 1200000 "$scope worker" }
         finally {
             Get-Content -LiteralPath "$Root\$scope-stdout.log"
             Get-Content -LiteralPath "$Root\$scope-stderr.log"
         }
         $result = Get-Content -LiteralPath "$Root\$scope-result.json" -Raw | ConvertFrom-Json
-        Assert-True (@($result.completed).Count -eq 4) "$scope matrix incomplete"
+        $expectedCases = if ($ProfileProbe) { 1 } else { 4 }
+        Assert-True (@($result.completed).Count -eq $expectedCases) "$scope matrix incomplete"
         $result | ConvertTo-Json -Depth 6 | Write-Host
-        if ($controllerSummary) {
+        if ($controllerSummary -and -not $ProfileProbe) {
             "Installer gate ($scope): $($result.baseline_coverage). Cases: $($result.completed -join ', ')." >> $controllerSummary
         }
     }
-    Write-Host 'PASS: 8 native install/reinstall cases (see explicit baseline coverage); NOT old installed updater, interactive UAC, or end-to-end recovery coverage.'
+    if ($ProfileProbe) {
+        Write-Host 'PASS: disposable worker profiles only; no installation tests or release provenance were accepted.'
+    } else {
+        Write-Host 'PASS: 8 native install/reinstall cases (see explicit baseline coverage); NOT old installed updater, interactive UAC, or end-to-end recovery coverage.'
+    }
     if ($evidence) {
         Assert-True (Test-Path -LiteralPath $evidence) 'Controller provenance is missing'
         "provenance_path=$evidence" >> $controllerOutput

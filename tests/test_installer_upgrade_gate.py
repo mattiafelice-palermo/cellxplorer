@@ -252,6 +252,33 @@ class FinalAssetRecheckTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
 class PowerShellGateTests(unittest.TestCase):
+    def test_profile_probe_returns_before_loading_plan_or_running_installers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'accounts.json').write_text(json.dumps({'user': 'disposable-fixture'}))
+            command = f"$Root = '{root}'\n" + r'''
+$ProfileProbe = $true
+$WorkerScope = 'user'
+function Initialize-WorkerProfile($Expected) { Assert-True ($Expected -ceq 'disposable-fixture') 'Wrong account plan'; return $false }
+function Invoke-Setup { throw 'Profile-only probe must never install' }
+Invoke-Worker
+$result = Get-Content -LiteralPath "$Root\user-result.json" -Raw | ConvertFrom-Json
+Assert-True (@($result.completed).Count -eq 1 -and $result.completed[0] -ceq 'profile-bootstrap') 'Probe falsely reported native installation cases'
+'''
+            result = self.run_functions(command)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_profile_probe_cannot_replace_full_publication_gate(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        early = workflow.split('- name: Verify disposable installer worker profiles', 1)[1].split('- parallel:', 1)[0]
+        self.assertIn('smoke_installer_upgrade.ps1 -ProfileProbe', early)
+        native = workflow.split('- name: Mandatory native installer upgrade and reinstall gate', 1)[1].split('- name:', 1)[0]
+        self.assertNotIn('ProfileProbe', native)
+        self.assertIn('smoke_installer_upgrade.ps1 @arguments', native)
+        source = SMOKE.read_text()
+        self.assertIn('Profile-only probe cannot verify draft release provenance', source)
+        self.assertIn("$expectedCases = if ($ProfileProbe) { 1 } else { 4 }", source)
+
     def test_worker_temp_is_selected_before_credentialed_launch_and_helper_compilation(self):
         source = SMOKE.read_text()
         driver = source.split('\nAssert-CI\n', 1)[1]

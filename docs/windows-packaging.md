@@ -258,7 +258,11 @@ user-only predecessor, or historical `both` installer without a proven unattende
 scope-selection contract, blocks preparation with an explicit unsupported-matrix
 diagnostic rather than fabricating an installation or reporting a skipped success.
 
-Before the native matrix, the workflow also requires the full Rust suite via
+Before building packages, the workflow requires an early profile-only probe of
+the same fresh credentialed worker initialization.
+It logs only selected identity/path diagnostics, performs no installations, and
+cannot produce native-gate or draft-provenance acceptance. The full install gate
+remains mandatory even when this early check passes. It then requires
 `cargo test --locked --manifest-path src-tauri/Cargo.toml` (including real
 disposable registry-reader and recovery regressions), the
 three-channel NSIS compiler/policy harness, and `python

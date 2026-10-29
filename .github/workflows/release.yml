@@ -76,6 +76,12 @@ jobs:
           add-job-id-key: "false"
           save-if: "false"
 
+      - name: Verify disposable installer worker profiles
+        shell: pwsh
+        run: |
+          .\scripts\smoke_installer_upgrade.ps1 -ProfileProbe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - parallel:
           - name: Install backend dependencies
             shell: pwsh
