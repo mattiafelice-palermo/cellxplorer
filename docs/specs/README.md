@@ -1,6 +1,6 @@
 # Feature specs
 
-- [073 — Signed recovery bootstrap and mandatory upgrade gate](073-signed-recovery-and-upgrade-gate.md). Implemented; Astra Medium review and local checks passed. Hosted build-only rehearsal pending.
+- [073 — Signed recovery bootstrap and mandatory upgrade gate](073-signed-recovery-and-upgrade-gate.md). Implementation pushed and local checks passed; hosted acceptance blocked by a process-exit ordering race. Final-E semantics await user decision; not merged or release-ready.
 
 - [072 — Interrupted BioLogic executions and readable source errors](072-interrupted-biologic-executions-and-readable-errors.md).
   **Implemented.** Evidence-backed restart without a rest row and specific

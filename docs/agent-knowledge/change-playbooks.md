@@ -221,6 +221,14 @@ Old clients cannot retroactively gain this protocol. `scripts/check_update_recov
 executes production NSIS logic and the actual Rust transport against harmless
 fixtures; it does not establish signed/installed-client/UAC acceptance.
 
+Windows `ExitProcess` closes object handles before signaling the process object.
+Consequently a broken pipe followed by an immediate unsignaled Wait(0) is NOT
+proof of cancellation rather than genuine process teardown. Spec 073's hosted
+rehearsal exposed this race; final integration is blocked pending an explicit
+final-authorization/exit-settlement contract and its tests. Do not claim the
+current immediate-check implementation is reliable, or silently add an unbounded
+wait that could accept a cancelled session on a later unrelated app exit.
+
 Preflight's real signature-vector check uses the small locked Cargo package in
 `scripts/updater_signature_verifier`, reusing the production-equivalent verifier
 source without desktop build inputs. Do not require an already-warm/offline Cargo

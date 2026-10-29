@@ -2,7 +2,7 @@
 
 Reviewer: GPT-6 Astra Medium. Date: 2026-10-29.
 Branch: `codex/signed-recovery-bootstrap`.
-Verdict: **PASS for the implementation checkpoint.** No remaining actionable code-review blockers. Hosted build-only rehearsal remains required before final integration.
+Verdict: **BLOCKED for final integration.** Earlier checkpoint reviews passed, but hosted rehearsal exposed a confirmed process-exit ordering race. The final-E acceptance amendment below requires user decision before correction and re-review; the native matrix remains unaccepted.
 
 ## Reviewed scope
 
@@ -99,3 +99,29 @@ Astra Medium final review: **PASS**, no actionable blockers; four focused tests
 including both native runtime probes passed independently. All 103 focused gate/
 workflow tests and canonical no-cache preflight (4/4 stages, 201 files/modules,
 four workers, 118.63 seconds) passed. Next hosted rehearsal remains mandatory.
+
+## Confirmed exit-ordering blocker
+
+The sixth rehearsal, [40957734314](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/40957734314),
+passed preflight, signed packaging, Rust73, signature vectors and NSIS policy,
+then intermittently failed the positive harmless recovery fixture in phase=exit
+with a broken pipe and an unsignaled process object. The new account environment
+fix did not reach the install matrix in this run.
+
+This is not dismissed as CLR fixture cleanup: Microsoft's documented
+[ExitProcess ordering](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess)
+closes all process handles before signaling the process object. Therefore the
+immediate broken-pipe/Wait(0) check can false-abort an actual production exit.
+Astra Medium confirmed the issue and corrected the earlier immediate-check
+approval. Existing green runs do not establish reliability of this ordering.
+
+Proposed amendment awaiting explicit user decision: final E becomes irreversible
+installation authorization; after observing a post-E disconnect, allow exactly
+one non-resetting 100-ms wait on the authenticated origin handle. Install only if
+the process signals, otherwise permanently abort the session. This accepts an
+exit inside that observed-disconnect window; it is not unchanged immediate
+cancellation semantics and does not prove the disconnect was caused by exit.
+Pre-E cancellation stays strict. Review final-E placement so cancellable/fallible
+preparation precedes it. Tests must cover pre-E cancellation, no-exit disconnect,
+inside-window exit and later exit after permanent expiry. No amendment or grace
+has been implemented; no merge, tag, new release or feed change was performed.
