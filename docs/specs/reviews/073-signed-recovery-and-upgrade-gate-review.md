@@ -83,3 +83,19 @@ Canonical no-cache preflight outside the restrictive sandbox passed all four
 stages and 201 test files/modules with four workers (116.66 seconds). Sandboxed
 attempts exposed temporary-path limits and stalled native startup tests; no
 application code or test timeout was changed to accommodate that environment.
+
+The fifth rehearsal made the failure conclusive: `DoNotVerify` resolved
+`runneradmin`'s inherited LocalAppData while token/ProfileList correctly named
+the fresh worker. No installation ran. The follow-up generates a native
+`CreateEnvironmentBlock` for the already-loaded current token with inheritance
+disabled, verifies its USERPROFILE and both AppData boundaries, then applies
+only validated profile variables before the existing shell-folder checks.
+The native block is freed in `finally`; no registry rewrite or fabricated path
+is used. A read-only native regression poisons inherited USERPROFILE/APPDATA/
+LOCALAPPDATA, verifies Windows returns genuine token values, and checks actual
+shell resolution after applying them in both PowerShell 7 and Windows PowerShell
+5.1. Identity mismatch and foreign-path cases still fail closed.
+Astra Medium final review: **PASS**, no actionable blockers; four focused tests
+including both native runtime probes passed independently. All 103 focused gate/
+workflow tests and canonical no-cache preflight (4/4 stages, 201 files/modules,
+four workers, 118.63 seconds) passed. Next hosted rehearsal remains mandatory.

@@ -231,7 +231,13 @@ and keep real candidate-byte verification mandatory before installer execution.
 Fresh credentialed Windows CI accounts need genuine shell-folder initialization.
 Default .NET `GetFolderPath` may return empty when a folder does not exist.
 Validate the token SID's ProfileList profile before resetting inherited profile
-environment; resolve AppData with `DoNotVerify` and validate absolute normalized
+environment. Credentialed PowerShell workers can retain the controller's
+`APPDATA`/`LOCALAPPDATA` even after `USERPROFILE` changes. Generate a fresh block
+with Windows `CreateEnvironmentBlock` for the loaded current token and inheritance
+disabled, validate its profile identity and AppData containment, and import only
+the explicit profile-variable allowlist; always free the native block. Do not
+copy PATH, credentials or workflow-control variables. Resolve AppData with
+`DoNotVerify` and validate absolute normalized
 profile containment before `Create`, then validate the created directories again.
 Never fabricate AppData paths or create an inherited runner path before checking
 containment. The native gate logs empty and outside-profile failures distinctly.

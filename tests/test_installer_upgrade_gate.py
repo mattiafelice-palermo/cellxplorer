@@ -254,13 +254,52 @@ class FinalAssetRecheckTests(unittest.TestCase):
 class PowerShellGateTests(unittest.TestCase):
     def test_fresh_profile_initializes_real_shell_folders_after_profile_validation(self):
         source = SMOKE.read_text().split('function Initialize-WorkerProfile', 1)[1].split('function Invoke-Worker', 1)[0]
-        self.assertLess(source.index('$profile -ieq $profileRecord.ProfileImagePath'), source.index('$env:USERPROFILE = $profile'))
-        self.assertLess(source.index('$env:USERPROFILE = $profile'), source.index('::LocalApplicationData,'))
+        self.assertLess(source.index('$profile -ieq $profileRecord.ProfileImagePath'), source.index('Set-WorkerTokenProfileEnvironment $profile'))
+        self.assertLess(source.index('Set-WorkerTokenProfileEnvironment $profile'), source.index('::LocalApplicationData,'))
         self.assertEqual(source.count('[Environment+SpecialFolderOption]::Create'), 2)
         self.assertEqual(source.count('[Environment+SpecialFolderOption]::DoNotVerify'), 2)
         self.assertLess(source.index('Assert-WorkerAppData $profile'), source.index('[Environment+SpecialFolderOption]::Create'))
         self.assertIn('Assert-WorkerAppData $profile $localData $roamingData', source)
         self.assertNotIn("Join-Path $profile 'AppData", source)
+
+    def test_token_environment_replaces_inherited_profile_paths_only_after_validation(self):
+        command = r'''
+$env:USERPROFILE = 'C:\Users\controller'
+$env:LOCALAPPDATA = 'C:\Users\controller\AppData\Local'
+$env:APPDATA = 'C:\Users\controller\AppData\Roaming'
+$block = @{ USERPROFILE = 'C:\Users\fixture'; LOCALAPPDATA = 'C:\Users\fixture\AppData\Local'; APPDATA = 'C:\Users\fixture\AppData\Roaming'; GH_TOKEN = 'must-not-be-copied' }
+Set-WorkerTokenProfileEnvironment 'C:\Users\fixture' $block
+Assert-True ($env:LOCALAPPDATA -ceq $block.LOCALAPPDATA -and $env:APPDATA -ceq $block.APPDATA -and $env:USERPROFILE -ceq $block.USERPROFILE) 'Inherited controller profile survived'
+Assert-True ($env:HOMEDRIVE -ceq 'C:' -and $env:HOMEPATH -ceq '\Users\fixture') 'Home variables do not match genuine profile'
+Assert-True ($env:GH_TOKEN -cne 'must-not-be-copied') 'Non-profile environment was copied'
+'''
+        result = self.run_functions(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for before, after in (("USERPROFILE = 'C:\\Users\\fixture'", "USERPROFILE = 'C:\\Users\\other'"),
+                              ("LOCALAPPDATA = 'C:\\Users\\fixture\\AppData\\Local'", "LOCALAPPDATA = 'C:\\Users\\controller\\AppData\\Local'")):
+            result = self.run_functions(command.replace(before, after))
+            self.assertNotEqual(result.returncode, 0)
+
+    @unittest.skipUnless(os.name == 'nt', 'Native Windows environment API required')
+    def test_native_token_environment_excludes_inherited_profile_variables(self):
+        command = r'''
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$env:USERPROFILE = 'C:\not-the-token-profile'
+$env:LOCALAPPDATA = 'C:\not-the-token-profile\Local'
+$env:APPDATA = 'C:\not-the-token-profile\Roaming'
+$block = Get-TokenProfileEnvironment $identity
+Assert-True ($block['LOCALAPPDATA'] -cne $env:LOCALAPPDATA -and $block['APPDATA'] -cne $env:APPDATA) 'Native token block inherited controller paths'
+Assert-True (-not [string]::IsNullOrWhiteSpace($block['USERPROFILE']) -and $block['USERPROFILE'] -cne $env:USERPROFILE) 'Token environment has no genuine loaded profile'
+Set-WorkerTokenProfileEnvironment $block['USERPROFILE'] $block
+$resolved = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
+Assert-True ($resolved -ieq $block['LOCALAPPDATA']) 'Shell resolver still uses inherited LocalAppData'
+'''
+        for shell in ('pwsh', 'powershell'):
+            if not shutil.which(shell):
+                continue
+            with self.subTest(shell=shell):
+                result = self.run_functions(command, shell=shell)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_profile_containment_still_rejects_missing_or_foreign_shell_folders(self):
         for local, roaming, accepted in ((r'C:\Users\fixture\AppData\Local', r'C:\Users\fixture\AppData\Roaming', True),
@@ -303,13 +342,13 @@ class PowerShellGateTests(unittest.TestCase):
         self.assertNotEqual(process.returncode, 0)
         self.assertIn("never run locally", process.stdout + process.stderr)
 
-    def run_functions(self, command):
+    def run_functions(self, command, shell='pwsh'):
         # Load definitions ONLY; never execute the driver/worker/installers.
         definitions = SMOKE.read_text().split("\nAssert-CI\n", 1)[0]
         with tempfile.TemporaryDirectory() as temporary:
             script = Path(temporary) / 'functions-only.ps1'
             script.write_text(definitions + "\n" + command, encoding='utf-8')
-            process = subprocess.run(["pwsh", "-NoProfile", "-File", str(script)], text=True, capture_output=True)
+            process = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)], text=True, capture_output=True)
         return process
 
     def test_installed_identity_validation_rejects_real_semantic_mismatches(self):

@@ -203,6 +203,59 @@ function Assert-WorkerAppData([string]$Profile, [string]$LocalData, [string]$Roa
     }
 }
 
+function Get-TokenProfileEnvironment([Security.Principal.WindowsIdentity]$Identity) {
+    if (-not ('CxInstallerTokenEnvironment' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class CxInstallerTokenEnvironment {
+    [DllImport("userenv.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateEnvironmentBlock(out IntPtr block, IntPtr token, [MarshalAs(UnmanagedType.Bool)] bool inherit);
+    [DllImport("userenv.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyEnvironmentBlock(IntPtr block);
+    public static Dictionary<string, string> Read(IntPtr token) {
+        IntPtr block;
+        if (token == IntPtr.Zero) throw new ArgumentException("A genuine worker token is required");
+        if (!CreateEnvironmentBlock(out block, token, false)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            IntPtr cursor = block;
+            while (true) {
+                string entry = Marshal.PtrToStringUni(cursor);
+                if (String.IsNullOrEmpty(entry)) break;
+                int separator = entry.IndexOf('=');
+                if (separator > 0) result.Add(entry.Substring(0, separator), entry.Substring(separator + 1));
+                cursor = IntPtr.Add(cursor, checked((entry.Length + 1) * 2));
+            }
+            return result;
+        } finally { DestroyEnvironmentBlock(block); }
+    }
+}
+'@
+    }
+    # false means the controller environment is not inherited. Do not print the
+    # block: only selected, validated profile paths are applied to this worker.
+    return [CxInstallerTokenEnvironment]::Read($Identity.Token)
+}
+
+function Set-WorkerTokenProfileEnvironment([string]$Profile, [Collections.IDictionary]$EnvironmentBlock) {
+    Assert-True ($EnvironmentBlock['USERPROFILE'] -ieq $Profile) 'Token environment profile differs from authenticated ProfileList identity'
+    $localData = [string]$EnvironmentBlock['LOCALAPPDATA']
+    $roamingData = [string]$EnvironmentBlock['APPDATA']
+    Assert-WorkerAppData $Profile $localData $roamingData
+    $profileDrive = [IO.Path]::GetPathRoot($Profile).TrimEnd('\')
+    Assert-True ($profileDrive -match '^[A-Za-z]:$') 'Worker profile must use a local drive'
+    $env:USERPROFILE = $Profile
+    $env:HOMEDRIVE = $profileDrive
+    $env:HOMEPATH = $Profile.Substring($profileDrive.Length)
+    $env:LOCALAPPDATA = $localData
+    $env:APPDATA = $roamingData
+}
+
 function Initialize-WorkerProfile([string]$ExpectedAccount) {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $accountName = $identity.Name.Split('\')[-1]
@@ -218,11 +271,7 @@ function Initialize-WorkerProfile([string]$ExpectedAccount) {
     # Ask Windows to initialize its genuine known folders, then retain containment
     # checks; never substitute a fabricated directory when resolution fails.
     $env:USERNAME = $accountName
-    $env:USERPROFILE = $profile
-    $profileDrive = [IO.Path]::GetPathRoot($profile).TrimEnd('\')
-    Assert-True ($profileDrive -match '^[A-Za-z]:$') 'Worker profile must use a local drive'
-    $env:HOMEDRIVE = $profileDrive
-    $env:HOMEPATH = $profile.Substring($profileDrive.Length)
+    Set-WorkerTokenProfileEnvironment $profile (Get-TokenProfileEnvironment $identity)
     $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
     $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData, [Environment+SpecialFolderOption]::DoNotVerify)
     Assert-WorkerAppData $profile $localData $roamingData
