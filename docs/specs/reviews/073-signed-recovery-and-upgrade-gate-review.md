@@ -210,3 +210,24 @@ Astra Medium final review passed; five focused reconstruction/plan/identity test
 passed independently. Canonical no-cache preflight passed 4/4 stages and 201
 files/modules with four workers (117.23 seconds). Hosted byte equality and all
 remaining matrix cases are still required before merge.
+
+## Independent preflight blocker - scope approval required
+
+Rehearsals [40972964960](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/40972964960)
+and the unchanged-commit rerun [40973776655](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/40973776655)
+both stopped in `tests.test_import_search_live`: `BatchSpool.get()` received a
+Windows PermissionError reading its atomically renamed temporary JSON file.
+Different watcher cases reached the same reader error; installer/gate unit tests
+passed. The native matrix therefore has not yet accepted the corrected NSIS hash.
+Local individual cases passed; a full watcher module run hit a different native
+root-replacement timing failure, which also passed individually. No watcher test,
+timeout or application transport implementation has been altered for this work.
+
+`backend/app/services/import_search_transport.py` currently performs an immediate
+read/unlink without transient-access handling. The precise external holder of the
+Windows file lock has not been established. A proposed separate narrow correction
+would retry transient access only within the existing caller timeout, retain
+unconsumed batches and surface persistent permission errors, with focused tests.
+User approval is required before changing that unrelated production service; do
+not silently weaken tests or keep rerunning unchanged failures until green.
+No merge, new release, tag or update-feed publication has occurred.

@@ -1,6 +1,6 @@
 # 073 — Signed recovery bootstrap and mandatory upgrade gate
 
-Status: Approved 100-ms exit-settlement amendment implemented; Astra Medium final review and local checks passed. Hosted native acceptance pending before integration.
+Status: Approved 100-ms amendment implemented and reviewed; local checks passed. Hosted acceptance is blocked by repeated unrelated import-search spool PermissionError failures. Approval is needed for that separate transport fix before continuing verification; not merged.
 Branch: `codex/signed-recovery-bootstrap`.
 Review document: [073 review](reviews/073-signed-recovery-and-upgrade-gate-review.md).
 
