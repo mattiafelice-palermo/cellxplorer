@@ -120,9 +120,11 @@ ${{UnStrLoc}}
 !define PRODUCTNAME "CellXplorer Scope Test {token}"
 !define MAINBINARYNAME "cellxplorer"
 !define BUNDLEID "com.cellxplorer.desktop"
+!define VERSION "1.0.0"
 !define UNINSTKEY "Software\\CellXplorerScopeTests\\{token}\\Uninstall"
 !define MANUPRODUCTKEY "Software\\CellXplorerScopeTests\\{token}\\Manufacturer"
 Var UpdateMode
+!include "{ROOT / 'src-tauri/update_recovery.nsh'}"
 !include "{policy_path}"
 OutFile "{executable}"
 Function .onInit

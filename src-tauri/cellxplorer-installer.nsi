@@ -125,6 +125,7 @@ Var CxBrandFont
 Var CxLaunchMark
 Var CxLaunchText
 Var CxEstimatedMb
+!include "${CELLXPLORER_HOOK_SOURCE_DIR}\update_recovery.nsh"
 !include "${CELLXPLORER_HOOK_SOURCE_DIR}\installation_scope.nsh"
 
 Var CxInstallInstanceId
@@ -435,6 +436,13 @@ Function PageReinstallUpdateSelection
 FunctionEnd
 Function PageLeaveReinstall
   ${NSD_GetState} $R2 $R1
+
+  ; Recovery only updates an authenticated existing NSIS installation. A WiX
+  ; migration would uninstall before prerequisite preparation/handshake.
+  ${If} $CxRecoveryToken != ""
+  ${AndIf} $WixMode = 1
+    Call CxScopeError
+  ${EndIf}
 
   ; If migrating from Wix, always uninstall
   ${If} $WixMode = 1
@@ -1459,6 +1467,9 @@ Section WebView2
 SectionEnd
 
 Section Install
+  ; Prerequisite preparation is complete. Authenticate and acknowledge before
+  ; SetOutPath, current-uninstaller branches, hooks or any installed-file writes.
+  Call CxPrepareRecovery
   SetOutPath $INSTDIR
 
   ${If} $RunCurrentUninstaller = 1

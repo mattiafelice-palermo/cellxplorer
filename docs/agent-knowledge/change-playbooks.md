@@ -192,13 +192,29 @@ Windows host; conflict fixtures should use disjoint subkeys rather than depend
 on same-path values diverging between WOW64 views.
 
 Tauri updater 2.10.1's Windows install method ignores ShellExecuteW's result
-and exits after its before-exit hook. The standard self-updater therefore keeps
-Tauri check/download signature verification but uses a checked Windows launcher
-on those exact verified bytes before backend shutdown. Keep the staged file's
-READ-only deny-write/delete lock through launch, compare bytes after reopening,
-and bound the full NSIS command (bundled NSIS has 1024 UTF-16 units). Successful
-launch is only handoff. Older clients retain their old first-update cancellation
-behavior until the new client is installed.
+and exits after its before-exit hook. The standard self-updater keeps Tauri
+check/download signature verification but launches the exact verified bytes
+through `src/update_recovery.rs`. This launcher deliberately does not interpret
+installation registry state: new signed payloads must be able to repair discovery
+rules without an old client blocking their execution. `update_recovery.nsh` runs
+after new-payload scope discovery and before any uninstall/process-stop/copy phase.
+It binds the existing destination to the live originating process. A named pipe
+authenticates both process IDs; the client additionally pins the responder to the
+locked staged image. READY, COMMIT, explicit ACK and client exit authorization
+precede shutdown; cancellation/disconnection while the origin remains alive
+aborts rather than waiting for a later unrelated exit. The successful client keeps
+the pipe and locks owned until actual OS termination, not merely until Tauri queues
+exit. Launch/process liveness
+alone never counts as readiness. Keep the staged READ-only deny-write/delete lock
+through preparation, compare bytes after reopening, serialize pending update state,
+and bound the full command (bundled NSIS has 1024 UTF-16 units). Scope elevation
+must forward the complete recovery identity, version/channel and verified-byte
+SHA256. The signed unelevated relay locks its own file and directory, checks its
+locked bytes against that original hash, and supervises its checked elevated child
+through exit. This protects an outstanding UAC request even if the client closes.
+Old clients cannot retroactively gain this protocol. `scripts/check_update_recovery.py`
+executes production NSIS logic and the actual Rust transport against harmless
+fixtures; it does not establish signed/installed-client/UAC acceptance.
 
 Use the compiler/policy harness in `scripts/check_installer_scope.py` to execute
 actual NSIS normalization/discovery/registration cleanup against disposable

@@ -6,6 +6,14 @@ user-facing impact.
 
 ## 0.28.0-alpha.10 - 2026-10-29
 
+### Important: manual update required for affected Alpha .8/.9
+
+If the updater reports "The registered installation location is invalid", Retry install cannot repair that installed updater. Save your work, close CellXplorer Alpha, then download and run the official Alpha .10 installer once. No uninstall or data deletion is needed.
+
+Download the installer: https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.10/CellXplorer.Alpha_0.28.0-alpha.10_x64-setup.exe
+
+Older update windows show this address as text: copy it into your browser.
+
 ### Bug fixes
 
 - Allow Alpha updates when the HKCU product key contains installer-language metadata but no default install location; incomplete, malformed, and conflicting registrations remain rejected.

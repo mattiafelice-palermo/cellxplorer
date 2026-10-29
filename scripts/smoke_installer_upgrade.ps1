@@ -1,0 +1,403 @@
+param(
+    [ValidateSet('stable', 'beta', 'alpha')][string]$Channel,
+    [string]$Version,
+    [string]$ReleaseId,
+    # Internal worker entry point, always authenticated against the generated account plan.
+    [ValidateSet('', 'user', 'machine')][string]$WorkerScope = '',
+    [string]$Root
+)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+function Assert-True($Condition, [string]$Message) {
+    if (-not $Condition) { throw $Message }
+}
+
+function Remove-NativeCredentials {
+    # Enumerate names only: never log secret values. Environment changes apply
+    # to this controller process and every subsequently spawned native process.
+    foreach ($entry in @(Get-ChildItem Env:)) {
+        if ($entry.Name -match '^(GH_TOKEN|GITHUB_TOKEN|TAURI_SIGNING.*|ACTIONS_RUNTIME_TOKEN|ACTIONS_ID_TOKEN.*|ID_TOKEN.*|GITHUB_(OUTPUT|ENV|PATH|STATE|STEP_SUMMARY))$') {
+            Remove-Item -LiteralPath "Env:\$($entry.Name)"
+        }
+    }
+}
+
+function New-ControllerEvidence {
+    $directory = Join-Path $env:RUNNER_TEMP ('cx-controller-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    $controller = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($controller)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($controller, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $directory -AclObject $acl
+    # No worker SID, Users or Administrators grant; native-root Modify grants
+    # below never apply to this separate protected sibling.
+    return Join-Path $directory 'provenance.json'
+}
+
+function Assert-CI {
+    Assert-True ($env:OS -eq 'Windows_NT' -and $env:GITHUB_ACTIONS -ceq 'true' -and
+        $env:RUNNER_ENVIRONMENT -ceq 'github-hosted') 'Native installs are restricted to disposable GitHub-hosted Windows CI; never run locally.'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) 'RUNNER_TEMP required'
+}
+
+function Assert-TempRoot([string]$Path) {
+    $absolute = [IO.Path]::GetFullPath($Path)
+    $temporary = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+    Assert-True ($absolute.StartsWith($temporary, [StringComparison]::OrdinalIgnoreCase) -and
+        (Split-Path $absolute -Leaf) -match '^cx-upgrade-[a-f0-9]{32}$') 'Gate root must be a unique RUNNER_TEMP child'
+    Assert-True (-not ((Get-Item -LiteralPath $absolute).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Gate root cannot be a reparse point'
+}
+
+function Wait-CheckedProcess($Process, [int]$Timeout, [string]$Label, [int]$ExpectedExitCode = 0) {
+    # In particular Start-Process -Credential can attach by PID. Cache its native
+    # handle before it exits so ExitCode remains available after WaitForExit.
+    $childHandle = $Process.Handle
+    Assert-True ($childHandle -ne [IntPtr]::Zero) "$Label has no process handle"
+    if (-not $Process.WaitForExit($Timeout)) {
+        $Process.Kill()
+        throw "$Label timed out"
+    }
+    Assert-True ($Process.ExitCode -eq $ExpectedExitCode) "$Label failed ($($Process.ExitCode)); expected $ExpectedExitCode"
+}
+
+function Invoke-Setup([string]$Executable, [string]$Options, [string]$ExpectedHash = '') {
+    $lock = $null
+    try {
+        if ((Split-Path $Executable -Parent) -ceq $Root) {
+            # Retain read access while denying writes/deletes to verified stages.
+            # Do not lock installed uninstall.exe: it legitimately deletes itself.
+            $lock = [IO.File]::Open($Executable, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            Assert-True ($ExpectedHash -match '^[a-f0-9]{64}$') 'Staged installer requires a verified expected digest'
+            $hasher = [Security.Cryptography.SHA256]::Create()
+            try { $actualHash = [BitConverter]::ToString($hasher.ComputeHash($lock)).Replace('-', '').ToLowerInvariant() }
+            finally { $hasher.Dispose() }
+            Assert-True ($actualHash -ceq $ExpectedHash) 'Locked installer bytes differ from verified stage'
+        }
+        $process = Start-Process -FilePath $Executable -ArgumentList $Options -PassThru -WindowStyle Hidden
+        # Only this process is stopped on timeout; runner teardown owns orphans.
+        Wait-CheckedProcess $process 180000 'Installer'
+    } finally {
+        if ($null -ne $lock) { $lock.Dispose() }
+    }
+}
+
+function Get-Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+
+function Get-InstallerCase([string]$Scope, [string]$Layout, [string]$Operation, [bool]$HasBaseline, [string]$Directory) {
+    $scopeFlag = if ($Scope -eq 'machine') { '/CXALLUSERS' } else { '/CXCURRENTUSER' }
+    $fresh = -not $HasBaseline -and $Layout -eq 'default' -and $Operation -eq 'upgrade'
+    $options = if ($Operation -eq 'upgrade' -and -not $fresh) { "/S /UPDATE $scopeFlag /CXEXPECTEDDIR=`"$Directory`"" } else { "/S $scopeFlag /CXEXPECTEDDIR=`"$Directory`"" }
+    $label = if ($fresh) { 'candidate-fresh-install' } elseif ($Operation -eq 'upgrade' -and -not $HasBaseline) { 'candidate-custom-update' } else { $Operation }
+    return [pscustomobject]@{ Options = $options; Name = "$Scope/$Layout/$label"; NativePriorUpgrade = $HasBaseline -and $Operation -eq 'upgrade' }
+}
+
+function Get-Registration([string]$Product, [string]$Hive) {
+    $records = @()
+    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+        $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::$Hive, $view)
+        try {
+            $key = $base.OpenSubKey("Software\Microsoft\Windows\CurrentVersion\Uninstall\$Product")
+            if ($null -ne $key) {
+                try {
+                    $values = [ordered]@{}
+                    foreach ($name in ($key.GetValueNames() | Sort-Object)) { $values[$name] = $key.GetValue($name) }
+                    $manufacturer = $base.OpenSubKey("Software\CellXplorer\$Product")
+                    $manufacturerDirectory = $null
+                    if ($null -ne $manufacturer) {
+                        try { $manufacturerDirectory = $manufacturer.GetValue('') }
+                        finally { $manufacturer.Dispose() }
+                    }
+                    $records += ,([pscustomobject]@{ View = [string]$view; Values = $values; ManufacturerDirectory = $manufacturerDirectory })
+                } finally { $key.Dispose() }
+            }
+        } finally { $base.Dispose() }
+    }
+    return $records
+}
+
+function Assert-Install([string]$Product, [string]$Scope, [string]$Directory, [string]$ExpectedVersion, [string]$BinaryHash = '') {
+    $hive = if ($Scope -eq 'machine') { 'LocalMachine' } else { 'CurrentUser' }
+    $otherHive = if ($Scope -eq 'machine') { 'CurrentUser' } else { 'LocalMachine' }
+    $records = @(Get-Registration $Product $hive)
+    Assert-True ($records.Count -gt 0) "No $Scope registration for $Product"
+    Assert-True (@(Get-Registration $Product $otherHive).Count -eq 0) "Unexpected opposite-scope registration for $Product"
+    foreach ($record in $records) {
+        Assert-True ($record.Values['InstallLocation'].Trim('"').TrimEnd('\') -ieq $Directory.TrimEnd('\')) 'Install directory changed'
+        Assert-True ($record.ManufacturerDirectory -is [string] -and $record.ManufacturerDirectory.TrimEnd('\') -ieq $Directory.TrimEnd('\')) 'Manufacturer directory does not match installation'
+        Assert-True ($record.Values['DisplayVersion'] -ceq $ExpectedVersion) 'Installed version does not match exact candidate'
+        if ($BinaryHash) {
+            Assert-True ($record.Values['InstallScope'] -ceq $Scope) 'Installed scope metadata mismatch'
+            Assert-True ($record.Values['BundleId'] -ceq ('com.cellxplorer.desktop' + $(if ($Channel -ne 'stable') { ".$Channel" } else { '' }))) 'Bundle identity mismatch'
+        }
+    }
+    Assert-True (Test-Path -LiteralPath "$Directory\uninstall.exe") 'Missing real uninstaller'
+    Assert-True (Test-Path -LiteralPath "$Directory\cellxplorer.exe") 'Missing real application'
+    if ($BinaryHash) { Assert-True ((Get-Hash "$Directory\cellxplorer.exe") -ceq $BinaryHash) 'Installed binary differs from candidate build' }
+}
+
+function Get-IdentitySnapshot([string]$Product, [string]$Directory) {
+    $registry = @()
+    foreach ($hive in @('CurrentUser', 'LocalMachine')) {
+        foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::$hive, $view)
+            try {
+                $scheme = 'cellxplorer' + $(if ($Product -eq 'CellXplorer Beta') { '-beta' } elseif ($Product -eq 'CellXplorer Alpha') { '-alpha' } else { '' })
+                foreach ($path in @("Software\CellXplorer\$Product", "Software\Microsoft\Windows\CurrentVersion\Uninstall\$Product", "Software\Classes\$scheme\shell\open\command", 'Software\Microsoft\Windows\CurrentVersion\Run')) {
+                    $key = $base.OpenSubKey($path)
+                    if ($null -ne $key) {
+                        try {
+                            foreach ($name in ($key.GetValueNames() | Sort-Object)) {
+                                if ($path.EndsWith('\Run') -and $name -cne $Product) { continue }
+                                $registry += "$hive/$view/$path/$name/$($key.GetValueKind($name))=$($key.GetValue($name))"
+                            }
+                        } finally { $key.Dispose() }
+                    }
+                }
+            } finally { $base.Dispose() }
+        }
+    }
+    return (@{ registry = $registry; binary = Get-Hash "$Directory\cellxplorer.exe"; uninstaller = Get-Hash "$Directory\uninstall.exe" } | ConvertTo-Json -Depth 8 -Compress)
+}
+
+function Move-LegacyFixture([string]$Product, [string]$Scope, [string]$From, [string]$To) {
+    # Production fresh CLI intentionally ignores /D. Model a previously chosen
+    # custom destination by relocating the REAL prior payload and its legacy
+    # registration. This is not acceptance of the interactive directory picker.
+    Assert-TempRoot $Root
+    Assert-True ($To.StartsWith($Root + '\', [StringComparison]::OrdinalIgnoreCase)) 'Custom fixture escaped gate root'
+    Assert-True (-not (Test-Path -LiteralPath $To)) 'Custom fixture already exists'
+    Move-Item -LiteralPath $From -Destination $To
+    $hive = if ($Scope -eq 'machine') { 'LocalMachine' } else { 'CurrentUser' }
+    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+        $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::$hive, $view)
+        try {
+            foreach ($path in @("Software\CellXplorer\$Product", "Software\Microsoft\Windows\CurrentVersion\Uninstall\$Product", 'Software\Microsoft\Windows\CurrentVersion\Run')) {
+                $key = $base.OpenSubKey($path, $true)
+                if ($null -ne $key) {
+                    try {
+                        foreach ($name in $key.GetValueNames()) {
+                            $value = $key.GetValue($name)
+                            if ($value -is [string] -and $value.Contains($From)) {
+                                $key.SetValue($name, $value.Replace($From, $To), $key.GetValueKind($name))
+                            }
+                        }
+                    } finally { $key.Dispose() }
+                }
+            }
+        } finally { $base.Dispose() }
+    }
+}
+
+function Initialize-WorkerProfile([string]$ExpectedAccount) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $accountName = $identity.Name.Split('\')[-1]
+    Assert-True ($accountName -ceq $ExpectedAccount -and $accountName -match '^cxg-[a-f0-9]{12}-[um]$') 'Worker requires its dedicated disposable OS account'
+    # Credentialed child processes can inherit the caller's environment. Resolve
+    # genuine known folders under the logged-on token, never the runner's paths.
+    $profile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    $roamingData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+    $profileRecord = Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($identity.User.Value)"
+    Assert-True ($profile -ieq $profileRecord.ProfileImagePath -and (Split-Path $profile -Leaf) -like "$accountName*") 'Worker profile must be its genuine disposable Windows profile'
+    Assert-True ($localData.StartsWith($profile + '\', [StringComparison]::OrdinalIgnoreCase)) 'LocalAppData escaped dedicated worker profile'
+    Assert-True ($roamingData.StartsWith($profile + '\', [StringComparison]::OrdinalIgnoreCase)) 'AppData escaped dedicated worker profile'
+    $env:USERNAME = $accountName
+    $env:USERPROFILE = $profile
+    $env:LOCALAPPDATA = $localData
+    $env:APPDATA = $roamingData
+    $workerTemp = Join-Path $Root "temp-$WorkerScope"
+    New-Item -ItemType Directory -Path $workerTemp | Out-Null
+    $env:TEMP = $workerTemp
+    $env:TMP = $workerTemp
+    $isAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    Assert-True ($isAdmin -eq ($WorkerScope -eq 'machine')) 'Incorrect Windows token: user worker must NOT be elevated'
+    return $isAdmin
+}
+
+function Invoke-Worker {
+    $accounts = Get-Content -LiteralPath "$Root\accounts.json" -Raw | ConvertFrom-Json
+    $isAdmin = Initialize-WorkerProfile $accounts.$WorkerScope
+    $plan = Get-Content -LiteralPath "$Root\plan.json" -Raw | ConvertFrom-Json
+    $hasBaseline = [bool]$plan.previous.$Channel.("supports_${WorkerScope}_baseline")
+    $machineResult = $null
+    if ($WorkerScope -eq 'user') {
+        $machineResult = Get-Content -LiteralPath "$Root\machine-result.json" -Raw | ConvertFrom-Json
+        Assert-True ($machineResult.account -ceq $accounts.machine -and @($machineResult.completed).Count -eq 4) 'Machine-scope isolation baseline did not complete'
+    }
+    $products = [ordered]@{ stable = 'CellXplorer'; beta = 'CellXplorer Beta'; alpha = 'CellXplorer Alpha' }
+    $directories = @{}
+    $sentinels = @{}
+    foreach ($entry in $products.GetEnumerator()) {
+        $product = $entry.Value
+        $protectedMachine = $WorkerScope -eq 'user' -and $entry.Key -ne $Channel
+        $hives = if ($protectedMachine) { @('CurrentUser') } else { @('CurrentUser', 'LocalMachine') }
+        foreach ($hive in $hives) {
+            Assert-True (@(Get-Registration $product $hive).Count -eq 0) "Refusing pre-existing $product registration"
+        }
+        $directory = if ($WorkerScope -eq 'user' -and -not $protectedMachine) { Join-Path $env:LOCALAPPDATA $product } else { Join-Path $env:ProgramW6432 $product }
+        if ($protectedMachine) {
+            Assert-Install $product 'machine' $directory $plan.previous.($entry.Key).tag.Substring(1)
+            Assert-True ((Get-Hash "$directory\cellxplorer.exe") -ceq $machineResult.protected_binary_hashes.($entry.Key)) 'Protected machine binary differs from completed machine fixture'
+        } else {
+            Assert-True (-not (Test-Path -LiteralPath $directory)) "Refusing pre-existing install directory $directory"
+        }
+        $directories[$entry.Key] = $directory
+        $dataName = '.cellxplorer' + $(if ($entry.Key -ne 'stable') { '-' + $entry.Key } else { '' })
+        $data = Join-Path $env:USERPROFILE $dataName
+        Assert-True (-not (Test-Path -LiteralPath $data)) "Refusing pre-existing scientific data $data"
+        New-Item -ItemType Directory -Path $data | Out-Null
+        # A non-database sentinel: never launch the app or migrate scientific data.
+        $sentinel = Join-Path $data 'installer-preserve-sentinel.bin'
+        [IO.File]::WriteAllBytes($sentinel, [Text.Encoding]::UTF8.GetBytes([guid]::NewGuid().ToString()))
+        $sentinels[$sentinel] = Get-Hash $sentinel
+    }
+    $scopeFlag = if ($WorkerScope -eq 'machine') { '/CXALLUSERS' } else { '/CXCURRENTUSER' }
+    $product = $products[$Channel]
+    $completed = @()
+    # Machine worker installs the native other-channel identities. They remain
+    # until runner teardown so the standard-user matrix protects those same real
+    # installations even when historical releases never supported currentUser.
+    foreach ($entry in $products.GetEnumerator()) {
+        if ($WorkerScope -eq 'user' -and $entry.Key -ne $Channel) { continue }
+        if ($entry.Key -eq $Channel -and -not $hasBaseline) { continue }
+        Assert-True ($plan.previous.($entry.Key).("supports_${WorkerScope}_baseline")) "Prior $($entry.Key) installer has no proven $WorkerScope selection; cannot fake an old install"
+        Assert-True ((Get-Hash "$Root\previous-$($entry.Key).exe") -ceq $plan.previous.($entry.Key).sha256) 'Verified previous installer bytes changed'
+        Invoke-Setup "$Root\previous-$($entry.Key).exe" "/S /NS $scopeFlag" $plan.previous.($entry.Key).sha256
+        Assert-Install $entry.Value $WorkerScope $directories[$entry.Key] $plan.previous.($entry.Key).tag.Substring(1)
+    }
+    $protected = @{}
+    foreach ($entry in $products.GetEnumerator()) {
+        if ($entry.Key -ne $Channel) { $protected[$entry.Key] = Get-IdentitySnapshot $entry.Value $directories[$entry.Key] }
+    }
+    foreach ($layout in @('default', 'custom')) {
+        $directory = $directories[$Channel]
+        if ($layout -eq 'custom') {
+            # Return the selected channel to its prior release, then move only
+            # this verified fresh payload/registration to a custom legacy path.
+            $seed = if ($hasBaseline) { "$Root\previous-$Channel.exe" } else { "$Root\candidate.exe" }
+            $seedHash = if ($hasBaseline) { $plan.previous.$Channel.sha256 } else { $plan.candidate_sha256 }
+            Invoke-Setup $seed "/S /NS $scopeFlag" $seedHash
+            $custom = Join-Path $Root "custom $WorkerScope $Channel"
+            Move-LegacyFixture $product $WorkerScope $directory $custom
+            $directory = $custom
+        }
+        if ($WorkerScope -eq 'machine') {
+            # Reproduce HKCU language-only manufacturer key alongside HKLM install.
+            $language = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\CellXplorer\$product")
+            try {
+                $language.DeleteValue('', $false)
+                $language.SetValue('Installer Language', 1033, [Microsoft.Win32.RegistryValueKind]::DWord)
+            } finally { $language.Dispose() }
+        }
+        foreach ($operation in @('upgrade', 'same-version-reinstall')) {
+            Assert-True ((Get-Hash "$Root\candidate.exe") -ceq $plan.candidate_sha256) 'Verified candidate bytes changed'
+            $case = Get-InstallerCase $WorkerScope $layout $operation $hasBaseline $directory
+            Invoke-Setup "$Root\candidate.exe" $case.Options $plan.candidate_sha256
+            Assert-Install $product $WorkerScope $directory $plan.version $plan.binary_sha256
+            foreach ($entry in $protected.GetEnumerator()) {
+                Assert-True ((Get-IdentitySnapshot $products[$entry.Key] $directories[$entry.Key]) -ceq $entry.Value) 'Another channel identity changed'
+            }
+            foreach ($entry in $sentinels.GetEnumerator()) {
+                Assert-True ((Get-Hash $entry.Key) -ceq $entry.Value) 'Scientific data sentinel changed'
+            }
+            $completed += $case.Name
+        }
+        # Cleanup only the exact successfully verified installation, preserving data.
+        Invoke-Setup "$directory\uninstall.exe" "/S /UPDATE $scopeFlag _?=$directory"
+        Assert-True (-not (Test-Path -LiteralPath "$directory\cellxplorer.exe")) 'Keep-data uninstall left application binary'
+        foreach ($hive in @('CurrentUser', 'LocalMachine')) {
+            Assert-True (@(Get-Registration $product $hive).Count -eq 0) 'Uninstall left selected registration'
+        }
+    }
+    foreach ($entry in $protected.GetEnumerator()) {
+        Assert-True ((Get-IdentitySnapshot $products[$entry.Key] $directories[$entry.Key]) -ceq $entry.Value) 'Keep-data uninstall affected another channel'
+    }
+    foreach ($entry in $sentinels.GetEnumerator()) { Assert-True ((Get-Hash $entry.Key) -ceq $entry.Value) 'Keep-data uninstall damaged data sentinel' }
+    $protectedHashes = @{}
+    foreach ($entry in $products.GetEnumerator()) {
+        if ($entry.Key -ne $Channel) { $protectedHashes[$entry.Key] = Get-Hash "$($directories[$entry.Key])\cellxplorer.exe" }
+    }
+    $coverage = if ($hasBaseline) { 'native prior-installer upgrade; old installed updater NOT executed' } else { "prior installer does not support $WorkerScope baseline; candidate fresh install/reinstall only" }
+    @{ completed = $completed; token_elevated = $isAdmin; account = $env:USERNAME; baseline_coverage = $coverage; protected_binary_hashes = $protectedHashes } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$Root\$WorkerScope-result.json"
+}
+
+Assert-CI
+if ($WorkerScope) {
+    Assert-TempRoot $Root
+    Remove-NativeCredentials
+    Invoke-Worker
+    exit 0
+}
+Assert-True ($Channel -and $Version) 'Channel and Version required'
+$Root = Join-Path $env:RUNNER_TEMP ('cx-upgrade-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $Root | Out-Null
+Assert-TempRoot $Root
+Write-Host "Installer gate evidence: $Root"
+$prepare = @("$PSScriptRoot\installer_upgrade_gate.py", '--root', $Root, '--channel', $Channel, '--version', $Version)
+$evidence = $null
+if ($ReleaseId) {
+    $evidence = New-ControllerEvidence
+    $prepare += @('--release-id', $ReleaseId, '--evidence', $evidence)
+}
+& python @prepare
+Assert-True ($LASTEXITCODE -eq 0) 'Artifact provenance / production signature verification failed'
+$controllerOutput = $env:GITHUB_OUTPUT
+$controllerSummary = $env:GITHUB_STEP_SUMMARY
+Remove-NativeCredentials
+Get-Content -LiteralPath "$Root\plan.json"
+Copy-Item -LiteralPath $PSCommandPath -Destination "$Root\smoke_installer_upgrade.ps1"
+$accounts = @{}
+$credentials = @{}
+$created = @()
+try {
+    $token = [guid]::NewGuid().ToString('N').Substring(0, 12)
+    foreach ($scope in @('machine', 'user')) {
+        $suffix = if ($scope -eq 'user') { 'u' } else { 'm' }
+        $name = "cxg-$token-$suffix"
+        $password = ConvertTo-SecureString ([guid]::NewGuid().ToString('N') + 'aA1!') -AsPlainText -Force
+        New-LocalUser -Name $name -Password $password -Description 'Disposable CellXplorer installer CI gate' | Out-Null
+        $created += $name
+        $groupSid = if ($scope -eq 'machine') { 'S-1-5-32-544' } else { 'S-1-5-32-545' }
+        $group = Get-LocalGroup -SID $groupSid
+        Add-LocalGroupMember -Group $group -Member $name
+        $accounts[$scope] = $name
+        $credentials[$scope] = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
+        & icacls.exe $Root /grant "${name}:(OI)(CI)M" | Out-Null
+        Assert-True ($LASTEXITCODE -eq 0) 'Could not grant isolated worker access'
+    }
+    $accounts | ConvertTo-Json | Set-Content -LiteralPath "$Root\accounts.json"
+    foreach ($scope in @('machine', 'user')) {
+        # Real harmless credentialed exit-code probes, before any native installs.
+        foreach ($expectedExit in @(0, 7)) {
+            $probe = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList "-NoProfile -NonInteractive -Command `"Start-Sleep -Milliseconds 200; exit $expectedExit`""
+            Wait-CheckedProcess $probe 30000 "$scope credentialed exit-code probe" $expectedExit
+        }
+        $worker = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credentials[$scope] -LoadUserProfile -WindowStyle Hidden -PassThru -WorkingDirectory $Root -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Root\smoke_installer_upgrade.ps1`" -Channel $Channel -WorkerScope $scope -Root `"$Root`"" -RedirectStandardOutput "$Root\$scope-stdout.log" -RedirectStandardError "$Root\$scope-stderr.log"
+        try { Wait-CheckedProcess $worker 1200000 "$scope worker" }
+        finally {
+            Get-Content -LiteralPath "$Root\$scope-stdout.log"
+            Get-Content -LiteralPath "$Root\$scope-stderr.log"
+        }
+        $result = Get-Content -LiteralPath "$Root\$scope-result.json" -Raw | ConvertFrom-Json
+        Assert-True (@($result.completed).Count -eq 4) "$scope matrix incomplete"
+        $result | ConvertTo-Json -Depth 6 | Write-Host
+        if ($controllerSummary) {
+            "Installer gate ($scope): $($result.baseline_coverage). Cases: $($result.completed -join ', ')." >> $controllerSummary
+        }
+    }
+    Write-Host 'PASS: 8 native install/reinstall cases (see explicit baseline coverage); NOT old installed updater, interactive UAC, or end-to-end recovery coverage.'
+    if ($evidence) {
+        Assert-True (Test-Path -LiteralPath $evidence) 'Controller provenance is missing'
+        "provenance_path=$evidence" >> $controllerOutput
+    }
+} finally {
+    foreach ($name in $created) { Remove-LocalUser -Name $name }
+    # Evidence and dedicated profiles live until disposable runner teardown.
+    # Never recursively delete a profile or product directory from this driver.
+}

@@ -445,6 +445,8 @@ dependencies = [
 name = "cellxplorer"
 version = "0.28.0-alpha.10"
 dependencies = [
+ "base64 0.22.1",
+ "minisign-verify",
  "notify-rust",
  "rusqlite",
  "semver",

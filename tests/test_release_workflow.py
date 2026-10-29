@@ -677,6 +677,55 @@ class ReleaseWorkflowTests(unittest.TestCase):
             step_index(self.release, "Publish verified draft release"),
         )
 
+    def test_native_installer_gate_cannot_be_skipped_before_publication(self):
+        gate_name = "Mandatory native installer upgrade and reinstall gate"
+        gate = self.release.split(f"- name: {gate_name}", 1)[1].split("\n      - name:", 1)[0]
+        self.assertNotRegex(gate, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertIn("id: installer_gate", gate)
+        self.assertIn("smoke_installer_upgrade.ps1 @arguments", gate)
+        self.assertIn("$arguments.ReleaseId = $env:GATE_RELEASE_ID", gate)
+        self.assertIn('throw "Draft release id is required', gate)
+        self.assertIn('"passed=true" >> $gateOutputFile', gate)
+        self.assertLess(step_index(self.release, "Verify updater manifest"), step_index(self.release, gate_name))
+        self.assertLess(step_index(self.release, "Build release artifacts only"), step_index(self.release, gate_name))
+        for name in ("Publish verified draft release", "Publish channel manifest pointer"):
+            self.assertLess(step_index(self.release, gate_name), step_index(self.release, name))
+            block = self.release.split(f"- name: {name}", 1)[1].split("\n      - name:", 1)[0]
+            self.assertIn('steps.installer_gate.outputs.passed }}" -ne \'true\'', block)
+
+    def test_native_policy_checks_and_signatures_required_for_manual_build_too(self):
+        policy = self.release.split("- name: Verify installation registry and NSIS policy", 1)[1].split("\n      - name:", 1)[0]
+        self.assertNotRegex(policy, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertIn("cargo test --locked --manifest-path src-tauri/Cargo.toml\n", policy)
+        self.assertIn("cargo test --locked --manifest-path src-tauri/Cargo.toml --example verify_updater_signature", policy)
+        self.assertIn("python scripts/check_installer_scope.py --run-policy-tests", policy)
+        self.assertIn("python scripts/check_update_recovery.py", policy)
+        self.assertEqual(policy.count("if ($LASTEXITCODE -ne 0)"), 4)
+        secrets = self.release.split("- name: Require updater signing secrets", 1)[1].split("\n      - name:", 1)[0]
+        self.assertNotRegex(secrets, r"(?m)^\s+if:")
+
+    def test_final_asset_recheck_is_adjacent_and_required_for_publication(self):
+        names = step_names(self.release)
+        recheck_name = "Recheck final draft assets before publication"
+        self.assertEqual(names[names.index("Publish verified draft release") - 1], recheck_name)
+        recheck = self.release.split(f"- name: {recheck_name}", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("if: github.ref_type == 'tag'", recheck)
+        self.assertNotIn("continue-on-error", recheck)
+        self.assertIn("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", recheck)
+        self.assertIn("steps.installer_gate.outputs.provenance_path", recheck)
+        self.assertIn('--recheck "$env:GATE_PROVENANCE"', recheck)
+        self.assertIn('--expected-tag "$env:GITHUB_REF_NAME"', recheck)
+        for name in ("Publish verified draft release", "Publish channel manifest pointer"):
+            block = self.release.split(f"- name: {name}", 1)[1].split("\n      - name:", 1)[0]
+            self.assertIn('steps.final_assets.outputs.passed }}" -ne \'true\'', block)
+        pointer = self.release.split("- name: Publish channel manifest pointer", 1)[1]
+        self.assertIn('ReadAllBytes("${{ steps.final_assets.outputs.manifest_path }}")', pointer)
+        self.assertNotIn('ReadAllBytes("uploaded-latest.json")', pointer)
+
+    def test_release_checkout_does_not_persist_git_credentials(self):
+        checkout = self.release.split("- name: Check out repository", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("persist-credentials: false", checkout)
+
     def test_manifest_is_read_from_workspace_root(self):
         self.assertIn('Join-Path $env:GITHUB_WORKSPACE "latest.json"', self.release)
         self.assertNotIn("src-tauri/target", self.release)

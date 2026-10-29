@@ -47,6 +47,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
@@ -358,13 +359,12 @@ jobs:
             --output release-notes.md
 
       - name: Require updater signing secrets
-        if: github.ref_type == 'tag'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            Write-Error "TAURI_SIGNING_PRIVATE_KEY is required for publishing."
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY is required for the mandatory signed installer gate (including build-only)."
             exit 1
           }
 
@@ -697,12 +697,71 @@ jobs:
             exit $verificationExitCode
           }
 
+      - name: Verify installation registry and NSIS policy
+        shell: pwsh
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --example verify_updater_signature
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_installer_scope.py --run-policy-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_update_recovery.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Mandatory native installer upgrade and reinstall gate
+        id: installer_gate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GATE_CHANNEL: ${{ steps.channel.outputs.channel }}
+          GATE_VERSION: ${{ steps.version.outputs.version }}
+          GATE_RELEASE_ID: ${{ steps.tauri_release.outputs.releaseId }}
+        run: |
+          $arguments = @{
+            Channel = $env:GATE_CHANNEL
+            Version = $env:GATE_VERSION
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ([string]::IsNullOrWhiteSpace($env:GATE_RELEASE_ID)) {
+              throw "Draft release id is required; cannot substitute local-only candidate."
+            }
+            $arguments.ReleaseId = $env:GATE_RELEASE_ID
+          }
+          $gateOutputFile = $env:GITHUB_OUTPUT
+          .\scripts\smoke_installer_upgrade.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "passed=true" >> $gateOutputFile
+
+      - name: Recheck final draft assets before publication
+        if: github.ref_type == 'tag'
+        id: final_assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GATE_PROVENANCE: ${{ steps.installer_gate.outputs.provenance_path }}
+          GATE_RELEASE_ID: ${{ steps.tauri_release.outputs.releaseId }}
+        run: |
+          if ("${{ steps.installer_gate.outputs.passed }}" -ne 'true' -or
+              [string]::IsNullOrWhiteSpace($env:GATE_PROVENANCE)) {
+            throw "Completed native gate and controller provenance are required."
+          }
+          python scripts/installer_upgrade_gate.py --recheck "$env:GATE_PROVENANCE" `
+            --release-id "$env:GATE_RELEASE_ID" --expected-tag "$env:GITHUB_REF_NAME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Publish verified draft release
         if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if ("${{ steps.installer_gate.outputs.passed }}" -ne 'true') {
+            throw "Mandatory native installer gate did not pass."
+          }
+          if ("${{ steps.final_assets.outputs.passed }}" -ne 'true') {
+            throw "Final draft asset recheck did not pass."
+          }
           $releaseId = "${{ steps.tauri_release.outputs.releaseId }}"
           $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
           $headers = @{
@@ -722,12 +781,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if ("${{ steps.installer_gate.outputs.passed }}" -ne 'true') {
+            throw "Mandatory native installer gate did not pass."
+          }
+          if ("${{ steps.final_assets.outputs.passed }}" -ne 'true') {
+            throw "Final draft asset recheck did not pass."
+          }
           $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
           $channelPath = "${{ steps.channel.outputs.channel_manifest }}"
           $version = "${{ steps.version.outputs.version }}"
           $product = "${{ steps.channel.outputs.product_name }}"
           $branch = "release-channels"
-          $manifestBytes = [System.IO.File]::ReadAllBytes("uploaded-latest.json")
+          $manifestBytes = [System.IO.File]::ReadAllBytes("${{ steps.final_assets.outputs.manifest_path }}")
           $manifestB64 = [Convert]::ToBase64String($manifestBytes)
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
@@ -824,7 +889,7 @@ jobs:
           $publishedUri = "https://api.github.com/repos/$owner/$repo/contents/${channelPath}?ref=${publishedCommit}"
           $contents = Invoke-RestMethod -Method Get -Uri $publishedUri -Headers $headers
           $remoteBytes = [Convert]::FromBase64String($contents.content.Replace("`n", ""))
-          $localBytes = [System.IO.File]::ReadAllBytes("uploaded-latest.json")
+          $localBytes = [System.IO.File]::ReadAllBytes("${{ steps.final_assets.outputs.manifest_path }}")
           function Assert-BytesEqual([byte[]]$expected, [byte[]]$actual, [string]$label) {
             if ($expected.Length -ne $actual.Length) {
               throw "$label byte length mismatch."

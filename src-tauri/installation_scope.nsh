@@ -84,6 +84,9 @@ Function ${PREFIX}CxReadElevation
 FunctionEnd
 
 Function ${PREFIX}CxScopeError
+  !if "${PREFIX}" == ""
+    Call CxRecoverySignalFailure
+  !endif
   MessageBox MB_ICONSTOP|MB_OK "The installation scope or directory could not be validated. Repair conflicting installation records or reinstall this edition. Your scientific data has not been changed."
   SetErrorLevel 2
   Quit
@@ -234,6 +237,7 @@ FunctionEnd
 !insertmacro CxScopeFunctions "un."
 
 Function CxInitializeScope
+  Call CxReadRecovery
   StrLen $0 $CMDLINE
   ${If} $0 >= 1000
     Call CxScopeError
@@ -307,8 +311,19 @@ Function CxInitializeScope
     ${If} $UpdateMode == 1
       StrCpy $0 "$0 /P /UPDATE /R /CXRESTART=$CxRestartArgs"
     ${EndIf}
-    ExecShell "runas" "$EXEPATH" "$0 /D=$INSTDIR"
+    StrCpy $0 "$0 $CxRecoveryArguments /D=$INSTDIR"
+    StrLen $1 $0
+    StrLen $2 $EXEPATH
+    IntOp $1 $1 + $2
+    ${If} $1 >= 990
+      Call CxScopeError
+    ${EndIf}
+    ${If} $CxRecoveryToken != ""
+      Call CxElevateRecovery
+    ${EndIf}
+    ExecShell "runas" "$EXEPATH" "$0"
     ${If} ${Errors}
+      Call CxRecoverySignalFailure
       MessageBox MB_ICONEXCLAMATION|MB_OK "Windows approval was cancelled or setup could not start. Nothing has been installed."
       SetErrorLevel 1
     ${EndIf}

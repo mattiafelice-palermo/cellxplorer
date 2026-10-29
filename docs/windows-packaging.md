@@ -181,6 +181,117 @@ The Stable app icon is sourced from `frontend/public/app-icon.png`. The Tauri bu
 `src-tauri/icons-alpha/icon.ico` (Alpha overlay). The runtime window/taskbar icon is set from the
 matching `icon-256.rgba` in `src-tauri/src/main.rs`.
 
+## Mandatory release reinstall/upgrade gate
+
+`release.yml` requires `scripts/smoke_installer_upgrade.ps1` before undrafting a
+release or updating its public channel pointer. The same gate runs for signed
+manual build-only dispatches. Missing signing secrets, prior same-channel releases,
+assets, verifier failures, account/token creation failures, timeouts and incomplete
+matrix results are blocking failures, never successful skips.
+
+Artifact preparation uses the GitHub Releases API, excluding drafts and selecting
+the highest earlier exact same-channel SemVer release. It downloads the previous
+setup/signature and the other channels' released setups for side-by-side isolation
+checks. For tag publication, the candidate installer and signature are downloaded
+from the exact draft release asset IDs; SHA-256 must match the exact locally built
+installer and `.sig`. The staged `latest.json` is also read back and matched to the
+verified manifest. Build-only uses the exact local signed artifact without a draft.
+For publication, release ID/tag and the three candidate asset IDs/names/sizes/
+SHA-256 digests are recorded in a separate `RUNNER_TEMP/cx-controller-*` directory.
+Its protected ACL grants only the controller SID and SYSTEM, not worker accounts
+or inherited Users/Administrators access. It is never inside the worker-writable
+native root. Immediately before undraft, `installer_upgrade_gate.py --recheck`
+uses fresh controller API credentials to re-fetch that exact draft, reject changed
+asset IDs or bytes (including same-name replacements), and verify its installer
+signature again. Both publication steps require that recheck to succeed. The feed
+uses the controller-only verified manifest readback, not a workspace copy that
+native processes could have changed. Manual build-only dispatch has no publication
+provenance/recheck and cannot undraft or update a feed.
+Every installer is cryptographically verified against the configured updater public
+key with `cargo run --locked --manifest-path src-tauri/Cargo.toml --example
+verify_updater_signature`. This invokes the same `minisign-verify` API as Tauri's
+updater, including full payload verification; metadata and key-ID checks alone do
+not satisfy the gate. This is not Windows Authenticode verification.
+
+Native installation is refused outside `GITHUB_ACTIONS=true` on a GitHub-hosted
+Windows runner. Unique temporary staging and two dedicated disposable Windows
+accounts isolate the runner's genuine profile state. The user account must have a
+non-elevated standard-user token; the machine account must be an administrator.
+Real harmless credentialed child processes first prove zero/nonzero exit-code
+handling; process handles are acquired before waiting for workers/installers.
+The gate never weakens production's rejection of elevated currentUser installs.
+After preparation and before account/probe/installer execution, the controller
+removes GH_TOKEN/GITHUB_TOKEN, TAURI_SIGNING*, ACTIONS_RUNTIME_TOKEN,
+ACTIONS_ID_TOKEN*/ID_TOKEN* and workflow output/environment-file paths from the
+process environment. Credentialed workers repeat stripping defensively. Recheck
+receives fresh API credentials in its own later step. Release checkout sets
+`persist-credentials: false`, so the token is not saved in Git configuration.
+These are minimum same-job safeguards, not a security boundary against malicious
+administrator code taking ownership or using privileges; a separately isolated
+native-test job remains stronger isolation.
+It refuses pre-existing installation registrations, destinations or profile data.
+Worker profile/LocalAppData/roaming AppData are resolved under their actual logon
+tokens and checked against the Windows ProfileList registry; TEMP/TMP use separate
+gate-root children. Verified staged installers are locked read-only before hashing
+through that handle and held denying writes/deletes through execution, including
+custom-layout seed installs. Accounts are removed at completion; evidence, the
+other-channel machine installations and dedicated profiles remain only until the
+disposable runner is destroyed.
+
+The selected channel's matrix covers default and custom registered destinations,
+candidate `/UPDATE`, same-version reinstall, exact installed executable hashes,
+registration version/scope/channel, keep-data uninstall, unchanged data sentinels
+for all three channels and unchanged other-channel installed identities. Custom
+legacy destinations are fixtures: a real released payload and matching registration
+are relocated before updating because production fresh CLI intentionally ignores
+`/D`. This does not prove the interactive directory picker. Machine cases include
+the language-only HKCU manufacturer-key regression alongside a real HKLM install.
+The prior release's declared NSIS scope determines whether an old-user installation
+is supported: older machine-only baselines are tested natively in machine scope;
+user scope then tests the candidate fresh install/reinstall and reports explicitly
+that a prior-user upgrade was unavailable. A selected user-only predecessor is
+handled symmetrically with candidate fresh-machine coverage. Neither is reported
+as a prior-release upgrade pass. Other-channel identities are real machine-scope
+installs shared across the machine-first and standard-user workers. An unrelated
+user-only predecessor, or historical `both` installer without a proven unattended
+scope-selection contract, blocks preparation with an explicit unsupported-matrix
+diagnostic rather than fabricating an installation or reporting a skipped success.
+
+Before the native matrix, the workflow also requires the full Rust suite via
+`cargo test --locked --manifest-path src-tauri/Cargo.toml` (including real
+disposable registry-reader and recovery regressions), the
+three-channel NSIS compiler/policy harness, and `python
+scripts/check_update_recovery.py`. The latter executes the production NSIS recovery
+include with harmless payloads and checks the kernel-authenticated named-pipe
+READY/COMMIT/ACK/exit-authorization protocol, origin/process validation,
+timeout/cancellation and waiting for origin exit before writes. Its parent fixture
+is not the old installed application's updater. The same check also runs the
+actual Rust launcher against a harmless NSIS fixture, exercises checked relay
+child lifetime and file/directory locks, and rejects mismatched payload hashes.
+The relay hashes its locked executable before elevation and retains independent
+locks until its checked elevated child exits; client timeout alone cannot release
+the relay's pathname protection.
+
+**Coverage boundary:** hosted Windows is elevated and UAC-disabled. The native
+matrix invokes the candidate installer `/UPDATE` path; it does **not** execute the
+prior installed Rust updater's reader/launcher or prove its pre-launch behavior.
+Actual OLD-client interactive update, UAC approval/cancellation/alternate credentials,
+and end-to-end installed-client recovery handshake remain unproven and require a
+separate disposable interactive Windows acceptance run. Extracting old source into
+a harness would be additional regression evidence, not execution of the released
+client. The sentinel is not a scientific database migration or application-startup
+test. These limitations must remain in release acceptance reporting even when CI
+passes. Never run the native installation script against a developer's profile.
+
+Local non-installing checks:
+
+```powershell
+python -m unittest tests.test_release_workflow tests.test_installer_upgrade_gate -v
+cargo test --locked --manifest-path src-tauri/Cargo.toml installation_scope
+python scripts/check_installer_scope.py --run-policy-tests
+python scripts/check_update_recovery.py
+```
+
 ## Manual build sequence
 
 Prefer `.\scripts\build-app.ps1 -Channel stable|beta|alpha`. When building manually:

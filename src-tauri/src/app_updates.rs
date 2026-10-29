@@ -14,6 +14,8 @@ pub struct PendingAppUpdate {
     version: Option<String>,
     downloaded_bytes: Option<Vec<u8>>,
     downloading: bool,
+    /// Serializes the bounded installer preparation/commit window.
+    installing: bool,
     download_generation: u64,
     /// Monotonic revision bumped on material pending-state transitions.
     revision: u64,
@@ -21,7 +23,7 @@ pub struct PendingAppUpdate {
 
 impl PendingAppUpdate {
     pub(crate) fn is_downloading(&self) -> bool {
-        self.downloading
+        self.downloading || self.installing
     }
 
     pub(crate) fn revision(&self) -> u64 {
@@ -95,7 +97,7 @@ pub fn replace_pending_update(
     pending: &mut PendingAppUpdate,
     update: tauri_plugin_updater::Update,
 ) -> Result<AppUpdateRelease, PendingUpdateError> {
-    if pending.downloading {
+    if pending.is_downloading() {
         return Err(PendingUpdateError::AlreadyDownloading);
     }
     let release = release_from_update(&update);
@@ -108,7 +110,7 @@ pub fn replace_pending_update(
 }
 
 pub fn clear_pending_update(pending: &mut PendingAppUpdate) -> Result<(), PendingUpdateError> {
-    if pending.downloading {
+    if pending.is_downloading() {
         return Err(PendingUpdateError::AlreadyDownloading);
     }
     let revision = pending.revision.wrapping_add(1);
@@ -141,7 +143,7 @@ pub fn begin_download(
     pending: &mut PendingAppUpdate,
     expected_version: &str,
 ) -> Result<(tauri_plugin_updater::Update, u64), PendingUpdateError> {
-    if pending.downloading {
+    if pending.is_downloading() {
         return Err(PendingUpdateError::AlreadyDownloading);
     }
     let update = match pending.update.as_ref() {
@@ -189,7 +191,7 @@ pub fn take_verified_install(
         pending.version.as_deref(),
         expected_version,
         pending.downloaded_bytes.is_some(),
-        pending.downloading,
+        pending.is_downloading(),
     )?;
     let update = pending
         .update
@@ -214,6 +216,8 @@ pub fn restore_failed_install(
     pending.update = Some(update);
     pending.downloaded_bytes = Some(bytes);
     pending.downloading = false;
+    pending.installing = false;
+    bump_revision(pending);
 }
 
 fn lock_pending<'a>(
@@ -227,7 +231,7 @@ fn lock_pending<'a>(
 fn map_pending_error(error: PendingUpdateError) -> String {
     match error {
         PendingUpdateError::AlreadyDownloading => {
-            "An update download is already in progress.".to_string()
+            "An update download or installation is already in progress.".to_string()
         }
         PendingUpdateError::MissingPendingUpdate | PendingUpdateError::VersionMismatch => {
             "No pending update matches the requested version.".to_string()
@@ -250,7 +254,7 @@ pub async fn check_app_update(
     let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
     let check_revision = {
         let pending = lock_pending(&state)?;
-        if pending.downloading {
+        if pending.is_downloading() {
             return Err(map_pending_error(PendingUpdateError::AlreadyDownloading));
         }
         pending.revision
@@ -324,7 +328,7 @@ pub async fn download_app_update(
 }
 
 #[tauri::command]
-pub fn install_app_update(
+pub async fn install_app_update(
     app: AppHandle,
     expected_version: String,
     state: State<'_, Mutex<PendingAppUpdate>>,
@@ -333,23 +337,39 @@ pub fn install_app_update(
     validate_release_version(channel, &expected_version)?;
     let (update, bytes) = {
         let mut pending = lock_pending(&state)?;
-        take_verified_install(&mut pending, &expected_version).map_err(|error| match error {
+        let verified = take_verified_install(&mut pending, &expected_version).map_err(|error| match error {
             PendingUpdateError::AlreadyDownloading => {
                 "An update download is still in progress.".to_string()
             }
             other => map_pending_error(other),
-        })?
+        })?;
+        pending.installing = true;
+        verified
     };
 
     #[cfg(windows)]
     {
         // Download already verified these exact bytes against the unchanged updater
-        // public key. Resolve the running installation again at the moment of launch.
-        let handoff = crate::installation_scope::running_installation(channel)
-            .and_then(|identity| crate::installation_scope::launch_verified_update(&identity, &bytes));
+        // public key. The new signed payload owns installation-state discovery.
+        let shared_bytes = std::sync::Arc::new(bytes);
+        let worker_bytes = shared_bytes.clone();
+        let recovery_channel = match channel { AppChannel::Stable => "stable", AppChannel::Beta => "beta", AppChannel::Alpha => "alpha" };
+        let handoff = tauri::async_runtime::spawn_blocking(move || {
+            let mut prepared = crate::update_recovery::prepare_verified_recovery(&worker_bytes, &expected_version, recovery_channel)?;
+            prepared.commit()?;
+            Ok::<_, String>(prepared)
+        }).await.unwrap_or_else(|error| Err(format!("Installer preparation could not finish: {error}")));
+        let bytes = std::sync::Arc::try_unwrap(shared_bytes).unwrap_or_else(|shared| (*shared).clone());
         match handoff {
-            Ok(_) => {
+            Ok(prepared) => {
+                if !prepared.is_alive() {
+                    if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
+                    return Err("The installer stopped after acknowledgement. The application remains open.".into());
+                }
                 crate::prepare_exit_for_update(&app);
+                // AppHandle::exit queues termination. Keep the authenticated pipe
+                // and staging locks owned until actual OS process termination.
+                std::mem::forget(prepared);
                 app.exit(0);
                 return Ok(());
             }
@@ -378,6 +398,18 @@ pub fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preparation_serializes_checks_downloads_and_install_retries() {
+        let mut pending = PendingAppUpdate { installing: true, ..Default::default() };
+        assert!(pending.is_downloading());
+        assert_eq!(clear_pending_update(&mut pending), Err(PendingUpdateError::AlreadyDownloading));
+        assert!(matches!(begin_download(&mut pending, "0.15.0"), Err(PendingUpdateError::AlreadyDownloading)));
+        assert!(matches!(take_verified_install(&mut pending, "0.15.0"), Err(PendingUpdateError::AlreadyDownloading)));
+        let revision = pending.revision;
+        assert_eq!(apply_check_result(&mut pending, revision, None), Err(PendingUpdateError::AlreadyDownloading));
+        assert!(pending.installing);
+    }
 
     fn pending_with_version(version: &str) -> PendingAppUpdate {
         PendingAppUpdate {

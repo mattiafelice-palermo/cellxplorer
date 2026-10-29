@@ -73,16 +73,21 @@ class InstallerScopeTests(unittest.TestCase):
         self.assertIn('${If} $CxScope == "user"', startup)
 
     def test_checked_handoff_happens_before_shutdown_and_failure_restores_verified_bytes(self):
+        recovery = (ROOT / 'src-tauri/src/update_recovery.rs').read_text()
         handoff = self.updates.split('let handoff =', 1)[1]
-        self.assertLess(handoff.index('launch_verified_update'), handoff.index('prepare_exit_for_update'))
+        self.assertLess(handoff.index('prepare_verified_recovery'), handoff.index('prepared.commit()'))
+        self.assertLess(handoff.index('prepared.commit()'), handoff.index('prepare_exit_for_update'))
+        self.assertNotIn('running_installation(', handoff)
         self.assertIn('restore_failed_install(&mut pending, update, bytes)', handoff)
-        self.assertIn('create_new(true)', self.rust)
-        self.assertIn('share_mode(1)', self.rust)
-        self.assertIn('if staged != bytes', self.rust)
-        self.assertIn('if info.hProcess.is_null()', self.rust)
-        self.assertIn('ERROR_CANCELLED', self.rust)
-        self.assertIn('command.encode_utf16().count() > 700', self.rust)
-        self.assertIn('parameters.encode_utf16().count() + 4 >= 1000', self.rust)
+        self.assertIn('create_new(true)', recovery)
+        self.assertIn('share_mode(1)', recovery)
+        self.assertIn('if actual != bytes', recovery)
+        self.assertIn('GetNamedPipeClientProcessId', recovery)
+        self.assertIn('authenticate_peer(&pipe, &path)', recovery)
+        self.assertIn('b\'A\'', recovery)
+        self.assertNotIn('registered_records(', recovery)
+        self.assertIn('origin.encode_utf16().count() * 2 > 700', recovery)
+        self.assertIn('parameters.encode_utf16().count() + 4 >= 1000', recovery)
         self.assertIn('.download(', self.updates)
 
     def test_restart_uses_original_user_and_trusted_process_scoped_helper(self):

@@ -3,6 +3,7 @@
 mod app_channel;
 mod app_updates;
 mod installation_scope;
+mod update_recovery;
 mod beta_bootstrap;
 mod beta_installer;
 mod relaunch;
