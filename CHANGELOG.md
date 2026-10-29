@@ -4,6 +4,27 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.8 - 2026-10-29
+
+### New features
+
+- Add customizable, axis-aware plot reference lines with spans and labels that persist in saved analyses and portable reports.
+- Add optional cycle shading to Voltage/Capacity plots, preserving sample hues and stable cycle colors across navigation.
+- Explain Rate Capability recognition with per-Cell evidence, input requirements, and clearer no-match guidance without changing scientific detection or calculations.
+- Reconstruct charge/discharge cycles across supported repeated BioLogic GCPL executions only when acquisition evidence is unambiguous; preserve unmatched phases without inventing summaries.
+- Default fresh installs to the current Windows user, offer an explicit all-users choice, and preserve installation scope and directory on updates.
+
+### Bug fixes
+
+- Show Coulombic Efficiency curves for individually displayed replicate members while respecting series visibility and styling.
+- Keep confirmed unreadable or unsupported sources ineligible across resolved-path aliases while preserving their source-specific error previews.
+- Keep signed update handoff cancellation or launch failures retryable without closing the app once the updated client is installed; older clients retain their previous first-update behavior.
+- Keep the selected segmented-tab highlight aligned with the active tab at non-default application zoom.
+
+### Known verification limits
+
+- Native signed install/update/UAC behavior remains unverified in an installed Windows acceptance matrix.
+
 ## 0.28.0-alpha.7 - 2026-10-02
 
 ### New features
