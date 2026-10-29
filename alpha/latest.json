@@ -1,15 +1,15 @@
 {
-  "version": "0.28.0-alpha.9",
-  "notes": "### New features\n\n- In supported single-operation GCPL recordings, recognize a direct return to the same operation, direction, and control after an interruption only when restart/control-change markers, an above-cadence gap, zero boundary charge transfer, and continuous capacity counters confirm it. Preserve the gap as unmeasured; do not invent rest or capacity.\n\n### Bug fixes\n\n- Give BioLogic MPR import failures specific explanations for incomplete blocks, unsupported layouts, and ambiguous restart/capacity boundaries while retaining raw diagnostics. Temporary open/access failures remain retryable, not permanent source rejections.",
-  "pub_date": "2026-10-29T15:12:23.812Z",
+  "version": "0.28.0-alpha.10",
+  "notes": "### Bug fixes\n\n- Allow Alpha updates when the HKCU product key contains installer-language metadata but no default install location; incomplete, malformed, and conflicting registrations remain rejected.\n- Alpha 0.28.0-alpha.8 and .9 installations affected by this error need a one-time manual download and installer run to bootstrap future updates.",
+  "pub_date": "2026-10-29T16:37:22.182Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFpK0JKWjljazIvcXJoY2wzQ2xrbXBKRG12WDJYNzlUOHRTc2trTk96aHVnMC9ybyt2NW4wRmNKQ0piRmtxdmFqT2VURytRV3lqSEVCVXhEM0dnU0FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjg2NzM3CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjlfeDY0LXNldHVwLmV4ZQpRQitQemhhRWp3V0ZZZGpxYXA1aC94bmNsMUo5ZHBLNXhyRyszYUkzb0VxVVhmVzVIOFBBZHNXR3lYbk01K1ltUE14ZEtNMTRVZ0ZHcjNwaWVmUWtDZz09Cg==",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.9/CellXplorer.Alpha_0.28.0-alpha.9_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWUreHRFVnB3QUdoUnMydnpRSW5OWG1qNEpObFVadkwreEJzdXA1dGVJNTJNMXdwUmVpOXdtNzBmQU5LRmNMcTBGTEhtWFY1RHNwSVdYQkt5MHlGN3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjkxODM1CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjEwX3g2NC1zZXR1cC5leGUKV213NUd6eEZiSDRiMlBVdGhFYUJmT3dHK25rNkdOTDU3emRPckhSa0VsbU5GZDZORDBIOWFXa1RDNG9xWUdhbi8xcy96N1F6Si96N3lVUHJGQ05LRHc9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.10/CellXplorer.Alpha_0.28.0-alpha.10_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFpK0JKWjljazIvcXJoY2wzQ2xrbXBKRG12WDJYNzlUOHRTc2trTk96aHVnMC9ybyt2NW4wRmNKQ0piRmtxdmFqT2VURytRV3lqSEVCVXhEM0dnU0FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjg2NzM3CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjlfeDY0LXNldHVwLmV4ZQpRQitQemhhRWp3V0ZZZGpxYXA1aC94bmNsMUo5ZHBLNXhyRyszYUkzb0VxVVhmVzVIOFBBZHNXR3lYbk01K1ltUE14ZEtNMTRVZ0ZHcjNwaWVmUWtDZz09Cg==",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.9/CellXplorer.Alpha_0.28.0-alpha.9_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWUreHRFVnB3QUdoUnMydnpRSW5OWG1qNEpObFVadkwreEJzdXA1dGVJNTJNMXdwUmVpOXdtNzBmQU5LRmNMcTBGTEhtWFY1RHNwSVdYQkt5MHlGN3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjkxODM1CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjEwX3g2NC1zZXR1cC5leGUKV213NUd6eEZiSDRiMlBVdGhFYUJmT3dHK25rNkdOTDU3emRPckhSa0VsbU5GZDZORDBIOWFXa1RDNG9xWUdhbi8xcy96N1F6Si96N3lVUHJGQ05LRHc9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.10/CellXplorer.Alpha_0.28.0-alpha.10_x64-setup.exe"
     }
   }
 }
