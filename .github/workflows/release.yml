@@ -88,7 +88,7 @@ jobs:
             run: |
               python -m pip install --upgrade pip
               python -m pip install -r backend/requirements.txt
-              python -m pip install pyinstaller
+              python -m pip install -r packaging/requirements-build.txt
               python -m pip check
 
           - name: Install frontend and Tauri CLI dependencies
@@ -450,6 +450,14 @@ jobs:
       - name: Smoke test the packaged backend
         shell: pwsh
         run: python scripts/smoke_packaged_backend.py
+
+      - name: Audit packaged runtime and verify frozen science
+        shell: pwsh
+        run: |
+          python scripts/audit_backend_bundle.py src-tauri/binaries/backend --validate --output backend-inventory.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_packaged_science.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Load release notes body
         id: release_notes

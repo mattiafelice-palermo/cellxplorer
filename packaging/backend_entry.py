@@ -56,12 +56,26 @@ def _backend_port() -> int:
 
 def main() -> int:
     multiprocessing.freeze_support()
+    # Reject malformed scientific-mode invocations before normal logging or
+    # crash reporting can open anything in the user's ordinary profile.
+    if os.environ.get("CELLXPLORER_BACKEND_SMOKE") == "scientific":
+        try:
+            from runtime_smoke import validate_root
+
+            validate_root()
+        except (KeyError, OSError, ValueError):
+            return 2
     try:
         _configure_logging()
         _ensure_source_backend_on_path()
         from app.services.app_channel import validate_packaged_channel_at_startup
 
         validate_packaged_channel_at_startup()
+        if os.environ.get("CELLXPLORER_BACKEND_SMOKE") == "scientific":
+            from runtime_smoke import verify
+
+            verify()
+            return 0
         from app.main import app
 
         if os.environ.get("CELLXPLORER_BACKEND_SMOKE") == "1":

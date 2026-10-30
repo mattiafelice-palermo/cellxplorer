@@ -16,7 +16,7 @@ explicit packaged schema migrations and automatic pre-migration backups. See
 - Node.js and npm
 - Rust toolchain (`rustc` and `cargo`)
 - Tauri CLI (`@tauri-apps/cli`)
-- PyInstaller
+- Packaging tools from `python -m pip install -r packaging/requirements-build.txt`
 - Windows installer toolchain required by Tauri for MSI/NSIS
 
 ## Recommended build command
@@ -397,8 +397,9 @@ handle to signal before starting the replacement; fixed-delay relaunches are not
 
 ## Desktop startup performance
 
-The packaged backend is a PyInstaller one-file sidecar. A cold launch includes extraction of the
-scientific Python runtime before FastAPI can listen. Database migration inspection itself is small
+The packaged backend is a windowless PyInstaller onedir resource. It loads its
+scientific runtime from the installed directory rather than extracting it on every
+launch. Database migration inspection itself is small
 (about 0.1-0.2 seconds on the development database); do not weaken schema compatibility checks to
 optimize startup. Expensive pandas, NewareNDA, PyArrow, analysis, and cache modules are loaded lazily
 after API startup, and old-cache capacity backfilling starts from the same deferred warm-up thread.

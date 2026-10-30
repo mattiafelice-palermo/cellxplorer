@@ -258,10 +258,28 @@ window next to the desktop app. Without `--disable-windowed-traceback`, a crash 
 sidecar can still show a PyInstaller error dialog. The root `build:backend` script should keep:
 
 ```powershell
-python -m PyInstaller --noconfirm --onefile --noconsole --disable-windowed-traceback --paths backend --name cellxplorer-backend packaging/backend_entry.py
+npm.cmd run build:backend
 ```
 
 When this is correct, PyInstaller logs mention the `runw.exe` bootloader.
+
+Use the pinned tools in `packaging/requirements-build.txt` and the root command,
+which keeps onedir packaging and `packaging/hooks/hook-pyarrow.py` together. The
+Arrow hook drops C++/Cython SDK headers, static libraries and test data, not runtime
+modules or DLLs. Tcl/Tk and timezone data remain required resources; file count
+alone is not evidence that a locale-looking file is unused. Optional development
+libraries absent from the clean runtime environment are explicitly excluded so
+local developer installs cannot silently enlarge the distributable.
+
+Before staging a release, run the ordinary API smoke plus
+`python scripts/audit_backend_bundle.py src-tauri/binaries/backend --validate` and
+`python scripts/verify_packaged_science.py`. The latter runs the actual frozen
+sidecar and source tree in a disposable data root, comparing lossless raw/cycle
+schemas and IPC values for Neware NDAX/Excel and BioLogic GCPL, Parquet/zstd,
+NumPy/Arrow compute, CSV, Tcl initialization, timezone data and the portable Plotly
+asset. It does not claim interactive picker, complete report-export, NDA, CP/OCV
+or private-corpus coverage. Scientific mode rejects invalid roots before logging;
+normal startup never executes it.
 
 The Tauri Rust executable also needs this crate attribute at the top of `src-tauri/src/main.rs`:
 

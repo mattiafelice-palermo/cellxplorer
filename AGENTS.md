@@ -372,6 +372,8 @@ Cellxplorer/
 │   ├── build_beta_icons.py         Derive Beta icon assets from Stable source art (Spec 021)
 │   ├── build_alpha_icons.py        Derive Alpha icon assets from Stable source art (Spec 053.1)
 │   ├── build_installer_helper.py   Build/digest the candidate-owned windowless installer helper (Spec 075.1)
+│   ├── audit_backend_bundle.py     Complete frozen payload inventory and runtime-only gate (Spec 075.2)
+│   ├── verify_packaged_science.py  Frozen/source parser, cycles, Parquet and asset parity (Spec 075.2)
 │   ├── check_installer_helper.py   Disposable NSIS helper hash/pinning fixtures (Spec 075.1)
 │   ├── installer_helper/           Small Rust GUI helper and native argv/process-isolation tests (Spec 075.1)
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
@@ -403,7 +405,8 @@ Cellxplorer/
 ├── .github/workflows/              GitHub Actions CI and release automation
 │   ├── preflight.yml               Clean Windows preflight on main pushes
 │   └── release.yml                 Signed Stable/Beta/Alpha publishing on v* tags (Specs 019/023/053.2)
-├── packaging/                      PyInstaller backend sidecar entry point
+├── packaging/                      PyInstaller entry point, pinned build tools and runtime-only Arrow hook
+│   └── runtime_smoke.py            Explicit isolated frozen scientific/runtime verification (Spec 075.2)
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 │   ├── installer_helper.nsh        Fresh signed-payload helper extraction, digest and replacement locks
 │   ├── tauri.conf.json              Stable base configuration

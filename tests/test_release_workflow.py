@@ -445,7 +445,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         parallel = parallel.split("      - name: Resolve release channel", 1)[0]
         self.assertIn("Install backend dependencies", parallel)
         self.assertIn("python -m pip install -r backend/requirements.txt", parallel)
-        self.assertIn("python -m pip install pyinstaller", parallel)
+        self.assertIn("python -m pip install -r packaging/requirements-build.txt", parallel)
         self.assertIn("Install frontend and Tauri CLI dependencies", parallel)
         self.assertIn("npm ci", parallel)
         self.assertIn("npm --prefix frontend ci", parallel)
