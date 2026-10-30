@@ -1,6 +1,6 @@
 # 075 — Faster, quieter updates
 
-Status: Implementation in progress.
+Status: Implementation and hosted acceptance complete; Alpha publication pending.
 Branch: `codex/faster-quieter-updates` (shared by all children).
 
 ## Approved scope and locked constraints
@@ -28,3 +28,15 @@ Acceptance: native helper and process fixtures pass; frozen parser/cache/report
 smoke passes; clean package inventory records changes; canonical no-cache
 preflight, unchanged recovery/policy suite and full hosted install matrix pass;
 only then merge and publish the next exact Alpha with verified public assets/feed.
+
+## Final integration acceptance
+
+Corrected candidate `68a973e7` passed [signed build-only rehearsal
+41130041034](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41130041034),
+including canonical no-cache preflight (205 hosted modules), frozen scientific
+parity, 13 helper tests, 73 Rust tests, signature verification, 17 recovery cases
+and all eight native install/reinstall cases. Local no-cache preflight passed
+206 modules. Final independent integration review found no actionable blockers.
+Native matrix: 143 seconds in this rehearsal versus 163 seconds in Alpha .11;
+this does not establish a warm-cache end-to-end release speedup. Interactive UAC,
+old installed updater and end-to-end recovery are outside this matrix's evidence.
