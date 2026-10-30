@@ -442,7 +442,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         parallel = self.preflight.split("      - parallel:\n", 1)[1]
         parallel = parallel.split("      - name: Run CellXplorer preflight", 1)[0]
         self.assertIn("Install backend dependencies", parallel)
-        self.assertIn("python -m pip install -r backend/requirements.txt", parallel)
+        self.assertIn("python -m uv pip install --system --python $pythonExe --default-index https://pypi.org/simple -r backend/requirements.txt", parallel)
         self.assertIn("python -m pip check", parallel)
         self.assertIn("Install frontend dependencies", parallel)
         self.assertIn("npm --prefix frontend ci", parallel)
@@ -452,13 +452,37 @@ class ReleaseWorkflowTests(unittest.TestCase):
         parallel = self.release.split("      - parallel:\n", 1)[1]
         parallel = parallel.split("      - name: Resolve release channel", 1)[0]
         self.assertIn("Install backend dependencies", parallel)
-        self.assertIn("python -m pip install -r backend/requirements.txt", parallel)
-        self.assertIn("python -m pip install -r packaging/requirements-build.txt", parallel)
-        self.assertIn("Install frontend and Tauri CLI dependencies", parallel)
+        self.assertIn("python -m uv pip install --system --python $pythonExe --default-index https://pypi.org/simple -r backend/requirements.txt -r packaging/requirements-build.txt", parallel)
+        self.assertIn("Install Tauri CLI dependencies", parallel)
+        self.assertIn("Install frontend dependencies", parallel)
         self.assertIn("npm ci", parallel)
         self.assertIn("npm --prefix frontend ci", parallel)
-        self.assertIn("Verify disposable installer worker profiles", parallel)
-        self.assertIn("smoke_installer_upgrade.ps1 -ProfileProbe", parallel)
+        self.assertNotIn("Verify disposable installer worker profiles", parallel)
+
+    def test_profile_probe_overlaps_setup_and_has_unconditional_join(self):
+        probe = self.release.split("- name: Verify disposable installer worker profiles", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("id: worker_profiles", probe)
+        self.assertIn("background: true", probe)
+        self.assertIn("smoke_installer_upgrade.ps1 -ProfileProbe", probe)
+        self.assertNotRegex(probe, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertLess(step_index(self.release, "Verify disposable installer worker profiles"), step_index(self.release, "Set up Python"))
+        join = self.release.split("- name: Join disposable installer worker profiles", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("wait: worker_profiles", join)
+        self.assertNotRegex(join, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertLess(step_index(self.release, "Join disposable installer worker profiles"), step_index(self.release, "Build Python sidecar"))
+
+    def test_fresh_python_installs_remain_pinned_interpreter_explicit_and_checked(self):
+        for workflow in (self.preflight, self.release):
+            block = workflow.split("- name: Install backend dependencies", 1)[1].split("\n          - name:", 1)[0]
+            self.assertIn("uv==0.13.6", block)
+            self.assertIn('python -c "import sys; print(sys.executable)"', block)
+            self.assertIn("--system --python $pythonExe --default-index https://pypi.org/simple", block)
+            self.assertIn("python -m pip check", block)
+            self.assertNotIn("--no-deps", block)
+            self.assertNotIn("--no-build-isolation", block)
+            self.assertNotIn("--trusted-host", block)
+        self.assertIn("Fresh pip and uv dependency equivalence", self.preflight)
+        self.assertIn("scripts/compare_ci_installers.py", self.preflight)
 
     def test_reused_preflight_builds_release_inputs_in_parallel_before_verification(self):
         self.assertIn("Build requested frontend channel", self.release)

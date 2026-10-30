@@ -2,6 +2,11 @@ name: CellXplorer preflight
 
 on:
   workflow_dispatch:
+    inputs:
+      compare_dependency_installers:
+        description: Compare fresh pip/uv inventories in isolated environments
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -37,8 +42,11 @@ jobs:
           - name: Install backend dependencies
             shell: pwsh
             run: |
-              python -m pip install --upgrade pip
-              python -m pip install -r backend/requirements.txt
+              python -m pip install --upgrade pip uv==0.13.6
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $pythonExe = python -c "import sys; print(sys.executable)"
+              python -m uv pip install --system --python $pythonExe --default-index https://pypi.org/simple -r backend/requirements.txt
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               python -m pip check
 
           - name: Install frontend dependencies
@@ -47,6 +55,29 @@ jobs:
 
       - name: Run CellXplorer preflight
         run: python scripts/preflight.py
+
+  dependency-installer-equivalence:
+    name: Fresh pip and uv dependency equivalence
+    if: github.event_name == 'workflow_dispatch' && inputs.compare_dependency_installers
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Compare fresh dependency installers
+        run: python scripts/compare_ci_installers.py --output dependency-installer-equivalence.json
+      - name: Retain installer equivalence evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-installer-equivalence
+          path: dependency-installer-equivalence.json
+          if-no-files-found: error
+          retention-days: 14
 
   rust-cache-warm:
     name: Warm Windows release Rust cache
