@@ -18,3 +18,8 @@ trusted main seed with both warmup commands executed, and a genuinely warm
 hosted measurement remain required. Overlap and cache savings affect the same
 phase; do not add them as independent savings. Application compile/link work
 remains even with warm dependency caches.
+
+Cold signed rehearsal `41136612666` at `b57e8def` passed all unchanged gates and
+eight native cases. Policy/native stages overlapped and the unconditional join
+waited 33 seconds after native success. Job 18m42s with empty new cache; not a
+warm speed result. Trusted main seeding and warm measurement remain outstanding.
