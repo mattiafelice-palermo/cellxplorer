@@ -28,7 +28,7 @@ import {
   type CellPreviewCycleSeries,
   type CellPreviewPlotColors,
 } from "./cellPreviewPlotModel";
-import { IconAlertTriangle, IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
+import { IconAlertTriangle, IconInfoCircle, IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 
 export type ImportPreviewView = "voltage" | "cycles";
 export type ImportPreviewVoltageXAxis = "time" | "capacity";
@@ -72,6 +72,10 @@ function requestFor(
 }
 
 function formatParserWarningExample(example: Record<string, number | string | boolean | null>): string | null {
+  if (typeof example.record_start === "number" && typeof example.record_end === "number"
+    && typeof example.matching_record_start === "number" && typeof example.matching_record_end === "number") {
+    return `Records ${example.record_start}–${example.record_end} repeat ${example.matching_record_start}–${example.matching_record_end}; the repeated copy was skipped.`;
+  }
   if (typeof example.data_point === "number") {
     const duplicatePoint = typeof example.duplicate_data_point === "number"
       ? `; matching measurements appear again at DataPoint ${example.duplicate_data_point}`
@@ -568,6 +572,8 @@ export function ImportSourcePreview({
     : null);
   const parserWarnings = inspectionQuery.data?.sources.flatMap((item) => item.parser_warnings ?? []) ?? [];
   const parserWarningCount = parserWarnings.reduce((total, warning) => total + warning.count, 0);
+  const parserNotices = parserWarnings.filter((warning) => warning.severity === "info");
+  const parserNoticesOnly = parserWarnings.length > 0 && parserNotices.length === parserWarnings.length;
   useLayoutEffect(() => {
     const content = previewContentRef.current;
     const plotSlot = plotStackRef.current;
@@ -928,6 +934,11 @@ export function ImportSourcePreview({
   return (
     <>
       <Stack ref={previewContentRef} gap="xs">
+      {parserNotices.map((notice, index) => (
+        <Alert key={`${notice.code}-${index}`} color="blue" title="Import note" p="xs">
+          {notice.message}
+        </Alert>
+      ))}
       {(parserWarnings.length > 0 || quickExcelDiagnosticMessage || quickExcelFallbackValidationError) && (
         <Group justify="flex-end">
           {(quickExcelDiagnosticMessage || quickExcelFallbackValidationError) && (
@@ -945,11 +956,11 @@ export function ImportSourcePreview({
             <Button
               size="compact-sm"
               variant="light"
-              color="orange"
-              leftSection={<IconAlertTriangle size={15} />}
+              color={parserNoticesOnly ? "blue" : "orange"}
+              leftSection={parserNoticesOnly ? <IconInfoCircle size={15} /> : <IconAlertTriangle size={15} />}
               onClick={() => setWarningsOpen(true)}
             >
-              Data warnings · {parserWarningCount}
+              {parserNoticesOnly ? "Source notes" : "Data warnings"} · {parserWarningCount}
             </Button>
           )}
         </Group>
@@ -1044,7 +1055,7 @@ export function ImportSourcePreview({
       <Modal
         opened={warningsOpen}
         onClose={() => setWarningsOpen(false)}
-        title="Neware source diagnostics"
+        title="Source notes and diagnostics"
         centered
         size="md"
       >
@@ -1063,7 +1074,7 @@ export function ImportSourcePreview({
           )}
           {parserWarnings.length > 0 && (
             <Text size="sm" c="dimmed">
-              These warnings describe inconsistencies found in the workbook. CellXplorer explains how it handled them below; preview and import remain available when the data can be recovered safely.
+              These notes describe issues found in the source and how CellXplorer handled them. The original file is unchanged.
             </Text>
           )}
           {parserWarnings.map((warning, index) => {
@@ -1074,7 +1085,7 @@ export function ImportSourcePreview({
             return (
               <Alert
                 key={`${warning.code}-${warning.scope}-${index}`}
-                color="orange"
+                color={warning.severity === "info" ? "blue" : "orange"}
                 title={`${warning.message} (${warning.count})`}
               >
                 {examples.length > 0 && (

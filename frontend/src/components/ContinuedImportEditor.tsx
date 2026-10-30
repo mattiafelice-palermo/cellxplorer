@@ -999,6 +999,13 @@ export function ContinuedImportEditor({
             </Group>
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="xs" pr="xs">
+                {previewMode === "combined" && result?.sources.flatMap((source) =>
+                  (source.parser_warnings ?? []).filter((warning) => warning.severity === "info").map((notice, index) => (
+                    <Alert key={`${source.key}-${notice.code}-${index}`} color="blue" title="Import note" p="xs">
+                      {notice.message}
+                    </Alert>
+                  )),
+                )}
                 {previewMode === "combined" && (
                     <Tabs
                       value={previewQuantity === "voltage" ? "voltage" : "cycles"}

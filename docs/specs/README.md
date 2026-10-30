@@ -1,5 +1,10 @@
 # Feature specs
 
+- [074 — Verified BioLogic replay recovery and private corpus](074-biologic-replay-recovery-and-private-corpus.md).
+  **Implemented.** Bounded replay omission, a calm informational notice and a
+  private six-source regression corpus; Astra review, independent capacity/CE
+  verification, browser import and canonical preflight passed.
+
 - [073 — Signed recovery bootstrap and mandatory upgrade gate](073-signed-recovery-and-upgrade-gate.md). Complete: approved settlement/spool correction, Astra Medium review, local preflight and full hosted native matrix passed. Accepted for integration; no release authorized.
 
 - [072 — Interrupted BioLogic executions and readable source errors](072-interrupted-biologic-executions-and-readable-errors.md).

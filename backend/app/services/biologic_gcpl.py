@@ -50,8 +50,9 @@ from .source_format_errors import (
 # gcpl14 counts a cycle only when its rows include both active directions.
 # gcpl15 identifies repeated executions; gcpl16 also admits marker/counter-proven
 # active-to-active returns after an interrupted phase, without inventing rest.
+# gcpl17 omits only fully matched, adjacent replayed measurement blocks.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl16"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl17"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -2403,6 +2404,17 @@ def map_gcpl_to_canonical(
     if isinstance(source, MprDocument):
         declared_settings = _validate_document_settings(source)
     records, flags = _records_from_source(source)
+    from .biologic_gcpl_replay import recover_replayed_blocks
+
+    recovery = recover_replayed_blocks(
+        records, declared_settings,
+        fully_compared_layout=(isinstance(source, MprDocument)
+                               and not source.vmp_data.ignored_known_column_ids
+                               and not source.vmp_data.opaque_trailing_column_ids),
+    )
+    if recovery.retained_positions is not None:
+        records = recovery.records
+        flags = {name: values[recovery.retained_positions] for name, values in (flags or {}).items()}
     fields = _field_names(records)
     missing = [name for name in _REQUIRED_RECORD_FIELDS if name not in fields]
     if missing:
@@ -2632,7 +2644,8 @@ def map_gcpl_to_canonical(
             time_s[start:end] = np.maximum(time_s[start:end], 0.0)
 
     frame_values: dict[str, Any] = {
-        "record_index": np.arange(1, len(records) + 1, dtype=np.int64),
+        "record_index": (recovery.retained_positions + 1 if recovery.retained_positions is not None
+                         else np.arange(1, len(records) + 1, dtype=np.int64)),
         "cycle": cycle,
         "cycle_complete": cycle_complete,
         "step": step,
@@ -2707,6 +2720,13 @@ def map_gcpl_to_canonical(
             execution_profile=executions.PROFILE,
             execution_acquisition=executions.acquisition_identity(decode_gcpl_log(source.vmp_log)),
             execution_count=int(execution_ids[-1]), execution_row_count=len(frame),
+        )
+    if recovery.skipped_blocks:
+        frame.attrs["biologic_gcpl"].update(
+            original_record_count=len(source.vmp_data.records),
+            retained_record_count=len(frame),
+            skipped_replayed_blocks=list(recovery.skipped_blocks),
+            parser_warnings=recovery.warnings(),
         )
     canonical_cycling.validate_raw_timeseries(frame)
     return frame

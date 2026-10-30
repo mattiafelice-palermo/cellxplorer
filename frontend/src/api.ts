@@ -2340,6 +2340,7 @@ export interface ContinuationInspectSource {
   capability_warning?: string | null;
   parser_warnings?: {
     code: string;
+    severity?: "info" | "warning";
     scope: string;
     count: number;
     message: string;

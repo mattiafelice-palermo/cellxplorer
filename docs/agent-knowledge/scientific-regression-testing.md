@@ -74,3 +74,15 @@ Preflight and normal tests never regenerate expected output automatically.
 The harness creates an isolated `CELLXPLORER_DATA` root, builds caches through production
 `scanner.parse_file` / `calc.per_cycle`, and parses each unique source hash at most once per test
 module run.
+
+## Private difficult-source corpus
+
+The ignored `.local-regression/parser-corpus/` archive preserves checksum-verified
+shared MPR originals and explicit frozen scientific expectations. After changing
+parsing, caching, stitching, import previews or scientific transforms, run
+`python scripts/parser_regression_corpus.py verify` when the archive is available,
+in addition to canonical preflight. Verification must not refresh expectations.
+Missing private inputs are an explicit verification boundary, not a passing test.
+See [private corpus workflow](../private-parser-regression-corpus.md) for immutable
+registration, independent baseline review and snapshot controls. Synthetic public
+tests remain independent of private files.

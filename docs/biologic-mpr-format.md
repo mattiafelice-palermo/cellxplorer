@@ -463,3 +463,22 @@ has a stride matching the declared known widths, or ends with a bounded opaque s
 by independent byte fixtures. An Ece-omitted layout is safe only when its own declared sequence and
 observed stride satisfy that same registry contract; the adapter then reports the missing counter
 potential rather than fabricating one.
+
+## Verified adjacent replay omission
+
+Adapter `gcpl17` can omit a bounded, complete, adjacent Rest/charge/discharge
+block only at a backward timestamp transition in the verified 0x77 profile.
+Every decoded field must match; unknown/ignored/opaque layouts are ineligible.
+The only differences admitted are a constant +2 diagnostic half-cycle offset
+and a constant <=2e-8 mAh cumulative-counter residual on neutral zero-dQ Rest
+rows. Rest can carry the next current control target; it remains exactly matched
+and is not interpreted as measured current. Active measurements/counters remain
+exact. A unique matching block, complete phase boundaries and forward resume
+are mandatory; any failed proof aborts the whole recovery.
+
+No timestamps or original files are edited and no raw half-cycles are renumbered.
+Retained `record_index` values preserve original physical positions with gaps;
+cycle reconstruction uses the existing protocol/observed-Ns contract. Raw
+Parquet attributes retain bounded skipped-range provenance, and parser diagnostics
+persist the informational source notice across cache reload/import inspection.
+See `tests/test_biologic_replay.py` and the private regression corpus workflow.

@@ -530,6 +530,7 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "summary_reconciliation_mismatch",
                 "future_duplicate_records_skipped",
                 "ambiguous_cycle_summary_times_ignored",
+                "biologic_replayed_records_skipped",
             }
             and isinstance(item.get("message"), str)
         ):
@@ -543,6 +544,8 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "count": count,
                 "message": item["message"][:500],
             }
+            if item["code"] == "biologic_replayed_records_skipped":
+                warning["severity"] = "info"
             raw_examples = item.get("examples")
             if isinstance(raw_examples, list):
                 examples = [
@@ -571,8 +574,9 @@ def _write_parser_diagnostics(
     parser_version: str,
     raw: pd.DataFrame,
 ) -> None:
-    excel_state = raw.attrs.get("neware_excel") if hasattr(raw, "attrs") else None
-    raw_warnings = excel_state.get("parser_warnings", []) if isinstance(excel_state, dict) else []
+    states = [raw.attrs.get(owner) for owner in ("neware_excel", "biologic_gcpl")]
+    raw_warnings = [warning for state in states if isinstance(state, dict)
+                    for warning in state.get("parser_warnings", [])]
     warnings: list[dict[str, object]] = []
     for item in raw_warnings:
         if (
@@ -582,6 +586,7 @@ def _write_parser_diagnostics(
                 "summary_reconciliation_mismatch",
                 "future_duplicate_records_skipped",
                 "ambiguous_cycle_summary_times_ignored",
+                "biologic_replayed_records_skipped",
             }
             or not isinstance(item.get("message"), str)
         ):
@@ -596,6 +601,8 @@ def _write_parser_diagnostics(
             "count": count,
             "message": str(item["message"])[:500],
         }
+        if item["code"] == "biologic_replayed_records_skipped":
+            diagnostic["severity"] = "info"
         examples: list[dict[str, object]] = []
         for example in item.get("examples", [])[:3] if isinstance(item.get("examples"), list) else []:
             if not isinstance(example, dict):
