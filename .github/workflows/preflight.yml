@@ -68,6 +68,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: cellxplorer-windows-release
+          key: release-and-test-profiles-v1
           add-job-id-key: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -80,4 +81,13 @@ jobs:
           # repository config and verifies the real frontend/sidecar before Tauri runs.
           $env:TAURI_CONFIG = '{"bundle":{"resources":[]},"build":{"frontendDist":null}}'
           cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compile test dependency graph on cache miss
+        if: steps.rust_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          # Warm compilation only. Release still executes every Rust/native test.
+          $env:TAURI_CONFIG = '{"bundle":{"resources":[]},"build":{"frontendDist":null}}'
+          cargo test --no-run --locked --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

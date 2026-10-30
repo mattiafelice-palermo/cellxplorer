@@ -73,14 +73,9 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: cellxplorer-windows-release
+          key: release-and-test-profiles-v1
           add-job-id-key: "false"
           save-if: "false"
-
-      - name: Verify disposable installer worker profiles
-        shell: pwsh
-        run: |
-          .\scripts\smoke_installer_upgrade.ps1 -ProfileProbe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - parallel:
           - name: Install backend dependencies
@@ -96,6 +91,12 @@ jobs:
             run: |
               npm ci
               npm --prefix frontend ci
+
+          - name: Verify disposable installer worker profiles
+            shell: pwsh
+            run: |
+              .\scripts\smoke_installer_upgrade.ps1 -ProfileProbe
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Resolve release channel
         id: channel
@@ -375,16 +376,44 @@ jobs:
           }
 
       - name: Resolve exact-SHA canonical main preflight
-        if: github.ref_type == 'tag'
         id: preflight_reuse
+        background: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scripts/resolve_preflight_reuse.py `
-            --repository "$env:GITHUB_REPOSITORY" `
-            --sha "$env:GITHUB_SHA" `
-            --output "$env:GITHUB_OUTPUT"
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            python scripts/resolve_preflight_reuse.py `
+              --repository "$env:GITHUB_REPOSITORY" `
+              --sha "$env:GITHUB_SHA" `
+              --output "$env:GITHUB_OUTPUT"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            "reuse_preflight=false" >> $env:GITHUB_OUTPUT
+          }
+
+      # Separate outputs only; none of these builds consume preflight outputs.
+      # The explicit wait below surfaces resolver failure before any gate/staging.
+      - parallel:
+          - name: Build requested frontend channel
+            if: github.ref_type == 'tag'
+            shell: pwsh
+            run: python scripts/build_frontend_channel.py "${{ steps.channel.outputs.channel }}"
+
+          - name: Build Python sidecar
+            shell: pwsh
+            run: .\scripts\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
+
+          - name: Build and test windowless installer helper
+            shell: pwsh
+            run: |
+              python scripts/build_installer_helper.py
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              cargo test --locked --manifest-path scripts/installer_helper/Cargo.toml --features test-fixtures --target-dir src-tauri/target/installer-helper
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Join exact-SHA canonical main preflight
+        wait: preflight_reuse
 
       - name: Run canonical release-local preflight fallback
         if: github.ref_type != 'tag' || steps.preflight_reuse.outputs.reuse_preflight != 'true'
@@ -398,33 +427,9 @@ jobs:
         shell: pwsh
         run: python scripts/frontend_channel.py write --channel "${{ steps.channel.outputs.channel }}"
 
-      - parallel:
-          - name: Build requested frontend channel
-            if: github.ref_type == 'tag' && steps.preflight_reuse.outputs.reuse_preflight == 'true'
-            shell: pwsh
-            run: python scripts/build_frontend_channel.py "${{ steps.channel.outputs.channel }}"
-
-          - name: Build Python sidecar
-            if: github.ref_type == 'tag' && steps.preflight_reuse.outputs.reuse_preflight == 'true'
-            shell: pwsh
-            run: .\scripts\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
-
-      - name: Build Python sidecar (release-local preflight fallback)
-        if: github.ref_type != 'tag' || steps.preflight_reuse.outputs.reuse_preflight != 'true'
-        shell: pwsh
-        run: .\scripts\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
-
       - name: Verify requested frontend channel stamp
         shell: pwsh
         run: python scripts/frontend_channel.py verify --channel "${{ steps.channel.outputs.channel }}"
-
-      - name: Build and test windowless installer helper
-        shell: pwsh
-        run: |
-          python scripts/build_installer_helper.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked --manifest-path scripts/installer_helper/Cargo.toml --features test-fixtures --target-dir src-tauri/target/installer-helper
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify packaged inputs exist
         shell: pwsh

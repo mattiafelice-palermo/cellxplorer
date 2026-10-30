@@ -332,6 +332,14 @@ Rust dependency cache; release jobs restore it without saving a tag-scoped repla
 
 ### Tag and release checklist
 
+Release build work may overlap the exact-SHA preflight lookup, but background
+outputs are unavailable until the explicit `wait`. The independent build group
+must finish before canonical fallback can rewrite the frontend. Manual dispatch
+always takes full fallback and stamps the requested channel. Main's shared Rust
+cache warms both release and test dependency graphs; `--no-run` there is not
+verification and never replaces release test execution. New immutable cache
+generations must match in main and release; tag jobs remain restore-only.
+
 The candidate-owned `cellxplorer-installer-helper.exe` is a small independent
 GUI-subsystem/asInvoker Rust binary. Build it with
 `python scripts/build_installer_helper.py` before NSIS compilation. Setup extracts,

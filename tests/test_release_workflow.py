@@ -428,6 +428,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("shared-key: cellxplorer-windows-release", self.release)
         self.assertIn('add-job-id-key: "false"', self.release)
         self.assertIn('save-if: "false"', self.release)
+        for workflow in (self.preflight, self.release):
+            self.assertIn("key: release-and-test-profiles-v1", workflow)
+        self.assertIn("Compile test dependency graph on cache miss", self.preflight)
+        self.assertIn("cargo test --no-run --locked --manifest-path src-tauri/Cargo.toml", self.preflight)
 
     def test_main_preflight_dependency_installation_uses_native_parallel_group(self):
         self.assertIn("      - parallel:\n", self.preflight)
@@ -449,18 +453,34 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Install frontend and Tauri CLI dependencies", parallel)
         self.assertIn("npm ci", parallel)
         self.assertIn("npm --prefix frontend ci", parallel)
+        self.assertIn("Verify disposable installer worker profiles", parallel)
+        self.assertIn("smoke_installer_upgrade.ps1 -ProfileProbe", parallel)
 
     def test_reused_preflight_builds_release_inputs_in_parallel_before_verification(self):
         self.assertIn("Build requested frontend channel", self.release)
         self.assertIn("Build Python sidecar", self.release)
-        self.assertIn("github.ref_type == 'tag' && steps.preflight_reuse.outputs.reuse_preflight == 'true'", self.release)
-        parallel = self.release.split("      - parallel:\n", 1)[1]
-        parallel = parallel.split("      - name: Build Python sidecar (release-local preflight fallback)", 1)[0]
+        resolver = self.release.split("- name: Resolve exact-SHA canonical main preflight", 1)[1].split("      - parallel:", 1)[0]
+        self.assertIn("background: true", resolver)
+        self.assertIn("id: preflight_reuse", resolver)
+        self.assertIn("$env:GITHUB_REF_TYPE -eq 'tag'", resolver)
+        self.assertIn('"reuse_preflight=false" >> $env:GITHUB_OUTPUT', resolver)
+        self.assertNotIn("continue-on-error", resolver)
+        parallel = self.release.split("      - parallel:\n", 2)[2].split("      - name: Join exact-SHA canonical main preflight", 1)[0]
         self.assertIn("Build requested frontend channel", parallel)
         self.assertIn("Build Python sidecar", parallel)
+        self.assertIn("Build and test windowless installer helper", parallel)
+        self.assertNotIn("steps.preflight_reuse.outputs", parallel)
+        self.assertNotIn("continue-on-error", parallel)
+        join = self.release.split("- name: Join exact-SHA canonical main preflight", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("wait: preflight_reuse", join)
+        self.assertNotIn("continue-on-error", join)
         verify = step_index(self.release, "Verify requested frontend channel stamp")
-        sidecar_fallback = step_index(self.release, "Build Python sidecar (release-local preflight fallback)")
-        self.assertLess(sidecar_fallback, verify)
+        sidecar = step_index(self.release, "Build Python sidecar")
+        wait = step_index(self.release, "Join exact-SHA canonical main preflight")
+        fallback = step_index(self.release, "Run canonical release-local preflight fallback")
+        self.assertLess(sidecar, wait)
+        self.assertLess(wait, fallback)
+        self.assertLess(fallback, verify)
         self.assertLess(verify, step_index(self.release, "Smoke test the packaged backend"))
         self.assertLess(
             step_index(self.release, "Run canonical release-local preflight fallback"),
@@ -468,13 +488,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertLess(
             step_index(self.release, "Stamp release-local preflight frontend"),
-            sidecar_fallback,
+            verify,
         )
         fallback_preflight = self.release.split(
             "Run canonical release-local preflight fallback", 1
         )[1].split("Stamp release-local preflight frontend", 1)[0]
         self.assertIn("VITE_CELLXPLORER_CHANNEL", fallback_preflight)
         self.assertIn("python scripts/preflight.py --no-cache", fallback_preflight)
+
+    def test_new_runtime_and_helper_verification_cannot_be_skipped_for_manual_dispatch(self):
+        for name, command in [
+            ("Build and test windowless installer helper", "cargo test --locked --manifest-path scripts/installer_helper/Cargo.toml"),
+            ("Audit packaged runtime and verify frozen science", "python scripts/verify_packaged_science.py"),
+        ]:
+            block = self.release.split(f"- name: {name}", 1)[1].split("- name:", 1)[0]
+            self.assertIn(command, block)
+            self.assertNotRegex(block, r"(?m)^\s+(?:if|continue-on-error):")
+            self.assertIn("if ($LASTEXITCODE -ne 0)", block)
+        self.assertLess(step_index(self.release, "Audit packaged runtime and verify frozen science"), step_index(self.release, "Stage signed draft release"))
 
     def test_manual_dispatch_accepts_channel_input(self):
         self.assertIn("workflow_dispatch:", self.release)
