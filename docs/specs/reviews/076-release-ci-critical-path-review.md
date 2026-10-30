@@ -38,3 +38,14 @@ phase before propagating errors; pinned always-upload retains the report for
 14 days. Focused tests: 87 passed. Final local no-cache preflight: 4/4 stages,
 207 modules, typecheck and production build, 132.29s. Hosted installer equivalence,
 full signed/native acceptance and measured end-to-end improvement remain required.
+
+## Final evidence
+
+Both final hosted workflows passed at `9e20a49e`. Equivalence run `41143147019`
+retained artifact `13020296889`: 39 matching distributions plus pinned uv only,
+all direct runtime/build pins checked on Python 3.14.10. Signed run `41143150029`
+passed every scientific/policy/recovery/signature gate and all eight native cases.
+Final full build-only job 12m29s versus like-for-like earlier 15m05s: 17.2% shorter.
+Policy 50s overlapped native 132s; compilation 12.19s; fresh Python bootstrap 26s.
+This is a single-run comparison, not a guarantee or new release-tag measurement.
+Source review, final local preflight and hosted acceptance are complete.

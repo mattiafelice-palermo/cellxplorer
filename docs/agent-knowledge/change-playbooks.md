@@ -357,6 +357,19 @@ including build-only runs. Keep NSIS-dependent policy after packaging has made
 the compiler available. Do not trade signature/provenance, case coverage, process
 quiet periods or test deadlines for apparent CI speed.
 
+CI's fresh Python installation uses pinned uv against the exact setup-python
+interpreter and public PyPI index, followed by `python -m pip check`. Root and
+frontend `npm ci` may run independently because their installation trees differ;
+keep lifecycle scripts and audits enabled. The PowerShell-only disposable profile
+probe may overlap tool setup, but must join before build inputs are consumed.
+Do not replace these with an unchecked installed-environment cache. When changing
+the installer/resolver, dispatch preflight with `compare_dependency_installers`
+enabled: `scripts/compare_ci_installers.py` compares complete fresh pip/uv
+inventories in isolated environments on one runner, permits only exact pinned uv,
+and asserts every runtime/build requirement. Its always-retained report records
+failure phases as well as success. Frozen/source science parity in a single
+environment is necessary but does not substitute for this distribution comparison.
+
 The candidate-owned `cellxplorer-installer-helper.exe` is a small independent
 GUI-subsystem/asInvoker Rust binary. Build it with
 `python scripts/build_installer_helper.py` before NSIS compilation. Setup extracts,

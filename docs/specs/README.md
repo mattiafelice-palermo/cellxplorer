@@ -1,9 +1,10 @@
 # Feature specs
 
 - [076 — Release CI critical path](076-release-ci-critical-path.md).
-  **In progress** on `codex/release-ci-critical-path`; repair effective Rust
-  cache generation and overlap independent policy/native gates without relaxing
-  checks. Signed build-only timing acceptance; no release publication requested.
+  **Complete.** Effective Rust cache repair, mandatory policy/native overlap and
+  fresh-install bootstrap verified. Full signed rehearsal improved from 15m05s
+  to 12m29s (single-run comparison); pip/uv inventory equivalence and all unchanged
+  scientific/native gates passed. No release publication requested.
 
 - [075 — Faster, quieter updates](075-faster-quieter-updates.md).
   **Complete; published in Alpha 0.28.0-alpha.12.** Native helper, audited runtime

@@ -1,6 +1,6 @@
 # 076 — Release CI critical path
 
-Status: Implemented/review-clean; cold hosted verification passed, warm acceptance pending.
+Status: Complete. Reviewed, locally verified and accepted in full signed hosted runs.
 Branch: `codex/release-ci-critical-path`.
 Review document: [076 review](reviews/076-release-ci-critical-path-review.md).
 
@@ -64,3 +64,29 @@ checks. Separately compare complete fresh pip/uv distribution inventories on one
 hosted Python/runner image, allowing only the exact uv tool difference and
 independently asserting every runtime/build pin. Record bytecode's deferred work
 in total pipeline timing rather than claiming installation-only savings.
+
+## Final acceptance
+
+Bootstrap candidate `9e20a49e` passed signed build-only run
+[41143150029](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41143150029)
+in **12m29s**, versus the prior like-for-like full-fallback run `41130041034` at
+15m05s: 2m36s / 17.2% shorter in this single-run comparison. This is a measured
+full-job improvement, not a guarantee across hosted-runner variability or a newly
+published tag measurement. All 206 hosted preflight modules, frozen scientific
+parity, 13 helper tests, 73 Rust tests plus signature example, unchanged recovery
+fixtures and eight native cases passed. Local final preflight: 4/4, 207 modules,
+132.29s; focused regressions: 87 passed.
+
+Fresh installer equivalence job in run `41143147019` passed on Python 3.14.10:
+all 39 distributions matched, plus exact uv 0.13.6 only; every declared pin was
+independently verified. Report artifact `13020296889` retains complete inventories.
+No runtime/build requirements, lifecycle scripts, audits, assertions, deadlines,
+signature/provenance gates or native cases were dropped.
+
+Final timings: fresh Python bootstrap 26s (previous warm attempt 133s); independent
+root/frontend npm ci 15s/45s; early profile probe 51s overlapped setup. Rust test
+compilation 12.19s versus .12's 167s. Policy stage 50s, overlapped native matrix
+132s rather than serialized. Remaining dominant stages are signed packaging
+192s, full manual fallback 189s and native matrix 132s. Tag runs may reuse exact
+main preflight; do not present subtraction of fallback as a measured tag runtime.
+Published Alpha .12 assets, tag and channel pointers were not changed.
