@@ -72,8 +72,8 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: src-tauri -> target
-          shared-key: cellxplorer-windows-release
-          key: release-and-test-profiles-v1
+          # Rotate the effective shared-key; key is ignored with shared-key here.
+          shared-key: cellxplorer-windows-release-and-test-v2
           add-job-id-key: "false"
           save-if: "false"
 
@@ -725,6 +725,8 @@ jobs:
           }
 
       - name: Verify installation registry and NSIS policy
+        id: installer_policy
+        background: true
         shell: pwsh
         run: |
           python scripts/check_installer_helper.py
@@ -761,6 +763,12 @@ jobs:
           .\scripts\smoke_installer_upgrade.ps1 @arguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "passed=true" >> $gateOutputFile
+
+      # Policy fixtures use disposable registration/scratch paths and their own
+      # Cargo target graph, independent of the native matrix's installed roots.
+      # Wait propagates failure on build-only runs too; neither result is optional.
+      - name: Join installation registry and NSIS policy
+        wait: installer_policy
 
       - name: Recheck final draft assets before publication
         if: github.ref_type == 'tag'

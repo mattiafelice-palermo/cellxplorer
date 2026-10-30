@@ -67,8 +67,8 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: src-tauri -> target
-          shared-key: cellxplorer-windows-release
-          key: release-and-test-profiles-v1
+          # At this pinned action revision, shared-key overrides (ignores) key.
+          shared-key: cellxplorer-windows-release-and-test-v2
           add-job-id-key: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -80,7 +80,8 @@ jobs:
           # Tauri merges this JSON patch for the cache-only compile; release packaging still uses the
           # repository config and verifies the real frontend/sidecar before Tauri runs.
           $env:TAURI_CONFIG = '{"bundle":{"resources":[]},"build":{"frontendDist":null}}'
-          cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+          # Match Tauri CLI's production feature graph, not the dev-protocol graph.
+          cargo build --release --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Compile test dependency graph on cache miss

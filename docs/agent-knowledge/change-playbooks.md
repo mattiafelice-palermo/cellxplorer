@@ -340,6 +340,23 @@ cache warms both release and test dependency graphs; `--no-run` there is not
 verification and never replaces release test execution. New immutable cache
 generations must match in main and release; tag jobs remain restore-only.
 
+At pinned rust-cache revision `779680da715d629ac1d338a641029a2f4372abb5`,
+`shared-key` overrides `key` (see its `src/config.ts`); rotate the effective
+`shared-key` itself when changing cached profiles. Otherwise an old exact hit
+skips warming a newly requested test graph. Warm production Rust dependencies
+with `--features tauri/custom-protocol`, matching Tauri CLI, as well as ordinary
+debug tests. A reported cache hit is not proof those profiles were populated:
+inspect the warmup steps and downstream Cargo compilation logs.
+
+Post-package policy checks may overlap the native installer matrix: policy
+fixtures use disposable HKCU keys/scratch files and root debug targets, whereas
+the matrix uses dedicated accounts/installation roots and a standalone signature
+verifier target. They must not rewrite the packaged candidate. The unconditional
+`wait: installer_policy` must succeed before final asset recheck or publication,
+including build-only runs. Keep NSIS-dependent policy after packaging has made
+the compiler available. Do not trade signature/provenance, case coverage, process
+quiet periods or test deadlines for apparent CI speed.
+
 The candidate-owned `cellxplorer-installer-helper.exe` is a small independent
 GUI-subsystem/asInvoker Rust binary. Build it with
 `python scripts/build_installer_helper.py` before NSIS compilation. Setup extracts,

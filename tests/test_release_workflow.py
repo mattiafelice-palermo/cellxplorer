@@ -416,7 +416,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_shared_rust_cache_is_seeded_on_main_and_restore_only_in_release(self):
         self.assertIn("name: Warm Windows release Rust cache", self.preflight)
         self.assertIn("continue-on-error: true", self.preflight)
-        self.assertIn("shared-key: cellxplorer-windows-release", self.preflight)
+        self.assertIn("shared-key: cellxplorer-windows-release-and-test-v2", self.preflight)
         self.assertIn('add-job-id-key: "false"', self.preflight)
         self.assertIn("steps.rust_cache.outputs.cache-hit", self.preflight)
         self.assertIn("cargo build --release --locked --manifest-path src-tauri/Cargo.toml", self.preflight)
@@ -425,11 +425,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.preflight,
         )
         self.assertIn("release packaging still uses the", self.preflight)
-        self.assertIn("shared-key: cellxplorer-windows-release", self.release)
+        self.assertIn("shared-key: cellxplorer-windows-release-and-test-v2", self.release)
         self.assertIn('add-job-id-key: "false"', self.release)
         self.assertIn('save-if: "false"', self.release)
         for workflow in (self.preflight, self.release):
-            self.assertIn("key: release-and-test-profiles-v1", workflow)
+            # The pinned action ignores `key` in its shared-key branch. A new
+            # generation must change the actual shared-key, not an ignored input.
+            self.assertNotRegex(workflow, r"(?m)^\s+key: release-and-test-profiles-v1$")
+            self.assertNotRegex(workflow, r"(?m)^\s+shared-key: cellxplorer-windows-release$")
+        self.assertIn("--features tauri/custom-protocol", self.preflight)
         self.assertIn("Compile test dependency graph on cache miss", self.preflight)
         self.assertIn("cargo test --no-run --locked --manifest-path src-tauri/Cargo.toml", self.preflight)
 
@@ -735,6 +739,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(policy.count("if ($LASTEXITCODE -ne 0)"), 5)
         secrets = self.release.split("- name: Require updater signing secrets", 1)[1].split("\n      - name:", 1)[0]
         self.assertNotRegex(secrets, r"(?m)^\s+if:")
+
+    def test_policy_overlaps_native_matrix_but_is_joined_before_any_publication(self):
+        policy_name = "Verify installation registry and NSIS policy"
+        native_name = "Mandatory native installer upgrade and reinstall gate"
+        join_name = "Join installation registry and NSIS policy"
+        policy = self.release.split(f"- name: {policy_name}", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("id: installer_policy", policy)
+        self.assertIn("background: true", policy)
+        self.assertNotRegex(policy, r"(?m)^\s+(?:if|continue-on-error):")
+        join = self.release.split(f"- name: {join_name}", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("wait: installer_policy", join)
+        self.assertNotRegex(join, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertEqual(self.release.count("wait: installer_policy"), 1)
+        self.assertLess(step_index(self.release, "Build release artifacts only"), step_index(self.release, policy_name))
+        self.assertLess(step_index(self.release, policy_name), step_index(self.release, native_name))
+        for name in ("Recheck final draft assets before publication", "Publish verified draft release", "Publish channel manifest pointer"):
+            self.assertLess(step_index(self.release, native_name), step_index(self.release, join_name))
+            self.assertLess(step_index(self.release, join_name), step_index(self.release, name))
 
     def test_final_asset_recheck_is_adjacent_and_required_for_publication(self):
         names = step_names(self.release)
