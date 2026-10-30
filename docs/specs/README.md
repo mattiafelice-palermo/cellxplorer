@@ -1,6 +1,6 @@
 # Feature specs
 
-- [073 — Signed recovery bootstrap and mandatory upgrade gate](073-signed-recovery-and-upgrade-gate.md). Approved settlement and spool correction implemented; Astra Medium review and local verification passed. Full hosted acceptance pending before merge; no release authorized.
+- [073 — Signed recovery bootstrap and mandatory upgrade gate](073-signed-recovery-and-upgrade-gate.md). Complete: approved settlement/spool correction, Astra Medium review, local preflight and full hosted native matrix passed. Accepted for integration; no release authorized.
 
 - [072 — Interrupted BioLogic executions and readable source errors](072-interrupted-biologic-executions-and-readable-errors.md).
   **Implemented.** Evidence-backed restart without a rest row and specific

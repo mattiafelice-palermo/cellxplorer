@@ -1,6 +1,6 @@
 # 073 — Signed recovery bootstrap and mandatory upgrade gate
 
-Status: Approved settlement and bounded spool-reader correction implemented; Astra Medium final review and local verification passed. Full hosted acceptance pending before merge. No release authorized.
+Status: Complete and accepted for integration: Astra Medium final review, local preflight and full hosted build-only verification passed. No release authorized.
 Branch: `codex/signed-recovery-bootstrap`.
 Review document: [073 review](reviews/073-signed-recovery-and-upgrade-gate-review.md).
 
@@ -54,10 +54,10 @@ Do not publish a release.
 
 ## Local verification
 
-- Canonical `--no-cache` preflight: 4/4 stages; all 201 backend/frontend files/modules.
+- Canonical `--no-cache` preflight: 4/4 stages; all 202 local backend/frontend files/modules.
 - Rust suite: 73 passed, including real kernel peer identity, delayed connection,
   missing acknowledgement, disposable registry fixtures and busy-state isolation.
-- Fifteen harmless native recovery/relay cases passed, including actual Rust-to-NSIS
+- Seventeen harmless native recovery/relay cases passed, including actual Rust-to-NSIS
   transport, invalid identity/version/channel/hash, hung origin, late cancellation,
   file/directory replacement denial and checked child exit propagation. On this
   host Windows also denied directory substitution during the pre-lock delay; that
@@ -68,7 +68,7 @@ Do not publish a release.
 ## Acceptance boundaries
 
 Hosted rehearsal 40957734314 exposed a real exit-ordering race: Windows closes
-process handles before signaling the process object, so the current immediate
+process handles before signaling the process object, so the original immediate
 broken-pipe/zero-time process check can reject a genuine exit. Astra Medium
 confirmed the issue and withdrew acceptance of that immediate-check behavior.
 Explicit user amendment (2026-10-29): final E is irreversible installation authorization;
@@ -79,18 +79,25 @@ The Rust worker completes C/ACK only; the calling thread validates the final pee
 and sends E immediately before infallible backend/app shutdown, without any
 restore-to-operational branch after successful E. Native fixtures test both exit
 inside the observed-disconnect window and permanent rejection after expiry, plus
-unchanged pre-E cancellation. Integration still requires independent final review
-and a successful hosted native install matrix. Distribution is a separate release
+unchanged pre-E cancellation. Independent final review and the hosted native
+matrix passed. Distribution is a separate release
 decision and must report the interactive/UAC acceptance limitations below.
 
 The first build-only rehearsal stopped safely in preflight because the signature
 integration test assumed an already-warm offline Cargo cache. The correction uses
 a minimal locked verifier package sharing the same source and exact crypto
-versions, without desktop/sidecar dependencies. The hosted install matrix still
-needs its subsequent successful build-only rehearsal.
+versions, without desktop/sidecar dependencies. The successful
+[build-only rehearsal](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41018569999)
+on implementation commit `62ea12ab` passed preflight, signed packaging, all native
+recovery/policy checks and all eight Alpha install cases: previous `.9` upgrade
+and same-version reinstall, default/custom destinations, under a genuine elevated
+machine account and non-admin user account. Exact candidate binary hashes, data
+sentinels, keep-data uninstall and Stable/Beta identities were preserved.
 It runs candidate installer `/UPDATE`, not the old installed client's Rust updater.
 Harmless transport probes are not signed installed-app or interactive UAC tests.
 Real UAC cancellation/alternate credentials and whole installed-client update/restart
 remain separate disposable interactive acceptance. Historical machine-only releases
 cannot be claimed as successful old-user upgrades: candidate fresh-user coverage
 is labelled distinctly. Per-user setup already existed before this feature.
+Publication-only draft-asset recheck/undraft/feed steps were deliberately skipped
+by manual dispatch; they remain mandatory for an explicitly authorized release.

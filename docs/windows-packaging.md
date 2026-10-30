@@ -111,15 +111,15 @@ run fresh setup normally. No automatic scope migration is performed. Normal
 future user updates avoid installer elevation when prerequisites are ready;
 repairing a machine-owned WebView2 prerequisite can still require approval.
 
-**Verification limit:** compiler fixtures and isolated policy checks do not
-prove native signed install/update behavior. The pending disposable matrix must
-cover all channels, standard/admin users, alternate credentials, user/machine
-fresh install, old-client to new-installer transition, new-client signed update,
-UAC cancellation, exact directory retention, restart arguments/token, shortcuts,
-startup, keep-data uninstall/reinstall and WebView2 repair. Native computer
-controls are unavailable in this task; no real installed application or user
-database was changed. Compiler fixtures deliberately use a placeholder payload
-and must never be installed.
+**Verification limit:** compiler fixtures and isolated policy checks do not alone
+prove native signed install/update behavior. Spec 073's successful hosted Alpha
+matrix covers candidate installer upgrade/reinstall, default/custom directories,
+user/machine scope, keep-data preservation and Stable/Beta isolation. Remaining
+disposable interactive acceptance includes all-channel installed-client transitions,
+UAC cancellation/alternate credentials, end-to-end signed recovery/restart,
+restart arguments/token, shortcuts, startup and WebView2 repair. That interactive
+acceptance was not performed here; no local real installation or user database
+was changed. Compiler fixtures use a placeholder payload and must never be installed.
 
 Focused checks:
 

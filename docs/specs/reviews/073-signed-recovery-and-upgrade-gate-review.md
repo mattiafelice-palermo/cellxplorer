@@ -1,8 +1,11 @@
 # Spec 073 independent review
 
-Reviewer: GPT-6 Astra Medium. Date: 2026-10-29.
+Reviewer: GPT-6 Astra Medium. Dates: 2026-10-29 through 2026-10-30.
 Branch: `codex/signed-recovery-bootstrap`.
-Verdict: **PASS for the final approved amendment.** Astra Medium found no remaining actionable code blockers. Hosted native install acceptance remains mandatory before integration.
+Verdict: **PASS for integration.** Astra Medium found no remaining actionable code blockers. Local preflight and full hosted build-only/native acceptance passed; publication remains prohibited.
+
+Earlier sections below preserve investigation checkpoints; the final acceptance
+section supersedes their historical pending/blocker status.
 
 ## Reviewed scope
 
@@ -211,7 +214,7 @@ passed independently. Canonical no-cache preflight passed 4/4 stages and 201
 files/modules with four workers (117.23 seconds). Hosted byte equality and all
 remaining matrix cases are still required before merge.
 
-## Independent preflight blocker - scope approval required
+## Historical independent preflight blocker - resolved with user approval
 
 Rehearsals [40972964960](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/40972964960)
 and the unchanged-commit rerun [40973776655](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/40973776655)
@@ -263,3 +266,31 @@ PowerShell runtimes, with the old cmdlet shadowed to reject accidental use.
 Astra Medium final review passed, as did 112 focused gate/workflow tests and
 canonical no-cache preflight (4/4 stages, 202 files/modules, four workers,
 216.38 seconds). Hosted standard-user cases and complete acceptance remain pending.
+
+## Final hosted acceptance - 2026-10-30
+
+[Run 41018569999](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41018569999)
+on implementation commit `62ea12ab5794401f0d3a8e5f8fda5d934ea6fe4f`
+completed successfully. Both isolated profile/token probes, full preflight
+(including spool/watcher regressions), packaged backend smoke, signed packaging,
+Rust73/signature vectors, three-channel NSIS policy and native17 recovery cases
+passed. All eight Alpha native installer cases passed:
+
+- machine/default and machine/custom: previous `.9` upgrade plus same-version reinstall;
+- user/default and user/custom: previous `.9` upgrade plus same-version reinstall.
+
+Both workers verified the exact NSIS-patched candidate hash. Data sentinels,
+keep-data uninstall and actual installed Stable/Beta identities remained unchanged.
+The machine worker used a verified elevated token; the user worker verified a
+non-admin token. No gates or assertions were bypassed. The complete source is
+accepted for main integration under the user's instruction.
+
+This was manual build-only dispatch: no new release/tag/feed change occurred;
+publication-only draft recheck/undraft/feed steps were skipped by design. The
+native matrix executes candidate `/UPDATE`, not the old installed client's Rust
+updater or a full installed-client handshake/restart. Real UAC cancellation and
+alternate credentials remain separate disposable interactive acceptance, not
+claims established by this CI result. No local real installation/database changed.
+The final canonical pre-merge check passed 4/4 stages (101.11 seconds); backend/
+frontend tests were rerun and unchanged frontend checks reused their successful
+cache. Main's automatic CI remains independently observable after integration.
