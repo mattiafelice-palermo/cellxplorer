@@ -149,18 +149,15 @@ class AppChannelConfigurationTests(unittest.TestCase):
         template = (
             ROOT / "src-tauri" / "cellxplorer-installer.nsi"
         ).read_text(encoding="utf-8")
-        self.assertIn("kill_installation_processes.ps1", hooks)
-        self.assertIn("installation_process_scope.ps1", hooks)
-        scope_extract = re.search(
-            r'File /oname=\$PLUGINSDIR\\(?P<name>[^\s"]+)\s+"\$\{CELLXPLORER_HOOK_SOURCE_DIR\}\\installation_process_scope\.ps1"',
-            hooks,
-        )
+        self.assertIn("cellxplorer-installer-helper.exe", hooks)
+        self.assertIn('--cleanup "$INSTDIR"', hooks)
+        self.assertIn("Call ${PREFIX}CxPrepareInstallerHelper", hooks)
+        self.assertNotIn("powershell.exe", hooks)
         scope_import = re.search(
             r'Join-Path \$PSScriptRoot "(?P<name>[^"]+)"', helper
         )
-        self.assertIsNotNone(scope_extract)
         self.assertIsNotNone(scope_import)
-        self.assertEqual(scope_extract.group("name"), scope_import.group("name"))
+        self.assertEqual(scope_import.group("name"), "installation_process_scope.ps1")
         self.assertIn("Get-InstallationProcessPathPrefix", helper)
         self.assertIn("Test-InstallationProcessCandidate", helper)
         self.assertIn("Test-InstallationOwnedExecutablePath", scope)

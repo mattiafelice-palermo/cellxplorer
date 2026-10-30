@@ -1352,6 +1352,8 @@ Function .onInit
   ${EndIf}
 
   Call CxInitializeScope
+  ; Extraction, digest verification and pinning must succeed before READY/E.
+  Call CxPrepareInstallerHelper
 FunctionEnd
 
 
@@ -1522,7 +1524,9 @@ Section Install
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
-  File /oname=restart_application.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\restart_application.ps1"
+  ; Remove only the obsolete application-owned restart script, never user data.
+  Delete "$INSTDIR\restart_application.ps1"
+  File /oname=cellxplorer-installer-helper.exe "${CELLXPLORER_HOOK_SOURCE_DIR}\binaries\cellxplorer-installer-helper.exe"
 
   ; Copy resources
   {{#each resources_dirs}}
@@ -1654,7 +1658,7 @@ Function .onInstSuccess
       ${If} $CxRestartArgs != ""
         ; An opaque argv array cannot inject NSIS options. RunAsUser restores
         ; the original standard desktop token after a machine update.
-        nsis_tauri_utils::RunAsUser "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\restart_application.ps1" -ArgumentsHex "$CxRestartArgs"'
+        nsis_tauri_utils::RunAsUser "$INSTDIR\cellxplorer-installer-helper.exe" '--restart $CxRestartArgs'
       ${Else}
       ${GetOptions} $CMDLINE "/ARGS" $R0
       nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
@@ -1714,6 +1718,7 @@ Section Uninstall
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
   Delete "$INSTDIR\restart_application.ps1"
+  Delete "$INSTDIR\cellxplorer-installer-helper.exe"
 
   ; Delete resources
   {{#each resources}}

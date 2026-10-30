@@ -700,7 +700,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("cargo test --locked --manifest-path src-tauri/Cargo.toml --example verify_updater_signature", policy)
         self.assertIn("python scripts/check_installer_scope.py --run-policy-tests", policy)
         self.assertIn("python scripts/check_update_recovery.py", policy)
-        self.assertEqual(policy.count("if ($LASTEXITCODE -ne 0)"), 4)
+        self.assertIn("python scripts/check_installer_helper.py", policy)
+        self.assertEqual(policy.count("if ($LASTEXITCODE -ne 0)"), 5)
         secrets = self.release.split("- name: Require updater signing secrets", 1)[1].split("\n      - name:", 1)[0]
         self.assertNotRegex(secrets, r"(?m)^\s+if:")
 
@@ -728,7 +729,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_manifest_is_read_from_workspace_root(self):
         self.assertIn('Join-Path $env:GITHUB_WORKSPACE "latest.json"', self.release)
-        self.assertNotIn("src-tauri/target", self.release)
+        manifest = self.release.split("- name: Locate generated updater manifest", 1)[1].split("\n      - name:", 1)[0]
+        self.assertNotIn("src-tauri/target", manifest)
 
     def test_uploaded_manifest_and_signature_are_verified(self):
         self.assertIn("uploaded-latest.json", self.release)

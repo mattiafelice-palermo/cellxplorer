@@ -100,14 +100,18 @@ class InstallerScopeTests(unittest.TestCase):
         self.assertIn('.download(', self.updates)
 
     def test_restart_uses_original_user_and_trusted_process_scoped_helper(self):
-        self.assertIn('RunAsUser "$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"', self.nsis)
-        self.assertIn('-ExecutionPolicy Bypass -File "$INSTDIR\\restart_application.ps1"', self.nsis)
-        script = (ROOT / 'src-tauri/restart_application.ps1').read_text()
-        self.assertIn("$PSScriptRoot 'cellxplorer.exe'", script)
-        self.assertIn('$start.UseShellExecute = $false', script)
-        self.assertNotIn('Invoke-Expression', script)
-        self.assertIn('ConvertFrom-Json', script)
-        self.assertIn('ArgumentsHex.Length -gt 65536', script)
+        self.assertIn('RunAsUser "$INSTDIR\\cellxplorer-installer-helper.exe"', self.nsis)
+        self.assertIn("'--restart $CxRestartArgs'", self.nsis)
+        self.assertNotIn('RunAsUser "$WINDIR\\System32\\WindowsPowerShell', self.nsis)
+        source = (ROOT / 'scripts/installer_helper/src/main.rs').read_text()
+        policy = (ROOT / 'scripts/installer_helper/src/policy.rs').read_text(encoding='utf-8')
+        self.assertIn('directory.join("cellxplorer.exe")', source)
+        self.assertIn('.current_dir(directory).args(arguments)', source)
+        self.assertIn('windows_subsystem = "windows"', source)
+        self.assertIn('creation_flags(0x0800_0000)', source)
+        self.assertIn('Vec<String>', policy)
+        self.assertIn('hex.len() > 65536', policy)
+        self.assertIn('check_command_length', source)
 
     def test_compile_renderer_preserves_nested_conditionals_alias_and_fails_unknown_tokens(self):
         source = '{{#if flag}}a{{#each items as |item|}}{{item}}{{/each}}{{else}}b{{/if}}'

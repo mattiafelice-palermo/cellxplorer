@@ -1,5 +1,10 @@
 # Feature specs
 
+- [075 — Faster, quieter updates](075-faster-quieter-updates.md).
+  **In progress** on `codex/faster-quieter-updates`; sequential native helper,
+  audited runtime package and CI overlap/closure children. Publication follows
+  full verification; differential updates are deferred.
+
 - [074 — Verified BioLogic replay recovery and private corpus](074-biologic-replay-recovery-and-private-corpus.md).
   **Implemented.** Bounded replay omission, a calm informational notice and a
   private six-source regression corpus; Astra review, independent capacity/CE

@@ -1,0 +1,36 @@
+[package]
+name = "cellxplorer-installer-helper"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+
+[dependencies]
+serde_json = "=1.0.151"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+test-fixtures = []
+
+[[bin]]
+name = "cellxplorer-installer-helper"
+path = "src/main.rs"
+
+[[bin]]
+name = "installer-process-fixture"
+path = "tests/fixture.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
+name = "native"
+path = "tests/native.rs"
+required-features = ["test-fixtures"]
+
+[[bin]]
+name = "installer-argv-console-fixture"
+path = "tests/console_fixture.rs"
+required-features = ["test-fixtures"]

@@ -4,14 +4,14 @@
 ; an inner backend process, so keep reaping and waiting until every
 ; installation-owned process has released its executable.
 !define CELLXPLORER_HOOK_SOURCE_DIR "${__FILEDIR__}"
+!include "${CELLXPLORER_HOOK_SOURCE_DIR}\installer_helper.nsh"
 
-!macro KillInstallationProcesses MODE_ARGUMENT
-  InitPluginsDir
-  File /oname=$PLUGINSDIR\installation_process_scope.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\installation_process_scope.ps1"
-  File /oname=$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\kill_installation_processes.ps1"
-  nsExec::ExecToStack 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1" -InstallDir "$INSTDIR" ${MODE_ARGUMENT}'
+!macro KillInstallationProcesses MODE_ARGUMENT PREFIX
+  Call ${PREFIX}CxPrepareInstallerHelper
+  nsExec::ExecToStack '"$PLUGINSDIR\cellxplorer-installer-helper.exe" --cleanup "$INSTDIR" ${MODE_ARGUMENT}'
   Pop $0
   Pop $1
+  Call ${PREFIX}CxReleaseInstallerHelper
   ${If} $0 != 0
     MessageBox MB_ICONSTOP|MB_OK "CellXplorer could not stop its running application and backend processes. Close CellXplorer and try again.$\r$\n$\r$\n$1"
     Abort
@@ -19,14 +19,14 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  !insertmacro KillInstallationProcesses ""
+  !insertmacro KillInstallationProcesses "" ""
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   ; The helper protects its own complete ancestor chain, including an active
   ; uninstaller launched from $INSTDIR, while stopping the target installation's
   ; application and backend processes before file removal.
-  !insertmacro KillInstallationProcesses ""
+  !insertmacro KillInstallationProcesses "" "un."
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

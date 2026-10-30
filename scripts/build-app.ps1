@@ -173,6 +173,7 @@ elseif (-not (Test-Path $sidecarExe)) {
 }
 
 if (-not $SkipInstaller) {
+    Invoke-Checked "python" @("scripts/build_installer_helper.py") $repoRoot
     Write-Host "Verifying frontend channel stamp before packaging..." -ForegroundColor Yellow
     Invoke-Checked "python" @("scripts/frontend_channel.py", "verify", "--channel", $Channel) $repoRoot
 

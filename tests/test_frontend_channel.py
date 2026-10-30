@@ -144,8 +144,9 @@ class NsisProcessCleanupTests(unittest.TestCase):
     def test_hooks_kill_by_install_dir_not_image_name(self):
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
         self.assertIn("$INSTDIR", hooks)
-        self.assertIn("kill_installation_processes.ps1", hooks)
-        self.assertIn("-File", hooks)
+        self.assertIn("cellxplorer-installer-helper.exe", hooks)
+        self.assertIn('--cleanup "$INSTDIR"', hooks)
+        self.assertNotIn("powershell.exe", hooks)
         self.assertIn("Abort", hooks)
         self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", hooks)
         self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", hooks)
@@ -154,17 +155,13 @@ class NsisProcessCleanupTests(unittest.TestCase):
         script = KILL_SCRIPT.read_text(encoding="utf-8")
         scope = SCOPE_SCRIPT.read_text(encoding="utf-8")
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
-        self.assertIn("installation_process_scope.ps1", hooks)
-        scope_extract = re.search(
-            r'File /oname=\$PLUGINSDIR\\(?P<name>[^\s"]+)\s+"\$\{CELLXPLORER_HOOK_SOURCE_DIR\}\\installation_process_scope\.ps1"',
-            hooks,
-        )
         scope_import = re.search(
             r'Join-Path \$PSScriptRoot "(?P<name>[^"]+)"', script
         )
-        self.assertIsNotNone(scope_extract)
         self.assertIsNotNone(scope_import)
-        self.assertEqual(scope_extract.group("name"), scope_import.group("name"))
+        self.assertEqual(scope_import.group("name"), "installation_process_scope.ps1")
+        self.assertIn("Call ${PREFIX}CxPrepareInstallerHelper", hooks)
+        self.assertIn("Call ${PREFIX}CxReleaseInstallerHelper", hooks)
         self.assertIn("Get-InstallationProcessPathPrefix", script)
         self.assertIn("Test-InstallationProcessCandidate", script)
         self.assertIn("Test-InstallationOwnedExecutablePath", scope)

@@ -332,6 +332,20 @@ Rust dependency cache; release jobs restore it without saving a tag-scoped repla
 
 ### Tag and release checklist
 
+The candidate-owned `cellxplorer-installer-helper.exe` is a small independent
+GUI-subsystem/asInvoker Rust binary. Build it with
+`python scripts/build_installer_helper.py` before NSIS compilation. Setup extracts,
+pins and hashes its embedded helper before recovery readiness; cleanup executes
+that pinned temporary copy, not an old installed helper. Restart remains behind
+RunAsUser and launches only the helper's sibling `cellxplorer.exe` using bounded
+hex JSON argv and native Windows argument encoding. Native Toolhelp image-path
+queries replace repeated WMI startup while retaining the ten-second monotonic
+deadline, five 200-ms quiet samples, live-handle ownership and ancestor protection.
+The legacy PowerShell files are regression references, not packaged entry points.
+Run `cargo test --locked --manifest-path scripts/installer_helper/Cargo.toml
+--features test-fixtures --target-dir src-tauri/target/installer-helper` and
+`python scripts/check_installer_helper.py` (disposable files only) when changing it.
+
 Agents use this when the user asks for a release. Unless a spec defers tagging (for example a
 multi-spec release train), operate on `main` after the relevant features are merged.
 
