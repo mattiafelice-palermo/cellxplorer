@@ -54,7 +54,9 @@ pub fn decode_arguments(hex: &str) -> Result<Vec<String>, String> {
 }
 
 pub fn normalize(path: &str) -> String {
-    let path = path.trim().replace('/', "\\");
+    // Win32 preserves non-ASCII whitespace in directory names. Never trim it:
+    // "App\u{a0}" and "App" can be distinct installation-owned directories.
+    let path = path.replace('/', "\\");
     let path = if let Some(unc) = path.strip_prefix("\\\\?\\UNC\\") {
         format!("\\\\{unc}")
     } else {
@@ -196,6 +198,26 @@ mod tests {
             "\\\\server\\share\\app\\",
             false
         ));
+    }
+
+    #[test]
+    fn directory_whitespace_is_identity_not_formatting() {
+        let spaced = format!("{}\\", normalize("C:\\Apps\\CellXplorer\u{a0}"));
+        assert!(owned(
+            "C:\\Apps\\CellXplorer\u{a0}\\worker.exe",
+            &spaced,
+            false
+        ));
+        assert!(!owned("C:\\Apps\\CellXplorer\\worker.exe", &spaced, false));
+        assert!(!owned(
+            "C:\\Apps\\CellXplorer\u{a0}\\worker.exe",
+            "C:\\Apps\\CellXplorer\\",
+            false
+        ));
+        assert_eq!(
+            normalize("C:\\Apps\\CellXplorer\u{2003}"),
+            "C:\\Apps\\CellXplorer\u{2003}"
+        );
     }
     #[test]
     fn protects_complete_ancestry_and_terminates_cycles() {

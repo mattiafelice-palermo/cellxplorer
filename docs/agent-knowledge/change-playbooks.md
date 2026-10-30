@@ -349,6 +349,9 @@ RunAsUser and launches only the helper's sibling `cellxplorer.exe` using bounded
 hex JSON argv and native Windows argument encoding. Native Toolhelp image-path
 queries replace repeated WMI startup while retaining the ten-second monotonic
 deadline, five 200-ms quiet samples, live-handle ownership and ancestor protection.
+Process ownership uses Windows ordinal-ignore-case UTF-16 comparison, not Unicode
+lowercasing. Do not trim directory strings: NBSP/EM SPACE can be significant in
+valid Win32 names and stripping them can target a distinct plain-name sibling.
 The legacy PowerShell files are regression references, not packaged entry points.
 Run `cargo test --locked --manifest-path scripts/installer_helper/Cargo.toml
 --features test-fixtures --target-dir src-tauri/target/installer-helper` and

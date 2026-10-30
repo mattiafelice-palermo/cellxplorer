@@ -238,3 +238,20 @@ fn cleanup_protects_installer_ancestor_inside_target_directory() {
     assert!(status.success());
     assert_eq!(fs::read_to_string(output).unwrap(), "0");
 }
+
+#[test]
+fn cleanup_preserves_plain_directory_when_target_ends_in_unicode_whitespace() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("CellXplorer\u{a0}");
+    let plain = dir.path().join("CellXplorer");
+    let target_exe = copy_fixture(&target, "cellxplorer.exe");
+    let plain_exe = copy_fixture(&plain, "cellxplorer.exe");
+    let mut target_child = hold(&target_exe, &dir.path().join("target.ready"));
+    let mut plain_child = hold(&plain_exe, &dir.path().join("plain.ready"));
+    cleanup(&target, false);
+    assert!(target_child.0.try_wait().unwrap().is_some());
+    assert!(
+        plain_child.0.try_wait().unwrap().is_none(),
+        "a distinct plain directory's process was killed"
+    );
+}
