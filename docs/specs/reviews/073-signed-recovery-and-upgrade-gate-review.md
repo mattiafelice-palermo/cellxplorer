@@ -231,3 +231,20 @@ unconsumed batches and surface persistent permission errors, with focused tests.
 User approval is required before changing that unrelated production service; do
 not silently weaken tests or keep rerunning unchanged failures until green.
 No merge, new release, tag or update-feed publication has occurred.
+
+## Authorized spool-access correction - 2026-10-30
+
+The user approved this separate narrow transport fix, Astra Medium review, full
+verification and merge only on success, explicitly prohibiting release publication.
+`BatchSpool.get()` now retries read/unlink PermissionError within the existing
+single caller deadline. It parses once, acknowledges before returning, retains
+FIFO/unconsumed files on failure, and raises the persistent original access error.
+Malformed JSON and unrelated I/O failures are not retried. Producer behavior and
+timeouts are unchanged. Six deterministic controlled-clock tests passed, covering
+transient read/unlink, persistent errors and later recovery, FIFO, shared timeout
+including initial empty polling, zero timeout and invalid JSON/other I/O behavior.
+Astra Medium final review passed with no actionable blockers; the six new tests
+and existing partial-frame regression passed independently. All 50 focused
+transport/import/native-watcher tests passed. Canonical no-cache preflight passed
+all four stages with four workers (198.39 seconds). Hosted acceptance remains
+required before merge; release publication remains explicitly prohibited.

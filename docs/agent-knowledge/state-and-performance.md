@@ -45,6 +45,14 @@ an SMB read or IPC batch stalls. Partial/offline traversal must retain unseen en
 mapped-drive/UNC identity. Header enrichment validates size/mtime again; failed identity checks
 clear unvalidated metadata and leave a retry state.
 
+The atomic spool publish boundary does not guarantee immediate read/delete access
+on Windows. `BatchSpool.get()` retries only PermissionError within one monotonic
+caller timeout shared by empty polling, reading and acknowledgement. Parse a batch
+once, retry only unlink afterward, and deliver it only after successful deletion.
+Expiry preserves the access error and unconsumed file, not `queue.Empty`; malformed
+JSON and other I/O failures remain immediate. Never skip a locked first batch,
+renew the deadline, or infer exactly-once delivery across process crashes.
+
 Spec 063 adds `import_search_watch.py` native recursive `ReadDirectoryChangesW` subscriptions,
 owned by `import_search_live.py`, capped at eight stoppable child processes. Buffers stay below
 SMB's 64 KiB limit; queue overflow has a separate signal and causes reconciliation. A watcher

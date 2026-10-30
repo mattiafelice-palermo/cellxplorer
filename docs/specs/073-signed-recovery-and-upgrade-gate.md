@@ -1,6 +1,6 @@
 # 073 — Signed recovery bootstrap and mandatory upgrade gate
 
-Status: Approved 100-ms amendment implemented and reviewed; local checks passed. Hosted acceptance is blocked by repeated unrelated import-search spool PermissionError failures. Approval is needed for that separate transport fix before continuing verification; not merged.
+Status: Approved settlement and bounded spool-reader correction implemented; Astra Medium final review and local verification passed. Full hosted acceptance pending before merge. No release authorized.
 Branch: `codex/signed-recovery-bootstrap`.
 Review document: [073 review](reviews/073-signed-recovery-and-upgrade-gate-review.md).
 
@@ -27,6 +27,13 @@ Ask GPT-6 Astra Medium to review design and final implementation. Run focused
 tests, compile NSIS, run canonical preflight, commit and push the feature branch.
 No version bump, release tag or publication is authorized by this implementation
 checkpoint. A separate release will deliver these changes to installed clients.
+
+Explicit follow-up authorization (2026-10-30): fix the independent spool-file
+PermissionError using bounded retries and regression tests, obtain Astra Medium
+review, rerun full GitHub verification and merge only after all gates pass.
+Retry read/unlink only within the existing get timeout, retain unconsumed batches,
+and preserve persistent permission errors rather than reporting an empty queue.
+Do not publish a release.
 
 ## Implementation
 

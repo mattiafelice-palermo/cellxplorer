@@ -6,6 +6,21 @@ import time
 from pathlib import Path
 
 
+def _retry_access(operation, deadline: float):
+    """Retry transient spool locks within the caller's existing wait budget."""
+    while True:
+        try:
+            return operation()
+        except PermissionError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.01, remaining))
+            if time.monotonic() >= deadline:
+                # Preserve the access error, not queue.Empty or a new timeout.
+                raise
+
+
 class BatchSpool:
     def __init__(self, directory: str):
         self.directory = Path(directory)
@@ -28,9 +43,12 @@ class BatchSpool:
                 # Only complete, atomically renamed files are visible. A killed
                 # producer can leave a .tmp, never a partially readable message.
                 path = paths[0]
-                message = json.loads(path.read_text(encoding="utf-8"))
-                path.unlink()
+                message = json.loads(_retry_access(lambda: path.read_text(encoding="utf-8"), end))
+                # Do not deliver a message until its acknowledgement succeeds.
+                # Retrying unlink must not reread/reparse or deliver duplicates.
+                _retry_access(path.unlink, end)
                 return message
-            if time.monotonic() >= end:
+            remaining = end - time.monotonic()
+            if remaining <= 0:
                 raise queue.Empty
-            time.sleep(0.01)
+            time.sleep(min(0.01, remaining))
