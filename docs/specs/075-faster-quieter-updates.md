@@ -1,6 +1,6 @@
 # 075 — Faster, quieter updates
 
-Status: Implementation and hosted acceptance complete; Alpha publication pending.
+Status: Complete. Merged to `main`; Alpha 0.28.0-alpha.12 published and verified.
 Branch: `codex/faster-quieter-updates` (shared by all children).
 
 ## Approved scope and locked constraints
@@ -40,3 +40,19 @@ and all eight native install/reinstall cases. Local no-cache preflight passed
 Native matrix: 143 seconds in this rehearsal versus 163 seconds in Alpha .11;
 this does not establish a warm-cache end-to-end release speedup. Interactive UAC,
 old installed updater and end-to-end recovery are outside this matrix's evidence.
+
+## Publication acceptance
+
+[Alpha .12](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.28.0-alpha.12)
+at `edba7f66` passed [release workflow 41133559623](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41133559623),
+including all eight native cases and final immutable asset recheck. Independent
+public downloads passed manifest/notes checks and actual installer-byte
+verification against the embedded updater public key. The public Alpha feed is
+byte-identical to the release manifest; README/Stable/Beta blobs are unchanged,
+and GitHub's normal latest release remains Stable. Setup was not run locally.
+
+Installer: 84,382,738 bytes versus .11's 86,185,063 (1,802,325 bytes / 2.1% less).
+Release job: 14m59s versus .11's 15m42s, a modest single-run improvement, not a
+substantial or controlled speedup. Exact-SHA preflight reuse and a full Rust cache
+hit were observed, but main Rust test compilation still took 2m47s. No claim of
+eliminated compilation or generally faster native-matrix timing is supported.
