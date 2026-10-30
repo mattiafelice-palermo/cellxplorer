@@ -279,6 +279,21 @@ class FinalAssetRecheckTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
 class PowerShellGateTests(unittest.TestCase):
+    def test_whole_file_hash_needs_no_cmdlet_module_and_missing_files_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary) / '[literal-file].bin'
+            for shell in ('pwsh', 'powershell'):
+                if not shutil.which(shell):
+                    continue
+                for data in (b'', b'abc', bytes(range(256)) * 1024):
+                    fixture.write_bytes(data)
+                    command = "function Get-FileHash { throw 'Cmdlet module must not be used' }\n" + f"Assert-True ((Get-Hash '{fixture}') -ceq '{hashlib.sha256(data).hexdigest()}') 'Incorrect whole-file digest'"
+                    with self.subTest(shell=shell, size=len(data)):
+                        result = self.run_functions(command, shell=shell)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = self.run_functions(f"Get-Hash '{fixture.with_name('missing.bin')}'")
+            self.assertNotEqual(result.returncode, 0)
+
     def test_machine_task_requires_dedicated_account_and_checks_exit_and_cleanup(self):
         for outcome in ('success', 'exit-failure', 'launch-failure', 'wrong-account', 'cleanup-query-failure', 'cleanup-stop-failure'):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary:

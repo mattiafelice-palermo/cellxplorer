@@ -147,7 +147,19 @@ function Invoke-Setup([string]$Executable, [string]$Options, [string]$ExpectedHa
     }
 }
 
-function Get-Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Get-Hash([string]$Path) {
+    # Fresh standard-user workers need not have Get-FileHash's script module
+    # available. Use the same whole-file SHA256 directly, with no module lookup.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $hasher = $null
+    try {
+        $hasher = [Security.Cryptography.SHA256]::Create()
+        return [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $hasher) { $hasher.Dispose() }
+        $stream.Dispose()
+    }
+}
 
 function Get-InstallerCase([string]$Scope, [string]$Layout, [string]$Operation, [bool]$HasBaseline, [string]$Directory) {
     $scopeFlag = if ($Scope -eq 'machine') { '/CXALLUSERS' } else { '/CXCURRENTUSER' }

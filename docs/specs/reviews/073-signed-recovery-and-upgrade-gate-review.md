@@ -248,3 +248,18 @@ and existing partial-frame regression passed independently. All 50 focused
 transport/import/native-watcher tests passed. Canonical no-cache preflight passed
 all four stages with four workers (198.39 seconds). Hosted acceptance remains
 required before merge; release publication remains explicitly prohibited.
+
+The full hosted run 41016236063 passed preflight, including the previously failing
+spool/watcher tests, signed packaging, Rust/registry/recovery checks and all four
+machine-scope default/custom upgrade/reinstall cases. Exact reconstructed NSIS
+binary hashes matched installed payloads; data sentinels and Stable/Beta identity
+checks passed. The standard-user worker then stopped before installing because
+Get-FileHash was not available in that credentialed PowerShell environment.
+The harness now computes the same whole-file SHA256 through a read-only .NET
+stream, with deterministic disposal and no module dependency. Expected hashes
+and all byte-equality assertions remain unchanged. Known empty/abc/multiblock
+vectors, literal-bracket filenames and missing-file rejection are tested in both
+PowerShell runtimes, with the old cmdlet shadowed to reject accidental use.
+Astra Medium final review passed, as did 112 focused gate/workflow tests and
+canonical no-cache preflight (4/4 stages, 202 files/modules, four workers,
+216.38 seconds). Hosted standard-user cases and complete acceptance remain pending.

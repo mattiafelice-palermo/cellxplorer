@@ -244,6 +244,9 @@ NSIS payload by the pinned single `__TAURI_BUNDLE_TYPE_VAR_UNK` to `..._NSS` cha
 and compares the entire installed file hash. It rejects changed CLI versions,
 missing/multiple markers and Authenticode configuration until reviewed; it never
 normalizes installed bytes or uses their observed hash as the expected value.
+Native gate hashes use streaming .NET SHA256 with literal paths and read-only
+deny-write/delete handles, not Get-FileHash module discovery in fresh accounts.
+Keep known-vector regression coverage in both Windows PowerShell and PowerShell 7.
 
 Fresh credentialed Windows CI accounts need genuine shell-folder initialization.
 Default .NET `GetFolderPath` may return empty when a folder does not exist.
