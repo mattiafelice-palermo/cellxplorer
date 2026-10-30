@@ -4,6 +4,26 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.11 - 2026-10-30
+
+### Important: affected Alpha .8/.9 clients need one manual update
+
+If the updater reports "The registered installation location is invalid", save your work, close CellXplorer Alpha, then download and run the official Alpha .11 installer once. No uninstall or data deletion is needed. The new recovery handoff applies to future updates after this version is installed.
+
+Download the installer: https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.11/CellXplorer.Alpha_0.28.0-alpha.11_x64-setup.exe
+
+Older update windows show this address as text: copy it into your browser.
+
+### New features
+
+- Add a signature-verified recovery handoff so newly downloaded installers can validate supported installation-state issues before CellXplorer closes. This takes effect after this version is installed; it cannot change an older installed updater.
+- Require native Windows upgrade/reinstall, data-preservation and channel-isolation checks before an update is published.
+
+### Bug fixes
+
+- Handle Windows process-exit ordering during the final installer handoff, with a bounded 100-ms settlement window and permanent cancellation if it expires.
+- Keep indexed import searches working through temporary batch-file access conflicts without dropping batches or hiding persistent permission errors.
+
 ## 0.28.0-alpha.10 - 2026-10-29
 
 ### Important: manual update required for affected Alpha .8/.9
