@@ -4,6 +4,21 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.12 - 2026-10-30
+
+- ### Important: affected Alpha .8/.9 clients need one manual update
+- If the updater reports "The registered installation location is invalid", save your work, close CellXplorer Alpha, then download and run the official Alpha .12 installer once. No uninstall or data deletion is needed. The recovery handoff applies to future updates after this version is installed.
+- Download the installer: https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.12/CellXplorer.Alpha_0.28.0-alpha.12_x64-setup.exe
+- Older update windows show this address as text: copy it into your browser.
+- ### New features
+- Add frozen scientific-runtime verification to the release checks, alongside the existing signature, upgrade/reinstall, data-preservation and channel-isolation gates.
+- ### Bug fixes
+- Recover BioLogic GCPL sources containing independently verified replayed acquisition blocks, with an informational notice about omitted repeated measurements and no changes to the original files.
+- Replace PowerShell update cleanup and restart launches with a windowless native helper, preserving verified installer recovery and the original user account for restart.
+- Reduce process-cleanup overhead while retaining installation-specific ownership checks, protected installer ancestry, bounded retries and all five quiet checks for lingering processes.
+- Remove bundled Arrow development headers, static libraries, sources and test data while retaining runtime libraries, file-picker and timezone resources.
+- Overlap independent release preparation and warm both Rust build and test dependencies without removing verification steps.
+
 ## 0.28.0-alpha.11 - 2026-10-30
 
 ### Important: affected Alpha .8/.9 clients need one manual update
