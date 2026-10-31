@@ -1,10 +1,11 @@
 # Feature specs
 
 - [077 — Verified build optimizations](077-verified-build-optimizations.md).
-  **Final CI closure under verification.** Relay observation synchronization,
-  atomic publication handling and final-frame draining preserve all deadlines.
-  Hosted correctness and repeatable positive full-job improvement remain required
-  before authorized main integration and Alpha.13. All failed runs are retained.
+  **Accepted; Alpha.13 integration/publication in progress.** Relay observation
+  synchronization, atomic publication handling and final-frame draining preserve
+  all deadlines. Full signed run passed every gate in 11m48s (2.3% below the fixed
+  control median); user explicitly accepted one passing run and waived repeats.
+  All prior failed runs remain recorded; final release gates remain mandatory.
   No rejected preflight shortcuts are included.
 
 - [076 — Release CI critical path](076-release-ci-critical-path.md).

@@ -1,6 +1,6 @@
 # 077 — Verified build optimizations
 
-Status: Live-search IPC publication fix under verification; prior CI evidence retained. Merge/release remain conditional on fresh passing gates and performance acceptance.
+Status: Correctness and user-amended hosted acceptance passed; Alpha.13 integration/publication in progress.
 Branch: `codex/verified-ci-optimizations`.
 
 ## User decision and scope
@@ -51,8 +51,8 @@ the isolated `C:/Temp/cxci-20261031-64428d17` workspace.
    matching graphs, four test workers, comparable toolchains/cache conditions,
    full fallback preflight, frozen scientific parity, all Rust/helper/recovery
    checks and all eight native cases. Record cold preparation separately.
-5. Retain existing checks and demonstrate a repeatable positive full-job
-   improvement in paired warm comparisons; do not infer success by adding overlapping stages or
+5. Retain existing checks and demonstrate positive full-job improvement in the
+   accepted warm signed run; do not infer success by adding overlapping stages or
    subtracting fallback. If evidence is mixed, stay on the feature branch.
 6. Only after acceptance, bump to the next verified Alpha version and add exact
    user-facing notes, run preflight, commit/push, and merge. Wait for exact-SHA
@@ -342,3 +342,33 @@ Final-frame checkpoint verification: canonical no-cache preflight passed **4/4**
 in **216.96 seconds**, four workers and all 209 local task files/modules. Four
 deterministic final-frame tests pass, including both scan/delta positive cases
 and missing-completion failures; process exit alone never qualifies as success.
+
+### User-amended acceptance and Alpha.13 preparation
+
+The user subsequently explicitly removed the multiple-run requirement: one fully
+working, reasonably fast run is sufficient; finish integration and release. This
+supersedes the three-run cohort requirement, not any correctness or safety gate.
+Final corrected run
+[41197878099](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41197878099)
+passed **every gate in 708 seconds (11m48s)** with exact warm npm/Rust caches.
+Against the fixed three-control median of 725 seconds, this is **17 seconds /
+2.3% shorter**. It is a single accepted run, not a repeatability/statistical claim.
+All 206 main task identities remain in the 208-task candidate inventory; the only
+added task files are Tabler parity and relay-controller regressions. Frozen
+science, helper checks, 73 Rust tests plus signature vector, all 18 recovery
+cases and all eight native install/reinstall cases passed. No check/deadline was
+removed or relaxed. The redundant second/third build-only benchmarks
+`41197913388` / `41198716019` were cancelled at the user's request; they are not
+accepted timing samples. Earlier failed runs remain reported above.
+
+The original relay observation race was fixed with explicit lifetime ownership;
+the later no-marker launch timeout was not reproduced by 30 hosted diagnostic
+trials or the two instrumented full signed passes. Diagnostic markers are not
+claimed as a production recovery fix. Full relay checks remain mandatory on the
+final release, and any new failure blocks publication.
+
+Alpha.13 versioned release checkpoint: all maintained declarations match;
+canonical no-cache local preflight passed **4/4** in **204.47 seconds**, with
+four workers and all 209 local task files/modules. The notes retain the affected
+Alpha .8/.9 manual-update guidance and target the new immutable Alpha.13 URL.
+No runtime dependency, scientific calculation or updater-consent change was added.

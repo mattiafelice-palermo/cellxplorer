@@ -4,6 +4,15 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.13 - 2026-10-31
+
+- ### Important: affected Alpha .8/.9 clients need one manual update
+- If Alpha .8 or .9 reports "The registered installation location is invalid", save your work, close CellXplorer Alpha, then download and run the official Alpha .13 installer once. No uninstall or data deletion is needed. The recovery handoff applies to future updates after this version is installed.
+- Download the installer: https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.13/CellXplorer.Alpha_0.28.0-alpha.13_x64-setup.exe
+- Older update windows show this address as text: copy it into your browser.
+- Improved indexed file-search reliability when Windows briefly locks an outgoing index message or a scan worker exits immediately after publishing its final result.
+- Streamlined verified Windows release builds while retaining the full scientific, signature, recovery and native installation checks. This is a build-pipeline improvement, not a claim of faster scientific calculations.
+
 ## 0.28.0-alpha.12 - 2026-10-30
 
 - ### Important: affected Alpha .8/.9 clients need one manual update
