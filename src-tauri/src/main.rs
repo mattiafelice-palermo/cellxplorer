@@ -2,6 +2,7 @@
 
 mod app_channel;
 mod app_updates;
+mod local_installer;
 mod installation_scope;
 mod update_recovery;
 mod beta_bootstrap;
@@ -634,6 +635,8 @@ fn main() {
             app_updates::check_app_update,
             app_updates::download_app_update,
             app_updates::install_app_update,
+            app_updates::stage_local_app_update,
+            app_updates::discard_local_app_update,
             beta_installer::detect_beta_installation,
             beta_installer::check_beta_install,
             beta_installer::download_beta_install,

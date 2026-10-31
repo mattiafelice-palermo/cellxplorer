@@ -754,6 +754,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/check_update_recovery.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_local_installer.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Mandatory native installer upgrade and reinstall gate
         id: installer_gate
@@ -784,6 +786,31 @@ jobs:
       # Wait propagates failure on build-only runs too; neither result is optional.
       - name: Join installation registry and NSIS policy
         wait: installer_policy
+
+      - name: Prepare verified local update test bundle
+        if: github.ref_type != 'tag'
+        shell: pwsh
+        env:
+          LOCAL_CHANNEL: ${{ steps.channel.outputs.channel }}
+          LOCAL_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $product = @{ stable = 'CellXplorer'; beta = 'CellXplorer Beta'; alpha = 'CellXplorer Alpha' }[$env:LOCAL_CHANNEL]
+          if (-not $product) { throw 'Unknown local bundle channel' }
+          $installer = Join-Path 'src-tauri/target/release/bundle/nsis' "${product}_$($env:LOCAL_VERSION)_x64-setup.exe"
+          $signature = "$installer.sig"
+          if (-not (Test-Path -LiteralPath $installer) -or -not (Test-Path -LiteralPath $signature)) { throw 'Signed candidate is missing' }
+          $destination = Join-Path $env:RUNNER_TEMP 'cellxplorer-local-update-bundle'
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          Copy-Item -LiteralPath $installer,$signature -Destination $destination
+
+      - name: Retain verified local update test bundle
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: local-signed-update-${{ steps.channel.outputs.channel }}
+          path: ${{ runner.temp }}/cellxplorer-local-update-bundle/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Recheck final draft assets before publication
         if: github.ref_type == 'tag'

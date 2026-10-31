@@ -256,6 +256,7 @@ Cellxplorer/
 │   │   │   ├── PlaceInFoldersModal.tsx
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
+│   │   │   ├── LocalInstallerSettings.tsx Signed local update selection and verification (Spec 080)
 │   │   │   ├── BetaBootstrapCoordinator.tsx Shared Beta/Alpha first-launch setup (Specs 022/053.3)
 │   │   │   ├── WhatsNewCoordinator.tsx Next-release feature introduction and bundled search guide
 │   │   │   ├── AppUpdateModal.tsx
@@ -381,6 +382,7 @@ Cellxplorer/
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── benchmark_test_runners.py  Diagnostic A/B/C backend runner benchmark (Spec 048.2)
 │   ├── check_versions.py           Read-only version declaration consistency check
+│   ├── check_local_installer.py    Signed harmless local-update verifier fixtures; never installs
 │   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
 │   ├── preflight.py                Canonical local verification command
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
@@ -413,6 +415,7 @@ Cellxplorer/
 ├── packaging/                      PyInstaller entry point, pinned build tools and runtime-only Arrow hook
 │   └── runtime_smoke.py            Explicit isolated frozen scientific/runtime verification (Spec 075.2)
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
+│   ├── examples/local_installer_probe.rs Read-only production local-payload verifier; never installs
 │   ├── installer_helper.nsh        Fresh signed-payload helper extraction, digest and replacement locks
 │   ├── tauri.conf.json              Stable base configuration
 │   ├── tauri.beta.conf.json         Beta identity overlay (Spec 021)
@@ -422,6 +425,7 @@ Cellxplorer/
 │       ├── app_channel.rs          Stable/Beta/Alpha identity and version helpers (Specs 021/053.1/053.2)
 │       ├── beta_bootstrap.rs       Shared Beta/Alpha activation and rollback (Specs 022/053.3)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
+│       ├── local_installer.rs      Signed local payload identity verification for the shared updater (Spec 080)
 │       ├── beta_installer.rs       Channel-scoped install identity lookup (Specs 023/053.3)
 │       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
 │       └── update_notifications.rs Windows app/data update toast display and activation events (Specs 020/061)

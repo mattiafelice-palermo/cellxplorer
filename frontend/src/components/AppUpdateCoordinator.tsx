@@ -27,6 +27,9 @@ import {
   installAppUpdateTauri,
   appUpdateIntervalMs,
   canDismissUpdateModal,
+  canUseLocalInstaller,
+  stageLocalAppUpdateTauri,
+  discardLocalAppUpdateTauri,
   isProtectedUpdateFlow,
   mergeCheckResult,
   mockRelease,
@@ -72,6 +75,8 @@ type AppUpdateContextValue = {
   retryDownload: () => Promise<void>;
   retryInstall: () => Promise<void>;
   restartAfterInstallFailure: () => Promise<void>;
+  stageLocalInstaller: (installerPath: string, signaturePath: string) => Promise<void>;
+  discardLocalInstaller: () => Promise<void>;
 };
 
 const AppUpdateContext = createContext<AppUpdateContextValue | null>(null);
@@ -276,6 +281,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const performCheck = useCallback(
     async (source: UpdateCheckSource) => {
       if (!updateUiEnabled) return;
+      if (downloadInFlight.current) return;
+      if (getCurrentRelease(stateRef.current)?.localInstaller) {
+        if (source === "manual") openMatchingUpdateModal();
+        return;
+      }
       if (checkInFlight.current) {
         if (source === "manual") {
           checkFeedbackSource.current = "manual";
@@ -363,7 +373,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       checkInFlight.current = run;
       await run;
     },
-    [applyRelease, devMock, recordCheckCompleted, tauri, updateUiEnabled],
+    [applyRelease, devMock, recordCheckCompleted, tauri, updateUiEnabled, openMatchingUpdateModal],
   );
 
   useEffect(() => {
@@ -531,14 +541,52 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     if (current.status !== "available") return;
     const confirmed = await confirmDirtyWorkspace(
-      "Download update?",
+      current.release.localInstaller ? "Install local update?" : "Download update?",
       "The installer will close CellXplorer and unsaved plot changes in open analysis tabs will be lost.",
     );
     if (!confirmed) return;
     checkEpochRef.current += 1;
     setModalOpen(true);
+    if (current.release.localInstaller) {
+      if (downloadInFlight.current) return;
+      downloadInFlight.current = true;
+      try { await runVerifiedInstall(current.release); }
+      finally { downloadInFlight.current = false; }
+      return;
+    }
     await runDownload(current.release);
-  }, [runDownload]);
+  }, [runDownload, runVerifiedInstall]);
+
+  const stageLocalInstaller = useCallback(async (installerPath: string, signaturePath: string) => {
+    if (!tauri) throw new Error("Local installer verification requires the installed Windows application.");
+    if (downloadInFlight.current || !canUseLocalInstaller(stateRef.current)) throw new Error("Finish the active update operation first.");
+    downloadInFlight.current = true;
+    checkEpochRef.current += 1;
+    try {
+      if (checkInFlight.current) await checkInFlight.current;
+      const release = await stageLocalAppUpdateTauri(installerPath, signaturePath);
+      if (!mountedRef.current) return;
+      stateRef.current = { status: "available", release };
+      dispatch({ type: "reset_available", release });
+      setUpToDateModal(false);
+      setModalOpen(true);
+    } finally { downloadInFlight.current = false; }
+  }, [tauri]);
+
+  const discardLocalInstaller = useCallback(async () => {
+    if (downloadInFlight.current || !canUseLocalInstaller(stateRef.current)) throw new Error("Finish the active update operation first.");
+    if (!getCurrentRelease(stateRef.current)?.localInstaller) return;
+    downloadInFlight.current = true;
+    checkEpochRef.current += 1;
+    try {
+      await discardLocalAppUpdateTauri();
+      if (!mountedRef.current) return;
+      dispatch({ type: "discard_local" });
+      stateRef.current = { status: "idle" };
+      setModalOpen(false);
+      setUpToDateModal(false);
+    } finally { downloadInFlight.current = false; }
+  }, []);
 
   const retryDownload = useCallback(async () => {
     const current = stateRef.current;
@@ -611,6 +659,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       retryDownload,
       retryInstall,
       restartAfterInstallFailure,
+      stageLocalInstaller,
+      discardLocalInstaller,
     }),
     [
       closeUpdateModal,
@@ -622,6 +672,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       openUpdateModal,
       performCheck,
       restartAfterInstallFailure,
+      stageLocalInstaller,
+      discardLocalInstaller,
       retryDownload,
       retryInstall,
       state,

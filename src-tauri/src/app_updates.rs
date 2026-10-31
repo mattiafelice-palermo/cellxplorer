@@ -10,6 +10,7 @@ use crate::app_channel::{validate_release_version, AppChannel};
 #[derive(Default)]
 pub struct PendingAppUpdate {
     update: Option<tauri_plugin_updater::Update>,
+    local_release: Option<AppUpdateRelease>,
     /// Mirrored version for policy checks and unit tests without constructing `Update`.
     version: Option<String>,
     downloaded_bytes: Option<Vec<u8>>,
@@ -22,6 +23,9 @@ pub struct PendingAppUpdate {
 }
 
 impl PendingAppUpdate {
+    fn release(&self) -> Option<AppUpdateRelease> {
+        self.local_release.clone().or_else(|| self.update.as_ref().map(release_from_update))
+    }
     pub(crate) fn is_downloading(&self) -> bool {
         self.downloading || self.installing
     }
@@ -51,9 +55,9 @@ pub fn apply_check_result(
     check_revision: u64,
     update: Option<tauri_plugin_updater::Update>,
 ) -> Result<Option<AppUpdateRelease>, PendingUpdateError> {
-    if pending.revision != check_revision {
+    if pending.revision != check_revision || pending.local_release.is_some() {
         // Stale check — leave verified bytes / current pending update untouched.
-        return Ok(pending.update.as_ref().map(release_from_update));
+        return Ok(pending.release());
     }
     match update {
         Some(update) => Ok(Some(replace_pending_update(pending, update)?)),
@@ -71,6 +75,8 @@ pub struct AppUpdateRelease {
     pub current_version: String,
     pub notes: Option<String>,
     pub published_at: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local_installer: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -100,6 +106,7 @@ pub fn release_from_update(update: &tauri_plugin_updater::Update) -> AppUpdateRe
         current_version: update.current_version.clone(),
         notes: update.body.clone(),
         published_at: update.date.map(|value| value.to_string()),
+        local_installer: false,
     }
 }
 
@@ -114,6 +121,7 @@ pub fn replace_pending_update(
     bump_revision(pending);
     pending.version = Some(release.version.clone());
     pending.update = Some(update);
+    pending.local_release = None;
     pending.downloaded_bytes = None;
     pending.downloading = false;
     Ok(release)
@@ -224,10 +232,94 @@ pub fn restore_failed_install(
 ) {
     pending.version = Some(update.version.clone());
     pending.update = Some(update);
+    pending.local_release = None;
     pending.downloaded_bytes = Some(bytes);
     pending.downloading = false;
     pending.installing = false;
     bump_revision(pending);
+}
+
+// Keep the remote helpers unchanged for Stable's separate first-Beta flow.
+// Both origins converge here before the one existing installation handoff.
+enum VerifiedInstaller {
+    Remote(tauri_plugin_updater::Update),
+    Local(AppUpdateRelease),
+}
+
+fn take_verified_payload(pending: &mut PendingAppUpdate, expected: &str) -> Result<(VerifiedInstaller, Vec<u8>), PendingUpdateError> {
+    validate_install_ready(pending.version.as_deref(), expected, pending.downloaded_bytes.is_some(), pending.is_downloading())?;
+    if let Some(release) = pending.local_release.take() {
+        let bytes = pending.downloaded_bytes.take().ok_or(PendingUpdateError::MissingVerifiedBytes)?;
+        pending.version = None;
+        bump_revision(pending);
+        return Ok((VerifiedInstaller::Local(release), bytes));
+    }
+    take_verified_install(pending, expected).map(|(update, bytes)| (VerifiedInstaller::Remote(update), bytes))
+}
+
+fn restore_verified_payload(pending: &mut PendingAppUpdate, installer: VerifiedInstaller, bytes: Vec<u8>) {
+    match installer {
+        VerifiedInstaller::Remote(update) => restore_failed_install(pending, update, bytes),
+        VerifiedInstaller::Local(release) => {
+            pending.version = Some(release.version.clone());
+            pending.update = None;
+            pending.local_release = Some(release);
+            pending.downloaded_bytes = Some(bytes);
+            pending.downloading = false;
+            pending.installing = false;
+            bump_revision(pending);
+        }
+    }
+}
+
+fn stage_local_verified(pending: &mut PendingAppUpdate, revision: u64, release: AppUpdateRelease, bytes: Vec<u8>) -> Result<AppUpdateRelease, String> {
+    if pending.is_downloading() || pending.revision != revision {
+        return Err("The update state changed during local verification. Wait for the active operation, then verify again.".into());
+    }
+    pending.version = Some(release.version.clone());
+    pending.update = None;
+    pending.local_release = Some(release.clone());
+    pending.downloaded_bytes = Some(bytes);
+    bump_revision(pending);
+    Ok(release)
+}
+
+#[tauri::command]
+pub async fn stage_local_app_update(app: AppHandle, installer_path: String, signature_path: String, state: State<'_, Mutex<PendingAppUpdate>>) -> Result<AppUpdateRelease, String> {
+    #[cfg(not(windows))]
+    { let _ = (app, installer_path, signature_path, state); Err("Local installer updates require the installed Windows application.".into()) }
+    #[cfg(windows)]
+    {
+        let revision = {
+            let pending = lock_pending(&state)?;
+            if pending.is_downloading() { return Err(map_pending_error(PendingUpdateError::AlreadyDownloading)); }
+            pending.revision
+        };
+        let channel = AppChannel::from_identifier(&app.config().identifier)?;
+        let current = app.package_info().version.to_string();
+        let key = app.config().plugins.0.get("updater")
+            .and_then(|config| config.get("pubkey")).and_then(|value| value.as_str())
+            .ok_or("The embedded updater public key is missing.")?.to_string();
+        let verification_current = current.clone();
+        let (version, bytes) = tauri::async_runtime::spawn_blocking(move || {
+            crate::local_installer::load(&installer_path, &signature_path, &key, channel, &verification_current)
+        }).await.map_err(|_| "Local installer verification could not finish.")??;
+        let release = AppUpdateRelease {
+            version, current_version: current,
+            notes: Some("Local signed installer. This is a real installation through the standard updater, not a dry run. No release feed was changed.".into()),
+            published_at: None, local_installer: true,
+        };
+        let mut pending = lock_pending(&state)?;
+        stage_local_verified(&mut pending, revision, release, bytes)
+    }
+}
+
+#[tauri::command]
+pub fn discard_local_app_update(state: State<'_, Mutex<PendingAppUpdate>>) -> Result<(), String> {
+    let mut pending = lock_pending(&state)?;
+    if pending.is_downloading() { return Err(map_pending_error(PendingUpdateError::AlreadyDownloading)); }
+    if pending.local_release.is_some() { clear_pending_update(&mut pending).map_err(map_pending_error)?; }
+    Ok(())
 }
 
 fn lock_pending<'a>(
@@ -267,6 +359,7 @@ pub async fn check_app_update(
         if pending.is_downloading() {
             return Err(map_pending_error(PendingUpdateError::AlreadyDownloading));
         }
+        if let Some(release) = pending.local_release.as_ref() { return Ok(Some(release.clone())); }
         pending.revision
     };
 
@@ -388,7 +481,7 @@ pub async fn install_app_update(
         let channel = AppChannel::from_identifier(app.config().identifier.as_str())
             .map_err(InstallAppUpdateFailure::aborted)?;
         validate_release_version(channel, &expected_version).map_err(InstallAppUpdateFailure::aborted)?;
-        let verified = take_verified_install(&mut pending, &expected_version)
+        let verified = take_verified_payload(&mut pending, &expected_version)
             .map_err(|error| InstallAppUpdateFailure::aborted(map_pending_error(error)))?;
         pending.installing = true;
         (channel, verified.0, verified.1)
@@ -412,7 +505,7 @@ pub async fn install_app_update(
                 if let Err(error) = prepared.authorize_exit() {
                     // Explicitly disarm before exposing terminal failure metadata.
                     drop(prepared);
-                    if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
+                    if let Ok(mut pending) = state.lock() { restore_verified_payload(&mut pending, update, bytes); }
                     return Err(InstallAppUpdateFailure::aborted(error));
                 }
                 // Final consent succeeded. No retry/restore/cancellation branch
@@ -425,7 +518,7 @@ pub async fn install_app_update(
                 return Ok(());
             }
             Err(error) => {
-                if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
+                if let Ok(mut pending) = state.lock() { restore_verified_payload(&mut pending, update, bytes); }
                 return Err(InstallAppUpdateFailure::aborted(error));
             }
         }
@@ -435,11 +528,11 @@ pub async fn install_app_update(
     // runs `on_before_exit` on Windows it stops the sidecar and exits the process regardless of
     // whether ShellExecuteW opened the installer successfully — that path does not return.
     #[cfg(not(windows))]
-    match update.install(&bytes) {
+    match match &update { VerifiedInstaller::Remote(remote) => remote.install(&bytes).map_err(user_safe_error), VerifiedInstaller::Local(_) => Err("Local installers require Windows.".into()) } {
         Ok(()) => Ok(()),
         Err(error) => {
             if let Ok(mut pending) = state.lock() {
-                restore_failed_install(&mut pending, update, bytes);
+                restore_verified_payload(&mut pending, update, bytes);
             }
             // Do not extend Windows recovery guarantees to another platform's
             // plugin implementation without a separately verified contract.
@@ -451,6 +544,52 @@ pub async fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn local_release() -> AppUpdateRelease {
+        AppUpdateRelease { version: "0.28.0-alpha.16".into(), current_version: "0.28.0-alpha.15".into(), notes: None, published_at: None, local_installer: true }
+    }
+
+    #[test]
+    fn staged_local_bytes_survive_remote_checks_and_restore_after_failure() {
+        let mut pending = PendingAppUpdate::default();
+        let release = local_release();
+        stage_local_verified(&mut pending, 0, release.clone(), vec![1, 2, 3]).unwrap();
+        assert_eq!(apply_check_result(&mut pending, 0, None).unwrap(), Some(release.clone()));
+        let revision = pending.revision;
+        assert_eq!(apply_check_result(&mut pending, revision, None).unwrap(), Some(release.clone()));
+        assert!(matches!(begin_download(&mut pending, &release.version), Err(PendingUpdateError::MissingPendingUpdate)));
+        let (installer, bytes) = take_verified_payload(&mut pending, &release.version).unwrap();
+        assert_eq!(bytes, vec![1, 2, 3]);
+        pending.installing = true;
+        restore_verified_payload(&mut pending, installer, bytes);
+        assert_eq!(pending.release(), Some(release));
+        assert!(!pending.installing);
+        assert_eq!(pending.downloaded_bytes, Some(vec![1, 2, 3]));
+        clear_pending_update(&mut pending).unwrap();
+        assert!(pending.local_release.is_none());
+        assert!(pending.downloaded_bytes.is_none());
+    }
+
+    #[test]
+    fn local_stage_cannot_replace_concurrent_or_changed_pending_state() {
+        for (downloading, installing, revision) in [(true, false, 0), (false, true, 0), (false, false, 1)] {
+            let mut pending = PendingAppUpdate { downloading, installing, revision, version: Some("old".into()), downloaded_bytes: Some(vec![9]), ..Default::default() };
+            assert!(stage_local_verified(&mut pending, 0, local_release(), vec![1]).is_err());
+            assert_eq!(pending.version.as_deref(), Some("old"));
+            assert_eq!(pending.downloaded_bytes, Some(vec![9]));
+            assert_eq!(pending.revision, revision);
+            assert_eq!(pending.installing, installing);
+        }
+    }
+
+    #[test]
+    fn wrong_version_install_cannot_consume_local_bytes() {
+        let mut pending = PendingAppUpdate::default();
+        stage_local_verified(&mut pending, 0, local_release(), vec![1]).unwrap();
+        assert!(matches!(take_verified_payload(&mut pending, "0.28.0-alpha.17"), Err(PendingUpdateError::VersionMismatch)));
+        assert_eq!(pending.downloaded_bytes, Some(vec![1]));
+        assert!(pending.local_release.is_some());
+    }
 
     #[test]
     fn terminal_install_error_serializes_exact_safe_close_contract() {

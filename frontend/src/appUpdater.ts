@@ -111,6 +111,7 @@ export type AppUpdateRelease = {
   currentVersion: string;
   notes: string | null;
   publishedAt: string | null;
+  localInstaller?: boolean;
 };
 
 export const UPDATE_APPLYING_LABEL = "Preparing update…";
@@ -548,7 +549,13 @@ export function shouldSkipAutomaticCheck(
   modalOpen: boolean,
 ): boolean {
   if (modalOpen) return true;
+  if (getCurrentRelease(state)?.localInstaller) return true;
   return isProtectedUpdateFlow(state);
+}
+
+export function canUseLocalInstaller(state: AppUpdateState): boolean {
+  return state.status === "idle" || state.status === "available" ||
+    (state.status === "error" && canDismissUpdateModal(state));
 }
 
 export function getCurrentRelease(state: AppUpdateState): AppUpdateRelease | null {
@@ -727,13 +734,16 @@ export type AppUpdateAction =
       lifecycleMayNeedRestart?: boolean;
     }
   | { type: "reset_available"; release: AppUpdateRelease }
-  | { type: "dismiss_check_error" };
+  | { type: "dismiss_check_error" }
+  | { type: "discard_local" };
 
 export function appUpdateReducer(
   state: AppUpdateState,
   action: AppUpdateAction,
 ): AppUpdateState {
   switch (action.type) {
+    case "discard_local":
+      return getCurrentRelease(state)?.localInstaller && canUseLocalInstaller(state) ? { status: "idle" } : state;
     case "check_started":
       if (action.source === "automatic") {
         if (isProtectedUpdateFlow(state) || state.status === "available") {
@@ -822,6 +832,7 @@ export type TauriUpdateReleaseResponse = {
   currentVersion: string;
   notes?: string | null;
   publishedAt?: string | null;
+  localInstaller?: boolean;
 };
 
 export function mapTauriRelease(response: TauriUpdateReleaseResponse): AppUpdateRelease {
@@ -830,6 +841,7 @@ export function mapTauriRelease(response: TauriUpdateReleaseResponse): AppUpdate
     currentVersion: response.currentVersion,
     notes: response.notes ?? null,
     publishedAt: response.publishedAt ?? null,
+    ...(response.localInstaller ? { localInstaller: true } : {}),
   };
 }
 
@@ -888,6 +900,16 @@ export async function downloadAppUpdateTauri(
 export async function installAppUpdateTauri(expectedVersion: string): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("install_app_update", { expectedVersion });
+}
+
+export async function stageLocalAppUpdateTauri(installerPath: string, signaturePath: string): Promise<AppUpdateRelease> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return mapTauriRelease(await invoke<TauriUpdateReleaseResponse>("stage_local_app_update", { installerPath, signaturePath }));
+}
+
+export async function discardLocalAppUpdateTauri(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("discard_local_app_update");
 }
 
 export async function restartAppTauri(): Promise<void> {
