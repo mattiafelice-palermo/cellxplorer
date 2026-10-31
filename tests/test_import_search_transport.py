@@ -57,6 +57,51 @@ class BatchSpoolAccessTests(unittest.TestCase):
             self.spool.get(0)
         self.assertEqual(self.clock.sleeps, [0.01])
 
+    def test_transient_publish_lock_retries_same_complete_frame_once_without_rewrite(self):
+        original = transport.os.replace
+        calls = []
+        def replace(source, destination):
+            calls.append((source, destination))
+            self.assertEqual(json.loads(source.read_text()), {"kind": "first"})
+            self.assertFalse(destination.exists())
+            if len(calls) == 1:
+                raise PermissionError("temporary sharing lock")
+            return original(source, destination)
+        # Capture the real writer outside the mock, then check exactly one write.
+        original_write = Path.write_text
+        with patch.object(transport.os, "replace", side_effect=replace), \
+             patch.object(Path, "write_text", autospec=True, side_effect=original_write) as write:
+            self.spool.put({"kind": "first"})
+            self.assertEqual(write.call_count, 1)
+        self.assertEqual(calls, [(self.first.with_suffix('.tmp'), self.first)] * 2)
+        self.assertEqual(self.spool.sequence, 1)
+        self.assertEqual(self.spool.get(0), {"kind": "first"})
+        self.spool.put({"kind": "second"})
+        self.assertEqual(self.spool.get(0), {"kind": "second"})
+        with self.assertRaises(queue.Empty):
+            self.spool.get(0)
+
+    def test_persistent_publish_lock_preserves_error_frame_and_fixed_budget(self):
+        failure = PermissionError("still locked")
+        start = self.clock.now
+        with patch.object(transport.os, "replace", side_effect=failure):
+            with self.assertRaises(PermissionError) as caught:
+                self.spool.put({"kind": "retained"})
+        self.assertIs(caught.exception, failure)
+        self.assertAlmostEqual(self.clock.now - start, 0.1)
+        self.assertEqual(self.spool.sequence, 0)
+        self.assertFalse(self.first.exists())
+        self.assertEqual(json.loads(self.first.with_suffix('.tmp').read_text()), {"kind": "retained"})
+
+    def test_non_permission_publish_error_is_not_retried(self):
+        failure = OSError("not a sharing lock")
+        with patch.object(transport.os, "replace", side_effect=failure) as replace:
+            with self.assertRaises(OSError) as caught:
+                self.spool.put({"kind": "retained"})
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(replace.call_count, 1)
+        self.assertEqual(self.clock.sleeps, [])
+
     def test_transient_unlink_lock_retries_ack_without_rereading_message(self):
         self.spool.put({'kind': 'done'})
         original_read, original_unlink = Path.read_text, Path.unlink

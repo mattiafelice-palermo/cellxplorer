@@ -1,6 +1,6 @@
 # 077 — Verified build optimizations
 
-Status: Relay-fixture fix pushed and verified; fresh hosted acceptance is blocked by a live-search test failure and unconfirmed timing criterion. No merge or release.
+Status: Live-search IPC publication fix under verification; prior CI evidence retained. Merge/release remain conditional on fresh passing gates and performance acceptance.
 Branch: `codex/verified-ci-optimizations`.
 
 ## User decision and scope
@@ -249,3 +249,39 @@ Final local verification again passed canonical no-cache preflight **4/4** in
 live-search module passed locally too; this does not override its hosted failure.
 Live fetch confirmed main remains `9ff61b9b` and all public channel/README blob
 identities remain unchanged. Only the feature branch receives this evidence.
+
+### Authorized live-search follow-up
+
+The user authorized investigating/fixing the live-search timeout without relaxing
+deadlines/checks, followed by a fresh warm comparison and conditional merge/Alpha.
+Thirty unchanged local native lifecycle repetitions passed; the original hosted
+interleaving remains unavailable. A concrete producer failure was reproduced
+using one actual Windows handle denying delete/rename access to the outgoing IPC
+`.tmp` frame. `os.replace` raised sharing violation 32; `scan_changes` treated the
+publication error as an unreadable change and entered 30-second recovery. The
+unchanged 12-second native lifecycle test then timed out waiting for its catalog
+update (reproduced at rename). This fixes a demonstrated failure mechanism rather
+than declaring the opaque hosted result environmental.
+
+`BatchSpool.put` now retries only the atomic rename, with one fixed 100-ms budget,
+using the same complete temporary frame and sequence number. It never rewrites
+or delivers a partial/duplicate frame. Persistent permission errors retain the
+original exception and frame; other I/O failures remain immediate. Existing
+consumer call budgets, worker watchdogs and the native test's 12-second deadlines
+are unchanged. The native fault regression runs every original create/rename/
+delete/pause/resume assertion under a real Windows sharing lock in each delta
+worker; healthy updates must still avoid a full-root rescan. Failure-only state
+diagnostics make a future timeout observable without changing acceptance.
+
+Nine spool unit cases, including the three new publication regressions, passed.
+The new native lock regression passed all original assertions in 7.435 s. Fresh
+full verification and hosted comparisons follow; prior failed jobs remain in the
+evidence and cannot count as speedups or passing release gates.
+
+The exact fault-injection script that failed before the producer fix passed after
+it in 9.503 s, with no test/deadline edits. All 38 spool/live-search suite cases
+passed, then canonical no-cache preflight passed **4/4** in **127.26 s** (four
+workers; all 209 local task files/modules). The three already-verified warm main
+controls at unchanged `9ff61b9b` remain the fixed baseline; the corrected source
+gets three new full signed candidate runs. Reusing that validated same-SHA,
+same-toolchain/cache baseline avoids repeatedly choosing new control samples.

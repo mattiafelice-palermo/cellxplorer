@@ -47,6 +47,38 @@ def fast_identity_watch(path, messages, stop, overflow):
     watch_root(path, messages, stop, overflow, root_check_seconds=0.25)
 
 
+def sharing_locked_delta(root, config, catalog, directory):
+    """One actual Windows deny-delete handle races the first atomic publication."""
+    import ctypes
+    from ctypes import wintypes as w
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
+    kernel.CreateFileW.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    original = os.replace
+    injected = False
+    def replace(source, destination):
+        nonlocal injected
+        if not injected:
+            injected = True
+            handle = kernel.CreateFileW(str(source), 0x80000000, 1, None, 3, 0, None)
+            if handle == ctypes.c_void_p(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                try:
+                    original(source, destination)
+                except PermissionError as error:
+                    if error.winerror != 32:
+                        raise AssertionError("Fixture did not exercise a sharing violation") from error
+                    raise
+                raise AssertionError("Fixture lock did not prevent publication")
+            finally:
+                kernel.CloseHandle(handle)
+        return original(source, destination)
+    with patch.object(os, "replace", replace):
+        scan_changes(root, config, catalog, directory)
+
+
 def slow_initial_scan(root, config, catalog, directory):
     spool = BatchSpool(directory)
     spool.put(dict(kind="traversed", complete=True, discovered=0))
@@ -415,30 +447,48 @@ class LifecycleTests(DeltaTests):
     def test_native_notifications_deep_rename_delete_pause_resume(self):
         indexer = SearchIndexer(self.catalog)
         indexer.start(self.config)
+        def wait_state(predicate):
+            try:
+                wait_until(predicate)  # Keep the original 12-second deadline.
+            except AssertionError as error:
+                with indexer.lock:
+                    detail = dict(roots=indexer.root_snapshots(), active=indexer.active_root,
+                                  pending=list(indexer.pending),
+                                  events={key: dict(item['events']) for key,item in indexer.live.items.items()},
+                                  worker_alive=indexer.process.is_alive() if indexer.process else None)
+                raise AssertionError(f"{error}; native search state: {detail}") from error
         try:
-            wait_until(lambda: indexer.root_snapshots()[0].get("monitor_state") == "connected")
-            wait_until(lambda: indexer.root_snapshots()[0]["last_success"] is not None)
+            wait_state(lambda: indexer.root_snapshots()[0].get("monitor_state") == "connected")
+            wait_state(lambda: indexer.root_snapshots()[0]["last_success"] is not None)
             initial_scan = indexer.root_snapshots()[0]["last_success"]
             folder = self.root / "deep" / "nested"
             folder.mkdir(parents=True)
             source = folder / "new.ndax"
             source.write_bytes(b"source")
-            wait_until(lambda: self.catalog.search(self.config, query="new.ndax")["total"] == 1)
+            wait_state(lambda: self.catalog.search(self.config, query="new.ndax")["total"] == 1)
             renamed = source.with_name("renamed.ndax")
             source.rename(renamed)
-            wait_until(lambda: self.catalog.search(self.config, query="renamed.ndax")["total"] == 1
+            wait_state(lambda: self.catalog.search(self.config, query="renamed.ndax")["total"] == 1
                        and self.catalog.search(self.config, query="new.ndax")["total"] == 0)
             renamed.unlink()
-            wait_until(lambda: self.catalog.search(self.config)["total"] == 0)
+            wait_state(lambda: self.catalog.search(self.config)["total"] == 0)
             # Healthy changes never require a full-root scan.
             self.assertEqual(indexer.root_snapshots()[0]["last_success"], initial_scan)
             indexer.configure({**self.config, "paused": True})
             self.assertEqual(indexer.root_snapshots()[0]["monitor_state"], "paused")
             (folder / "during-pause.ndax").write_bytes(b"pause")
             indexer.configure(self.config)
-            wait_until(lambda: self.catalog.search(self.config, query="during-pause")["total"] == 1)
+            wait_state(lambda: self.catalog.search(self.config, query="during-pause")["total"] == 1)
         finally:
             indexer.stop()
+
+    @unittest.skipUnless(os.name == "nt", "Native Windows acceptance")
+    def test_native_delta_publication_sharing_lock_keeps_subscription_and_all_changes(self):
+        # Run every original create/rename/delete/pause/resume assertion, with
+        # its original 12-second wait, despite one genuine sharing violation in
+        # each delta worker. No full-root recovery or timing extension is allowed.
+        with patch("backend.app.services.import_search_index.scan_changes", sharing_locked_delta):
+            self.test_native_notifications_deep_rename_delete_pause_resume()
 
 
 if __name__ == "__main__":

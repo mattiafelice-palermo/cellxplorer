@@ -5,6 +5,8 @@ import queue
 import time
 from pathlib import Path
 
+PUBLISH_RETRY_SECONDS = 0.1
+
 
 def _retry_access(operation, deadline: float):
     """Retry transient spool locks within the caller's existing wait budget."""
@@ -32,7 +34,12 @@ class BatchSpool:
         temporary = self.directory / f"{self.sequence:012d}.tmp"
         destination = temporary.with_suffix(".json")
         temporary.write_text(json.dumps(message, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, destination)
+        # Closing our writer does not exclude a scanner briefly opening the
+        # temporary file without FILE_SHARE_DELETE on Windows. Publish the same
+        # complete frame, never rewrite it or advance sequence on failure. This
+        # local retry does not renew the coordinator's existing worker watchdog.
+        _retry_access(lambda: os.replace(temporary, destination),
+                      time.monotonic() + PUBLISH_RETRY_SECONDS)
         self.sequence += 1
 
     def get(self, timeout: float):

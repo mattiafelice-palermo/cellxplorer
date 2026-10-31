@@ -53,6 +53,15 @@ Expiry preserves the access error and unconsumed file, not `queue.Empty`; malfor
 JSON and other I/O failures remain immediate. Never skip a locked first batch,
 renew the deadline, or infer exactly-once delivery across process crashes.
 
+The producer's atomic rename can also encounter a short Windows sharing lock on
+its just-closed `.tmp` file. Retry only that rename of the same complete frame,
+within a single 100-ms publication budget; do not rewrite or advance sequence
+until success. Permanent failure preserves the exception/frame and normal worker
+recovery. Neither consumer poll budgets nor the existing worker watchdog is
+renewed. A native deny-delete-handle regression must still pass the original
+create/rename/delete/pause/resume assertions and 12-second catalog waits without
+requiring a full reconciliation for healthy changes.
+
 Spec 063 adds `import_search_watch.py` native recursive `ReadDirectoryChangesW` subscriptions,
 owned by `import_search_live.py`, capped at eight stoppable child processes. Buffers stay below
 SMB's 64 KiB limit; queue overflow has a separate signal and causes reconciliation. A watcher
