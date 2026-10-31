@@ -142,6 +142,27 @@ def beta_bootstrap_use_current(db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@router.post("/complete-single-edition")
+def beta_bootstrap_complete_single_edition(db: Session = Depends(get_db)):
+    _require_beta_channel()
+    return _complete_single_edition(db)
+
+
+@alpha_router.post("/complete-single-edition")
+def alpha_bootstrap_complete_single_edition(db: Session = Depends(get_db)):
+    _require_alpha_channel()
+    return _complete_single_edition(db)
+
+
+def _complete_single_edition(db: Session):
+    try:
+        return beta_bootstrap.complete_single_edition_setup(db)
+    except beta_bootstrap.BetaBootstrapConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except beta_bootstrap.BetaBootstrapValidation as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @alpha_router.get("/status")
 def alpha_bootstrap_status(db: Session = Depends(get_db)):
     _require_alpha_channel()

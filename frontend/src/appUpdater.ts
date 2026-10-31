@@ -573,22 +573,38 @@ export function getCurrentRelease(state: AppUpdateState): AppUpdateRelease | nul
 }
 
 export function compareSemver(left: string, right: string): number {
-  const parse = (value: string): number[] => {
-    const normalized = value.trim().replace(/^v/i, "");
-    const core = normalized.split("-")[0] ?? normalized;
-    return core.split(".").map((part) => {
-      const match = part.match(/^\d+/);
-      return match ? Number(match[0]) : 0;
-    });
+  const parse = (value: string) => {
+    const [core, ...pre] = value.trim().replace(/^v/i, "").split("+")[0].split("-");
+    return { core: core.split("."), pre: pre.join("-").split(".").filter(Boolean) };
+  };
+  const compare = (a: string, b: string) => {
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      const aa = BigInt(a), bb = BigInt(b);
+      return aa < bb ? -1 : aa > bb ? 1 : 0;
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
   };
   const a = parse(left);
   const b = parse(right);
-  const length = Math.max(a.length, b.length);
+  const length = Math.max(a.core.length, b.core.length);
   for (let index = 0; index < length; index += 1) {
-    const diff = (a[index] ?? 0) - (b[index] ?? 0);
-    if (diff !== 0) return diff < 0 ? -1 : 1;
+    const diff = compare(a.core[index] ?? "0", b.core[index] ?? "0");
+    if (diff) return diff;
+  }
+  if (!a.pre.length || !b.pre.length) return a.pre.length ? -1 : b.pre.length ? 1 : 0;
+  for (let index = 0; index < Math.max(a.pre.length, b.pre.length); index += 1) {
+    const aa = a.pre[index], bb = b.pre[index];
+    if (aa === undefined || bb === undefined) return aa === undefined ? -1 : 1;
+    const an = /^\d+$/.test(aa), bn = /^\d+$/.test(bb);
+    if (an !== bn) return an ? -1 : 1;
+    const diff = compare(aa, bb);
+    if (diff) return diff;
   }
   return 0;
+}
+
+export function canRefreshAppUpdate(state: AppUpdateState): boolean {
+  return state.status !== "checking" && !isProtectedUpdateFlow(state) && !getCurrentRelease(state)?.localInstaller;
 }
 
 export function shouldNotifyForVersion(
@@ -745,11 +761,7 @@ export function appUpdateReducer(
     case "discard_local":
       return getCurrentRelease(state)?.localInstaller && canUseLocalInstaller(state) ? { status: "idle" } : state;
     case "check_started":
-      if (action.source === "automatic") {
-        if (isProtectedUpdateFlow(state) || state.status === "available") {
-          return state;
-        }
-      }
+      if (isProtectedUpdateFlow(state) || state.status === "available") return state;
       return { status: "checking", source: action.source };
     case "check_success": {
       if (isProtectedUpdateFlow(state)) {

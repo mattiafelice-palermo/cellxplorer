@@ -1149,6 +1149,48 @@ def build_alpha_status(db: Session) -> dict[str, Any]:
     }
 
 
+def _automatic_setup_artifact_present(path: Path) -> bool:
+    # Path.exists() suppresses filesystem errors on current Python versions.
+    # An unreadable recovery artifact must not become proof of safe absence.
+    try:
+        path.stat()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise BetaBootstrapValidation("Could not verify setup recovery state. Review the setup dialog.") from error
+
+
+def complete_single_edition_setup(db: Session) -> dict[str, Any]:
+    """Acknowledge only; never discard a stage, reset data, or activate a copy.
+
+    Native edition discovery owns the decision to call this path. Recheck the
+    live recovery state under the staging lock before persisting any marker.
+    """
+    channel = resolve_app_channel()
+    if channel not in ("alpha", "beta"):
+        raise BetaBootstrapValidation("Single-edition setup is only available in Alpha/Beta.")
+    status = build_alpha_status(db) if channel == "alpha" else build_status(db)
+    invalid_source = (
+        any(source["exists"] and not source["compatible"] for source in status["sources"])
+        if channel == "alpha"
+        else status["stableDatabaseExists"] and not status["stableDatabaseCompatible"]
+    )
+    if (status["setupState"] != "choice-required" or status["setupError"]
+            or status["outstandingStageToken"] or status["applyFailureMessage"]
+            or status["scientificPreparationPending"] or invalid_source):
+        raise BetaBootstrapConflict("Setup needs an explicit decision or recovery. Review the setup dialog.")
+    with _stage_lock:
+        failure = read_alpha_apply_failure() if channel == "alpha" else read_apply_failure()
+        failure_path = alpha_apply_failure_path() if channel == "alpha" else apply_failure_path()
+        _automatic_setup_artifact_present(_bootstrap_root_for(APP_DATA_DIR))
+        if (_active_stage_token or _stage_directories()
+                or _automatic_setup_artifact_present(_bootstrap_root_for(APP_DATA_DIR) / LOCK_NAME)
+                or failure or _automatic_setup_artifact_present(failure_path)):
+            raise BetaBootstrapConflict("Setup changed during detection. Review the setup dialog.")
+        return use_alpha_current_library(db) if channel == "alpha" else use_current_library(db)
+
+
 def start_empty_library(db: Session) -> dict[str, Any]:
     if resolve_app_channel() != "beta":
         raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")

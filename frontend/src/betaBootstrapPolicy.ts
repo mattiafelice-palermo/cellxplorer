@@ -8,6 +8,34 @@ import type {
 export type BootstrapChannel = "beta" | "alpha";
 export type BootstrapStatus = BetaBootstrapStatus | AlphaBootstrapStatus;
 
+export type InstalledEdition = {
+  channel: AppChannel;
+  availability: "installed" | "absent" | "unknown";
+};
+
+export function editionAvailability(editions: InstalledEdition[] | undefined, channel: AppChannel) {
+  return editions?.find((edition) => edition.channel === channel)?.availability ?? "unknown";
+}
+
+/** Never infer absence from a missing library, and never auto-dismiss recovery. */
+export function canAutoUseOnlyInstalledEdition(args: {
+  channel: BootstrapChannel;
+  editions?: InstalledEdition[];
+  status?: BootstrapStatus;
+  statusError: boolean;
+  busy: boolean;
+}): boolean {
+  const { status, editions, channel } = args;
+  if (args.busy || args.statusError || !status || status.channel !== channel ||
+      !status.needsChoice || status.setupState !== "choice-required" ||
+      status.setupError || status.applyFailureMessage || status.outstandingStageToken ||
+      status.scientificPreparationPending) return false;
+  if (status.channel === "alpha" && status.sources.some((source) => source.exists && !source.compatible)) return false;
+  if (status.channel === "beta" && status.stableDatabaseExists && !status.stableDatabaseCompatible) return false;
+  return (["stable", "beta", "alpha"] as const).every((edition) =>
+    editionAvailability(editions, edition) === (edition === channel ? "installed" : "absent"));
+}
+
 export type DevBetaBootstrapMockMode =
   | "available"
   | "existing"

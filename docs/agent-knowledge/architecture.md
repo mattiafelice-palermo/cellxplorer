@@ -42,8 +42,13 @@ Beta and Alpha first-launch setup share the implementation in
 `src-tauri/src/beta_bootstrap.rs`, and `frontend/src/components/BetaBootstrapCoordinator.tsx`.
 Beta retains its released Stable-copy contract and `beta-bootstrap.json` marker. Alpha uses
 `alpha-bootstrap.json` and `alpha-bootstrap-apply-error.json` in its own root and offers exactly
-Copy Stable library, Copy Beta library, Start empty, and (for a nonempty Alpha)
-Keep current Alpha library as separate actions. A copy is a one-time SQLite-backup
+Copy Stable library, Copy Beta library, Start empty, and Keep current Alpha library
+as separate actions. Only verified installed source editions are offered, using
+native registry evidence rather than data-directory presence; unknown detection
+does not imply absence. A verified sole Alpha/Beta edition can acknowledge its
+current or pristine library through the guarded `complete-single-edition` path,
+which rechecks recovery/stage state and never copies or resets data. Stable has
+no bootstrap chooser. A copy is a one-time SQLite-backup
 snapshot: it receives a new database instance UUID, rewrites only managed import paths into the
 Alpha `imports/` tree, preserves external paths, and records the source channel. Source databases
 are inspected through a private sidecar-preserving snapshot so opening a live WAL database cannot

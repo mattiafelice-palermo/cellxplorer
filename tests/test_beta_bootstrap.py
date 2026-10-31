@@ -279,6 +279,23 @@ class BetaBootstrapTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_single_edition_beta_keeps_existing_cells_and_blocks_pending_recovery(self):
+        db = self.beta_session()
+        try:
+            db.add(Cell(name="Retained Beta cell"))
+            db.commit()
+            status = beta_bootstrap.build_status(db)
+            with patch.object(beta_bootstrap, "build_status", return_value={**status, "outstandingStageToken": "a" * 32}):
+                with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+                    beta_bootstrap.complete_single_edition_setup(db)
+            self.assertIsNone(beta_bootstrap.read_marker())
+            result = beta_bootstrap.complete_single_edition_setup(db)
+            self.assertEqual(result, {"decision": "current", "restartRequired": False})
+            self.assertEqual(db.query(Cell).one().name, "Retained Beta cell")
+            self.assertIsNone(beta_bootstrap.find_outstanding_stage_token())
+        finally:
+            db.close()
+
     def test_marker_from_an_older_beta_requires_a_new_choice(self):
         db = self.beta_session()
         try:
