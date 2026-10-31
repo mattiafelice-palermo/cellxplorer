@@ -51,8 +51,8 @@ the isolated `C:/Temp/cxci-20261031-64428d17` workspace.
    matching graphs, four test workers, comparable toolchains/cache conditions,
    full fallback preflight, frozen scientific parity, all Rust/helper/recovery
    checks and all eight native cases. Record cold preparation separately.
-5. Retain existing checks and demonstrate at least 10% lower full-job median in
-   paired warm comparisons; do not infer success by adding overlapping stages or
+5. Retain existing checks and demonstrate a repeatable positive full-job
+   improvement in paired warm comparisons; do not infer success by adding overlapping stages or
    subtracting fallback. If evidence is mixed, stay on the feature branch.
 6. Only after acceptance, bump to the next verified Alpha version and add exact
    user-facing notes, run preflight, commit/push, and merge. Wait for exact-SHA
@@ -63,6 +63,12 @@ the isolated `C:/Temp/cxci-20261031-64428d17` workspace.
 
 The workflow-dispatch cache seed is a documented diagnostic option. It writes
 only the dispatch ref's cache; it cannot publish a release or bypass a gate.
+
+User clarification (2026-10-31): accept a repeatable positive full-job improvement,
+with every gate passing and all results reported. The earlier 10% cutoff was
+introduced by the agent and is superseded, not a user requirement. Historical
+comparisons below retain the criterion used at the time; failed jobs still cannot
+qualify as timing samples or passing release evidence.
 
 ## Evidence
 
@@ -285,3 +291,23 @@ workers; all 209 local task files/modules). The three already-verified warm main
 controls at unchanged `9ff61b9b` remain the fixed baseline; the corrected source
 gets three new full signed candidate runs. Reusing that validated same-SHA,
 same-toolchain/cache baseline avoids repeatedly choosing new control samples.
+
+### Relay launch diagnosis after live-search correction
+
+The first corrected signed run `41192065963` passed every gate in 682 seconds.
+Run `41192112621` failed the normal relay case: no ready marker, parent still
+running, no fixture error marker after 10.003 seconds. This is distinct from the
+previous delayed-observer race; no readiness/completion deadline is extended.
+The already-dispatched third run `41192915524` completed successfully, but does
+not erase the second run's failure or establish an all-passing comparison.
+
+Test-only parent/child phase markers and a failure-only process snapshot now
+record where launch stopped. An optional manual preflight job repeats only the
+harmless relay on a fresh hosted runner using the checksum-pinned Tauri NSIS
+compiler. It performs no actual installation/account changes and is explicitly
+not release acceptance. Normal full preflight and the mandatory complete release
+policy suite remain unchanged. No production recovery code is modified.
+
+The diagnostic checkpoint's local canonical no-cache preflight passed **4/4** in
+**121.36 seconds**, retaining four workers and all 209 local backend/frontend
+tasks. Hosted diagnosis remains necessary before a new acceptance cohort.

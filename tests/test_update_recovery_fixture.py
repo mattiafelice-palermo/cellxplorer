@@ -64,6 +64,7 @@ class RelayControllerTests(unittest.TestCase):
             mock.patch.object(fixture, "compile_fixture", side_effect=compile_fixture),
             mock.patch.object(fixture.subprocess, "Popen", return_value=self.process),
             mock.patch.object(fixture, "assert_relay_locks", side_effect=assert_locks),
+            mock.patch.object(fixture, "relay_failure_state", return_value={"unit": "failure evidence"}),
             mock.patch.object(fixture.time, "monotonic", side_effect=lambda: self.clock),
             mock.patch.object(fixture.time, "sleep", side_effect=lambda delay: setattr(self, "clock", self.clock + delay)),
         ]:

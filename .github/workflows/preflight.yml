@@ -11,6 +11,10 @@ on:
         description: Seed this dispatch ref's release/test Rust cache for a controlled benchmark
         type: boolean
         default: false
+      relay_diagnostics:
+        description: Run harmless relay launch diagnostics (not release acceptance)
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -19,6 +23,32 @@ permissions:
   contents: read
 
 jobs:
+  relay-diagnostics:
+    if: github.event_name == 'workflow_dispatch' && inputs.relay_diagnostics
+    name: Diagnose harmless relay launch
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Prepare exact pinned Tauri NSIS compiler (no installation)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'relay-nsis-3.11.zip'
+          Invoke-WebRequest 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip' -OutFile $zip
+          if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -cne 'C7D27F780DDB6CFFB4730138CD1591E841F4B7EDB155856901CDF5F214394FA1') { throw 'NSIS SHA256 mismatch' }
+          if ((Get-FileHash -LiteralPath $zip -Algorithm SHA1).Hash -cne 'EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D') { throw 'Pinned Tauri NSIS SHA1 mismatch' }
+          $tools = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'tauri'))
+          Expand-Archive -LiteralPath $zip -DestinationPath $tools
+          $source = [IO.Path]::GetFullPath((Join-Path $tools 'nsis-3.11'))
+          $target = [IO.Path]::GetFullPath((Join-Path $tools 'NSIS'))
+          if (-not $source.StartsWith($tools + [IO.Path]::DirectorySeparatorChar) -or -not $target.StartsWith($tools + [IO.Path]::DirectorySeparatorChar)) { throw 'Compiler path escaped tools directory' }
+          Move-Item -LiteralPath $source -Destination $target
+      - name: Trace checked relay launch with unchanged deadlines
+        run: python -u scripts/check_update_recovery.py --relay-diagnostic --iterations 30
+
   preflight:
     name: Clean Windows preflight
     runs-on: windows-latest

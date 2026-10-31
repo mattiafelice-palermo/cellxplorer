@@ -394,6 +394,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('tags:\n      - "v*"', self.release)
         self.assertNotIn("tags:", self.preflight)
 
+    def test_relay_diagnosis_is_manual_and_never_release_acceptance(self):
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.relay_diagnostics", self.preflight)
+        self.assertIn('--relay-diagnostic --iterations 30', self.preflight)
+        self.assertIn("NSIS SHA256 mismatch", self.preflight)
+        self.assertNotIn('--relay-diagnostic', self.release)
+        self.assertNotIn('inputs.relay_diagnostics', self.release)
+        normal = self.preflight.split('\n  preflight:\n', 1)[1]
+        self.assertNotIn('inputs.relay_diagnostics', normal)
+        self.assertIn('python scripts/check_update_recovery.py', self.release)
+
     def test_four_worker_budget_is_explicit_in_both_workflows(self):
         for workflow in (self.preflight, self.release):
             self.assertIn('CELLXPLORER_PREFLIGHT_CPU_BUDGET: "4"', workflow)

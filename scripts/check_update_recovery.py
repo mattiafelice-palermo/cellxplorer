@@ -6,6 +6,7 @@ keys or real application processes are modified. This is not signed/UAC coverage
 from __future__ import annotations
 
 import base64
+import argparse
 from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
@@ -80,8 +81,14 @@ Function .onInit
   ${{EndIf}}
   ${{GetOptions}} $CMDLINE "/CXTESTCHILD" $0
   ${{IfNot}} ${{Errors}}
+    FileOpen $6 "{output / 'relay-child-phase.txt'}" w
+    FileWrite $6 "child-entered"
+    FileClose $6
     ${{GetOptions}} $CMDLINE "/CXHASH=" $CxRecoveryHash
     Call CxLockRecoveryPayload
+    FileOpen $6 "{output / 'relay-child-phase.txt'}" w
+    FileWrite $6 "child-locked"
+    FileClose $6
     System::Call 'kernel32::OpenEventW(i 0x100000, i 0, w "{relay_release_event or ''}")p.r7'
     ${{If}} $7 == 0
       Call CxScopeError
@@ -102,8 +109,14 @@ Function .onInit
   ${{EndIf}}
   ${{GetOptions}} $CMDLINE "/CXTESTRELAY" $0
   ${{IfNot}} ${{Errors}}
+    FileOpen $6 "{output / 'relay-parent-phase.txt'}" w
+    FileWrite $6 "parent-entered"
+    FileClose $6
     ${{GetOptions}} $CMDLINE "/CXHASH=" $CxRecoveryHash
     Call CxLockRecoveryPayload
+    FileOpen $6 "{output / 'relay-parent-phase.txt'}" w
+    FileWrite $6 "parent-locked-before-shell"
+    FileClose $6
     StrCpy $0 "/CXTESTCHILD /CXHASH=$CxRecoveryHash"
     Call CxElevateRecovery
   ${{EndIf}}
@@ -288,6 +301,44 @@ def assert_relay_locks(executable: Path, output: Path) -> None:
         raise RuntimeError("Relay staging directory could be renamed while launch was outstanding")
 
 
+def relay_failure_state(output: Path, executable: Path, pid: int) -> dict:
+    """Read-only failure evidence, after the unchanged readiness deadline expires."""
+    state = {}
+    for name in ("relay-parent-phase.txt", "relay-child-phase.txt", "recovery-error.txt"):
+        path = output / name
+        state[name] = path.read_text(errors="replace") if path.exists() else None
+    if os.name != "nt":
+        return state
+    class Entry(ctypes.Structure):
+        _fields_ = [("size",wintypes.DWORD),("usage",wintypes.DWORD),("pid",wintypes.DWORD),
+                    ("heap",ctypes.c_size_t),("module",wintypes.DWORD),("threads",wintypes.DWORD),
+                    ("parent",wintypes.DWORD),("priority",wintypes.LONG),("flags",wintypes.DWORD),
+                    ("image",wintypes.WCHAR * 260)]
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD,wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for name in ("Process32FirstW","Process32NextW"):
+        getattr(kernel,name).argtypes = [wintypes.HANDLE,ctypes.POINTER(Entry)]
+        getattr(kernel,name).restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel.CreateToolhelp32Snapshot(2,0)
+    if snapshot == ctypes.c_void_p(-1).value:
+        state['snapshot_error'] = ctypes.get_last_error()
+        return state
+    rows = []
+    try:
+        entry = Entry(size=ctypes.sizeof(Entry))
+        valid = kernel.Process32FirstW(snapshot,ctypes.byref(entry))
+        while valid:
+            if entry.pid == pid or entry.parent == pid or entry.image.casefold() == executable.name.casefold():
+                rows.append(dict(pid=entry.pid,parent=entry.parent,image=entry.image,threads=entry.threads))
+            valid = kernel.Process32NextW(snapshot,ctypes.byref(entry))
+    finally:
+        kernel.CloseHandle(snapshot)
+    state['processes'] = rows
+    return state
+
+
 def run_relay_case(output: Path, parent: Path, *, on_child_ready=None) -> dict:
     output.mkdir()
     if not output.resolve().is_relative_to((ROOT / "tmp").resolve()):
@@ -308,7 +359,8 @@ def run_relay_case(output: Path, parent: Path, *, on_child_ready=None) -> dict:
                 diagnostic = output / "recovery-error.txt"
                 detail = diagnostic.read_text(errors="replace") if diagnostic.exists() else "none"
                 raise RuntimeError(f"Relay did not retain a live checked child: marker={marker.exists()} "
-                                   f"exit={process.poll()} elapsed={time.monotonic()-started:.3f}s error={detail}")
+                                   f"exit={process.poll()} elapsed={time.monotonic()-started:.3f}s error={detail} "
+                                   f"state={relay_failure_state(output, executable, process.pid)}")
             assert_relay_locks(executable, output)
             if process.poll() is not None:
                 raise RuntimeError("Relay exited before the controller released its checked child")
@@ -358,6 +410,10 @@ def run_prelock_replacement_case(output: Path, parent: Path) -> dict:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--relay-diagnostic', action='store_true', help='Diagnostic relay-only repetitions; NOT full policy acceptance')
+    parser.add_argument('--iterations', type=int, default=20)
+    args = parser.parse_args()
     if os.name != "nt":
         raise RuntimeError("Recovery policy execution requires Windows; refusing to silently skip")
     parent = Path(shutil.which("powershell.exe") or "")
@@ -365,6 +421,14 @@ def main() -> None:
         raise RuntimeError("Windows PowerShell is required")
     scratch = ROOT / "tmp"
     scratch.mkdir(exist_ok=True)
+    if args.relay_diagnostic:
+        if not 1 <= args.iterations <= 50:
+            raise ValueError('Diagnostic repetitions must be bounded')
+        print('DIAGNOSTIC ONLY: not full policy/UAC/release acceptance', flush=True)
+        with tempfile.TemporaryDirectory(prefix='relay-diagnostic-', dir=scratch) as directory:
+            for index in range(args.iterations):
+                print(json.dumps(dict(iteration=index, result=run_relay_case(Path(directory)/str(index),parent))),flush=True)
+        return
     with tempfile.TemporaryDirectory(prefix="recovery-policy-", dir=scratch) as directory:
         rows = [run_case(Path(directory) / case, parent, case) for case in ["commit", "cancel", "wrong-origin", "wrong-process", "wrong-version", "wrong-channel", "wrong-hash", "invalid-commit", "disconnected", "origin-hangs", "cancel-after-ack", "disconnect-after-exit-authorization", "exit-inside-settlement", "exit-after-settlement"]]
         rows.append(run_relay_case(Path(directory) / "relay", parent))
