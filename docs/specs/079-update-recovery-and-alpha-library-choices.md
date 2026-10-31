@@ -1,7 +1,16 @@
 # 079 — Reliable update recovery and explicit Alpha library choices
 
-Status: Implementation complete; live installed-client/UAC acceptance remains unverified.
+Status: Complete; published and publicly verified in Alpha 0.28.0-alpha.15.
+Live installed-client/UAC acceptance remains unverified.
 Branch: `codex/update-recovery-and-alpha-library-choices`.
+
+Release closure: tag `v0.28.0-alpha.15` targets `cd65ee2233bf486ef7f49cda6718a0d24fe9c537`
+and includes the subsequent local signed-installer option (080). Exact-main CI
+`41217189503` and signed release/native acceptance `41217220435` passed. Independent
+public installer, signature, structured notes and byte-identical Alpha updater feed
+verification passed; Stable/Beta/README channel blobs are unchanged. See
+[080 published evidence](080-local-signed-installer-updates.md#published-release-evidence--2026-10-31).
+This does not claim an actual interactive UAC/installed-client test on the user's machine.
 
 ## User decisions
 

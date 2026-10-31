@@ -1,6 +1,6 @@
 # 080 — Local signed installer updates
 
-Status: Implementation and local verification complete; Alpha.15 release gates pending.
+Status: Complete; published and publicly verified in Alpha 0.28.0-alpha.15.
 Branch: `codex/local-signed-installer`.
 
 ## User request
@@ -72,3 +72,30 @@ Local evidence (2026-10-31):
 Include this in the still-unpublished Alpha.15 scope and structured changelog.
 Existing Alpha.11 cannot gain the option before being upgraded. Supersede the
 earlier build-only rehearsal with a candidate from the final integrated commit.
+
+## Published release evidence — 2026-10-31
+
+- Feature commit `2dca57c0` was pushed, merged to `main` as
+  `cd65ee2233bf486ef7f49cda6718a0d24fe9c537`, and tagged `v0.28.0-alpha.15`.
+- Exact-commit main CI [41217189503](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41217189503)
+  and signed release [41217220435](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41217220435)
+  passed. Release acceptance includes scientific-runtime parity, native unit tests,
+  three-channel policy, 29 recovery fixtures, six local signed-input fixtures,
+  all eight user/machine × default/custom × upgrade/reinstall cases, keep-data
+  preservation, other-channel isolation and final draft asset/signature recheck.
+- The [published prerelease](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.28.0-alpha.15)
+  has the exact installer, matching `.sig` and `latest.json`. Independent public
+  downloads returned the expected sizes and asset digests. The installer SHA-256 is
+  `4dcb65484a5bb2deb9df82c8cef9805d2dcbe13d5e6ae186e1c64d4992b69574`.
+- Both the unchanged updater-key verifier and the production local-installer
+  loader accepted the actual public installer/signature, including its embedded
+  Alpha product/version and same-version reinstall policy. These checks did not
+  execute the installer or mutate a real application/library.
+- The canonical public Alpha feed was byte-identical to the release manifest;
+  version, URL, signature and structured changelog notes passed the maintained
+  manifest verifier. README, Stable and Beta manifest blob identities were unchanged.
+  GitHub's normal latest release remains Stable `v0.20.2`.
+- Local public-audit evidence is retained under `tmp/080-public-alpha15/`, and
+  hosted logs under `tmp/079-alpha15-evidence/41217220435/` (not committed).
+  Live interactive installed-client/UAC approval and cancellation remain outside
+  the hosted, UAC-disabled acceptance claim.

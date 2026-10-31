@@ -1,17 +1,21 @@
 # Feature specs
 
 - [080 — Local signed installer updates](080-local-signed-installer-updates.md).
-  **Implementation and local verification complete; Alpha.15 release gates pending.**
+  **Complete; merged and published in Alpha 0.28.0-alpha.15.**
   Signed local payload staging shares the protected automatic updater handoff.
   Native 91/91, six signed fixtures, browser layout checks and canonical no-cache
-  preflight (4/4 stages, 211 test modules) pass. No signature/channel bypass.
+  preflight (4/4 stages, 211 test modules) pass. Signed hosted release gates and
+  independent public installer/signature/feed verification pass; all non-Alpha
+  channel blobs are unchanged. No signature/channel bypass or live-UAC claim.
 
 - [079 — Reliable update recovery and explicit Alpha library choices](079-update-recovery-and-alpha-library-choices.md).
   **Implementation complete.** Astra High confirmed the NSIS declaration-order
   defect; 29 native fixtures, 83 native unit tests, reset-safety review and final
   no-cache four-worker preflight (210 test files/modules) pass. Failed updates can
   close safely; Alpha has separate Keep current and acknowledged Start empty actions.
-  No new release is published; live installed-client/UAC acceptance is unverified.
+  Published in Alpha 0.28.0-alpha.15 with 080; signed hosted release/native gates and
+  public installer/signature/feed verification passed. Live installed-client/UAC
+  acceptance remains unverified.
 
 - [078 — Installer recovery crash](078-installer-recovery-crash.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.14.** Embedded command quotes
