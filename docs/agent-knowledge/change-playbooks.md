@@ -372,6 +372,11 @@ compilation and these fixture executions do not establish it.
 Alpha/Beta bootstrap edition availability is native, read-only installation
 evidence, not the existence of a `.cellxplorer*` data folder. `installed_editions`
 checks both registry hives/views and keeps failed or incomplete reads unknown.
+An uninstall or manufacturer-only record with a valid local path is stale/absent
+only when both `cellxplorer.exe` and `uninstall.exe` are explicitly missing.
+Use error-preserving metadata reads, not `exists()`-style checks that hide access
+failures. Malformed values, unexpected filesystem objects, denied reads and
+surviving partial installations remain unknown. Discovery never deletes records.
 Only a verified sole edition can bypass the chooser through the guarded backend
 `complete-single-edition` acknowledgement; it never resets data, discards a stage,
 or activates a copy. Stable has no bootstrap chooser. Test production confirmation

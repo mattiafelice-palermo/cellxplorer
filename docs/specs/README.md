@@ -7,6 +7,9 @@
   confirmation/refresh regressions and light/dark/zoom browser acceptance pass.
   Exact-main CI, signed eight-case installer matrix and independent public
   installer/signature/feed verification pass; other channel blobs are unchanged.
+  [R1 stale-entry follow-up](reviews/081-illustrated-setup-and-update-refresh-review.md)
+  is implemented and verified (97 native tests, no-cache preflight 4/4).
+  It awaits a subsequent app release; the published Alpha.16 tag remains unchanged.
 
 - [080 — Local signed installer updates](080-local-signed-installer-updates.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.15.**

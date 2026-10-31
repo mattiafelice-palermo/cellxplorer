@@ -2,6 +2,7 @@
 
 Status: Complete; merged and published in Alpha 0.28.0-alpha.16.
 Branch: `codex/illustrated-bootstrap-refresh`.
+Review document: [Stale installation records follow-up](reviews/081-illustrated-setup-and-update-refresh-review.md).
 
 ## Approved scope
 
