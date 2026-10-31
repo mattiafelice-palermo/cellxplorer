@@ -350,6 +350,7 @@ Cellxplorer/
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
+│   ├── test_update_recovery_fixture.py  Relay fixture synchronization, locks, fixed deadlines and failure cleanup
 │   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
 │   ├── test_release_tag_script.py  Exact Stable/Beta/Alpha tag parser tests
 │   ├── test_release_workflow.py    Release/channel workflow contract tests

@@ -1,9 +1,9 @@
 # Feature specs
 
 - [077 — Verified build optimizations](077-verified-build-optimizations.md).
-  **Hosted acceptance blocked.** Implementation checkpoint pushed; an unchanged
-  recovery-policy relay fixture failed a mandatory hosted gate. No merge or next
-  Alpha publication until equivalent checks and a favourable benchmark are proven.
+  **Warm comparison repeated.** The relay fixture's observation-window race is
+  corrected with explicit synchronization and unchanged check deadlines. Fresh
+  hosted acceptance is pending before any merge or next Alpha publication.
   No rejected preflight shortcuts are included.
 
 - [076 — Release CI critical path](076-release-ci-critical-path.md).

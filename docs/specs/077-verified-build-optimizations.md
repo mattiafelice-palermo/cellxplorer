@@ -1,6 +1,6 @@
 # 077 — Verified build optimizations
 
-Status: Implementation checkpoint pushed; hosted acceptance is blocked by a recovery-policy fixture failure. No merge or release.
+Status: Relay-fixture synchronization fix verified locally; repeated warm hosted acceptance pending. No merge or release yet.
 Branch: `codex/verified-ci-optimizations`.
 
 ## User decision and scope
@@ -11,6 +11,11 @@ all checks. Benchmark signed GitHub CI before merging. Merge and publish the
 next Alpha only if correctness is equivalent and hosted timing is favourable.
 Do not include rejected scheduling, native-thread caps, eight-worker defaults,
 fixture batching, reduced test populations, or shortened integration waits.
+
+User follow-up: investigate and fix the relay-fixture failure without weakening
+checks or deadlines, repeat the warm CI comparison, and merge/release the next
+Alpha only if every gate passes and the improvement holds. This authorizes the
+bounded fixture follow-up below, not changes to production recovery consent.
 
 ## Implementation
 
@@ -69,7 +74,7 @@ workflow and native-gate regressions passed 128 tests; preflight cache regressio
 passed 23 tests. All 102 icon imports/source hashes and 306 upstream SVG render
 comparisons passed. Installer/account execution remains hosted-only.
 
-### Hosted comparison
+### Initial hosted comparison (before relay-fixture fix)
 
 Controls use `9ff61b9b7237ec43d68ab22ee4f79a4f8caf63cb`; candidate runs use the
 unchanged implementation checkpoint `543a8afa798e6fcf6268acbbe9f5a6ecf95d5fdc`.
@@ -112,7 +117,7 @@ Parquet/zstd, CSV, Tcl/picker import, timezone and portable assets passed. The
 first candidate emitted 40 successful native timing completions, including all
 eight setup cases; the mandatory native matrix passed in all three candidate runs.
 
-### Recovery-policy failure and publication hold
+### Initial recovery-policy failure and publication hold
 
 Run `41160494247` failed `Verify installation registry and NSIS policy` in
 `scripts/check_update_recovery.py:237`: **Relay did not retain a live checked
@@ -125,8 +130,9 @@ The final, already-queued unchanged repeat passed that policy gate and every
 remaining gate. This demonstrates an intermittent observed result, not an
 established root cause or permission to ignore the failed safety assertion.
 
-The relay fixture and production NSIS recovery policy are byte-identical between
-main and the candidate (Git blobs `af22639451fb10c6a3949a909507eaadb2ab6e0a` and
+At the initial checkpoint, the relay fixture and production NSIS recovery policy
+were byte-identical between main and the candidate (Git blobs
+`af22639451fb10c6a3949a909507eaadb2ab6e0a` and
 `18c3b28502aba752e545e37931fcdc7d25cbf83e`, respectively). That establishes an
 unchanged code path, not a proven environmental cause. No deadline, assertion,
 population, join or recovery behavior has been altered to obtain a pass.
@@ -141,3 +147,43 @@ passed **4/4** again in **117.37 s**, retaining four workers and all 208 local
 backend/frontend task files/modules. Live remote verification confirmed main
 still at `9ff61b9b` and the README, Stable, Beta and Alpha channel blobs unchanged.
 No version bump, merge, release tag or publication was performed.
+
+### Authorized relay-fixture follow-up
+
+The old fixture published its checked child's ready marker and then blindly slept
+2 seconds before exiting. The controller separately sampled the marker, relay
+liveness and file/directory locks. Those are not synchronized: a descheduled
+observer can see a genuine marker only after the child and relay have exited.
+Controlled execution reproduced the failure condition: at 2.678 s, the marker
+existed but the relay had already returned the expected status 7. Three ordinary
+observations completed while it was live, in 0.15–0.21 s. The original hosted
+failure did not retain enough state to prove its exact scheduling interleaving;
+the reproduced race is fixed rather than labeling that run environmental.
+
+The harmless fixture now uses a unique controller-owned manual-reset event. The
+checked child takes the production payload/directory locks and publishes its
+marker, then awaits explicit release after **both** lock-replacement assertions.
+The 10-second readiness and 15-second completion limits are unchanged; late
+readiness, premature exit, unlocked payload/directory, wrong child status and
+completion timeout still fail. The child also has a bounded 15-second guard using
+the existing completion budget, rather than an unbounded hold. The former blind
+2-second sleep was an observation window, not a production safety deadline.
+Production NSIS/Rust recovery code, consent rules and deadlines are unchanged.
+
+Failure cleanup signals the harmless child and joins the exact owned relay before
+temporary-directory cleanup. Cleanup cannot turn a failed assertion or an expired
+completion wait into success. Fourteen deterministic unit regressions cover the
+controller ordering and negative cases. The mandatory native policy suite keeps
+every old case and adds a delayed-observer regression that pauses 2.5 seconds
+after readiness, beyond the old sleep but within the unchanged readiness budget.
+Eight local relay executions (four delayed) passed all original lock and status
+assertions. The full harmless policy suite passed all **18** cases, including the
+actual Rust-to-NSIS transport. Actual installers/accounts remain hosted-only.
+
+Fresh signed main controls and fixed-candidate comparisons are being repeated
+with the existing warm Rust/npm caches and four workers. Earlier failed/cold runs
+remain above as evidence and cannot be substituted for this fresh comparison.
+The corrected checkpoint's canonical no-cache local preflight passed **4/4** in
+**130.11 s**, with four workers and all 209 local tasks (107 backend modules and
+102 frontend files, including the unrelated untracked converter test). No
+production recovery file, release workflow gate or application version changed.

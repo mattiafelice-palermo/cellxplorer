@@ -6,6 +6,9 @@ keys or real application processes are modified. This is not signed/UAC coverage
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+import ctypes
+from ctypes import wintypes
 import hashlib
 import json
 import os
@@ -14,13 +17,19 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 
 from check_installer_scope import nsis_compiler
 
 ROOT = Path(__file__).resolve().parents[1]
+RELAY_READY_TIMEOUT = 10
+RELAY_EXIT_TIMEOUT = 15
 
 
-def compile_fixture(output: Path, parent: Path, *, relay: bool = False) -> Path:
+def compile_fixture(output: Path, parent: Path, *, relay: bool = False,
+                    relay_release_event: str | None = None) -> Path:
+    if relay and not relay_release_event:
+        raise ValueError("Relay fixture requires a controller-owned release event")
     marker = output / "committed.txt"
     executable = output / "recovery-policy.exe"
     source = f'''Unicode true
@@ -73,10 +82,21 @@ Function .onInit
   ${{IfNot}} ${{Errors}}
     ${{GetOptions}} $CMDLINE "/CXHASH=" $CxRecoveryHash
     Call CxLockRecoveryPayload
+    System::Call 'kernel32::OpenEventW(i 0x100000, i 0, w "{relay_release_event or ''}")p.r7'
+    ${{If}} $7 == 0
+      Call CxScopeError
+    ${{EndIf}}
     FileOpen $0 "{output / 'relay-child.txt'}" w
     FileWrite $0 "independent child owns its payload locks"
     FileClose $0
-    Sleep 2000
+    ; Test-only synchronization, not a production recovery timeout. The child
+    ; stays alive until the controller finishes BOTH lock assertions. Its guard
+    ; uses the existing completion budget; it cannot wait indefinitely.
+    System::Call 'kernel32::WaitForSingleObject(p r7, i {RELAY_EXIT_TIMEOUT * 1000})i.r0'
+    System::Call 'kernel32::CloseHandle(p r7)'
+    ${{If}} $0 != 0
+      Call CxScopeError
+    ${{EndIf}}
     SetErrorLevel 7
     Quit
   ${{EndIf}}
@@ -222,19 +242,33 @@ if ('CASE' -eq 'commit') {
     return {"case": case, "passed": True, "post_exit_commit": marker.exists()}
 
 
-def run_relay_case(output: Path, parent: Path) -> dict:
-    output.mkdir()
-    if not output.resolve().is_relative_to((ROOT / "tmp").resolve()):
-        raise RuntimeError("Relay replacement fixture must stay inside repository tmp")
-    executable = compile_fixture(output, parent, relay=True)
-    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
-    process = subprocess.Popen([str(executable), "/CXTESTRELAY", f"/CXHASH={digest}"])
-    marker = output / "relay-child.txt"
-    deadline = time.monotonic() + 10
-    while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
-        time.sleep(0.025)
-    if not marker.exists() or process.poll() is not None:
-        raise RuntimeError("Relay did not retain a live checked child")
+@contextmanager
+def relay_release_event():
+    """Own one unique manual-reset event; never inherit or open a user event."""
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateEventW.restype = wintypes.HANDLE
+    kernel.SetEvent.argtypes = [wintypes.HANDLE]
+    kernel.SetEvent.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    name = "Local\\CellXplorerRelayFixture-" + uuid.uuid4().hex
+    handle = kernel.CreateEventW(None, True, False, name)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS: never reuse an event.
+        kernel.CloseHandle(handle)
+        raise RuntimeError("Relay fixture release event was not newly created")
+    def release():
+        if not kernel.SetEvent(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield name, release
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def assert_relay_locks(executable: Path, output: Path) -> None:
     try:
         with executable.open("r+b"):
             pass
@@ -252,9 +286,47 @@ def run_relay_case(output: Path, parent: Path) -> dict:
     else:
         replacement.rename(output)
         raise RuntimeError("Relay staging directory could be renamed while launch was outstanding")
-    if process.wait(timeout=15) != 7:
-        raise RuntimeError("Relay failed to wait for/propagate checked child exit status")
-    return {"case": "relay-lock-lifetime-and-child-exit", "passed": True, "actual_uac": False}
+
+
+def run_relay_case(output: Path, parent: Path, *, on_child_ready=None) -> dict:
+    output.mkdir()
+    if not output.resolve().is_relative_to((ROOT / "tmp").resolve()):
+        raise RuntimeError("Relay replacement fixture must stay inside repository tmp")
+    with relay_release_event() as (event_name, release):
+        executable = compile_fixture(output, parent, relay=True, relay_release_event=event_name)
+        digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+        process = subprocess.Popen([str(executable), "/CXTESTRELAY", f"/CXHASH={digest}"])
+        marker = output / "relay-child.txt"
+        started = time.monotonic()
+        deadline = started + RELAY_READY_TIMEOUT
+        try:
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.025)
+            if marker.exists() and on_child_ready is not None:
+                on_child_ready()
+            if time.monotonic() >= deadline or not marker.exists() or process.poll() is not None:
+                diagnostic = output / "recovery-error.txt"
+                detail = diagnostic.read_text(errors="replace") if diagnostic.exists() else "none"
+                raise RuntimeError(f"Relay did not retain a live checked child: marker={marker.exists()} "
+                                   f"exit={process.poll()} elapsed={time.monotonic()-started:.3f}s error={detail}")
+            assert_relay_locks(executable, output)
+            if process.poll() is not None:
+                raise RuntimeError("Relay exited before the controller released its checked child")
+            release()
+            if process.wait(timeout=RELAY_EXIT_TIMEOUT) != 7:
+                raise RuntimeError("Relay failed to wait for/propagate checked child exit status")
+        finally:
+            # Even a failing assertion releases this harmless child, then joins
+            # only our exact Popen process. Cleanup must not mask it with WinError 32.
+            release()
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=RELAY_EXIT_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=RELAY_EXIT_TIMEOUT)
+    return {"case": "relay-lock-lifetime-and-child-exit", "passed": True, "actual_uac": False,
+            "delayed_observer": on_child_ready is not None}
 
 
 def run_prelock_replacement_case(output: Path, parent: Path) -> dict:
@@ -296,6 +368,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="recovery-policy-", dir=scratch) as directory:
         rows = [run_case(Path(directory) / case, parent, case) for case in ["commit", "cancel", "wrong-origin", "wrong-process", "wrong-version", "wrong-channel", "wrong-hash", "invalid-commit", "disconnected", "origin-hangs", "cancel-after-ack", "disconnect-after-exit-authorization", "exit-inside-settlement", "exit-after-settlement"]]
         rows.append(run_relay_case(Path(directory) / "relay", parent))
+        # Regression: the old child's blind 2-second sleep made this otherwise
+        # valid observation fail. All original deadlines and assertions remain.
+        delayed = run_relay_case(Path(directory) / "relay-delayed-observer", parent,
+                                 on_child_ready=lambda: time.sleep(2.5))
+        delayed["case"] = "relay-delayed-observer-lock-lifetime-and-child-exit"
+        rows.append(delayed)
         rows.append(run_prelock_replacement_case(Path(directory) / "pre-lock", parent))
         # Exercise the actual Rust launcher, kernel peer authentication, byte and
         # directory locks, COMMIT/ACK/exit authorization against production NSIS.

@@ -254,6 +254,17 @@ Old clients cannot retroactively gain this protocol. `scripts/check_update_recov
 executes production NSIS logic and the actual Rust transport against harmless
 fixtures; it does not establish signed/installed-client/UAC acceptance.
 
+Keep relay-fixture lifetime synchronized with its controller. A child that writes
+its marker then blindly sleeps two seconds can exit before a descheduled observer
+checks liveness and locks. The harmless fixture uses a unique controller-owned
+manual-reset event: the checked child holds its locks until both replacement
+assertions finish, then exits with the required status. The original 10-second
+readiness and 15-second completion deadlines stay fixed; the child also has a
+bounded guard using that completion budget. Always release/join the exact owned
+relay on failure before temporary-directory cleanup. Cleanup cannot turn a timed
+out or failed assertion into a passing result. Keep the delayed-observer native
+regression as well as the ordinary relay case; neither substitutes for signed UAC.
+
 Windows `ExitProcess` closes object handles before signaling the process object.
 Consequently a broken pipe followed by an immediate unsignaled Wait(0) is NOT
 proof of cancellation rather than genuine process teardown. Under the explicit
