@@ -1,6 +1,6 @@
 # 078 — Installer recovery crash
 
-Status: Confirmed correction and local verification complete; Alpha.14 integration/publication in progress.
+Status: Complete. Correction merged to main; Alpha.14 published and publicly verified. Live installed-client/UAC confirmation remains user-controlled, not claimed by automated coverage.
 Branch: `codex/fix-installer-recovery-crash`.
 
 ## User request
@@ -90,3 +90,36 @@ the opaque register source in the shared installer elevation structure; no clien
 transport, registry policy, signature check, scientific calculation or deadline
 was changed. The three-channel compiler/policy check and full signed/native gates
 remain required by the existing release workflow.
+
+## Published closure
+
+Fix/release commit `84588646f4f0fa09c9d60b5f8a96722075d6f752` was pushed on
+the feature branch and fast-forwarded to main. Exact-main run
+[41202597550](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41202597550)
+passed both canonical preflight and shared Rust-cache verification before tagging.
+
+Signed tag release run
+[41202959827](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41202959827)
+passed every gate and published
+[Alpha.14](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.28.0-alpha.14).
+The complete release job took 441 seconds, reusing the successful exact-SHA main
+preflight. All **19** recovery-policy rows passed, including the production
+quoted-command relay and both unquoted lifetime cases. Frozen scientific/runtime
+checks, helper tests, 73 Rust tests plus signature vector, three-channel NSIS
+policy and all eight native upgrade/reinstall cases passed. No prior check,
+case, signature/consent policy, live-lock assertion or deadline was removed.
+
+Independent public readback verified all three immutable release assets, exact
+tag commit/prerelease/notes, the installer signature against the embedded updater
+public key, and byte-identical release manifest/public Alpha feed. Installer:
+**82,957,043 bytes**, SHA-256
+`a8ff7a319731815d8134756f52809441f228c52d6f97c1ab1b524b9d5ebf8989`.
+Stable/Beta/README channel blob identities are unchanged; the Alpha.13 tag remains
+at `8c4757f0d9b0d55bece4784c33e7b2328ec27496` and no old asset was replaced.
+
+No installer, UAC prompt or installed-client transition was executed against the
+user's live installation. The automated native matrix does not claim interactive
+UAC/old-installed-client acceptance. For the existing Alpha.11 failed-install
+dialog, save work, use Restart CellXplorer, then check for updates again and
+select Alpha.14; Retry install on the cached Alpha.13 payload still retries the
+old bug. User-controlled live completion is the remaining acceptance observation.
