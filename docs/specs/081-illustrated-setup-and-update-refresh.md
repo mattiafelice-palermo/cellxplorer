@@ -1,6 +1,6 @@
 # 081 — Illustrated setup and explicit updater refresh
 
-Status: Implemented; local acceptance complete; Alpha.16 publication pending.
+Status: Complete; merged and published in Alpha 0.28.0-alpha.16.
 Branch: `codex/illustrated-bootstrap-refresh`.
 
 ## Approved scope
@@ -113,5 +113,37 @@ two-choice dialog. Browser acceptance uses a disposable library, never real data
   the agent-created tab and tracked disposable servers closed. The real installed
   app, its libraries and installer/UAC behavior were not exercised or changed.
 
-Signed hosted packaging/native gates and independent public release/feed
-verification remain required before claiming publication complete.
+## Published release evidence — 2026-10-31
+
+- Feature commit `c0479cf7eabdd8551434826d7a8463051d3acdef` was pushed and
+  merged to `main` as `6cf1e8723f6c97fd4f49717b3a7ee765046cbed4`.
+  Annotated tag `v0.28.0-alpha.16` points to that exact commit; Alpha.15 remains
+  unchanged.
+- Exact-commit main CI
+  [41224610167](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41224610167)
+  passed 4/4 preflight stages and all 212 committed backend/frontend task modules.
+  The local 213-module count additionally includes the unrelated untracked
+  converter test; it was not added to this release.
+- Signed release
+  [41224635165](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41224635165)
+  passed in 9m30s. Frozen scientific-runtime parity, 93 native unit tests,
+  registry/recovery/local-signed-input policy fixtures, all eight user/machine x
+  default/custom x upgrade/reinstall cases, keep-data and other-channel isolation,
+  final draft payload/signature recheck and manifest publication passed.
+  This is run evidence, not a CI optimization benchmark; this feature did not
+  change the workflows.
+- The [published prerelease](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.28.0-alpha.16)
+  contains the exact setup executable, matching `.sig` and `latest.json`.
+  Independent public downloads matched GitHub asset sizes and SHA-256 digests.
+  The setup is 88,158,973 bytes with SHA-256
+  `d9a6aacde531819d886590bd4dbd0ed5619d37878b679e73b6ce7d735f2d71c4`.
+- Both the unchanged embedded-key signature verifier and the rebuilt production
+  local-installer verifier accepted the actual public setup/signature, including
+  its Alpha product/version and same-version reinstall policy. No installer ran
+  on the user's computer. The canonical public Alpha feed is byte-identical to
+  the release manifest; version, URL, signature and structured changelog notes pass.
+- The release-channel README, Stable and Beta blobs remain unchanged from the
+  pre-publication snapshot; GitHub's normal latest release remains Stable `v0.20.2`.
+  Public audit evidence is retained under `tmp/081-public-alpha16/`, and exact-SHA
+  hosted logs under `tmp/081-release/`. Interactive installed-client/UAC acceptance
+  remains unverified and is not implied by hosted, UAC-disabled native checks.

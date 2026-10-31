@@ -1,10 +1,12 @@
 # Feature specs
 
 - [081 — Illustrated setup and explicit updater refresh](081-illustrated-setup-and-update-refresh.md).
-  **Implemented; Alpha.16 publication pending.** Compact 88 px Direct actions
+  **Complete; merged and published in Alpha 0.28.0-alpha.16.** Compact 88 px Direct actions
   chooser, installation-aware safe setup and protected remote update refresh.
   Final no-cache preflight (4/4, 213 local modules), native 93/93, production
   confirmation/refresh regressions and light/dark/zoom browser acceptance pass.
+  Exact-main CI, signed eight-case installer matrix and independent public
+  installer/signature/feed verification pass; other channel blobs are unchanged.
 
 - [080 — Local signed installer updates](080-local-signed-installer-updates.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.15.**
