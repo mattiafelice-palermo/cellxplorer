@@ -278,18 +278,39 @@ fn apply_alpha_bootstrap(
     token: String,
     confirm_replace_existing_library: bool,
 ) -> Result<(), String> {
+    apply_alpha_bootstrap_stage(app, token, confirm_replace_existing_library, false)
+}
+
+#[tauri::command]
+fn apply_alpha_empty_bootstrap(app: AppHandle, token: String, confirm_data_loss: bool) -> Result<(), String> {
+    if !confirm_data_loss {
+        return Err("Acknowledge Alpha data loss before starting empty.".into());
+    }
+    apply_alpha_bootstrap_stage(app, token, confirm_data_loss, true)
+}
+
+fn apply_alpha_bootstrap_stage(app: AppHandle, token: String, confirmed: bool, reset: bool) -> Result<(), String> {
     let channel = channel_for_app(&app)?;
     if channel != AppChannel::Alpha {
         return Err("Alpha bootstrap is only available in the Alpha channel.".to_string());
     }
     let alpha_root = app_data_dir_for_channel(channel);
+    if reset {
+        let home = user_home_dir();
+        beta_bootstrap::validate_alpha_reset_destination(&alpha_root, &[
+            AppChannel::Stable.default_data_root(&home), AppChannel::Beta.default_data_root(&home),
+        ])?;
+    }
+    let validate = || {
+        if reset {
+            beta_bootstrap::validate_alpha_empty_stage_for_activation(&alpha_root, &token, confirmed)
+        } else {
+            beta_bootstrap::validate_alpha_staged_copy_for_activation(&alpha_root, &token, confirmed)
+        }
+    };
 
     // Pre-stop validation may return to the frontend. Nothing is mutated yet.
-    let _ = beta_bootstrap::validate_alpha_staged_copy_for_activation(
-        &alpha_root,
-        &token,
-        confirm_replace_existing_library,
-    )?;
+    let _ = validate()?;
 
     schedule_bootstrap_relaunch()?;
 
@@ -299,11 +320,7 @@ fn apply_alpha_bootstrap(
     stop_backend(&app);
 
     match (|| {
-        let paths = beta_bootstrap::validate_alpha_staged_copy_for_activation(
-            &alpha_root,
-            &token,
-            confirm_replace_existing_library,
-        )?;
+        let paths = validate()?;
         let install_instance_id = beta_installer::current_install_instance_id(AppChannel::Alpha);
         beta_bootstrap::activate_staged_copy_for_channel(
             &alpha_root,
@@ -625,6 +642,7 @@ fn main() {
             apply_beta_bootstrap,
             beta_bootstrap_gate_required,
             apply_alpha_bootstrap,
+            apply_alpha_empty_bootstrap,
             alpha_bootstrap_gate_required,
             backend_api_base,
             is_autostart_enabled,

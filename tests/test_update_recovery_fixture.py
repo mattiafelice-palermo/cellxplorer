@@ -149,6 +149,55 @@ class RelayControllerTests(unittest.TestCase):
 
 
 class RelayFixtureSourceTests(unittest.TestCase):
+    def test_machine_fixture_runs_production_scope_and_full_relay_handshake(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
+                 mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='', stderr='')) as compile_run:
+                fixture.compile_fixture(folder, Path('C:/Client space, Ω/client.exe'), machine=True,
+                                        version='0.28.0-alpha.14', channel='alpha')
+            self.assertEqual(compile_run.call_args.args[0][1:3], ['/INPUTCHARSET', 'UTF8'])
+            source = (folder / 'recovery-policy.nsi').read_text(encoding='utf-8')
+            policy = (folder / 'machine-policy.nsh').read_text(encoding='utf-8')
+            self.assertIn('Call CxInitializeScope', source)
+            self.assertIn('Call CxPrepareRecovery', source)
+            self.assertNotIn('Var CxExisting', source)
+            self.assertNotIn('Var CxExisting', policy)
+            self.assertIn('${GetOptions} $CMDLINE "/UPDATER" $UpdateMode', source)
+            self.assertIn('!define VERSION "0.28.0-alpha.14"', source)
+            self.assertIn('!define BUNDLEID "com.cellxplorer.desktop.alpha"', source)
+            self.assertIn('$CxExpectedDir != "C:\\Client space, Ω"', source)
+            self.assertIn('$CxRestartArgs != "5b5d"', source)
+            self.assertIn('GetTokenInformation', policy)
+            self.assertIn('Call CxElevateRecovery', policy)
+            self.assertIn('$CxRecoveryArguments /D=$INSTDIR', policy)
+            self.assertNotIn('ExecShell ', policy)
+            self.assertNotIn('ReadRegStr ', policy)
+            self.assertNotIn('WriteRegStr ', policy)
+            self.assertIn('!define CX_RECOVERY_ELEVATION_VERB "open"', source)
+
+    def test_fixture_release_identity_rejects_source_injection(self):
+        with self.assertRaises(ValueError):
+            fixture.compile_fixture(Path('unused'), Path('client.exe'), version='1.0.0"\nQuit')
+        with self.assertRaises(ValueError):
+            fixture.compile_fixture(Path('unused'), Path('client.exe'), channel='unknown')
+
+    def test_successful_compiler_exit_cannot_hide_an_unresolved_variable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
+                 mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(
+                     returncode=0, stdout='warning 6000: unknown variable/constant "CxExisting" detected', stderr='')):
+                with self.assertRaisesRegex(RuntimeError, 'Unresolved NSIS'):
+                    fixture.compile_fixture(Path(directory), Path('client.exe'))
+
+    def test_shared_existing_state_is_declared_before_recovery_code_in_production_order(self):
+        recovery = (ROOT / 'src-tauri/update_recovery.nsh').read_text()
+        scope = (ROOT / 'src-tauri/installation_scope.nsh').read_text()
+        template = (ROOT / 'src-tauri/cellxplorer-installer.nsi').read_text()
+        self.assertLess(template.index('\\update_recovery.nsh'), template.index('\\installation_scope.nsh'))
+        self.assertLess(recovery.index('Var CxExisting'), recovery.index('Function CxPrepareRecovery'))
+        self.assertNotIn('Var CxExisting', scope)
+
     def test_native_shell_parameters_are_an_opaque_register_not_interpolated_text(self):
         source = (ROOT / 'src-tauri/update_recovery.nsh').read_text()
         layout = next(line for line in source.splitlines() if "System::Call '*(i ${CX_SHELLEXECUTE_SIZE}" in line)
@@ -159,7 +208,7 @@ class RelayFixtureSourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
-                 mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(returncode=0)):
+                 mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='', stderr='')):
                 fixture.compile_fixture(folder, Path('powershell.exe'), relay=True,
                                         relay_release_event='Local\\fixture-test-event', quoted_relay=True)
             source = (folder / 'recovery-policy.nsi').read_text(encoding='utf-8')
@@ -172,7 +221,7 @@ class RelayFixtureSourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             with mock.patch.object(fixture, "nsis_compiler", return_value=Path("makensis.exe")), \
-                 mock.patch.object(fixture.subprocess, "run", return_value=mock.Mock(returncode=0)):
+                 mock.patch.object(fixture.subprocess, "run", return_value=mock.Mock(returncode=0, stdout='', stderr='')):
                 fixture.compile_fixture(folder, Path("powershell.exe"), relay=True,
                                         relay_release_event="Local\\fixture-test-event")
             source = (folder / "recovery-policy.nsi").read_text()

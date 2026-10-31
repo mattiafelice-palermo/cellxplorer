@@ -104,7 +104,8 @@ export function AppUpdateModal({
         size="36rem"
         radius="md"
         padding="md"
-        withCloseButton={false}
+        withCloseButton={dismissible}
+        closeButtonProps={{ "aria-label": "Close update dialog" }}
         closeOnClickOutside={dismissible}
         closeOnEscape={dismissible}
       >
@@ -146,7 +147,7 @@ export function AppUpdateModal({
       onClose={onClose}
       title={
         <Group gap="sm" wrap="nowrap">
-          <Text fw={600}>{launching ? UPDATE_APPLYING_LABEL : "Update available"}</Text>
+          <Text fw={600}>{launching ? UPDATE_APPLYING_LABEL : transferError ? "Update failed" : "Update available"}</Text>
           <Badge color={APP_BRANDING.primaryColor} variant="light">
             v{release!.version}
           </Badge>
@@ -156,12 +157,13 @@ export function AppUpdateModal({
       size="36rem"
       radius="md"
       padding="md"
-      withCloseButton={false}
+      withCloseButton={dismissible}
+      closeButtonProps={{ "aria-label": "Close update dialog" }}
       closeOnClickOutside={dismissible}
       closeOnEscape={dismissible}
     >
       <Stack gap="sm">
-        <Text size="sm">A new version of CellXplorer is ready to install.</Text>
+        <Text size="sm">{transferError ? "The update could not be completed." : "A new version of CellXplorer is ready to install."}</Text>
 
         <Stack gap={6}>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
@@ -212,13 +214,22 @@ export function AppUpdateModal({
           </Alert>
         ) : null}
 
+        {state.status === "error" && state.phase === "install" ? (
+          <Text size="sm" c="dimmed">
+            {state.lifecycleMayNeedRestart === false
+              ? "The installer handoff was cancelled before CellXplorer shut down. You can close this dialog or retry installation."
+              : "The application connection may be unavailable. Restart CellXplorer to restore it before continuing work."}
+          </Text>
+        ) : null}
+
         {state.status === "available" ? (
           <Text size="xs" c="dimmed">
             After download completes, CellXplorer will close and the passive updater will finish installation automatically.
           </Text>
         ) : null}
 
-        <Group justify="flex-end" gap="sm" mt={4}>
+        <Group justify="flex-end" gap="sm" mt={4} py="xs"
+          style={{ position: "sticky", bottom: 0, background: "var(--mantine-color-body)", zIndex: 1 }}>
           {state.status === "available" ? (
             <>
               <Button variant="default" onClick={onClose}>
@@ -247,6 +258,9 @@ export function AppUpdateModal({
 
           {state.status === "error" && state.phase === "install" ? (
             <>
+              {dismissible ? (
+                <Button variant="default" onClick={onClose}>Close</Button>
+              ) : null}
               <Button variant="default" onClick={onRestart}>
                 Restart CellXplorer
               </Button>

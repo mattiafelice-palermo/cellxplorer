@@ -29,6 +29,16 @@ impl PendingAppUpdate {
     pub(crate) fn revision(&self) -> u64 {
         self.revision
     }
+
+    fn require_idle_install_handoff(&self) -> Result<(), InstallAppUpdateFailure> {
+        if self.installing {
+            Err(InstallAppUpdateFailure::unknown(
+                "Installer preparation is already in progress.".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 pub fn bump_revision(pending: &mut PendingAppUpdate) -> u64 {
@@ -327,24 +337,61 @@ pub async fn download_app_update(
     }
 }
 
+/// Command failures are distinct from an IPC/bridge failure. `Aborted` means
+/// this invocation never authorized final E and did not stop the backend; it
+/// does not assert that a disarmed relay has already exited or general health.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallAppUpdateFailure {
+    message: String,
+    handoff: FailedInstallHandoff,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backend_stopped: Option<bool>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum FailedInstallHandoff {
+    Aborted,
+    Unknown,
+}
+
+impl InstallAppUpdateFailure {
+    fn aborted(message: String) -> Self {
+        Self {
+            message,
+            handoff: FailedInstallHandoff::Aborted,
+            backend_stopped: Some(false),
+        }
+    }
+
+    fn unknown(message: String) -> Self {
+        Self {
+            message,
+            handoff: FailedInstallHandoff::Unknown,
+            backend_stopped: None,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn install_app_update(
     app: AppHandle,
     expected_version: String,
     state: State<'_, Mutex<PendingAppUpdate>>,
-) -> Result<(), String> {
-    let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
-    validate_release_version(channel, &expected_version)?;
-    let (update, bytes) = {
-        let mut pending = lock_pending(&state)?;
-        let verified = take_verified_install(&mut pending, &expected_version).map_err(|error| match error {
-            PendingUpdateError::AlreadyDownloading => {
-                "An update download is still in progress.".to_string()
-            }
-            other => map_pending_error(other),
-        })?;
+) -> Result<(), InstallAppUpdateFailure> {
+    let (channel, update, bytes) = {
+        let mut pending = lock_pending(&state).map_err(InstallAppUpdateFailure::unknown)?;
+        // A rejected duplicate call must not describe the first call's live
+        // handoff as aborted. Keep its UI protected until that owner terminates.
+        pending.require_idle_install_handoff()?;
+        let channel = AppChannel::from_identifier(app.config().identifier.as_str())
+            .map_err(InstallAppUpdateFailure::aborted)?;
+        validate_release_version(channel, &expected_version).map_err(InstallAppUpdateFailure::aborted)?;
+        let verified = take_verified_install(&mut pending, &expected_version)
+            .map_err(|error| InstallAppUpdateFailure::aborted(map_pending_error(error)))?;
         pending.installing = true;
-        verified
+        (channel, verified.0, verified.1)
     };
 
     #[cfg(windows)]
@@ -363,8 +410,10 @@ pub async fn install_app_update(
         match handoff {
             Ok(mut prepared) => {
                 if let Err(error) = prepared.authorize_exit() {
+                    // Explicitly disarm before exposing terminal failure metadata.
+                    drop(prepared);
                     if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
-                    return Err(error);
+                    return Err(InstallAppUpdateFailure::aborted(error));
                 }
                 // Final consent succeeded. No retry/restore/cancellation branch
                 // is allowed beyond this point; shutdown itself is infallible.
@@ -377,7 +426,7 @@ pub async fn install_app_update(
             }
             Err(error) => {
                 if let Ok(mut pending) = state.lock() { restore_failed_install(&mut pending, update, bytes); }
-                return Err(error);
+                return Err(InstallAppUpdateFailure::aborted(error));
             }
         }
     }
@@ -392,7 +441,9 @@ pub async fn install_app_update(
             if let Ok(mut pending) = state.lock() {
                 restore_failed_install(&mut pending, update, bytes);
             }
-            Err(user_safe_error(error))
+            // Do not extend Windows recovery guarantees to another platform's
+            // plugin implementation without a separately verified contract.
+            Err(InstallAppUpdateFailure::unknown(user_safe_error(error)))
         }
     }
 }
@@ -400,6 +451,33 @@ pub async fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_install_error_serializes_exact_safe_close_contract() {
+        let failure = InstallAppUpdateFailure::aborted("Preparation stopped.".into());
+        assert_eq!(serde_json::to_value(failure).unwrap(), serde_json::json!({
+            "message": "Preparation stopped.", "handoff": "aborted", "backendStopped": false
+        }));
+    }
+
+    #[test]
+    fn unknown_install_error_cannot_claim_backend_or_handoff_safety() {
+        let failure = InstallAppUpdateFailure::unknown("Another install is active.".into());
+        assert_eq!(serde_json::to_value(failure).unwrap(), serde_json::json!({
+            "message": "Another install is active.", "handoff": "unknown"
+        }));
+    }
+
+    #[test]
+    fn duplicate_install_is_unknown_and_does_not_release_the_active_owner() {
+        let pending = PendingAppUpdate { installing: true, revision: 7, ..Default::default() };
+        let error = pending.require_idle_install_handoff().unwrap_err();
+        assert_eq!(error.handoff, FailedInstallHandoff::Unknown);
+        assert_eq!(error.backend_stopped, None);
+        assert!(pending.installing);
+        assert_eq!(pending.revision, 7);
+        assert!(PendingAppUpdate::default().require_idle_install_handoff().is_ok());
+    }
 
     #[test]
     fn preparation_serializes_checks_downloads_and_install_retries() {

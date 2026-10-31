@@ -1,4 +1,8 @@
 ; Policy is inside the exact signature-verified payload. No remote repair scripts.
+; Shared scope result must be declared before CxPrepareRecovery is compiled.
+; Production includes this file BEFORE installation_scope.nsh. NSIS otherwise
+; compiles an unknown $CxExisting as a literal and always rejects the handoff.
+Var CxExisting
 Var CxRecoveryToken
 Var CxRecoveryPid
 Var CxRecoveryOrigin

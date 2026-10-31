@@ -4,6 +4,7 @@ import test from "node:test";
 import type { BetaBootstrapStatus } from "../src/api.ts";
 import {
   betaBootstrapGateOpen,
+  canConfirmAlphaReset,
   betaBootstrapLoadingStatus,
   alphaSourceBlockingReason,
   alphaSourceCopyDisabled,
@@ -34,6 +35,13 @@ const availableStatus: BetaBootstrapStatus = {
   outstandingStageToken: null,
   applyFailureMessage: null,
 };
+
+test("empty Alpha library requires an explicit acknowledgement and idle action", () => {
+  assert.equal(canConfirmAlphaReset(false, false), false);
+  assert.equal(canConfirmAlphaReset(false, true), false);
+  assert.equal(canConfirmAlphaReset(true, true), false);
+  assert.equal(canConfirmAlphaReset(true, false), true);
+});
 
 test("dev mock query parsing is development-only", () => {
   assert.equal(parseDevBetaBootstrapMock("?mockBetaBootstrap=available", false), null);

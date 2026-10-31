@@ -1,4 +1,4 @@
-import { Alert, Button, Group, Loader, Modal, Paper, Progress, Stack, Text } from "@mantine/core";
+import { Alert, Button, Checkbox, Group, Loader, Modal, Paper, Progress, SimpleGrid, Stack, Text } from "@mantine/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconLoader2 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,6 +8,7 @@ import {
   post,
   type BackgroundJob,
   type AlphaBootstrapStageCopyResult,
+  type AlphaBootstrapStageEmptyResult,
   type AlphaBootstrapStatus,
   type BetaScientificPreparationStatus,
   type BetaBootstrapStageCopyResult,
@@ -16,6 +17,7 @@ import {
 import { APP_BRANDING } from "../appChannel";
 import {
   betaBootstrapGateOpen,
+  canConfirmAlphaReset,
   betaBootstrapLoadingStatus,
   copyStableLibraryDisabled,
   alphaSourceBlockingReason,
@@ -56,6 +58,9 @@ export function BetaBootstrapCoordinator({
   const [phase, setPhase] = useState<CoordinatorPhase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [retainedToken, setRetainedToken] = useState<string | null>(null);
+  const [retainedOperation, setRetainedOperation] = useState<"copy" | "reset-alpha" | null>(null);
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const [acknowledgeEmpty, setAcknowledgeEmpty] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [alphaSource, setAlphaSource] = useState<"stable" | "beta" | null>(null);
   const [loadingElapsedSeconds, setLoadingElapsedSeconds] = useState(0);
@@ -204,6 +209,7 @@ export function BetaBootstrapCoordinator({
 
   const outstandingToken =
     retainedToken ?? status?.outstandingStageToken ?? null;
+  const outstandingOperation = retainedOperation ?? alphaStatus?.outstandingStageOperation ?? "copy";
 
   const copyBlockedReason = useMemo(() => {
     if (isAlpha) return null;
@@ -270,6 +276,9 @@ export function BetaBootstrapCoordinator({
       }
 
       let token = outstandingToken;
+      if (token && outstandingOperation === "reset-alpha") {
+        throw new Error("Discard the staged empty library before copying another library.");
+      }
       if (!shouldRetryExistingStage(token)) {
         setPhase("staging");
         const staged = isAlpha
@@ -285,6 +294,7 @@ export function BetaBootstrapCoordinator({
             });
         token = staged.token;
         setRetainedToken(token);
+        setRetainedOperation("copy");
       }
       if (!token) {
         throw new Error("The staged copy token is missing.");
@@ -301,18 +311,52 @@ export function BetaBootstrapCoordinator({
           : typeof error === "string" && error.trim()
             ? error.trim()
           : `Could not copy the ${source === "beta" ? "Beta" : "Stable"} library.`;
-      // If we already entered restarting, the backend may be gone — keep the
-      // non-dismissible restart surface rather than offering a dead retry.
-      if (phase === "restarting") {
-        setErrorMessage(message);
-        return;
-      }
+      // Native activation returns errors only before stopping the backend;
+      // post-stop failures are recorded for the scheduled restart instead.
       setErrorMessage(message);
       setPhase("error");
     } finally {
       actionInFlight.current = false;
     }
-  }, [applyToken, devMock, hasExistingAlpha, hasExistingBeta, isAlpha, outstandingToken, phase]);
+  }, [applyToken, confirmReplace, devMock, hasExistingAlpha, hasExistingBeta, isAlpha, outstandingToken, outstandingOperation]);
+
+  const runStartEmpty = useCallback(async () => {
+    if (!isAlpha || !canConfirmAlphaReset(acknowledgeEmpty, actionInFlight.current)) return;
+    actionInFlight.current = true;
+    setConfirmEmpty(false);
+    setAcknowledgeEmpty(false);
+    setErrorMessage(null);
+    setRetainedOperation("reset-alpha");
+    setPhase("staging");
+    try {
+      if (devMock) {
+        setPhase("restarting");
+        return;
+      }
+      if (outstandingToken) {
+        await post("/api/alpha-bootstrap/discard-stage", { token: outstandingToken });
+        setRetainedToken(null);
+      }
+      const staged = await post<AlphaBootstrapStageEmptyResult>(
+        "/api/alpha-bootstrap/stage-empty", { confirmDataLoss: true },
+      );
+      setRetainedToken(staged.token);
+      setPhase("applying");
+      try {
+        await post("/api/session/finish");
+      } catch (error) {
+        addDebugEvent("alpha-bootstrap:session-finish-error", { message: String(error) });
+      }
+      setPhase("restarting");
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("apply_alpha_empty_bootstrap", { token: staged.token, confirmDataLoss: true });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setPhase("error");
+    } finally {
+      actionInFlight.current = false;
+    }
+  }, [acknowledgeEmpty, devMock, isAlpha, outstandingToken]);
 
   const runUseCurrent = useCallback(async () => {
     if (actionInFlight.current) return;
@@ -334,6 +378,7 @@ export function BetaBootstrapCoordinator({
           : `/api/${bootstrapChannel}-bootstrap/start-empty`,
       );
       setRetainedToken(null);
+      setRetainedOperation(null);
       await queryClient.invalidateQueries({
         queryKey: [`${bootstrapChannel}-bootstrap-status`],
       });
@@ -365,6 +410,7 @@ export function BetaBootstrapCoordinator({
         token: outstandingToken,
       });
       setRetainedToken(null);
+      setRetainedOperation(null);
       setErrorMessage(null);
       await queryClient.invalidateQueries({
         queryKey: [`${bootstrapChannel}-bootstrap-status`],
@@ -396,10 +442,10 @@ export function BetaBootstrapCoordinator({
 
   const busy = phase === "staging" || phase === "applying" || phase === "restarting";
   const copyStableDisabled = isAlpha
-    ? alphaSourceCopyDisabled(alphaStatus, "stable", busy, devMock)
+    ? alphaSourceCopyDisabled(alphaStatus, "stable", busy, devMock) || Boolean(outstandingToken && outstandingOperation === "reset-alpha")
     : copyStableLibraryDisabled(betaStatus, busy, devMock);
   const copyBetaDisabled = isAlpha
-    ? alphaSourceCopyDisabled(alphaStatus, "beta", busy, devMock)
+    ? alphaSourceCopyDisabled(alphaStatus, "beta", busy, devMock) || Boolean(outstandingToken && outstandingOperation === "reset-alpha")
     : true;
   const stableBlockingReason = isAlpha
     ? alphaSourceBlockingReason(alphaStatus, "stable", devMock)
@@ -422,6 +468,7 @@ export function BetaBootstrapCoordinator({
   }
 
   return (
+    <>
     <Modal
       opened
       onClose={() => undefined}
@@ -429,7 +476,7 @@ export function BetaBootstrapCoordinator({
       closeOnClickOutside={false}
       closeOnEscape={false}
       centered
-      size="md"
+      size={isAlpha ? "32rem" : "md"}
       title={
         preparationPending
           ? `Preparing copied ${isAlpha ? "Alpha" : "Beta"} library`
@@ -524,7 +571,7 @@ export function BetaBootstrapCoordinator({
           </Alert>
         ) : null}
 
-        {showChoice && hasExistingBeta && confirmReplace ? (
+        {showChoice && hasExistingLibrary && confirmReplace ? (
           <Alert color="red" title={`Confirm ${isAlpha ? "Alpha" : "Beta"} library replacement`}>
             Continue only if you no longer need the current {isAlpha ? "Alpha" : "Beta"} data. The replacement is rolled
             back if activation fails, but after a successful copy the previous {isAlpha ? "Alpha" : "Beta"} library is
@@ -573,7 +620,9 @@ export function BetaBootstrapCoordinator({
 
         {outstandingToken && showChoice ? (
           <Text size="xs" c="dimmed">
-              A staged {isAlpha ? "library" : "Stable library"} copy is ready. Retry will activate it without copying again.
+              {outstandingOperation === "reset-alpha"
+                ? "An empty Alpha library is staged. Choose Start empty to confirm again, or discard this staged change."
+                : `A staged ${isAlpha ? "library" : "Stable library"} copy is ready. Retry will activate it without copying again.`}
           </Text>
         ) : null}
 
@@ -582,7 +631,7 @@ export function BetaBootstrapCoordinator({
             <Group gap="xs">
               <IconLoader2 size={16} className="source-check-spin" />
               <Text size="sm">
-                Copying and verifying {isAlpha && alphaSource === "beta" ? "Beta" : "Stable"} library…
+                {retainedOperation === "reset-alpha" ? "Preparing and verifying an empty Alpha library…" : `Copying and verifying ${isAlpha && alphaSource === "beta" ? "Beta" : "Stable"} library…`}
               </Text>
             </Group>
             {isAlpha ? (
@@ -632,14 +681,15 @@ export function BetaBootstrapCoordinator({
                   onClick={() => void discardStage()}
                   disabled={busy}
                 >
-                  Discard staged copy
+                  Discard staged change
                 </Button>
               ) : null}
             </Group>
             {isAlpha ? (
-              <Group gap="sm" align="flex-end" wrap="wrap" justify="flex-end">
-                <Stack gap={2} maw={170}>
+              <SimpleGrid cols={2} spacing="sm" w="100%">
+                <Stack gap={2}>
                   <Button
+                    variant="default"
                     color={hasExistingAlpha && confirmReplace ? "red" : APP_BRANDING.primaryColor}
                     onClick={() => {
                       setAlphaSource("stable");
@@ -654,10 +704,10 @@ export function BetaBootstrapCoordinator({
                   >
                     {outstandingToken
                       ? hasExistingAlpha && confirmReplace
-                        ? "Replace Alpha library"
+                        ? "Replace with Stable"
                         : "Retry activation"
                       : hasExistingAlpha && confirmReplace
-                        ? "Replace Alpha library"
+                        ? "Replace with Stable"
                         : "Copy Stable library"}
                   </Button>
                   {stableBlockingReason ? (
@@ -666,8 +716,9 @@ export function BetaBootstrapCoordinator({
                     </Text>
                   ) : null}
                 </Stack>
-                <Stack gap={2} maw={170}>
+                <Stack gap={2}>
                   <Button
+                    variant="default"
                     color={hasExistingAlpha && confirmReplace ? "red" : APP_BRANDING.primaryColor}
                     onClick={() => {
                       setAlphaSource("beta");
@@ -682,10 +733,10 @@ export function BetaBootstrapCoordinator({
                   >
                     {outstandingToken
                       ? hasExistingAlpha && confirmReplace
-                        ? "Replace Alpha library"
+                        ? "Replace with Beta"
                         : "Retry activation"
                       : hasExistingAlpha && confirmReplace
-                        ? "Replace Alpha library"
+                        ? "Replace with Beta"
                         : "Copy Beta library"}
                   </Button>
                   {betaBlockingReason ? (
@@ -694,7 +745,16 @@ export function BetaBootstrapCoordinator({
                     </Text>
                   ) : null}
                 </Stack>
-                <Button onClick={() => void runUseCurrent()} disabled={busy}>
+                {hasExistingAlpha ? (
+                  <Button onClick={() => void runUseCurrent()} disabled={busy}>
+                    Keep current Alpha library
+                  </Button>
+                ) : null}
+                <Button color="red" variant="light" onClick={() => {
+                  setAcknowledgeEmpty(false);
+                  setConfirmReplace(false);
+                  setConfirmEmpty(true);
+                }} disabled={busy}>
                   Start empty
                 </Button>
                 {confirmReplace ? (
@@ -702,7 +762,7 @@ export function BetaBootstrapCoordinator({
                     Cancel
                   </Button>
                 ) : null}
-              </Group>
+              </SimpleGrid>
             ) : (
               <Group gap="sm">
                 <Button variant="default" onClick={() => void runUseCurrent()} disabled={busy}>
@@ -742,5 +802,41 @@ export function BetaBootstrapCoordinator({
         ) : null}
       </Stack>
     </Modal>
+    <Modal
+      opened={confirmEmpty}
+      onClose={() => { if (!busy) { setConfirmEmpty(false); setAcknowledgeEmpty(false); } }}
+      title="Start with an empty Alpha library?"
+      closeButtonProps={{ "aria-label": "Cancel empty Alpha library" }}
+      centered
+      size="md"
+      zIndex={450}
+      closeOnClickOutside={false}
+      closeOnEscape={!busy}
+      withCloseButton={!busy}
+    >
+      <Stack gap="md">
+        <Text size="sm">
+          This replaces the active Alpha database and Alpha-managed imports with an empty library.
+          Current Alpha cells, analyses, folders and settings will no longer appear. A recovery
+          backup is retained in the Alpha data folder.
+        </Text>
+        <Text size="sm">Original source files and the Stable and Beta libraries are not changed.</Text>
+        <Checkbox
+          label="I understand that I will lose the data in my current Alpha library."
+          checked={acknowledgeEmpty}
+          onChange={(event) => setAcknowledgeEmpty(event.currentTarget.checked)}
+          disabled={busy}
+        />
+        <Group justify="flex-end">
+          <Button variant="default" disabled={busy} onClick={() => {
+            setConfirmEmpty(false); setAcknowledgeEmpty(false);
+          }}>Cancel</Button>
+          <Button color="red" disabled={!canConfirmAlphaReset(acknowledgeEmpty, busy)} onClick={() => void runStartEmpty()}>
+            Start empty and restart
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+    </>
   );
 }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.orm import Session
 from typing import Literal
 
@@ -43,6 +43,10 @@ class AlphaStageCopyRequest(BaseModel):
         default=False,
         alias="confirmReplaceExistingLibrary",
     )
+
+
+class AlphaStageEmptyRequest(BaseModel):
+    confirm_data_loss: StrictBool = Field(default=False, alias="confirmDataLoss")
 
 
 def _require_beta_channel() -> None:
@@ -195,6 +199,19 @@ def alpha_bootstrap_discard_stage(payload: DiscardStageRequest):
     _require_alpha_channel()
     try:
         return beta_bootstrap.discard_alpha_stage(payload.token)
+    except beta_bootstrap.BetaBootstrapConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except beta_bootstrap.BetaBootstrapValidation as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except beta_bootstrap.BetaBootstrapError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@alpha_router.post("/stage-empty")
+def alpha_bootstrap_stage_empty(payload: AlphaStageEmptyRequest, db: Session = Depends(get_db)):
+    _require_alpha_channel()
+    try:
+        return beta_bootstrap.stage_alpha_empty_library(db, confirm_data_loss=payload.confirm_data_loss)
     except beta_bootstrap.BetaBootstrapConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except beta_bootstrap.BetaBootstrapValidation as error:

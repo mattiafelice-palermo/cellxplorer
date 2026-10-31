@@ -254,6 +254,12 @@ Old clients cannot retroactively gain this protocol. `scripts/check_update_recov
 executes production NSIS logic and the actual Rust transport against harmless
 fixtures; it does not establish signed/installed-client/UAC acceptance.
 
+NSIS fixture declaration/include order must match production. NSIS compiles an
+undeclared variable reference as literal text with warning 6000 even when its exit
+code is zero. Recovery is included before scope policy, so shared variables used
+by recovery must be declared in that earlier header. Reject warning 6000 and use
+explicit UTF-8 compiler input; a successful compile alone is not verified policy.
+
 For System plug-in structure fields, pass arbitrary command text by register
 source (`w r0`), never by interpolating it into the expression (`w "$0"`). Quoted
 scope/origin paths otherwise become syntax in System's own parser. Two installer
