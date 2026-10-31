@@ -66,6 +66,17 @@ speculative release before the installer failure is understood and verified.
 
 ## Verification
 
+### Alpha.15 release preparation
+
+The user authorized `0.28.0-alpha.15` publication on 2026-10-31, subject to
+completion of installer/update checks. Release notes use `### New features` and
+`### Bug fixes`. A signed build-only Alpha rehearsal will run the complete hosted
+policy, transport, frozen-science and disposable upgrade/reinstall matrix before
+tag publication. Hosted Windows has UAC disabled; interactive approval/cancellation
+acceptance requires a separate disposable session and is not replaced by fixtures.
+Publication remains gated while that acceptance scope is unresolved. The live
+user installation and libraries are not test targets.
+
 - Installer cause: the production template includes `update_recovery.nsh` before
   `installation_scope.nsh`, but recovery used `$CxExisting` before its declaration.
   NSIS compiled the unknown reference as literal text (warning 6000), so an existing

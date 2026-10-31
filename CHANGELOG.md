@@ -4,6 +4,22 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.15 - 2026-10-31
+
+### New features
+
+- Offer Copy Stable library, Copy Beta library, Keep current Alpha library, and Start empty as distinct Alpha setup choices.
+- Require a separate confirmation and an initially unchecked data-loss acknowledgement before starting empty. Retain a recovery backup of the previous Alpha database and managed imports, without changing original source files or Stable/Beta libraries.
+
+### Bug fixes
+
+- Correct the installer scope/directory validation failure when updating an existing installation after Windows administrator approval.
+- Allow confirmed failed update preparations to be closed without forcing a restart, while retaining the verified download for retry and protecting active installer handoffs.
+- Start installer preparation without waiting for diagnostic session logging, and show Preparing update feedback. Signature verification, installation identity checks, payload protection, consent boundaries and all safety deadlines remain in place.
+- Use the current overwrite confirmation when copying a Stable/Beta library into Alpha, and reject an empty reset if the target library changed after confirmation.
+- Affected Alpha .8/.9 clients that report "The registered installation location is invalid" still require one manual update: save your work, close Alpha, then download and run the official Alpha .15 installer. No uninstall or data deletion is needed.
+- Manual installer: https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.15/CellXplorer.Alpha_0.28.0-alpha.15_x64-setup.exe
+
 ## 0.28.0-alpha.14 - 2026-10-31
 
 - ### Important: affected Alpha .8/.9 clients need one manual update
