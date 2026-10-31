@@ -1,6 +1,6 @@
 # 077 — Verified build optimizations
 
-Status: Correctness and user-amended hosted acceptance passed; Alpha.13 integration/publication in progress.
+Status: Complete. Merged to main; Alpha 0.28.0-alpha.13 published and independently verified.
 Branch: `codex/verified-ci-optimizations`.
 
 ## User decision and scope
@@ -372,3 +372,34 @@ canonical no-cache local preflight passed **4/4** in **204.47 seconds**, with
 four workers and all 209 local task files/modules. The notes retain the affected
 Alpha .8/.9 manual-update guidance and target the new immutable Alpha.13 URL.
 No runtime dependency, scientific calculation or updater-consent change was added.
+
+### Published closure
+
+Release commit `8c4757f0d9b0d55bece4784c33e7b2328ec27496` was fast-forwarded
+to main. Exact-SHA main run
+[41199154969](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41199154969)
+passed canonical preflight (208 remote task files/modules, 184.47 seconds) and
+prepared both effective v3 Rust graphs before the new annotated tag was pushed.
+
+Tag-triggered signed release run
+[41199815994](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41199815994)
+passed all gates and published
+[Alpha.13](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.28.0-alpha.13).
+Its complete job took **546 seconds (9m06s)**, restored the full main Rust cache,
+and reused the exact-SHA main preflight. This is not a like-for-like comparison
+with manual full-fallback benchmarks and is not used to inflate the accepted gain.
+Frozen scientific/runtime checks, helper tests, 73 Rust tests plus signature
+vector, all 18 recovery-policy cases and all eight native install/reinstall cases
+passed. Interactive UAC/old-installed-updater/end-to-end recovery acceptance is
+not claimed by the existing automated native matrix.
+
+Independent public readback verified the annotated tag's exact commit, GitHub
+prerelease status, exact release notes, all three immutable assets, public
+installer size/digest, the signature against the embedded updater public key,
+and byte-identical release manifest/public Alpha feed. Installer size:
+**82,958,616 bytes**; SHA-256:
+`0ed05f4f0005dad303f9005ede8f32b77c51e26d79b1c40c04b08ce1c01d7a70`.
+The release-channel README, Stable and Beta blob identities stayed unchanged;
+Stable `v0.20.2` remains the latest normal release. No existing published tag or
+asset was replaced, no actual installer/account was run on the user's computer,
+and no real user database was changed.

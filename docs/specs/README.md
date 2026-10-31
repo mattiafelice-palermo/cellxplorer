@@ -1,11 +1,12 @@
 # Feature specs
 
 - [077 — Verified build optimizations](077-verified-build-optimizations.md).
-  **Accepted; Alpha.13 integration/publication in progress.** Relay observation
+  **Complete; merged and published in Alpha 0.28.0-alpha.13.** Relay observation
   synchronization, atomic publication handling and final-frame draining preserve
-  all deadlines. Full signed run passed every gate in 11m48s (2.3% below the fixed
-  control median); user explicitly accepted one passing run and waived repeats.
-  All prior failed runs remain recorded; final release gates remain mandatory.
+  all deadlines. Accepted signed rehearsal passed in 11m48s (single-run 2.3% gain;
+  user waived repeats). Exact-main checks, release gates and independent public
+  installer/signature/feed/channel-isolation audit passed. Prior failures remain
+  recorded; no checks or deadlines were weakened.
   No rejected preflight shortcuts are included.
 
 - [076 — Release CI critical path](076-release-ci-critical-path.md).
