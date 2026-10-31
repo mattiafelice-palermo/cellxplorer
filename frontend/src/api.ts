@@ -279,6 +279,7 @@ export interface AlphaBootstrapStatus {
   setupError?: string | null;
   blockingReason: string | null;
   outstandingStageToken?: string | null;
+  outstandingStageOperation?: "copy" | "reset-alpha" | null;
   applyFailureMessage?: string | null;
   scientificPreparation?: {
     schemaVersion: number;
@@ -318,6 +319,11 @@ export interface AlphaBootstrapStageCopyResult {
   externalSourcePaths: number;
   replaceExistingAlpha: boolean;
   replaceExistingLibrary: boolean;
+  restartRequired: boolean;
+}
+
+export interface AlphaBootstrapStageEmptyResult {
+  token: string;
   restartRequired: boolean;
 }
 

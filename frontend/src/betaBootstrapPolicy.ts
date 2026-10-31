@@ -10,6 +10,7 @@ export type BootstrapStatus = BetaBootstrapStatus | AlphaBootstrapStatus;
 
 export type DevBetaBootstrapMockMode =
   | "available"
+  | "existing"
   | "blocked"
   | "copy-error"
   | "loading"
@@ -37,6 +38,7 @@ export function parseDevBetaBootstrapMock(
     params.get("mockBetaBootstrap");
   if (
     value === "available" ||
+    value === "existing" ||
     value === "blocked" ||
     value === "copy-error" ||
     value === "loading" ||
@@ -99,8 +101,8 @@ export function mockBetaBootstrapStatus(
           : "choice-required",
       decision: null,
       needsChoice: mode !== "corrupt-marker" && mode !== "status-error",
-      alphaPristine: true,
-      alphaHasExistingLibrary: false,
+      alphaPristine: mode !== "existing",
+      alphaHasExistingLibrary: mode === "existing",
       acknowledgedAppVersion: null,
       acknowledgedInstallInstanceId: null,
       sources,
@@ -282,6 +284,10 @@ export function alphaSourceBlockingReason(
 
 export function shouldRetryExistingStage(token: string | null | undefined): boolean {
   return typeof token === "string" && /^[0-9a-f]{32}$/.test(token);
+}
+
+export function canConfirmAlphaReset(acknowledged: boolean, busy: boolean): boolean {
+  return acknowledged === true && !busy;
 }
 
 export function scientificPreparationResourceText(

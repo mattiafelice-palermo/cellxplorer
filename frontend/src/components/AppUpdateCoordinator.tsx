@@ -22,6 +22,7 @@ import {
   firstAutomaticCheckDelayMs,
   loadAppUpdatePreferences,
   downloadAppUpdateTauri,
+  describeInstallFailure,
   getCurrentRelease,
   installAppUpdateTauri,
   appUpdateIntervalMs,
@@ -451,22 +452,22 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     async (release: AppUpdateRelease) => {
       if (!mountedRef.current) return;
 
-      // Render the handoff state before the session close and installer launch so the
-      // user sees that the verified update is being applied while CellXplorer is alive.
+      // Render truthful preparation feedback while the authenticated handoff runs.
       dispatch({ type: "launching", release });
 
       try {
-        try {
-          await post("/api/session/finish");
-        } catch (error) {
+        // This records diagnostic session bookkeeping only. It must not delay
+        // verified installer preparation; native consent/shutdown still owns
+        // every safety deadline and the backend lifecycle.
+        void post("/api/session/finish").catch((error) => {
           addDebugEvent("app-update:session-finish-error", {
             message: normalizeUpdaterError(error, "Session finish failed."),
           });
-        }
+        });
 
         if (devMock) {
           if (devMock === "install-error") {
-            throw new Error("Mock install launch failed.");
+            throw { message: "Mock installer preparation failed. No installation was started.", handoff: "aborted", backendStopped: false };
           }
           addDebugEvent("app-update:mock-install", { version: release.version });
           notifications.show({
@@ -485,8 +486,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         dispatch({
           type: "install_error",
           release,
-          message: normalizeUpdaterError(error, "Could not apply the update."),
-          lifecycleMayNeedRestart: true,
+          ...describeInstallFailure(error),
         });
       }
     },
@@ -584,7 +584,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const handleMenuClick = useCallback(() => {
     const current = stateRef.current;
-    if (current.status === "available") {
+    if (current.status === "available" ||
+        (current.status === "error" && current.release && canDismissUpdateModal(current))) {
       checkEpochRef.current += 1;
       setUpToDateModal(false);
       setModalOpen(true);

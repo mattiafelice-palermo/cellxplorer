@@ -99,6 +99,17 @@ class InstallerScopeTests(unittest.TestCase):
         self.assertIn('parameters.encode_utf16().count() + 4 >= 1000', recovery)
         self.assertIn('.download(', self.updates)
 
+    def test_typed_terminal_error_requires_disarmed_pre_exit_ownership(self):
+        command = self.updates.split('pub async fn install_app_update(', 1)[1].split('#[cfg(test)]', 1)[0]
+        self.assertIn('Result<(), InstallAppUpdateFailure>', command)
+        self.assertIn('pending.require_idle_install_handoff()?;', command)
+        failure = command.split('if let Err(error) = prepared.authorize_exit()', 1)[1].split('// Final consent', 1)[0]
+        self.assertLess(failure.index('drop(prepared)'), failure.index('InstallAppUpdateFailure::aborted'))
+        self.assertLess(command.index('prepared.authorize_exit()'), command.index('prepare_exit_for_update'))
+        irreversible = command.split('crate::prepare_exit_for_update(&app);', 1)[1].split('return Ok(());', 1)[0]
+        self.assertNotIn('return Err', irreversible)
+        self.assertIn('std::mem::forget(prepared)', irreversible)
+
     def test_restart_uses_original_user_and_trusted_process_scoped_helper(self):
         self.assertIn('RunAsUser "$INSTDIR\\cellxplorer-installer-helper.exe"', self.nsis)
         self.assertIn("'--restart $CxRestartArgs'", self.nsis)

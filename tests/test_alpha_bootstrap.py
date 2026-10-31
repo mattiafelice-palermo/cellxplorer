@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import _enable_write_ahead_logging, _set_sqlite_pragma
 from app.models import (
+    AppSetting,
     Analysis,
     Cell,
     Folder,
@@ -82,6 +83,7 @@ class AlphaBootstrapTests(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
         self._engines = []
+        self._sessions = []
         self.alpha_root = Path(self._tmpdir.name) / "alpha"
         self.stable_root = Path(self._tmpdir.name) / "stable"
         self.beta_root = Path(self._tmpdir.name) / "beta"
@@ -114,6 +116,8 @@ class AlphaBootstrapTests(unittest.TestCase):
         beta_bootstrap._active_stage_token = None
 
     def tearDown(self):
+        for session in self._sessions:
+            session.close()
         beta_bootstrap._active_stage_token = None
         for root in (self.alpha_root, self.stable_root, self.beta_root):
             lock = root / "bootstrap" / beta_bootstrap.LOCK_NAME
@@ -126,7 +130,9 @@ class AlphaBootstrapTests(unittest.TestCase):
     def _session(self, root: Path):
         factory, engine = _create_database_from_template(root, self._template)
         self._engines.append(engine)
-        return factory()
+        session = factory()
+        self._sessions.append(session)
+        return session
 
     def _source_session(self, root: Path):
         return self._session(root)
@@ -216,6 +222,111 @@ class AlphaBootstrapTests(unittest.TestCase):
         self.assertTrue(all(not item["compatible"] for item in status["sources"]))
         self.assertTrue(all(item["blockingReason"] for item in status["sources"]))
         self.assertTrue(all("library database was found" in item["blockingReason"] for item in status["sources"]))
+
+    def test_empty_reset_requires_explicit_acknowledgement_before_staging(self):
+        db = self._alpha_session()
+        self.addCleanup(db.close)
+        db.add(Cell(name="Keep me"))
+        db.commit()
+        before = self._root_snapshot(self.alpha_root)
+        with self.assertRaises(beta_bootstrap.BetaBootstrapValidation):
+            beta_bootstrap.stage_alpha_empty_library(db, confirm_data_loss=False)
+        self.assertEqual(self._root_snapshot(self.alpha_root), before)
+        self.assertEqual(db.query(Cell).one().name, "Keep me")
+
+    def test_empty_reset_stages_new_database_without_changing_any_live_library(self):
+        self._populate_source(self.stable_root, "stable")
+        self._populate_source(self.beta_root, "beta")
+        sources_before = [self._root_snapshot(root) for root in (self.stable_root, self.beta_root)]
+        db = self._alpha_session()
+        self.addCleanup(db.close)
+        db.add(Cell(name="Existing Alpha"))
+        db.commit()
+        imports = self.alpha_root / "imports"
+        imports.mkdir()
+        managed = imports / "kept.ndax"
+        managed.write_bytes(b"Alpha managed original")
+        fingerprint = beta_bootstrap.alpha_reset_library_fingerprint(self.alpha_root / "cellxplorer.db")
+        result = beta_bootstrap.stage_alpha_empty_library(db, confirm_data_loss=True)
+        stage = self.alpha_root / "bootstrap" / result["token"]
+        manifest = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["operation"], "reset-alpha")
+        self.assertIs(manifest["confirmDataLoss"], True)
+        self.assertEqual(manifest["resetTargetLibraryFingerprint"], fingerprint)
+        self.assertEqual(manifest["imports"], [])
+        self.assertEqual(db.query(Cell).one().name, "Existing Alpha")
+        self.assertEqual(managed.read_bytes(), b"Alpha managed original")
+        with closing(sqlite3.connect(stage / beta_bootstrap.STAGED_DB_NAME)) as staged:
+            self.assertEqual(staged.execute("SELECT COUNT(*) FROM cells").fetchone()[0], 0)
+            self.assertEqual(staged.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(sources_before, [self._root_snapshot(root) for root in (self.stable_root, self.beta_root)])
+        status = beta_bootstrap.build_alpha_status(db)
+        self.assertEqual(status["outstandingStageOperation"], "reset-alpha")
+
+    def test_reset_fingerprint_survives_checkpoint_but_detects_real_library_edits(self):
+        db = self._alpha_session()
+        self.addCleanup(db.close)
+        cell = Cell(name="before\0suffix")
+        db.add(cell)
+        db.commit()
+        path = self.alpha_root / "cellxplorer.db"
+        before = beta_bootstrap.alpha_reset_library_fingerprint(path)
+        with closing(sqlite3.connect(path)) as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.assertEqual(before, beta_bootstrap.alpha_reset_library_fingerprint(path))
+        cell.name = "before\0different suffix"
+        db.commit()
+        self.assertNotEqual(before, beta_bootstrap.alpha_reset_library_fingerprint(path))
+
+    def test_reset_fingerprint_cross_language_typed_golden(self):
+        path = self.alpha_root / "golden.db"
+        with closing(sqlite3.connect(path)) as connection:
+            connection.executescript("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT); CREATE TABLE probe (n, i, f, t, b);")
+            connection.execute("INSERT INTO app_settings VALUES (?,?)", (DATABASE_INSTANCE_ID_KEY, "test-reset-instance"))
+            connection.executemany("INSERT INTO probe VALUES (?,?,?,?,?)", [
+                (None, -42, 0.125, "Ω\0tail", b"\x00\xff"),
+                (None, 7, 0.5, "second", b""),
+            ])
+            connection.commit()
+        self.assertEqual(beta_bootstrap.alpha_reset_library_fingerprint(path),
+                         "dc4e487bd8eafce82acbd6b02dc5ad60847619426f9d5286e2dd26f4f21ac700")
+
+    def test_reset_fingerprint_protects_application_preferences(self):
+        db = self._alpha_session()
+        path = self.alpha_root / "cellxplorer.db"
+        before = beta_bootstrap.alpha_reset_library_fingerprint(path)
+        db.add(AppSetting(key="user.preference", value="preserve new edit"))
+        db.commit()
+        self.assertNotEqual(before, beta_bootstrap.alpha_reset_library_fingerprint(path))
+
+    def test_empty_reset_request_rejects_coerced_acknowledgement(self):
+        for value in ("true", "yes", 1, None):
+            with self.subTest(value=value), self.assertRaises(Exception):
+                bootstrap_router.AlphaStageEmptyRequest.model_validate({"confirmDataLoss": value})
+        self.assertFalse(bootstrap_router.AlphaStageEmptyRequest().confirm_data_loss)
+        self.assertTrue(bootstrap_router.AlphaStageEmptyRequest(confirmDataLoss=True).confirm_data_loss)
+
+    def test_import_fingerprint_detects_added_removed_and_changed_files(self):
+        imports = self.alpha_root / "imports"
+        imports.mkdir()
+        before = beta_bootstrap.alpha_reset_imports_fingerprint(self.alpha_root)
+        item = imports / "Ω.ndax"
+        item.write_bytes(b"data")
+        added = beta_bootstrap.alpha_reset_imports_fingerprint(self.alpha_root)
+        self.assertNotEqual(before, added)
+        item.write_bytes(b"changed data")
+        self.assertNotEqual(added, beta_bootstrap.alpha_reset_imports_fingerprint(self.alpha_root))
+        item.unlink()
+        self.assertEqual(before, beta_bootstrap.alpha_reset_imports_fingerprint(self.alpha_root))
+
+    def test_empty_reset_rejects_other_channel_root_and_existing_stages(self):
+        db = self._alpha_session()
+        self.addCleanup(db.close)
+        with self.assertRaises(beta_bootstrap.BetaBootstrapValidation):
+            beta_bootstrap.stage_alpha_empty_library(db, confirm_data_loss=True, data_root=self.stable_root)
+        beta_bootstrap.stage_alpha_empty_library(db, confirm_data_loss=True)
+        with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+            beta_bootstrap.stage_alpha_empty_library(db, confirm_data_loss=True)
 
     def test_start_empty_uses_only_alpha_marker(self):
         db = self._alpha_session()

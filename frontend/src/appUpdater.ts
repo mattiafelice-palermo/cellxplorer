@@ -113,9 +113,9 @@ export type AppUpdateRelease = {
   publishedAt: string | null;
 };
 
-export const UPDATE_APPLYING_LABEL = "Applying update…";
+export const UPDATE_APPLYING_LABEL = "Preparing update…";
 export const UPDATE_APPLYING_DESCRIPTION =
-  "CellXplorer will close and restart. A compact passive updater window will remain visible while installation finishes.";
+  "Verifying the installer and preparing a safe handoff. Windows may ask for permission. CellXplorer stays open until preparation succeeds, then closes and restarts after installation.";
 
 export type AppUpdateState =
   | { status: "idle" }
@@ -216,6 +216,23 @@ export function normalizeUpdaterError(error: unknown, fallback: string): string 
     return trimmed || fallback;
   }
   return fallback;
+}
+
+/** Only a native-returned terminal result proves installation consent was not sent. */
+export function describeInstallFailure(error: unknown): { message: string; lifecycleMayNeedRestart: boolean } {
+  if (error !== null && typeof error === "object" &&
+      "handoff" in error && error.handoff === "aborted" &&
+      "backendStopped" in error && error.backendStopped === false &&
+      "message" in error && typeof error.message === "string" && error.message.trim()) {
+    return { message: error.message.trim(), lifecycleMayNeedRestart: false };
+  }
+  return {
+    message: error !== null && typeof error === "object" && "message" in error &&
+      typeof error.message === "string" && error.message.trim()
+      ? error.message.trim()
+      : normalizeUpdaterError(error, "Could not apply the update. The installer handoff could not be confirmed."),
+    lifecycleMayNeedRestart: true,
+  };
 }
 
 export type UpdateCheckFailureExplanation = {
@@ -478,6 +495,9 @@ export function getUpdateMenuLabel(state: AppUpdateState): string {
     case "launching":
       return `Updating to v${state.release.version}…`;
     case "error":
+      if (state.release && state.phase === "install" && state.lifecycleMayNeedRestart === false) {
+        return `Review failed update to v${state.release.version}`;
+      }
       if (state.release && state.phase !== "check") {
         return `Updating to v${state.release.version}…`;
       }
@@ -494,7 +514,8 @@ export function isUpdateMenuDisabled(state: AppUpdateState): boolean {
     state.status === "launching" ||
     (state.status === "error" &&
       Boolean(state.release) &&
-      state.phase !== "check")
+      state.phase !== "check" &&
+      !(state.phase === "install" && state.lifecycleMayNeedRestart === false))
   );
 }
 
@@ -505,7 +526,9 @@ export function isUpdateMenuLoading(state: AppUpdateState): boolean {
 export function canDismissUpdateModal(state: AppUpdateState): boolean {
   if (state.status === "available") return true;
   if (state.status === "error") {
-    return state.phase === "check" || (state.phase === "download" && !state.lifecycleMayNeedRestart);
+    return state.phase === "check" ||
+      (state.phase === "download" && !state.lifecycleMayNeedRestart) ||
+      (state.phase === "install" && state.lifecycleMayNeedRestart === false);
   }
   return false;
 }

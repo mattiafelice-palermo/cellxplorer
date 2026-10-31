@@ -42,13 +42,26 @@ Beta and Alpha first-launch setup share the implementation in
 `src-tauri/src/beta_bootstrap.rs`, and `frontend/src/components/BetaBootstrapCoordinator.tsx`.
 Beta retains its released Stable-copy contract and `beta-bootstrap.json` marker. Alpha uses
 `alpha-bootstrap.json` and `alpha-bootstrap-apply-error.json` in its own root and offers exactly
-Start empty, Copy Stable library, or Copy Beta library. A copy is a one-time SQLite-backup
+Copy Stable library, Copy Beta library, Start empty, and (for a nonempty Alpha)
+Keep current Alpha library as separate actions. A copy is a one-time SQLite-backup
 snapshot: it receives a new database instance UUID, rewrites only managed import paths into the
 Alpha `imports/` tree, preserves external paths, and records the source channel. Source databases
 are inspected through a private sidecar-preserving snapshot so opening a live WAL database cannot
 change the source `-wal` or `-shm`; the source root is never written and no synchronization follows.
 The historical `beta.scientific_preparation` app-setting key is intentionally shared by both
 destinations; its name is compatibility history, not a Beta-only data boundary.
+
+Alpha Start empty uses an explicit second dialog and an initially unchecked data-loss
+acknowledgement. `/api/alpha-bootstrap/stage-empty` requires a strict boolean, creates a
+migrated empty database with a new instance UUID, and leaves the active database untouched.
+Only `apply_alpha_empty_bootstrap` may activate that operation; copy activation rejects it.
+Before and after stopping the backend, Rust verifies typed logical SQLite and managed-import
+inventory fingerprints so session bookkeeping/WAL checkpoints do not invalidate consent but
+library edits do. The Python/Rust typed digest shares a golden fixture including embedded NUL,
+Unicode, integer, float, NULL and blob values. Activation retains the previous database and
+managed imports under `backups/alpha-reset-<token>/`; marker failure restores them. Original
+external sources and other channel roots are not reset. Regenerable caches are not erased;
+the new database identity prevents restoring the previous database-scoped startup UI state.
 
 Stable self-updates read `release-channels/stable/latest.json`; Beta self-updates read
 `release-channels/beta/latest.json`; Alpha self-updates read
@@ -62,6 +75,15 @@ SemVer before accepting a pending update: Stable is `MAJOR.MINOR.PATCH`; Beta ac
 use the exact dotted form with no leading zero. Once a Beta line publishes a compact version, keep
 that form for the rest of the same core version: SemVer orders `beta.12` below `beta011`, while
 `beta012` correctly follows `beta011`.
+
+Windows `install_app_update` reports terminal native preparation failures as
+`{message, handoff: "aborted", backendStopped: false}` only after disarming that
+attempt. This proves no final exit authorization was sent and that the updater did
+not stop the backend; it does not assert general backend health or that every relay
+process has already exited. Duplicate active owners, unclassified IPC failures and
+other platforms remain unknown. The frontend permits Close/X only for the confirmed
+aborted result, retains its verified-byte retry state, and keeps active handoff
+non-dismissible. Diagnostic session bookkeeping must not block native preparation.
 
 NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
 directory being changed — never by shared image name alone — so all three products can run side by

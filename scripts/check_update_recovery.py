@@ -13,6 +13,7 @@ from ctypes import wintypes
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -29,11 +30,16 @@ RELAY_EXIT_TIMEOUT = 15
 
 def compile_fixture(output: Path, parent: Path, *, relay: bool = False,
                     relay_release_event: str | None = None,
-                    quoted_relay: bool = False) -> Path:
+                    quoted_relay: bool = False, machine: bool = False,
+                    version: str = "1.0.0", channel: str = "stable") -> Path:
     if relay and not relay_release_event:
         raise ValueError("Relay fixture requires a controller-owned release event")
     if quoted_relay and not relay:
         raise ValueError("Quoted relay arguments require a relay fixture")
+    if machine and relay:
+        raise ValueError("Full machine transport and relay-only fixtures are distinct")
+    if channel not in {'stable', 'beta', 'alpha'} or not re.fullmatch(r'[0-9A-Za-z.-]+', version):
+        raise ValueError("Invalid fixture release identity")
     relay_command = '/CXTESTCHILD /CXHASH=$CxRecoveryHash'
     quoted_check = ''
     if quoted_relay:
@@ -58,12 +64,11 @@ SilentInstall silent
 !include StrFunc.nsh
 ${{StrLoc}}
 !define MAINBINARYNAME "{parent.stem}"
-!define VERSION "1.0.0"
-!define BUNDLEID "com.cellxplorer.desktop"
+!define VERSION "{version}"
+!define BUNDLEID "com.cellxplorer.desktop{'.' + channel if channel != 'stable' else ''}"
 !define CX_RECOVERY_TIMEOUT_MS 2000
 {('!define CX_RECOVERY_ELEVATION_VERB "open"' if relay else '')}
 Var UpdateMode
-Var CxExisting
 ; Diagnostic hook only in this harmless compiler fixture, never in production.
 !macro CX_RECOVERY_TEST_EXIT_SETTLEMENT
   FileOpen $6 "{output / 'settlement-started.txt'}" w
@@ -142,6 +147,10 @@ Function .onInit
   Call CxReadRecovery
   StrCpy $CxExisting 1
   StrCpy $INSTDIR "{parent.parent}"
+  ${{GetOptions}} $CMDLINE "/CXTESTMISSINGEXISTING" $0
+  ${{IfNot}} ${{Errors}}
+    StrCpy $CxExisting 0
+  ${{EndIf}}
   Call CxPrepareRecovery
 FunctionEnd
 Section
@@ -150,17 +159,93 @@ Section
   FileClose $0
 SectionEnd
 '''
+    if machine:
+        # Execute the production scope reader/selector/relay too. Only its OS
+        # inputs are simulated: no registry writes, elevation or installation.
+        policy = (ROOT / 'src-tauri/installation_scope.nsh').read_text()
+        if policy.count('  StrCpy $CxElevated $0\nFunctionEnd') != 1:
+            raise RuntimeError('Scope elevation input changed; review the harmless fixture before running')
+        policy = policy.replace('  StrCpy $CxElevated $0\nFunctionEnd', '''  StrCpy $CxElevated $0
+  ${GetOptions} $CMDLINE "/CXALLUSERS" $0
+  ${IfNot} ${Errors}
+    StrCpy $CxElevated 1
+  ${Else}
+    StrCpy $CxElevated 0
+  ${EndIf}
+FunctionEnd''')
+        policy = re.sub(r'^\s*MessageBox .*$', '', policy, flags=re.M)
+        # Replace the registry instruction, not the production validation logic.
+        policy = re.sub(r'ReadRegStr (\S+) (\S+) "([^"\n]+)" "([^"\n]*)"',
+                        r'!insertmacro FixtureReadReg \1 \2 "\3" "\4"', policy)
+        policy = re.sub(r'^\s*ExecShell .*$', '  Call CxScopeError', policy, flags=re.M)
+        policy = re.sub(r'Function un.CxInitializeScope\n.*?FunctionEnd',
+                        lambda m: m[0].replace('Call CxScopeError', 'Call un.CxScopeError'), policy, flags=re.S)
+        policy = policy.replace('Function ${PREFIX}CxScopeError\n', f'''Function ${{PREFIX}}CxScopeError
+  FileOpen $9 "{output / 'recovery-error.txt'}" w
+  FileWrite $9 "phase=$CxRecoveryPhase record=$CxRecordDir expected=$CxExpectedDir instdir=$INSTDIR origin=$CxRecoveryOrigin version=$CxRecoveryVersion channel=$CxRecoveryChannel hash=$CxRecoveryHash r0=$0 r1=$1"
+  FileClose $9
+''')
+        policy_path = output / 'machine-policy.nsh'
+        policy_path.write_text(policy, encoding='utf-8')
+        definitions = f'''
+${{UnStrLoc}}
+!define PRODUCTNAME "CellXplorer Fixture"
+!define UNINSTKEY "UnusedFixtureUninstall"
+!define MANUPRODUCTKEY "UnusedFixtureManufacturer"
+!macro FixtureReadReg DEST HIVE KEY FIELD
+  StrCpy ${{DEST}} ""
+  !if "${{HIVE}}" == "HKLM"
+    !if "${{FIELD}}" == "InstallLocation"
+      StrCpy ${{DEST}} '$\\"{parent.parent}$\\"'
+    !else if "${{FIELD}}" == ""
+      StrCpy ${{DEST}} "{parent.parent}"
+    !else if "${{FIELD}}" == "MainBinaryName"
+      StrCpy ${{DEST}} "{parent.name}"
+    !else if "${{FIELD}}" == "DisplayName"
+      StrCpy ${{DEST}} "${{PRODUCTNAME}}"
+    !else if "${{FIELD}}" == "BundleId"
+      StrCpy ${{DEST}} "${{BUNDLEID}}"
+    !else if "${{FIELD}}" == "InstallScope"
+      StrCpy ${{DEST}} "machine"
+    !endif
+  !endif
+!macroend
+!include "{policy_path}"
+'''
+        source = source.replace('OutFile ', definitions + '\nOutFile ', 1)
+        source = re.sub(r'Function CxScopeError\n.*?FunctionEnd\n', '', source, count=1, flags=re.S)
+        source = source.replace('!define CX_RECOVERY_TIMEOUT_MS 2000', '!define CX_RECOVERY_TIMEOUT_MS 2000\n!define CX_RECOVERY_ELEVATION_VERB "open"')
+        source = source.replace('  Call CxReadRecovery\n  StrCpy $CxExisting 1\n  StrCpy $INSTDIR "' + str(parent.parent) + '"', '  Call CxInitializeScope')
+        template = (ROOT / 'src-tauri/cellxplorer-installer.nsi').read_text()
+        flags = template.split('Function .onInit\n', 1)[1].split('  !if "${DISPLAYLANGUAGESELECTOR}"', 1)[0]
+        source = source.replace('Var UpdateMode', 'Var PassiveMode\nVar NoShortcutMode\nVar UpdateMode')
+        source = source.replace('  StrCpy $UpdateMode 1\n  Call CxInitializeScope', flags + '\n  Call CxInitializeScope')
+        source = source.replace('  Call CxPrepareRecovery', f'''
+  ${{If}} $CxScope != "machine"
+  ${{OrIf}} $CxExisting != 1
+  ${{OrIf}} $CxExpectedDir != "{parent.parent}"
+  ${{OrIf}} $INSTDIR != "{parent.parent}"
+  ${{OrIf}} $CxRestartArgs != "5b5d"
+    Call CxScopeError
+  ${{EndIf}}
+  Call CxPrepareRecovery''')
     path = output / "recovery-policy.nsi"
     path.write_text(source, encoding="utf-8")
-    result = subprocess.run([str(nsis_compiler()), "/V2", str(path)], capture_output=True, text=True, timeout=60)
+    # The fixture source is UTF-8. ACP decoding lets two equally corrupted
+    # string literals compare equal while failing against a real Unicode path.
+    result = subprocess.run([str(nsis_compiler()), "/INPUTCHARSET", "UTF8", "/V2", str(path)], capture_output=True, text=True, timeout=60)
+    (output / 'compile.log').write_text(result.stdout + result.stderr, encoding='utf-8')
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
+    if 'warning 6000:' in (result.stdout + result.stderr).lower():
+        raise RuntimeError('Unresolved NSIS variable/constant in recovery fixture:\n' + result.stdout + result.stderr)
     return executable
 
 
-def run_case(output: Path, parent: Path, case: str) -> dict:
+def run_case(output: Path, parent: Path, case: str, *, machine: bool = False,
+             version: str = "1.0.0", channel: str = "stable") -> dict:
     output.mkdir(parents=True)
-    executable = compile_fixture(output, parent)
+    executable = compile_fixture(output, parent, machine=machine, version=version, channel=channel)
     marker = output / "committed.txt"
     # This child is the originating process. The success case must exit before
     # NSIS is allowed past the handshake; the outer Python process observes it.
@@ -181,19 +266,22 @@ function Read-One {
 }
 $origin = (Get-Process -Id $PID).Path
 $originPid = $PID
-$payloadVersion = '1.0.0'
-$payloadChannel = 'stable'
+$payloadVersion = 'PAYLOADVERSION'
+$payloadChannel = 'PAYLOADCHANNEL'
 $payloadHash = 'PAYLOADHASH'
 if ('CASE' -eq 'wrong-origin') { $origin = 'C:\wrong\powershell.exe' }
 if ('CASE' -eq 'wrong-process') { $originPid = OUTERPID }
 if ('CASE' -eq 'wrong-version') { $payloadVersion = '2.0.0' }
-if ('CASE' -eq 'wrong-channel') { $payloadChannel = 'alpha' }
+if ('CASE' -eq 'wrong-channel') { $payloadChannel = 'WRONGCHANNEL' }
 if ('CASE' -eq 'wrong-hash') { $payloadHash = '0' * 64 }
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = 'EXECUTABLE'
 $start.UseShellExecute = $false
 $start.CreateNoWindow = $true
-$start.Arguments = '/P /UPDATE /CXRECOVERY=' + $nonce + ' /CXPID=' + $originPid + ' /CXORIGIN="' + $origin + '" /CXVERSION=' + $payloadVersion + ' /CXCHANNEL=' + $payloadChannel + ' /CXHASH=' + $payloadHash
+$start.Arguments = '/P /UPDATE /R /CXRECOVERY=' + $nonce + ' /CXPID=' + $originPid + ' /CXORIGIN="' + $origin + '" /CXVERSION=' + $payloadVersion + ' /CXCHANNEL=' + $payloadChannel + ' /CXHASH=' + $payloadHash + ' /CXRESTART=5b5d'
+if ('CASE' -eq 'wrong-scope') { $start.Arguments += ' /CXCURRENTUSER' }
+if ('CASE' -eq 'wrong-expected-directory') { $start.Arguments += ' /CXEXPECTEDDIR="C:\Wrong Fixture Directory"' }
+if ('CASE' -eq 'wrong-existing') { $start.Arguments += ' /CXTESTMISSINGEXISTING' }
 $process = [Diagnostics.Process]::Start($start)
 if ('CASE' -like 'wrong-*') {
   if (-not $process.WaitForExit(15000)) { throw 'Invalid origin process hung' }
@@ -252,7 +340,7 @@ if ('CASE' -eq 'commit') {
   $pipe.SafePipeHandle.SetHandleAsInvalid()
 } else { $pipe.Dispose() }
 '''
-    for old, new in {"CASE": case, "EXECUTABLE": str(executable).replace("'", "''"), "MARKER": str(marker).replace("'", "''"), "SETTLEMENT": str(output / 'settlement-started.txt').replace("'", "''"), "OUTERPID": str(os.getpid()), "PAYLOADHASH": hashlib.sha256(executable.read_bytes()).hexdigest()}.items():
+    for old, new in {"CASE": case, "EXECUTABLE": str(executable).replace("'", "''"), "MARKER": str(marker).replace("'", "''"), "SETTLEMENT": str(output / 'settlement-started.txt').replace("'", "''"), "OUTERPID": str(os.getpid()), "PAYLOADHASH": hashlib.sha256(executable.read_bytes()).hexdigest(), "PAYLOADVERSION": version, "PAYLOADCHANNEL": channel, "WRONGCHANNEL": 'stable' if channel != 'stable' else 'alpha'}.items():
         command = command.replace(old, new)
     encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
     result = subprocess.run([str(parent), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], capture_output=True, timeout=35)
@@ -270,7 +358,8 @@ if ('CASE' -eq 'commit') {
         raise RuntimeError(f"Recovery {case}: incorrect post-handshake file state ({diagnostic})")
     if case in {"exit-inside-settlement", "exit-after-settlement"} and not (output / 'settlement-started.txt').exists():
         raise RuntimeError(f"Recovery {case}: did not exercise the settlement branch")
-    return {"case": case, "passed": True, "post_exit_commit": marker.exists()}
+    return {"case": ('machine-' if machine else '') + case, "passed": True,
+            "post_exit_commit": marker.exists(), "simulated_elevation": machine}
 
 
 @contextmanager
@@ -430,6 +519,31 @@ def run_prelock_replacement_case(output: Path, parent: Path) -> dict:
     return {"case": "pre-lock-path-substitution", "passed": True, "substitution_detected_by_hash": True}
 
 
+def run_machine_transport_case(output: Path, probe: Path) -> dict:
+    """Actual Rust client + both production NSIS passes, without UAC or writes to installations."""
+    output.mkdir()
+    origin = output / 'Client space, Ω' / 'client.exe'
+    origin.parent.mkdir()
+    shutil.copyfile(probe, origin)
+    payload = compile_fixture(output, origin, machine=True)
+    start = time.monotonic()
+    result = subprocess.run([str(origin)], env={**os.environ, 'CX_RECOVERY_PROBE_INSTALLER': str(payload)},
+                            capture_output=True, timeout=150)
+    if result.returncode:
+        evidence = output / 'recovery-error.txt'
+        detail = evidence.read_text(errors='replace') if evidence.exists() else 'none'
+        raise RuntimeError(f'Machine transport failed: {result.stdout!r} {result.stderr!r} {detail}')
+    marker = output / 'committed.txt'
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.025)
+    if not marker.exists():
+        raise RuntimeError('Machine transport did not reach its post-origin-exit marker')
+    return {'case': 'production-rust-machine-scope-quoted-paths', 'passed': True,
+            'simulated_elevation': True, 'signature_or_uac_acceptance': False,
+            'elapsed_seconds': round(time.monotonic() - start, 3)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--relay-diagnostic', action='store_true', help='Diagnostic relay-only repetitions; NOT full policy acceptance')
@@ -451,7 +565,7 @@ def main() -> None:
                 print(json.dumps(dict(iteration=index, result=run_relay_case(Path(directory)/str(index),parent))),flush=True)
         return
     with tempfile.TemporaryDirectory(prefix="recovery-policy-", dir=scratch) as directory:
-        rows = [run_case(Path(directory) / case, parent, case) for case in ["commit", "cancel", "wrong-origin", "wrong-process", "wrong-version", "wrong-channel", "wrong-hash", "invalid-commit", "disconnected", "origin-hangs", "cancel-after-ack", "disconnect-after-exit-authorization", "exit-inside-settlement", "exit-after-settlement"]]
+        rows = [run_case(Path(directory) / case, parent, case) for case in ["commit", "cancel", "wrong-origin", "wrong-process", "wrong-version", "wrong-channel", "wrong-hash", "wrong-existing", "invalid-commit", "disconnected", "origin-hangs", "cancel-after-ack", "disconnect-after-exit-authorization", "exit-inside-settlement", "exit-after-settlement"]]
         rows.append(run_relay_case(Path(directory) / "relay", parent))
         # Regression: the old child's blind 2-second sleep made this otherwise
         # valid observation fail. All original deadlines and assertions remain.
@@ -465,6 +579,10 @@ def main() -> None:
         rows.append(run_relay_case(Path(directory) / "relay-quoted-command", parent,
                                    quoted_relay=True))
         rows.append(run_prelock_replacement_case(Path(directory) / "pre-lock", parent))
+        for case in ['commit', 'cancel-after-ack', 'wrong-origin', 'wrong-version',
+                     'wrong-channel', 'wrong-hash', 'wrong-scope', 'wrong-expected-directory']:
+            rows.append(run_case(Path(directory) / ('machine-' + case), parent, case,
+                                 machine=True, version='0.28.0-alpha.14', channel='alpha'))
         # Exercise the actual Rust launcher, kernel peer authentication, byte and
         # directory locks, COMMIT/ACK/exit authorization against production NSIS.
         subprocess.run(["cargo", "build", "--locked", "--manifest-path", str(ROOT / "src-tauri/Cargo.toml"), "--example", "recovery_transport_probe"], check=True, timeout=300)
@@ -483,6 +601,7 @@ def main() -> None:
         if not marker.exists():
             raise RuntimeError("Production transport did not permit the harmless post-exit marker")
         rows.append({"case": "production-rust-to-nsis-transport", "passed": True, "signature_or_uac_acceptance": False})
+        rows.append(run_machine_transport_case(Path(directory) / 'machine-transport', probe))
     print(json.dumps({"native_recovery_policy": rows}, indent=2))
 
 

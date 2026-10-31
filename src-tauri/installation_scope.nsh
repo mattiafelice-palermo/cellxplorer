@@ -11,7 +11,6 @@ Var CxManufacturerDir
 Var CxRequestedScope
 Var CxExpectedDir
 Var CxElevated
-Var CxExisting
 Var CxRestartArgs
 Var CxScopeButton
 
@@ -149,7 +148,7 @@ Function ${PREFIX}CxNormalizeDirectory
       StrCpy $2 ""
     ${Else}
       ${If} $1 == ':'
-      ${OrIf} $1 == '$'
+      ${OrIf} $1 == '$$'
       ${OrIf} $1 == '$\r'
       ${OrIf} $1 == '$\n'
       ${OrIf} $1 == '$\t'

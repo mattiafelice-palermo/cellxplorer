@@ -11,10 +11,12 @@ from uuid import uuid4
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import shutil
 import sqlite3
+import struct
 import threading
 from contextlib import closing
 from dataclasses import dataclass, replace
@@ -22,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import func
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import Session
 
 from ..config import APP_DATA_DIR, APP_VERSION, IMPORT_DIR, INSTALL_INSTANCE_ID
@@ -66,6 +68,8 @@ MANIFEST_SCHEMA_VERSION = 1
 STAGE_TOKEN_BYTES = 16
 STAGE_RETENTION_HOURS = 24
 COPY_CHUNK_SIZE = 1024 * 1024
+RESET_OPERATION = "reset-alpha"
+_RESET_OPERATIONAL_TABLES = frozenset({"alembic_version", "app_sessions", "activity_events"})
 
 _TOKEN_PATTERN = re.compile(rf"^[0-9a-f]{{{STAGE_TOKEN_BYTES * 2}}}$")
 
@@ -696,6 +700,94 @@ def _source_identity(path: Path) -> tuple[str, int, dict[str, tuple[str, int]]]:
     return _sha256_file(path), path.stat().st_mtime_ns, sidecars
 
 
+def _reset_hash_field(digest, value: bytes) -> None:
+    digest.update(len(value).to_bytes(8, "little"))
+    digest.update(value)
+
+
+def alpha_reset_library_fingerprint(path: Path) -> str:
+    """Logical scientific snapshot, stable across WAL checkpoint/session shutdown.
+
+    Keep the typed, length-prefixed encoding aligned with beta_bootstrap.rs.
+    Operational activity/session rows do not invalidate a confirmation; actual
+    library edits and database replacement do. Sort row digests, not entire rows.
+    """
+    digest = hashlib.sha256()
+    _reset_hash_field(digest, b"alpha-reset-library-v1")
+    with closing(_connect_readonly(path)) as connection:
+        connection.execute("BEGIN")
+        instance = connection.execute(
+            "SELECT value FROM app_settings WHERE key=?", (DATABASE_INSTANCE_ID_KEY,)
+        ).fetchone()
+        _reset_hash_field(digest, (str(instance[0]) if instance else "").encode("utf-8"))
+        tables = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name COLLATE BINARY"
+        ).fetchall()
+        for table, schema in tables:
+            if table in _RESET_OPERATIONAL_TABLES:
+                continue
+            _reset_hash_field(digest, str(table).encode("utf-8"))
+            _reset_hash_field(digest, str(schema or "").encode("utf-8"))
+            quoted = '"' + str(table).replace('"', '""') + '"'
+            rows = []
+            for row in connection.execute(f"SELECT * FROM {quoted}"):
+                row_digest = hashlib.sha256()
+                for value in row:
+                    if value is None:
+                        tag, encoded = b"n", b""
+                    elif isinstance(value, int):
+                        tag, encoded = b"i", struct.pack("<q", value)
+                    elif isinstance(value, float):
+                        tag, encoded = b"f", struct.pack("<d", value)
+                    elif isinstance(value, bytes):
+                        tag, encoded = b"b", value
+                    else:
+                        tag, encoded = b"t", str(value).encode("utf-8")
+                    row_digest.update(tag)
+                    _reset_hash_field(row_digest, encoded)
+                rows.append(row_digest.digest())
+            _reset_hash_field(digest, len(rows).to_bytes(8, "little"))
+            for row in sorted(rows):
+                _reset_hash_field(digest, row)
+    return digest.hexdigest()
+
+
+def alpha_reset_imports_fingerprint(root: Path) -> str:
+    digest = hashlib.sha256()
+    _reset_hash_field(digest, b"alpha-reset-imports-v1")
+    imports = root / "imports"
+    records = []
+    if imports.exists():
+        for current, directories, files in os.walk(imports, followlinks=False):
+            for name in [*directories, *files]:
+                path = Path(current) / name
+                info = path.lstat()
+                if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+                    raise BetaBootstrapValidation("Alpha reset cannot traverse linked managed imports.")
+                if not _path_is_under(path, root):
+                    raise BetaBootstrapValidation("An Alpha managed import escaped its data root.")
+                if path.is_file():
+                    records.append((path.relative_to(imports).as_posix(), info.st_size, info.st_mtime_ns))
+    for relative, size, modified in sorted(records):
+        for value in (relative, str(size), str(modified)):
+            _reset_hash_field(digest, value.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _validate_alpha_reset_root(root: Path) -> None:
+    for other in (stable_library_root(), beta_library_root()):
+        if _path_is_under(root, other) or _path_is_under(other, root):
+            raise BetaBootstrapValidation("Alpha reset must not overlap the Stable or Beta data root.")
+        other_db = other / "cellxplorer.db"
+        live_db = root / "cellxplorer.db"
+        if live_db.exists() and other_db.exists() and live_db.samefile(other_db):
+            raise BetaBootstrapValidation("Alpha reset cannot replace a shared channel database.")
+    for path in (root, root / "bootstrap", root / "imports", root / "backups", root / "cellxplorer.db"):
+        if path.exists() and (path.is_symlink() or getattr(path.lstat(), "st_file_attributes", 0) & 0x400):
+            raise BetaBootstrapValidation("Alpha reset cannot use linked library paths.")
+
+
 def _remove_sqlite_sidecars(db_path: Path) -> None:
     """Drop `-wal`/`-shm`/`-journal` remnants so the stage holds only the files the apply expects."""
     for suffix in ("-wal", "-shm", "-journal"):
@@ -1021,6 +1113,9 @@ def build_alpha_status(db: Session) -> dict[str, Any]:
     acknowledged_for_install = _marker_acknowledges_for(ALPHA_DESTINATION, marker)
     needs_choice = setup_error is None and not acknowledged_for_install
     outstanding = _reconcile_active_stage_token(APP_DATA_DIR) or find_outstanding_stage_token(APP_DATA_DIR)
+    outstanding_manifest = (
+        _read_stage_manifest(_bootstrap_root_for(APP_DATA_DIR) / outstanding) if outstanding else None
+    )
     scientific_preparation = get_scientific_preparation_state(db)
 
     if setup_error:
@@ -1039,6 +1134,7 @@ def build_alpha_status(db: Session) -> dict[str, Any]:
         "needsChoice": needs_choice,
         "alphaPristine": pristine,
         "alphaHasExistingLibrary": not pristine,
+        "outstandingStageOperation": (outstanding_manifest or {}).get("operation", "copy") if outstanding else None,
         "acknowledgedAppVersion": marker.get("appVersion") if marker else None,
         "acknowledgedInstallInstanceId": marker.get("installInstanceId") if marker else None,
         "sources": [_source_status(inspection) for inspection in inspections],
@@ -1076,6 +1172,76 @@ def start_alpha_empty_library(db: Session, data_root: Path | None = None) -> dic
         )
     payload = write_alpha_marker("empty", data_root=root)
     return {"decision": payload["decision"], "restartRequired": False}
+
+
+def stage_alpha_empty_library(
+    db: Session, *, confirm_data_loss: bool, data_root: Path | None = None,
+) -> dict[str, Any]:
+    """Stage a new empty database; never clear the open live database in place."""
+    from .database_migrations import migrate_database
+
+    global _active_stage_token
+    if resolve_app_channel() != "alpha":
+        raise BetaBootstrapValidation("Alpha reset is only available in the Alpha channel.")
+    if confirm_data_loss is not True:
+        raise BetaBootstrapValidation("Acknowledge that starting empty clears the current Alpha library.")
+    root = data_root or APP_DATA_DIR
+    _validate_alpha_reset_root(root)
+    if _marker_acknowledges_for(ALPHA_DESTINATION, read_alpha_marker(root)):
+        raise BetaBootstrapConflict("Alpha setup has already completed.")
+    _reconcile_active_stage_token(root)
+    if find_outstanding_stage_token(root) is not None:
+        raise BetaBootstrapConflict("A library change is already staged. Discard it before starting empty.")
+    before = alpha_reset_library_fingerprint(root / "cellxplorer.db")
+    imports_before = alpha_reset_imports_fingerprint(root)
+    with _stage_lock:
+        if _active_stage_token is not None:
+            raise BetaBootstrapConflict("An Alpha library change is already in progress.")
+        token = secrets.token_hex(STAGE_TOKEN_BYTES)
+        stage_dir = _bootstrap_root_for(root) / token
+        stage_dir.mkdir(parents=True, exist_ok=False)
+        (_bootstrap_root_for(root) / LOCK_NAME).write_text(token + "\n", encoding="utf-8")
+        _active_stage_token = token
+    staged_db = stage_dir / STAGED_DB_NAME
+    try:
+        engine = create_engine(f"sqlite:///{staged_db.as_posix()}")
+        try:
+            migration = migrate_database(engine, staged_db)
+            if not migration.compatible:
+                raise BetaBootstrapValidation("A compatible empty Alpha database could not be prepared.")
+        finally:
+            engine.dispose()
+        with closing(sqlite3.connect(staged_db)) as connection:
+            connection.execute(
+                "INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                (DATABASE_INSTANCE_ID_KEY, str(uuid4()), _utc_now_iso()),
+            )
+            connection.commit()
+            connection.execute("PRAGMA journal_mode=DELETE")
+        _remove_sqlite_sidecars(staged_db)
+        (stage_dir / "imports").mkdir()
+        if before != alpha_reset_library_fingerprint(root / "cellxplorer.db") or imports_before != alpha_reset_imports_fingerprint(root):
+            raise BetaBootstrapConflict("The Alpha library changed while preparing the reset. Confirm a new reset.")
+        _atomic_write_json(stage_dir / MANIFEST_NAME, {
+            "schemaVersion": MANIFEST_SCHEMA_VERSION, "token": token,
+            "operation": RESET_OPERATION, "confirmDataLoss": True,
+            "targetDataRoot": str(root.resolve()),
+            "resetTargetLibraryFingerprint": before,
+            "resetTargetImportsFingerprint": imports_before,
+            "sourceChannel": "empty", "sourceDatabaseInstanceId": None,
+            "sourceSchemaRevision": migration.schema_revision,
+            "stagedDatabase": STAGED_DB_NAME,
+            "stagedDatabaseSha256": _sha256_file(staged_db),
+            "stagedDatabaseSize": staged_db.stat().st_size,
+            "copiedImports": 0, "imports": [], "externalSourcePaths": 0,
+            "replaceExistingAlpha": True, "createdAt": _utc_now_iso(),
+        })
+        return {"token": token, "operation": RESET_OPERATION, "restartRequired": True}
+    except Exception:
+        clear_alpha_stage_lock(token, root)
+        _remove_stage_directory(stage_dir)
+        raise
 
 
 def use_current_library(db: Session) -> dict[str, Any]:

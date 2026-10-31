@@ -92,9 +92,11 @@ def compile_template(channel: str, output: Path) -> Path:
         resources=[], resources_dirs=[], resources_ancestors=[], binaries=[], file_associations=[])
     rendered = render_template(source, values)
     path = output / f"{channel}.nsi"; path.write_text(rendered, encoding="utf-8")
-    process = subprocess.run([str(compiler), "/V2", str(path)], cwd=output, text=True, capture_output=True)
+    process = subprocess.run([str(compiler), "/INPUTCHARSET", "UTF8", "/V2", str(path)], cwd=output, text=True, capture_output=True)
     (output / f"{channel}-compile.log").write_text(process.stdout + process.stderr, encoding="utf-8")
     if process.returncode: raise RuntimeError(process.stdout + process.stderr)
+    if 'warning 6000:' in (process.stdout + process.stderr).lower():
+        raise RuntimeError('Unresolved NSIS variable/constant in production template:\n' + process.stdout + process.stderr)
     return Path(values["out_file"])
 
 
@@ -224,9 +226,11 @@ Section Uninstall
 SectionEnd
 '''
     source = output / "policy-check.nsi"; source.write_text(fixture, encoding="utf-8")
-    compiled = subprocess.run([str(nsis_compiler()), "/V2", str(source)], cwd=output, text=True, capture_output=True)
+    compiled = subprocess.run([str(nsis_compiler()), "/INPUTCHARSET", "UTF8", "/V2", str(source)], cwd=output, text=True, capture_output=True)
     (output / "policy-compile.log").write_text(compiled.stdout + compiled.stderr, encoding="utf-8")
     if compiled.returncode: raise RuntimeError(compiled.stdout + compiled.stderr)
+    if 'warning 6000:' in (compiled.stdout + compiled.stderr).lower():
+        raise RuntimeError('Unresolved NSIS variable/constant in scope fixture:\n' + compiled.stdout + compiled.stderr)
     import winreg
     def cleanup():
         # Cleanup also runs if NSIS aborts before its GUI lifecycle callback.

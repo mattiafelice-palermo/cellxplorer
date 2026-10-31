@@ -28,6 +28,7 @@ import {
   mergeCheckResult,
   mockRelease,
   normalizeUpdaterError,
+  describeInstallFailure,
   notificationActivationAction,
   parseDevUpdateMock,
   parseReleaseNoteLines,
@@ -253,9 +254,9 @@ test("installation failure marks lifecycleMayNeedRestart", () => {
   }
 });
 
-test("application handoff has explicit passive-progress copy and remains protected", () => {
-  assert.equal(UPDATE_APPLYING_LABEL, "Applying update…");
-  assert.match(UPDATE_APPLYING_DESCRIPTION, /passive updater window/i);
+test("application handoff describes preparation truthfully and remains protected", () => {
+  assert.equal(UPDATE_APPLYING_LABEL, "Preparing update…");
+  assert.match(UPDATE_APPLYING_DESCRIPTION, /stays open until preparation succeeds/i);
   const applying = { status: "launching" as const, release: mockRelease("0.16.0") };
   assert.equal(isProtectedUpdateFlow(applying), true);
   assert.equal(canDismissUpdateModal(applying), false);
@@ -320,6 +321,21 @@ test("normalizeUpdaterError preserves strings and Error messages", () => {
   assert.equal(normalizeUpdaterError(new Error("boom"), "fallback"), "boom");
   assert.equal(normalizeUpdaterError({ nested: true }, "fallback"), "fallback");
   assert.equal(normalizeUpdaterError("   ", "fallback"), "fallback");
+});
+
+test("only typed aborted native handoff permits terminal failure dismissal", () => {
+  const terminal = { message: "  Preparation stopped. ", handoff: "aborted", backendStopped: false };
+  assert.deepEqual(describeInstallFailure(terminal), { message: "Preparation stopped.", lifecycleMayNeedRestart: false });
+  const terminalState = { status: "error" as const, phase: "install" as const,
+    release: mockRelease("0.16.0"), ...describeInstallFailure(terminal) };
+  assert.equal(isUpdateMenuDisabled(terminalState), false);
+  assert.equal(getUpdateMenuLabel(terminalState), "Review failed update to v0.16.0");
+  assert.equal(shouldSkipAutomaticCheck(terminalState, false), true);
+  for (const error of [new Error("IPC disconnected"), "bridge rejected", null, {},
+    { ...terminal, backendStopped: true }, { ...terminal, handoff: "pending" },
+    { ...terminal, backendStopped: "false" }, { ...terminal, message: " " }]) {
+    assert.equal(describeInstallFailure(error).lifecycleMayNeedRestart, true);
+  }
 });
 
 test("update-check failures explain the cause and useful recovery", () => {
@@ -436,6 +452,14 @@ test("development mock parsing stays dev-only", () => {
 });
 
 test("modal dismissal rules follow download and install phases", () => {
+  assert.equal(canDismissUpdateModal({
+    status: "error", phase: "install", message: "Preparation stopped before handoff",
+    release: mockRelease("0.16.0"), lifecycleMayNeedRestart: false,
+  }), true);
+  assert.equal(canDismissUpdateModal({
+    status: "error", phase: "install", message: "Unknown lifecycle",
+    release: mockRelease("0.16.0"),
+  }), false);
   assert.equal(
     canDismissUpdateModal({ status: "available", release: mockRelease("0.16.0") }),
     true,

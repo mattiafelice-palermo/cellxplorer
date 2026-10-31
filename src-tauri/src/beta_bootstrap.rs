@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -20,6 +21,7 @@ pub const LIVE_DB_NAME: &str = "cellxplorer.db";
 pub const SCIENTIFIC_PREPARATION_KEY: &str = "beta.scientific_preparation";
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const MARKER_SCHEMA_VERSION: u32 = 1;
+const RESET_OPERATION: &str = "reset-alpha";
 
 #[derive(Debug, Deserialize)]
 struct ImportInventoryEntry {
@@ -53,6 +55,16 @@ struct BootstrapManifest {
     replace_existing_alpha: bool,
     #[serde(rename = "sourceChannel", default)]
     source_channel: Option<String>,
+    #[serde(default)]
+    operation: Option<String>,
+    #[serde(rename = "confirmDataLoss", default)]
+    confirm_data_loss: bool,
+    #[serde(rename = "targetDataRoot", default)]
+    target_data_root: Option<PathBuf>,
+    #[serde(rename = "resetTargetLibraryFingerprint", default)]
+    reset_target_library_fingerprint: Option<String>,
+    #[serde(rename = "resetTargetImportsFingerprint", default)]
+    reset_target_imports_fingerprint: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -70,6 +82,7 @@ pub struct StagePaths {
     pub staged_imports: PathBuf,
     pub source_database_instance_id: Option<String>,
     pub source_schema_revision: Option<String>,
+    pub is_alpha_reset: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -489,11 +502,201 @@ fn collect_staged_files(stage_imports: &Path) -> Result<BTreeMap<String, PathBuf
     Ok(found)
 }
 
+fn reset_hash_field(digest: &mut Sha256, value: &[u8]) {
+    digest.update((value.len() as u64).to_le_bytes());
+    digest.update(value);
+}
+
+fn reset_library_tables(
+    connection: &rusqlite::Connection,
+) -> Result<Vec<(String, String)>, String> {
+    let mut statement = connection.prepare("SELECT name, coalesce(sql,'') FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name COLLATE BINARY").map_err(|e| e.to_string())?;
+    let result = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(result
+        .into_iter()
+        .filter(|(name, _)| {
+            !matches!(
+                name.as_str(),
+                "alembic_version" | "app_sessions" | "activity_events"
+            )
+        })
+        .collect())
+}
+
+fn alpha_reset_library_fingerprint(path: &Path) -> Result<String, String> {
+    use rusqlite::types::ValueRef;
+    reject_symlink(path)?;
+    let connection =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch("BEGIN")
+        .map_err(|e| e.to_string())?;
+    let mut digest = Sha256::new();
+    reset_hash_field(&mut digest, b"alpha-reset-library-v1");
+    let instance = connection.query_row(
+        "SELECT value FROM app_settings WHERE key='database.instance_id'",
+        [],
+        |r| r.get::<_, String>(0),
+    );
+    let instance = match instance {
+        Ok(value) => value,
+        Err(rusqlite::Error::QueryReturnedNoRows) => String::new(),
+        Err(error) => return Err(error.to_string()),
+    };
+    reset_hash_field(&mut digest, instance.as_bytes());
+    for (table, schema) in reset_library_tables(&connection)? {
+        reset_hash_field(&mut digest, table.as_bytes());
+        reset_hash_field(&mut digest, schema.as_bytes());
+        let quoted = table.replace('"', "\"\"");
+        let mut statement = connection
+            .prepare(&format!("SELECT * FROM \"{quoted}\""))
+            .map_err(|e| e.to_string())?;
+        let columns = statement.column_count();
+        let mut rows = statement.query([]).map_err(|e| e.to_string())?;
+        let mut row_digests = Vec::new();
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let mut row_digest = Sha256::new();
+            for column in 0..columns {
+                match row.get_ref(column).map_err(|e| e.to_string())? {
+                    ValueRef::Null => {
+                        row_digest.update(b"n");
+                        reset_hash_field(&mut row_digest, b"");
+                    }
+                    ValueRef::Integer(value) => {
+                        row_digest.update(b"i");
+                        reset_hash_field(&mut row_digest, &value.to_le_bytes());
+                    }
+                    ValueRef::Real(value) => {
+                        row_digest.update(b"f");
+                        reset_hash_field(&mut row_digest, &value.to_le_bytes());
+                    }
+                    ValueRef::Text(value) => {
+                        row_digest.update(b"t");
+                        reset_hash_field(&mut row_digest, value);
+                    }
+                    ValueRef::Blob(value) => {
+                        row_digest.update(b"b");
+                        reset_hash_field(&mut row_digest, value);
+                    }
+                }
+            }
+            row_digests.push(row_digest.finalize().to_vec());
+        }
+        reset_hash_field(&mut digest, &(row_digests.len() as u64).to_le_bytes());
+        row_digests.sort();
+        for row in row_digests {
+            reset_hash_field(&mut digest, &row);
+        }
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn reject_reset_link(path: &Path) -> Result<(), String> {
+    reject_symlink(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if fs::symlink_metadata(path)
+            .map_err(|e| e.to_string())?
+            .file_attributes()
+            & 0x400
+            != 0
+        {
+            return Err("Alpha reset cannot use linked library paths.".into());
+        }
+    }
+    Ok(())
+}
+
+fn alpha_reset_imports_fingerprint(root: &Path) -> Result<String, String> {
+    fn walk(
+        root: &Path,
+        base: &Path,
+        current: &Path,
+        files: &mut BTreeMap<String, PathBuf>,
+    ) -> Result<(), String> {
+        reject_reset_link(current)?;
+        ensure_within_root(current, root)?;
+        for entry in fs::read_dir(current).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            reject_reset_link(&path)?;
+            ensure_within_root(&path, root)?;
+            if path.is_dir() {
+                walk(root, base, &path, files)?;
+            } else if path.is_file() {
+                let relative = path
+                    .strip_prefix(base)
+                    .map_err(|e| e.to_string())?
+                    .to_str()
+                    .ok_or("An Alpha import path is not valid Unicode.")?
+                    .replace('\\', "/");
+                files.insert(relative, path);
+            }
+        }
+        Ok(())
+    }
+    let mut digest = Sha256::new();
+    reset_hash_field(&mut digest, b"alpha-reset-imports-v1");
+    let imports = root.join("imports");
+    let mut files = BTreeMap::new();
+    if imports.exists() {
+        walk(root, &imports, &imports, &mut files)?;
+    }
+    for (relative, path) in files {
+        let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
+        let modified = metadata.modified().map_err(|e| e.to_string())?;
+        let nanos = match modified.duration_since(std::time::UNIX_EPOCH) {
+            Ok(value) => value.as_nanos() as i128,
+            Err(error) => -(error.duration().as_nanos() as i128),
+        };
+        for value in [relative, metadata.len().to_string(), nanos.to_string()] {
+            reset_hash_field(&mut digest, value.as_bytes());
+        }
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn verify_alpha_reset_target(
+    root: &Path,
+    manifest: &BootstrapManifest,
+    confirm_data_loss: bool,
+) -> Result<(), String> {
+    if !confirm_data_loss || !manifest.confirm_data_loss {
+        return Err("Acknowledge Alpha data loss before starting empty.".into());
+    }
+    reject_reset_link(root)?;
+    let expected_root = manifest
+        .target_data_root
+        .as_ref()
+        .ok_or("The Alpha reset does not name its target.")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if root.canonicalize().map_err(|e| e.to_string())? != expected_root {
+        return Err("The Alpha reset belongs to a different data root.".into());
+    }
+    if manifest.reset_target_library_fingerprint.as_deref()
+        != Some(alpha_reset_library_fingerprint(&root.join(LIVE_DB_NAME))?.as_str())
+        || manifest.reset_target_imports_fingerprint.as_deref()
+            != Some(alpha_reset_imports_fingerprint(root)?.as_str())
+    {
+        return Err("The Alpha library changed after reset confirmation. Discard this stage and confirm a new reset.".into());
+    }
+    Ok(())
+}
+
 fn resolve_and_verify_stage_for_channel(
     root: &Path,
     token: &str,
     confirm_replace_existing: bool,
     channel: BootstrapChannel,
+    allow_alpha_reset: bool,
 ) -> Result<StagePaths, String> {
     validate_stage_token(token).map_err(token_error_message)?;
     fs::create_dir_all(root).map_err(|error| error.to_string())?;
@@ -521,7 +724,20 @@ fn resolve_and_verify_stage_for_channel(
     if manifest.copied_imports != manifest.imports.len() {
         return Err("The staged import inventory count does not match.".to_string());
     }
-    if channel == BootstrapChannel::Alpha {
+    let is_alpha_reset = manifest.operation.as_deref() == Some(RESET_OPERATION);
+    if is_alpha_reset {
+        if channel != BootstrapChannel::Alpha
+            || !allow_alpha_reset
+            || manifest.source_channel.as_deref() != Some("empty")
+        {
+            return Err("An Alpha reset requires its explicit start-empty action.".into());
+        }
+        verify_alpha_reset_target(root, &manifest, confirm_replace_existing)?;
+    } else if manifest.operation.is_some() {
+        return Err("The staged library operation is unsupported.".into());
+    } else if allow_alpha_reset {
+        return Err("This stage is not an Alpha empty-library reset.".into());
+    } else if channel == BootstrapChannel::Alpha {
         if !matches!(manifest.source_channel.as_deref(), Some("stable" | "beta")) {
             return Err("The Alpha staged copy does not name a valid source channel.".to_string());
         }
@@ -538,6 +754,65 @@ fn resolve_and_verify_stage_for_channel(
         return Err("The staged database checksum does not match the manifest.".to_string());
     }
     sqlite_integrity_ok(&staged_db)?;
+    if is_alpha_reset {
+        let connection = rusqlite::Connection::open_with_flags(
+            &staged_db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|e| e.to_string())?;
+        let instance: String = connection
+            .query_row(
+                "SELECT value FROM app_settings WHERE key='database.instance_id'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let live = rusqlite::Connection::open_with_flags(
+            root.join(LIVE_DB_NAME),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|e| e.to_string())?;
+        let old_instance = live
+            .query_row(
+                "SELECT value FROM app_settings WHERE key='database.instance_id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if instance.is_empty() || old_instance.as_deref() == Some(instance.as_str()) {
+            return Err("An empty Alpha library must have a new database identity.".into());
+        }
+        let unexpected_settings: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM app_settings WHERE key <> 'database.instance_id'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if unexpected_settings != 0 {
+            return Err(
+                "An empty Alpha reset cannot contain existing application settings.".into(),
+            );
+        }
+        for (table, _) in reset_library_tables(&connection)? {
+            if table == "entity_id_sequences" || table == "app_settings" {
+                continue;
+            }
+            let quoted = table.replace('"', "\"\"");
+            let count: i64 = connection
+                .query_row(&format!("SELECT count(*) FROM \"{quoted}\""), [], |r| {
+                    r.get(0)
+                })
+                .map_err(|e| e.to_string())?;
+            if count != 0 {
+                return Err("The staged Alpha reset database is not empty.".into());
+            }
+        }
+        if manifest.copied_imports != 0 {
+            return Err("An empty Alpha reset cannot contain managed imports.".into());
+        }
+    }
 
     let staged_imports = stage_dir.join("imports");
     let found = collect_staged_files(&staged_imports)?;
@@ -587,6 +862,7 @@ fn resolve_and_verify_stage_for_channel(
         staged_imports,
         source_database_instance_id: manifest.source_database_instance_id,
         source_schema_revision: manifest.source_schema_revision,
+        is_alpha_reset,
     })
 }
 
@@ -600,6 +876,7 @@ fn resolve_and_verify_stage_with_confirmation(
         token,
         confirm_replace_existing_beta,
         BootstrapChannel::Beta,
+        false,
     )
 }
 
@@ -617,7 +894,46 @@ pub fn resolve_and_verify_alpha_stage(
         token,
         confirm_replace_existing_library,
         BootstrapChannel::Alpha,
+        false,
     )
+}
+
+pub fn validate_alpha_empty_stage_for_activation(
+    root: &Path,
+    token: &str,
+    confirm_data_loss: bool,
+) -> Result<StagePaths, String> {
+    resolve_and_verify_stage_for_channel(
+        root,
+        token,
+        confirm_data_loss,
+        BootstrapChannel::Alpha,
+        true,
+    )
+}
+
+pub fn validate_alpha_reset_destination(
+    root: &Path,
+    forbidden_roots: &[PathBuf],
+) -> Result<(), String> {
+    reject_reset_link(root)?;
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    for other in forbidden_roots {
+        let other = if other.exists() {
+            other.canonicalize().map_err(|e| e.to_string())?
+        } else {
+            other
+                .parent()
+                .ok_or("Invalid protected channel root.")?
+                .canonicalize()
+                .map_err(|e| e.to_string())?
+                .join(other.file_name().ok_or("Invalid protected channel root.")?)
+        };
+        if root.starts_with(&other) || other.starts_with(&root) {
+            return Err("Alpha reset must not overlap the Stable or Beta data root.".into());
+        }
+    }
+    Ok(())
 }
 
 fn write_bootstrap_marker_for_channel(
@@ -801,9 +1117,63 @@ pub fn activate_staged_copy_for_channel(
     channel: BootstrapChannel,
 ) -> Result<(), String> {
     let live_db = root.join(LIVE_DB_NAME);
-    let rollback_db = root.join(ROLLBACK_DB_NAME);
     let live_imports = root.join("imports");
-    let rollback_imports = root.join(IMPORTS_ROLLBACK_NAME);
+    let reset_backup = if paths.is_alpha_reset {
+        if channel != BootstrapChannel::Alpha {
+            return Err("Only Alpha supports an explicit empty-library reset.".into());
+        }
+        let raw =
+            fs::read_to_string(paths.stage_dir.join(MANIFEST_NAME)).map_err(|e| e.to_string())?;
+        let manifest: BootstrapManifest = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        if manifest.operation.as_deref() != Some(RESET_OPERATION) {
+            return Err("Invalid Alpha reset operation.".into());
+        }
+        verify_alpha_reset_target(root, &manifest, true)?;
+        // Flush the stopped backend's committed WAL into the recoverable backup.
+        let connection = rusqlite::Connection::open_with_flags(
+            &live_db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
+        .map_err(|e| e.to_string())?;
+        let busy: i64 = connection
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if busy != 0 {
+            return Err("The Alpha database is still in use; the reset was not applied.".into());
+        }
+        drop(connection);
+        let backups = root.join("backups");
+        if backups.exists() {
+            reject_reset_link(&backups)?;
+            ensure_within_root(&backups, root)?;
+        } else {
+            fs::create_dir(&backups).map_err(|e| e.to_string())?;
+        }
+        let token = paths
+            .stage_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid Alpha reset token.")?;
+        validate_stage_token(token).map_err(token_error_message)?;
+        let backup = backups.join(format!("alpha-reset-{token}"));
+        fs::create_dir(&backup).map_err(|e| e.to_string())?;
+        let marker = root.join(ALPHA_MARKER_NAME);
+        if marker.is_file() {
+            reject_reset_link(&marker)?;
+            fs::copy(&marker, backup.join(ALPHA_MARKER_NAME)).map_err(|e| e.to_string())?;
+        }
+        Some(backup)
+    } else {
+        None
+    };
+    let rollback_db = reset_backup
+        .as_ref()
+        .map(|path| path.join(LIVE_DB_NAME))
+        .unwrap_or_else(|| root.join(ROLLBACK_DB_NAME));
+    let rollback_imports = reset_backup
+        .as_ref()
+        .map(|path| path.join("imports"))
+        .unwrap_or_else(|| root.join(IMPORTS_ROLLBACK_NAME));
 
     if rollback_db.exists() {
         remove_tree(&rollback_db)?;
@@ -818,7 +1188,12 @@ pub fn activate_staged_copy_for_channel(
     remove_sqlite_sidecars(&live_db);
 
     if live_imports.exists() {
-        fs::rename(&live_imports, &rollback_imports).map_err(|error| error.to_string())?;
+        if let Err(error) = fs::rename(&live_imports, &rollback_imports) {
+            if rollback_db.is_file() {
+                let _ = fs::rename(&rollback_db, &live_db);
+            }
+            return Err(error.to_string());
+        }
     }
 
     let mut moved_db = false;
@@ -841,6 +1216,15 @@ pub fn activate_staged_copy_for_channel(
                 install_instance_id,
                 paths.source_database_instance_id.as_deref(),
                 paths.source_schema_revision.as_deref(),
+            ),
+            BootstrapChannel::Alpha if paths.is_alpha_reset => write_bootstrap_marker_for_channel(
+                root,
+                BootstrapChannel::Alpha,
+                "empty",
+                install_instance_id,
+                None,
+                None,
+                None,
             ),
             BootstrapChannel::Alpha => match staged_source_channel(&paths.stage_dir) {
                 Ok(Some(source_channel)) => write_alpha_bootstrap_marker(
@@ -876,12 +1260,19 @@ pub fn activate_staged_copy_for_channel(
             let _ = fs::rename(&rollback_db, &live_db);
         }
         restore_imports(root, &rollback_imports, &live_imports);
+        if let Some(backup) = &reset_backup {
+            if backup.join(ALPHA_MARKER_NAME).is_file() {
+                let _ = fs::copy(backup.join(ALPHA_MARKER_NAME), root.join(ALPHA_MARKER_NAME));
+            }
+        }
         return Err(error);
     }
 
-    let _ = remove_tree(&rollback_db);
-    remove_sqlite_sidecars(&rollback_db);
-    let _ = remove_tree(&rollback_imports);
+    if reset_backup.is_none() {
+        let _ = remove_tree(&rollback_db);
+        remove_sqlite_sidecars(&rollback_db);
+        let _ = remove_tree(&rollback_imports);
+    }
     clear_stage_lock(root);
     Ok(())
 }
@@ -1027,6 +1418,234 @@ mod tests {
                  INSERT INTO source_files DEFAULT VALUES;",
             )
             .unwrap();
+    }
+
+    fn prepare_alpha_reset(root: &Path, token: &str) -> PathBuf {
+        let live = root.join(LIVE_DB_NAME);
+        {
+            let connection = rusqlite::Connection::open(&live).unwrap();
+            connection.execute_batch("CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT); INSERT INTO app_settings VALUES ('database.instance_id','old-alpha'); CREATE TABLE probe(value TEXT); INSERT INTO probe VALUES ('old data');").unwrap();
+        }
+        fs::create_dir_all(root.join("imports")).unwrap();
+        fs::write(root.join("imports/old.nda"), b"keep managed bytes").unwrap();
+        let stage = root.join(BOOTSTRAP_SUBDIR).join(token);
+        fs::create_dir_all(stage.join("imports")).unwrap();
+        let staged = stage.join(STAGED_DB_NAME);
+        {
+            let connection = rusqlite::Connection::open(&staged).unwrap();
+            connection.execute_batch("CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT); INSERT INTO app_settings VALUES ('database.instance_id','new-alpha'); CREATE TABLE probe(value TEXT);").unwrap();
+        }
+        write_alpha_manifest(&stage, token, &staged, "empty", &[]);
+        let manifest_path = stage.join(MANIFEST_NAME);
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        payload["operation"] = serde_json::json!(RESET_OPERATION);
+        payload["confirmDataLoss"] = serde_json::json!(true);
+        payload["targetDataRoot"] =
+            serde_json::json!(root.canonicalize().unwrap().to_string_lossy());
+        payload["replaceExistingAlpha"] = serde_json::json!(true);
+        payload["resetTargetLibraryFingerprint"] =
+            serde_json::json!(alpha_reset_library_fingerprint(&live).unwrap());
+        payload["resetTargetImportsFingerprint"] =
+            serde_json::json!(alpha_reset_imports_fingerprint(root).unwrap());
+        fs::write(manifest_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+        stage
+    }
+
+    #[test]
+    fn alpha_reset_typed_fingerprint_matches_python_golden() {
+        let (_dir, root) = temp_root();
+        let path = root.join("golden.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection.execute_batch("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT); CREATE TABLE probe (n, i, f, t, b); INSERT INTO app_settings VALUES ('database.instance_id','test-reset-instance');").unwrap();
+            connection
+                .execute(
+                    "INSERT INTO probe VALUES (NULL, ?1, ?2, ?3, ?4)",
+                    rusqlite::params![-42_i64, 0.125_f64, "Ω\0tail", vec![0_u8, 255]],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO probe VALUES (NULL, ?1, ?2, ?3, ?4)",
+                    rusqlite::params![7_i64, 0.5_f64, "second", Vec::<u8>::new()],
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            alpha_reset_library_fingerprint(&path).unwrap(),
+            "dc4e487bd8eafce82acbd6b02dc5ad60847619426f9d5286e2dd26f4f21ac700"
+        );
+    }
+
+    #[test]
+    fn alpha_reset_requires_both_acknowledgements_and_explicit_action() {
+        let (_dir, root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        let stage = prepare_alpha_reset(&root, token);
+        assert!(validate_alpha_empty_stage_for_activation(&root, token, false).is_err());
+        assert!(validate_alpha_staged_copy_for_activation(&root, token, true).is_err());
+        assert!(validate_alpha_empty_stage_for_activation(&root, token, true).is_ok());
+        let manifest_path = stage.join(MANIFEST_NAME);
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        payload["confirmDataLoss"] = serde_json::json!(false);
+        fs::write(manifest_path, serde_json::to_vec(&payload).unwrap()).unwrap();
+        assert!(validate_alpha_empty_stage_for_activation(&root, token, true).is_err());
+    }
+
+    #[test]
+    fn alpha_reset_rejects_library_and_import_changes_after_confirmation() {
+        for change_imports in [false, true] {
+            let (_dir, root) = temp_root();
+            let token = "0123456789abcdef0123456789abcdef";
+            prepare_alpha_reset(&root, token);
+            if change_imports {
+                fs::write(root.join("imports/new.nda"), b"new bytes").unwrap();
+            } else {
+                let connection = rusqlite::Connection::open(root.join(LIVE_DB_NAME)).unwrap();
+                connection
+                    .execute("UPDATE probe SET value='new edit'", [])
+                    .unwrap();
+            }
+            let error = validate_alpha_empty_stage_for_activation(&root, token, true).unwrap_err();
+            assert!(
+                error.contains("changed after reset confirmation"),
+                "{error}"
+            );
+            assert!(root.join("imports/old.nda").is_file());
+        }
+    }
+
+    #[test]
+    fn alpha_reset_rejects_nonempty_stage_and_reused_database_identity() {
+        for reuse_identity in [false, true] {
+            let (_dir, root) = temp_root();
+            let token = "0123456789abcdef0123456789abcdef";
+            let stage = prepare_alpha_reset(&root, token);
+            let staged = stage.join(STAGED_DB_NAME);
+            {
+                let connection = rusqlite::Connection::open(&staged).unwrap();
+                if reuse_identity {
+                    connection
+                        .execute("UPDATE app_settings SET value='old-alpha'", [])
+                        .unwrap();
+                } else {
+                    connection
+                        .execute("INSERT INTO probe VALUES ('unexpected data')", [])
+                        .unwrap();
+                }
+            }
+            let manifest_path = stage.join(MANIFEST_NAME);
+            let mut payload: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+            let (digest, size) = sha256_file(&staged).unwrap();
+            payload["stagedDatabaseSha256"] = serde_json::json!(digest);
+            payload["stagedDatabaseSize"] = serde_json::json!(size);
+            fs::write(manifest_path, serde_json::to_vec(&payload).unwrap()).unwrap();
+            let error = validate_alpha_empty_stage_for_activation(&root, token, true).unwrap_err();
+            assert!(
+                error.contains(if reuse_identity {
+                    "new database identity"
+                } else {
+                    "not empty"
+                }),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn alpha_reset_marker_failure_restores_live_library_and_imports() {
+        let (_dir, root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        prepare_alpha_reset(&root, token);
+        let paths = validate_alpha_empty_stage_for_activation(&root, token, true).unwrap();
+        fs::create_dir(root.join(ALPHA_MARKER_NAME)).unwrap();
+        assert!(activate_staged_copy_for_channel(
+            &root,
+            &paths,
+            Some("test-install"),
+            BootstrapChannel::Alpha
+        )
+        .is_err());
+        let connection = rusqlite::Connection::open(root.join(LIVE_DB_NAME)).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM probe", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "old data"
+        );
+        assert_eq!(
+            fs::read(root.join("imports/old.nda")).unwrap(),
+            b"keep managed bytes"
+        );
+        assert!(paths.staged_db.is_file());
+    }
+
+    #[test]
+    fn alpha_reset_destination_rejects_both_ancestor_and_descendant_channel_roots() {
+        let (_dir, root) = temp_root();
+        let stable = root.join("stable");
+        fs::create_dir(&stable).unwrap();
+        let nested = stable.join("nested");
+        fs::create_dir(&nested).unwrap();
+        assert!(validate_alpha_reset_destination(&root, &[stable.clone()]).is_err());
+        assert!(validate_alpha_reset_destination(&nested, &[stable.clone()]).is_err());
+        assert!(validate_alpha_reset_destination(&stable, &[stable.clone()]).is_err());
+        let alpha = root.join("alpha");
+        fs::create_dir(&alpha).unwrap();
+        assert!(validate_alpha_reset_destination(&alpha, &[root.join("stable")]).is_ok());
+    }
+
+    #[test]
+    fn alpha_reset_activates_empty_database_and_keeps_recovery_backup_and_sources() {
+        let (directory, root) = temp_root();
+        let root = root.join("alpha");
+        fs::create_dir(&root).unwrap();
+        let external = directory.path().join("external.nda");
+        fs::write(&external, b"external unchanged").unwrap();
+        let stable = directory.path().join("stable");
+        fs::create_dir(&stable).unwrap();
+        fs::write(stable.join("cellxplorer.db"), b"stable unchanged").unwrap();
+        let token = "0123456789abcdef0123456789abcdef";
+        prepare_alpha_reset(&root, token);
+        let paths = validate_alpha_empty_stage_for_activation(&root, token, true).unwrap();
+        activate_staged_copy_for_channel(
+            &root,
+            &paths,
+            Some("test-install"),
+            BootstrapChannel::Alpha,
+        )
+        .unwrap();
+        let connection = rusqlite::Connection::open(root.join(LIVE_DB_NAME)).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM probe", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        let backup = root.join("backups").join(format!("alpha-reset-{token}"));
+        let old = rusqlite::Connection::open(backup.join(LIVE_DB_NAME)).unwrap();
+        assert_eq!(
+            old.query_row("SELECT value FROM probe", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "old data"
+        );
+        assert_eq!(
+            fs::read(backup.join("imports/old.nda")).unwrap(),
+            b"keep managed bytes"
+        );
+        assert_eq!(fs::read(external).unwrap(), b"external unchanged");
+        assert_eq!(
+            fs::read(stable.join("cellxplorer.db")).unwrap(),
+            b"stable unchanged"
+        );
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(ALPHA_MARKER_NAME)).unwrap())
+                .unwrap();
+        assert_eq!(marker["decision"], "empty");
+        assert!(fs::read_dir(root.join("imports")).unwrap().next().is_none());
     }
 
     #[test]
@@ -1226,6 +1845,7 @@ mod tests {
             staged_imports: stage_dir.join("imports"),
             source_database_instance_id: Some("stable-id".into()),
             source_schema_revision: Some("0012".into()),
+            is_alpha_reset: false,
         };
         let error =
             activate_staged_copy(&beta_root, &paths, Some("test-install")).expect_err("marker dir");
