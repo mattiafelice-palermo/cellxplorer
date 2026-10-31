@@ -1,10 +1,10 @@
 # Feature specs
 
 - [077 — Verified build optimizations](077-verified-build-optimizations.md).
-  **Relay fixed; hosted acceptance blocked.** Explicit synchronization preserves
-  check deadlines and passed two full signed workflows. The final fresh candidate
-  hit an unchanged live-search timeout, and the timing criterion is unconfirmed.
-  No merge or next Alpha publication; all fresh comparison results are retained.
+  **Final CI closure under verification.** Relay observation synchronization,
+  atomic publication handling and final-frame draining preserve all deadlines.
+  Hosted correctness and repeatable positive full-job improvement remain required
+  before authorized main integration and Alpha.13. All failed runs are retained.
   No rejected preflight shortcuts are included.
 
 - [076 — Release CI critical path](076-release-ci-critical-path.md).

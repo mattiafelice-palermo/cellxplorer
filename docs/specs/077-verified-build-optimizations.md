@@ -311,3 +311,34 @@ policy suite remain unchanged. No production recovery code is modified.
 The diagnostic checkpoint's local canonical no-cache preflight passed **4/4** in
 **121.36 seconds**, retaining four workers and all 209 local backend/frontend
 tasks. Hosted diagnosis remains necessary before a new acceptance cohort.
+
+### Authorized final CI closure
+
+The user explicitly requested continuing through fixes, verified main integration
+and Alpha.13 publication, retaining every check/deadline and requiring repeatable
+positive full-job improvement. Hosted diagnostic run `41196385492` passed all 30
+harmless relay trials, but its independent full preflight failed initial full-scan
+readiness (`offline` instead of `ready`). Instrumented signed full rehearsal
+`41196465999` then passed all gates in 702 seconds with warm matching caches.
+No relay failure was reproduced there; instrumentation is not claimed as a fix.
+
+A deterministic coordinator regression reproduces the false-offline mechanism:
+the spool poll returns empty, then the worker publishes completion and exits,
+then liveness is checked. The old coordinator broke without reading the final
+published frame. Both full-scan and delta coordinators now perform one nonwaiting
+spool read after observing exit, and still require an explicit valid completion
+message. They do not wait longer, infer success from exit, or change the 45-second
+silence watchdog, 60-second scan test, or 12-second native lifecycle deadlines.
+The initial regression failed before the change and passes after it; full-scan
+and delta orderings are covered. All 56 focused search-suite tests passed in
+91.936 seconds; the additional delta regression passed separately. This proves
+the race and correction, not the opaque hosted failure's exact interleaving.
+
+Final local verification and a fixed three-run warm signed cohort follow before
+conditional integration. All prior failed/cold runs remain reported and cannot
+count as successful speedups. The validated main control cohort remains fixed.
+
+Final-frame checkpoint verification: canonical no-cache preflight passed **4/4**
+in **216.96 seconds**, four workers and all 209 local task files/modules. Four
+deterministic final-frame tests pass, including both scan/delta positive cases
+and missing-completion failures; process exit alone never qualifies as success.

@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -284,6 +285,61 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(wait_terminal()["status"], "ready")
         finally:
             indexer.stop()
+
+    def test_worker_exit_after_empty_poll_drains_already_published_completion(self):
+        """An exit notification must not overtake the final atomic spool frame."""
+        self.check_worker_exit_completion(delta=False)
+
+    def test_delta_worker_exit_after_empty_poll_drains_published_completion(self):
+        self.check_worker_exit_completion(delta=True)
+
+    def test_exited_worker_without_done_is_still_offline(self):
+        self.check_worker_exit_completion(delta=False, completion=False)
+
+    def test_exited_delta_worker_without_done_still_requires_recovery(self):
+        self.check_worker_exit_completion(delta=True, completion=False)
+
+    def check_worker_exit_completion(self, *, delta, completion=True):
+        indexer = SearchIndexer(self.catalog, monitoring=False)
+        indexer.config = self.config
+        if delta:
+            indexer.live = mock.Mock(items={'root': {}})
+        original_get = BatchSpool.get
+        pending = {}
+
+        def empty_then_publish(spool, timeout):
+            if not pending:
+                pending['spool'] = spool
+                raise queue.Empty
+            return original_get(spool, timeout)
+
+        def observe_exit():
+            if not pending.get('published'):
+                pending['published'] = True
+                spool = BatchSpool(str(pending['spool'].directory))
+                spool.put(dict(kind='traversed', complete=True, discovered=0))
+                if completion:
+                    spool.put(dict(kind='done', warnings=0, recovery=False))
+            return False
+
+        process = mock.Mock()
+        process.is_alive.side_effect = observe_exit
+        with patch('backend.app.services.import_search_index.multiprocessing.get_context') as context, \
+             patch.object(BatchSpool, 'get', empty_then_publish):
+            context.return_value.Process.return_value = process
+            if delta:
+                indexer._delta(self.config['roots'][0], self.config, indexer.epoch, [])
+            else:
+                indexer._scan(self.config['roots'][0], self.config, indexer.epoch)
+        if delta:
+            if completion:
+                indexer.live.require_recovery.assert_not_called()
+            else:
+                indexer.live.require_recovery.assert_called_once()
+        else:
+            self.assertEqual(self.catalog.roots()[0]['status'], 'ready' if completion else 'offline')
+        process.terminate.assert_not_called()
+        process.join.assert_called_once_with(1)
 
 
     def test_normalized_path_queries_and_canonical_relative_location(self):

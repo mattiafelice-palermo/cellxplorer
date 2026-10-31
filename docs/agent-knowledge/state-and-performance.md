@@ -53,6 +53,14 @@ Expiry preserves the access error and unconsumed file, not `queue.Empty`; malfor
 JSON and other I/O failures remain immediate. Never skip a locked first batch,
 renew the deadline, or infer exactly-once delivery across process crashes.
 
+Worker liveness and the filesystem spool are independent observations. An empty
+poll can precede a final published completion frame and worker exit. After
+observing exit, perform one nonwaiting spool read before declaring the worker
+incomplete; drain complete frames normally, never infer success from exit alone.
+This applies to both full scans and deltas and does not extend the silence budget.
+Exercise the ordering deterministically: publish completion between the empty
+poll and the process-death observation, retaining real atomic spool frames.
+
 The producer's atomic rename can also encounter a short Windows sharing lock on
 its just-closed `.tmp` file. Retry only that rename of the same complete frame,
 within a single 100-ms publication budget; do not rewrite or advance sequence

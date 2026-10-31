@@ -310,9 +310,18 @@ class SearchIndexer:
                     try:
                         message = messages.get(timeout=0.1)
                     except queue.Empty:
-                        if not process.is_alive() or time.monotonic() - last_message > self.timeout:
+                        if not process.is_alive():
+                            # Exit can race the preceding empty directory poll.
+                            # The exited producer can no longer publish, so drain
+                            # any final atomic frame before declaring failure.
+                            try:
+                                message = messages.get(timeout=0)
+                            except queue.Empty:
+                                break
+                        elif time.monotonic() - last_message > self.timeout:
                             break
-                        continue
+                        else:
+                            continue
                     last_message = time.monotonic()
                     with self.lock:
                         if epoch != self.epoch:
@@ -389,7 +398,14 @@ class SearchIndexer:
                             try:
                                 message = messages.get(timeout=0.1)
                             except queue.Empty:
-                                if not process.is_alive() or time.monotonic() - last_message > self.timeout:
+                                if not process.is_alive():
+                                    # Observe death before the final nonwaiting
+                                    # spool read, not after an earlier empty poll.
+                                    try:
+                                        message = messages.get(timeout=0)
+                                    except queue.Empty:
+                                        break
+                                elif time.monotonic() - last_message > self.timeout:
                                     if last_header and process.is_alive():
                                         # Skip a stalled header, not the rest of the root.
                                         last_header.update(metadata_state="unavailable")
@@ -400,7 +416,8 @@ class SearchIndexer:
                                         warnings += 1
                                         restart = True
                                     break
-                                continue
+                                else:
+                                    continue
                             last_message = time.monotonic()
                             with self.lock:
                                 if epoch != self.epoch:
