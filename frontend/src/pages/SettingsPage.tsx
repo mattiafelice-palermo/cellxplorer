@@ -31,6 +31,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { loadNotificationPreferences, saveNotificationPreferences, NOTIFICATION_PREFERENCES_CHANGED } from "../notificationPreferences";
 
 import { FileSearchSettings } from "../components/FileSearchSettings";
+import { LocalInstallerSettings } from "../components/LocalInstallerSettings";
 
 import { APP_BRANDING } from "../appChannel";
 
@@ -1858,6 +1859,8 @@ export function SettingsPage() {
               </Paper>
 
 
+
+              <LocalInstallerSettings />
 
               {APP_BRANDING.channel === "stable" ? (
               <Paper

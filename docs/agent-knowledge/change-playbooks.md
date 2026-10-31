@@ -393,6 +393,19 @@ Rust dependency cache; release jobs restore it without saving a tag-scoped repla
 
 ### Tag and release checklist
 
+Local signed update testing lives in Settings → App updates. Select an official
+Windows setup and matching `.sig`; verification snapshots the bytes, checks the
+unchanged embedded updater key and reads product/channel/SemVer from a protected
+copy's Windows resources. Same-version reinstall is allowed, downgrades and
+cross-channel payloads are rejected. The next explicit action enters the existing
+`install_app_update` recovery handoff, not a second launcher. A selected local
+candidate pins pending state against discovery until installed or explicitly
+discarded. It is a real installation, never a dry-run simulation. Build-only
+workflow artifact `local-signed-update-<channel>` contains both files only after
+the unchanged native gate and policy join pass. `scripts/check_local_installer.py`
+uses newly generated fixture keys and harmless NSIS payloads for read-only
+verification; it never launches a setup. Interactive UAC acceptance is separate.
+
 Release build work may overlap the exact-SHA preflight lookup, but background
 outputs are unavailable until the explicit `wait`. The independent build group
 must finish before canonical fallback can rewrite the frontend. Manual dispatch

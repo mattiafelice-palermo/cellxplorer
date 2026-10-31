@@ -8,6 +8,7 @@ user-facing impact.
 
 ### New features
 
+- Add Settings → App updates selection of a local official installer and matching updater signature. Verify before installing through the normal protected updater; allow same-version reinstall, reject downgrades and other channels, and keep release feeds unchanged.
 - Offer Copy Stable library, Copy Beta library, Keep current Alpha library, and Start empty as distinct Alpha setup choices.
 - Require a separate confirmation and an initially unchecked data-loss acknowledgement before starting empty. Retain a recovery backup of the previous Alpha database and managed imports, without changing original source files or Stable/Beta libraries.
 

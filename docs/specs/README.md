@@ -1,5 +1,11 @@
 # Feature specs
 
+- [080 — Local signed installer updates](080-local-signed-installer-updates.md).
+  **Implementation and local verification complete; Alpha.15 release gates pending.**
+  Signed local payload staging shares the protected automatic updater handoff.
+  Native 91/91, six signed fixtures, browser layout checks and canonical no-cache
+  preflight (4/4 stages, 211 test modules) pass. No signature/channel bypass.
+
 - [079 — Reliable update recovery and explicit Alpha library choices](079-update-recovery-and-alpha-library-choices.md).
   **Implementation complete.** Astra High confirmed the NSIS declaration-order
   defect; 29 native fixtures, 83 native unit tests, reset-safety review and final

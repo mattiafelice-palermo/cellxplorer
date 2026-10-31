@@ -786,7 +786,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/check_installer_scope.py --run-policy-tests", policy)
         self.assertIn("python scripts/check_update_recovery.py", policy)
         self.assertIn("python scripts/check_installer_helper.py", policy)
-        self.assertEqual(policy.count("if ($LASTEXITCODE -ne 0)"), 5)
+        self.assertIn("python scripts/check_local_installer.py", policy)
+        self.assertEqual(policy.count("if ($LASTEXITCODE -ne 0)"), 6)
         secrets = self.release.split("- name: Require updater signing secrets", 1)[1].split("\n      - name:", 1)[0]
         self.assertNotRegex(secrets, r"(?m)^\s+if:")
 

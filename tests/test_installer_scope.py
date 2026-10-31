@@ -81,13 +81,20 @@ class InstallerScopeTests(unittest.TestCase):
         self.assertLess(handoff.index('prepared.authorize_exit()'), handoff.index('prepare_exit_for_update'))
         shutdown = handoff.split('crate::prepare_exit_for_update(&app);', 1)[1].split('Err(error) =>', 1)[0]
         self.assertNotIn('restore_failed_install', shutdown)
+        self.assertNotIn('restore_verified_payload', shutdown)
         self.assertNotIn('return Err', shutdown)
         ack_only = recovery.split('pub fn commit(', 1)[1].split('pub fn authorize_exit(', 1)[0]
         self.assertNotIn('b"E"', ack_only)
         self.assertIn('self.acknowledged = true', ack_only)
         self.assertIn('if !self.acknowledged || !self.is_alive()', recovery)
         self.assertNotIn('running_installation(', handoff)
-        self.assertIn('restore_failed_install(&mut pending, update, bytes)', handoff)
+        self.assertIn('restore_verified_payload(&mut pending, update, bytes)', handoff)
+        restore = self.updates.split('fn restore_verified_payload(', 1)[1].split('fn stage_local_verified(', 1)[0]
+        self.assertIn('VerifiedInstaller::Remote(update) => restore_failed_install(pending, update, bytes)', restore)
+        self.assertIn('VerifiedInstaller::Local(release)', restore)
+        self.assertIn('pending.local_release = Some(release)', restore)
+        self.assertIn('pending.downloaded_bytes = Some(bytes)', restore)
+        self.assertIn('pending.installing = false', restore)
         self.assertIn('create_new(true)', recovery)
         self.assertIn('share_mode(1)', recovery)
         self.assertIn('if actual != bytes', recovery)

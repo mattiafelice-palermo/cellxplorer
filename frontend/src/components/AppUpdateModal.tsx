@@ -163,11 +163,12 @@ export function AppUpdateModal({
       closeOnEscape={dismissible}
     >
       <Stack gap="sm">
-        <Text size="sm">{transferError ? "The update could not be completed." : "A new version of CellXplorer is ready to install."}</Text>
+        <Text size="sm">{transferError ? "The update could not be completed." : release!.localInstaller ? "The local signed installer is verified and ready. This performs a real update or reinstall, not a dry run." : "A new version of CellXplorer is ready to install."}</Text>
+        {release!.localInstaller ? <Badge variant="light" color="gray" style={{ alignSelf: "flex-start" }}>Local installer</Badge> : null}
 
         <Stack gap={6}>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-            Release notes
+            {release!.localInstaller ? "Local update" : "Release notes"}
           </Text>
           <ReleaseNotesBody release={release!} />
         </Stack>
@@ -224,7 +225,7 @@ export function AppUpdateModal({
 
         {state.status === "available" ? (
           <Text size="xs" c="dimmed">
-            After download completes, CellXplorer will close and the passive updater will finish installation automatically.
+            {release!.localInstaller ? "No network download is needed. Install uses the same protected updater handoff and Windows approval; CellXplorer closes only after preparation succeeds." : "After download completes, CellXplorer will close and the passive updater will finish installation automatically."}
           </Text>
         ) : null}
 
@@ -240,7 +241,7 @@ export function AppUpdateModal({
                 leftSection={<IconDownload size={16} />}
                 onClick={onDownload}
               >
-                Download update
+                {release!.localInstaller ? "Install local update" : "Download update"}
               </Button>
             </>
           ) : null}
