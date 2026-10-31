@@ -1,9 +1,10 @@
 # Feature specs
 
 - [077 — Verified build optimizations](077-verified-build-optimizations.md).
-  **Warm comparison repeated.** The relay fixture's observation-window race is
-  corrected with explicit synchronization and unchanged check deadlines. Fresh
-  hosted acceptance is pending before any merge or next Alpha publication.
+  **Relay fixed; hosted acceptance blocked.** Explicit synchronization preserves
+  check deadlines and passed two full signed workflows. The final fresh candidate
+  hit an unchanged live-search timeout, and the timing criterion is unconfirmed.
+  No merge or next Alpha publication; all fresh comparison results are retained.
   No rejected preflight shortcuts are included.
 
 - [076 — Release CI critical path](076-release-ci-critical-path.md).

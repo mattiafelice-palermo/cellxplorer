@@ -1,6 +1,6 @@
 # 077 — Verified build optimizations
 
-Status: Relay-fixture synchronization fix verified locally; repeated warm hosted acceptance pending. No merge or release yet.
+Status: Relay-fixture fix pushed and verified; fresh hosted acceptance is blocked by a live-search test failure and unconfirmed timing criterion. No merge or release.
 Branch: `codex/verified-ci-optimizations`.
 
 ## User decision and scope
@@ -180,10 +180,72 @@ Eight local relay executions (four delayed) passed all original lock and status
 assertions. The full harmless policy suite passed all **18** cases, including the
 actual Rust-to-NSIS transport. Actual installers/accounts remain hosted-only.
 
-Fresh signed main controls and fixed-candidate comparisons are being repeated
+Fresh signed main controls and fixed-candidate comparisons were repeated
 with the existing warm Rust/npm caches and four workers. Earlier failed/cold runs
 remain above as evidence and cannot be substituted for this fresh comparison.
+The fresh comparison uses **three** warm complete jobs per cohort, chosen before
+the first fresh full-job outcome because observed runner/stage variation is large.
+Retain all results; the 10% full-job-median criterion is unchanged.
 The corrected checkpoint's canonical no-cache local preflight passed **4/4** in
 **130.11 s**, with four workers and all 209 local tasks (107 backend modules and
 102 frontend files, including the unrelated untracked converter test). No
 production recovery file, release workflow gate or application version changed.
+
+### Fresh comparison after the relay-fixture fix
+
+Controls remain at `9ff61b9b7237ec43d68ab22ee4f79a4f8caf63cb`; every corrected
+candidate uses `ca20e6d32446df57534a30c08f4979f4a565c1d0`. All six runs restored
+exact Rust graphs and warm npm caches, with Rust 1.99.1, Python 3.14.9 and four
+preflight workers. All retained gates and the full release-local no-cache fallback
+were requested; no failed result is replaced by an earlier or partial pass.
+
+| Role | GitHub run | Full build-job time | Outcome |
+| --- | --- | ---: | --- |
+| Warm main 1 | [41187957404](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41187957404) | 791 s | Passed every gate |
+| Warm main 2 | [41188030122](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41188030122) | 568 s | Passed every gate |
+| Warm main 3 | [41188930612](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41188930612) | 725 s | Passed every gate |
+| Corrected warm candidate 1 | [41188173841](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41188173841) | 725 s | Passed every gate, including all 18 recovery-policy cases and eight native install/reinstall cases |
+| Corrected warm candidate 2 | [41188204818](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41188204818) | 622 s | Passed every gate, including all 18 recovery-policy cases and eight native install/reinstall cases |
+| Corrected warm candidate 3 | [41189256127](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/41189256127) | 395 s | Failed full fallback preflight in a live-search case; packaging/native gates did not run, so this is not a timing sample |
+
+The fresh controls' median is **725 s (12m05s)**. Only two corrected candidates
+passed every gate, so the predeclared three-run warm candidate median has not
+been established. Their passing-only median of 673.5 s (11m13.5s) is a diagnostic
+observation, **7.1%** below the control median, not a qualifying three-run result
+and below the 10% acceptance criterion even before the missing valid sample.
+Large run-to-run variation remains visible; the earlier single-run 11.3% gain
+was not confirmed by this fresh comparison. No overlapping stages are summed or
+subtracted, no fast failed run is counted, and the planned cohort is not extended
+until a favourable number appears.
+
+All 206 main task-file identities remain present in each corrected candidate's
+208-task inventory. Additions are the icon-parity file and the relay fixture's
+14 unit regressions. Both completed corrected workflows passed frozen science,
+all existing safety cases and the new native delayed-observer regression. No
+relay-policy failure recurred in those two full hosted executions.
+
+The third candidate instead failed
+`LifecycleTests.test_native_notifications_deep_rename_delete_pause_resume` in
+`tests/test_import_search_live.py:426`, waiting for newly created `new.ndax` to
+appear in the catalog. The existing **12-second** deadline expired. That test,
+`import_search_live.py` and `import_search_watch.py` are unchanged between main
+and the candidate (blobs `1728008a90e910b9db2b1283021f9c91afc0c8bc`,
+`372c93a639da5c1554ec8e8734e7f28454f8c45d` and
+`f618eee6b0abc714a7e42fd0e2a61cdd76ce0dd5`). This establishes an unchanged code
+path, not a proven environmental cause or absence of timing interactions.
+The exact unmodified case passed once locally in 5.561 s; that diagnostic does
+not substitute for the failed CI gate. Its deadline, watcher behavior and test
+assertions have not been changed in this follow-up.
+
+**Decision:** retain the relay fix and optimization checkpoint on the pushed
+feature branch. Do not merge, bump the version, tag or publish Alpha while full
+hosted correctness and the repeated timing criterion remain unproven. The
+live-search failure requires separate investigation; it is not ignored or
+silently retried into benchmark acceptance. Main and public channels are not
+modified by this decision.
+
+Final local verification again passed canonical no-cache preflight **4/4** in
+**139.32 s**, with four workers and all 209 local task files/modules. The full
+live-search module passed locally too; this does not override its hosted failure.
+Live fetch confirmed main remains `9ff61b9b` and all public channel/README blob
+identities remain unchanged. Only the feature branch receives this evidence.
