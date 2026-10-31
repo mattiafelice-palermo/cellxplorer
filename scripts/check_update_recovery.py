@@ -28,9 +28,26 @@ RELAY_EXIT_TIMEOUT = 15
 
 
 def compile_fixture(output: Path, parent: Path, *, relay: bool = False,
-                    relay_release_event: str | None = None) -> Path:
+                    relay_release_event: str | None = None,
+                    quoted_relay: bool = False) -> Path:
     if relay and not relay_release_event:
         raise ValueError("Relay fixture requires a controller-owned release event")
+    if quoted_relay and not relay:
+        raise ValueError("Quoted relay arguments require a relay fixture")
+    relay_command = '/CXTESTCHILD /CXHASH=$CxRecoveryHash'
+    quoted_check = ''
+    if quoted_relay:
+        relay_command += r' /CXTESTQUOTED=$\"C:\Quoted, folder Ω\client.exe$\" /CXTESTSECOND=$\"second quoted value$\"'
+        quoted_check = r'''
+    ${GetOptions} $CMDLINE "/CXTESTQUOTED=" $6
+    ${If} $6 != "C:\Quoted, folder Ω\client.exe"
+      Call CxScopeError
+    ${EndIf}
+    ${GetOptions} $CMDLINE "/CXTESTSECOND=" $6
+    ${If} $6 != "second quoted value"
+      Call CxScopeError
+    ${EndIf}
+'''
     marker = output / "committed.txt"
     executable = output / "recovery-policy.exe"
     source = f'''Unicode true
@@ -84,6 +101,7 @@ Function .onInit
     FileOpen $6 "{output / 'relay-child-phase.txt'}" w
     FileWrite $6 "child-entered"
     FileClose $6
+    {quoted_check}
     ${{GetOptions}} $CMDLINE "/CXHASH=" $CxRecoveryHash
     Call CxLockRecoveryPayload
     FileOpen $6 "{output / 'relay-child-phase.txt'}" w
@@ -117,7 +135,7 @@ Function .onInit
     FileOpen $6 "{output / 'relay-parent-phase.txt'}" w
     FileWrite $6 "parent-locked-before-shell"
     FileClose $6
-    StrCpy $0 "/CXTESTCHILD /CXHASH=$CxRecoveryHash"
+    StrCpy $0 "{relay_command}"
     Call CxElevateRecovery
   ${{EndIf}}
   StrCpy $UpdateMode 1
@@ -339,12 +357,14 @@ def relay_failure_state(output: Path, executable: Path, pid: int) -> dict:
     return state
 
 
-def run_relay_case(output: Path, parent: Path, *, on_child_ready=None) -> dict:
+def run_relay_case(output: Path, parent: Path, *, on_child_ready=None,
+                   quoted_relay: bool = False) -> dict:
     output.mkdir()
     if not output.resolve().is_relative_to((ROOT / "tmp").resolve()):
         raise RuntimeError("Relay replacement fixture must stay inside repository tmp")
     with relay_release_event() as (event_name, release):
-        executable = compile_fixture(output, parent, relay=True, relay_release_event=event_name)
+        executable = compile_fixture(output, parent, relay=True, relay_release_event=event_name,
+                                     quoted_relay=quoted_relay)
         digest = hashlib.sha256(executable.read_bytes()).hexdigest()
         process = subprocess.Popen([str(executable), "/CXTESTRELAY", f"/CXHASH={digest}"])
         marker = output / "relay-child.txt"
@@ -377,7 +397,8 @@ def run_relay_case(output: Path, parent: Path, *, on_child_ready=None) -> dict:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=RELAY_EXIT_TIMEOUT)
-    return {"case": "relay-lock-lifetime-and-child-exit", "passed": True, "actual_uac": False,
+    return {"case": "relay-quoted-command-lock-lifetime-and-child-exit" if quoted_relay else "relay-lock-lifetime-and-child-exit",
+            "passed": True, "actual_uac": False, "quoted_arguments": quoted_relay,
             "delayed_observer": on_child_ready is not None}
 
 
@@ -438,6 +459,11 @@ def main() -> None:
                                  on_child_ready=lambda: time.sleep(2.5))
         delayed["case"] = "relay-delayed-observer-lock-lifetime-and-child-exit"
         rows.append(delayed)
+        # Machine-update commands contain quoted scope/origin paths. Preserve
+        # multiple quoted values, spaces, commas and Unicode through the actual
+        # production System structure and ShellExecute call, not a copied stub.
+        rows.append(run_relay_case(Path(directory) / "relay-quoted-command", parent,
+                                   quoted_relay=True))
         rows.append(run_prelock_replacement_case(Path(directory) / "pre-lock", parent))
         # Exercise the actual Rust launcher, kernel peer authentication, byte and
         # directory locks, COMMIT/ACK/exit authorization against production NSIS.

@@ -80,6 +80,13 @@ class RelayControllerTests(unittest.TestCase):
         self.assertEqual(self.events[:3], ["both-lock-assertions", "release", ("wait", 15)])
         self.assertEqual(self.events[-1], "close-event")
 
+    def test_quoted_command_keeps_all_lifetime_and_deadline_checks(self):
+        result = self.run_case(quoted_relay=True)
+        self.assertTrue(result['quoted_arguments'])
+        self.assertIn('quoted-command', result['case'])
+        self.assertEqual(self.events[:3], ['both-lock-assertions', 'release', ('wait', 15)])
+        self.assertEqual(fixture.RELAY_READY_TIMEOUT, 10)
+
     def test_delayed_observer_keeps_original_readiness_budget_and_all_assertions(self):
         def delayed_observer():
             self.clock += 2.5  # Longer than the old blind child sleep, below 10s.
@@ -142,6 +149,25 @@ class RelayControllerTests(unittest.TestCase):
 
 
 class RelayFixtureSourceTests(unittest.TestCase):
+    def test_native_shell_parameters_are_an_opaque_register_not_interpolated_text(self):
+        source = (ROOT / 'src-tauri/update_recovery.nsh').read_text()
+        layout = next(line for line in source.splitlines() if "System::Call '*(i ${CX_SHELLEXECUTE_SIZE}" in line)
+        self.assertIn('w r0, p 0', layout)
+        self.assertNotIn('w "$0"', layout)
+
+    def test_quoted_relay_fixture_checks_both_values_in_the_real_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
+                 mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(returncode=0)):
+                fixture.compile_fixture(folder, Path('powershell.exe'), relay=True,
+                                        relay_release_event='Local\\fixture-test-event', quoted_relay=True)
+            source = (folder / 'recovery-policy.nsi').read_text(encoding='utf-8')
+            self.assertIn('C:\\Quoted, folder Ω\\client.exe', source)
+            self.assertIn('${GetOptions} $CMDLINE "/CXTESTQUOTED=" $6', source)
+            self.assertIn('${GetOptions} $CMDLINE "/CXTESTSECOND=" $6', source)
+            self.assertIn('/CXTESTSECOND=$\\"second quoted value$\\"', source)
+
     def test_fixture_waits_on_owned_release_event_with_bounded_completion_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

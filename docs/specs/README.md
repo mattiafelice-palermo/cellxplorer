@@ -1,5 +1,11 @@
 # Feature specs
 
+- [078 — Installer recovery crash](078-installer-recovery-crash.md).
+  **Verified fix; Alpha.14 publication in progress.** Embedded command quotes
+  corrupted the native elevation structure. Opaque register input fixes the
+  shared relay; 19 native harmless cases and canonical preflight pass with all
+  prior checks/deadlines retained. Published Alpha.13 stays immutable.
+
 - [077 — Verified build optimizations](077-verified-build-optimizations.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.13.** Relay observation
   synchronization, atomic publication handling and final-frame draining preserve

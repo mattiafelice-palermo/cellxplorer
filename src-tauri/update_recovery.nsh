@@ -159,7 +159,10 @@ Function CxElevateRecovery
   !else
     !define CX_SHELLEXECUTE_SIZE 60
   !endif
-  System::Call '*(i ${CX_SHELLEXECUTE_SIZE}, i 0x140, p 0, w "${CX_RECOVERY_ELEVATION_VERB}", w "$EXEPATH", w "$0", p 0, &i${NSIS_PTR_SIZE} 1, p 0, p 0, p 0, p 0, &i${NSIS_PTR_SIZE} 0, p 0, p 0)p.r9'
+  ; Register source is essential: interpolating "$0" into System's expression
+  ; lets embedded command quotes terminate its string and corrupt later fields.
+  ; Keep the fully bounded command opaque, including all quoted path identities.
+  System::Call '*(i ${CX_SHELLEXECUTE_SIZE}, i 0x140, p 0, w "${CX_RECOVERY_ELEVATION_VERB}", w "$EXEPATH", w r0, p 0, &i${NSIS_PTR_SIZE} 1, p 0, p 0, p 0, p 0, &i${NSIS_PTR_SIZE} 0, p 0, p 0)p.r9'
   System::Call 'shell32::ShellExecuteExW(p r9)i.r0'
   ${If} $0 == 0
     System::Free $9

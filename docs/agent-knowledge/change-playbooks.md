@@ -254,6 +254,17 @@ Old clients cannot retroactively gain this protocol. `scripts/check_update_recov
 executes production NSIS logic and the actual Rust transport against harmless
 fixtures; it does not establish signed/installed-client/UAC acceptance.
 
+For System plug-in structure fields, pass arbitrary command text by register
+source (`w r0`), never by interpolating it into the expression (`w "$0"`). Quoted
+scope/origin paths otherwise become syntax in System's own parser. Two installer
+crash dumps showed `lpParameters=0x3a`, `lpDirectory=0x10000`, `nShow=0`; a harmless
+compiled layout inspector reproduced these exact values. Register-source input
+restored a valid argument pointer, null directory, SW_SHOWNORMAL and exact argument
+comparison. The mandatory quoted relay case now round-trips multiple quoted
+values, spaces, a comma and Unicode through the real production relay and child,
+retaining its lock/exit/deadline assertions. Unquoted relay success is not coverage
+of the machine-update command shape. Never commit private crash dumps.
+
 Keep relay-fixture lifetime synchronized with its controller. A child that writes
 its marker then blindly sleeps two seconds can exit before a descheduled observer
 checks liveness and locks. The harmless fixture uses a unique controller-owned
