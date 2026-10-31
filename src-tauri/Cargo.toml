@@ -36,3 +36,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 # recompile plus link on each pass.
 [profile.release]
 incremental = true
+# Explicit "off" disables rustc's default per-crate local ThinLTO. Keep
+# optimization level 3, assertions/overflow policy, panic strategy and every
+# runtime/security feature unchanged.
+lto = "off"

@@ -41,6 +41,10 @@ jobs:
     name: Build Windows release
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      CELLXPLORER_PREFLIGHT_CPU_BUDGET: "4"
+      CELLXPLORER_PREFLIGHT_JOBS: "4"
+      CARGO_BUILD_JOBS: "4"
 
     steps:
       - name: Check out repository
@@ -83,7 +87,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           # Rotate the effective shared-key; key is ignored with shared-key here.
-          shared-key: cellxplorer-windows-release-and-test-v2
+          shared-key: cellxplorer-windows-release-and-test-v3-lto-off
           add-job-id-key: "false"
           save-if: "false"
 

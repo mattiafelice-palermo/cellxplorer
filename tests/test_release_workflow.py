@@ -394,6 +394,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('tags:\n      - "v*"', self.release)
         self.assertNotIn("tags:", self.preflight)
 
+    def test_four_worker_budget_is_explicit_in_both_workflows(self):
+        for workflow in (self.preflight, self.release):
+            self.assertIn('CELLXPLORER_PREFLIGHT_CPU_BUDGET: "4"', workflow)
+            self.assertIn('CELLXPLORER_PREFLIGHT_JOBS: "4"', workflow)
+            self.assertNotIn('CELLXPLORER_PREFLIGHT_JOBS: "8"', workflow)
+
+    def test_benchmark_cache_seed_is_manual_and_release_remains_restore_only(self):
+        self.assertIn('seed_release_benchmark_cache:', self.preflight)
+        condition = "github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.seed_release_benchmark_cache)"
+        self.assertIn('if: ' + condition, self.preflight)
+        self.assertIn('save-if: ${{ ' + condition + ' }}', self.preflight)
+        self.assertIn('save-if: "false"', self.release)
+        self.assertNotIn('inputs.seed_release_benchmark_cache', self.release)
+        self.assertIn('run: python scripts/preflight.py --no-cache', self.release)
+        self.assertIn('Mandatory native installer upgrade and reinstall gate', self.release)
+
     def test_main_preflight_is_not_suppressed_for_release_tags(self):
         self.assertIn("name: Clean Windows preflight", self.preflight)
         self.assertIn("branches:\n      - main", self.preflight)
@@ -416,7 +432,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_shared_rust_cache_is_seeded_on_main_and_restore_only_in_release(self):
         self.assertIn("name: Warm Windows release Rust cache", self.preflight)
         self.assertIn("continue-on-error: true", self.preflight)
-        self.assertIn("shared-key: cellxplorer-windows-release-and-test-v2", self.preflight)
+        self.assertIn("shared-key: cellxplorer-windows-release-and-test-v3-lto-off", self.preflight)
         self.assertIn('add-job-id-key: "false"', self.preflight)
         self.assertIn("steps.rust_cache.outputs.cache-hit", self.preflight)
         self.assertIn("cargo build --release --locked --manifest-path src-tauri/Cargo.toml", self.preflight)
@@ -425,7 +441,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.preflight,
         )
         self.assertIn("release packaging still uses the", self.preflight)
-        self.assertIn("shared-key: cellxplorer-windows-release-and-test-v2", self.release)
+        self.assertIn("shared-key: cellxplorer-windows-release-and-test-v3-lto-off", self.release)
         self.assertIn('add-job-id-key: "false"', self.release)
         self.assertIn('save-if: "false"', self.release)
         for workflow in (self.preflight, self.release):

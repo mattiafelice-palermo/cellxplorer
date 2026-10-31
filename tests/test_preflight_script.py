@@ -48,6 +48,21 @@ def make_repo() -> Path:
 
 
 class PreflightScriptTests(unittest.TestCase):
+    def test_vendored_icons_invalidate_both_caches_and_parity_scripts_invalidate_policy(self):
+        vendor = self.repo / "frontend" / "vendor" / "icons" / "icon.mjs"
+        vendor.parent.mkdir(parents=True)
+        vendor.write_text("export default 1", encoding="utf-8")
+        with mock.patch.object(preflight, "frontend_toolchain_fingerprint", return_value="fixed"):
+            build_before = preflight.frontend_build_input_hash(self.repo)
+            policy_before = preflight.frontend_policy_input_hash(self.repo)
+            vendor.write_text("export default 2", encoding="utf-8")
+            self.assertNotEqual(build_before, preflight.frontend_build_input_hash(self.repo))
+            self.assertNotEqual(policy_before, preflight.frontend_policy_input_hash(self.repo))
+            for name in ("tabler_subset.mjs", "verify_tabler_subset.mjs"):
+                before = preflight.frontend_policy_input_hash(self.repo)
+                (self.repo / "scripts" / name).write_text("// parity check", encoding="utf-8")
+                self.assertNotEqual(before, preflight.frontend_policy_input_hash(self.repo))
+
     def setUp(self):
         self.repo = make_repo()
         self.calls: list[tuple[list[str], Path, dict[str, str]]] = []

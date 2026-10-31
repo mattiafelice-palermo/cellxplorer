@@ -9,6 +9,7 @@ from pathlib import Path
 
 SDK_SUFFIXES = {".h", ".hpp", ".cc", ".lib", ".pxd", ".pxi", ".pyx", ".pyi", ".cmake"}
 UNUSED_OPTIONALS = {"scipy", "scipy.libs", "matplotlib", "IPython", "PIL", "psycopg", "psycopg2", "pymysql", "MySQLdb", "pytest"}
+BUILD_ONLY_ROOTS = {"setuptools", "distutils", "_distutils_hack"}
 
 
 def inventory(root: Path) -> dict:
@@ -39,7 +40,7 @@ def validate(report: dict) -> None:
             raise ValueError(f"Required runtime component missing: {package}")
     for row in report["inventory"]:
         parts = Path(row["path"]).parts
-        if len(parts) > 1 and parts[0] == "_internal" and parts[1] in UNUSED_OPTIONALS:
+        if len(parts) > 1 and parts[0] == "_internal" and parts[1] in UNUSED_OPTIONALS | BUILD_ONLY_ROOTS:
             raise ValueError(f"Unused optional dependency leaked into runtime: {row['path']}")
         if row["path"].startswith("_internal/pyarrow/"):
             arrow_path = Path(row["path"]).relative_to("_internal/pyarrow")

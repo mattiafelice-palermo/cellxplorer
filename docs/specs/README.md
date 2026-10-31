@@ -1,5 +1,10 @@
 # Feature specs
 
+- [077 — Verified build optimizations](077-verified-build-optimizations.md).
+  **Implementation checkpoint.** Four-worker signed hosted comparison pending;
+  merge and next Alpha publication are conditional on equivalent checks and a
+  favourable benchmark. No rejected preflight shortcuts are included.
+
 - [076 — Release CI critical path](076-release-ci-critical-path.md).
   **Complete.** Effective Rust cache repair, mandatory policy/native overlap and
   fresh-install bootstrap verified. Full signed rehearsal improved from 15m05s

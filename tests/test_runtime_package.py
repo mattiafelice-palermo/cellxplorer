@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import shlex
+import tomllib
 import importlib.util
 import os
 from pathlib import Path
@@ -16,6 +19,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RuntimePackageTests(unittest.TestCase):
+    def test_rust_release_changes_only_local_lto_not_safety_or_optimization_policy(self):
+        manifest=tomllib.loads((ROOT/'src-tauri/Cargo.toml').read_text())
+        release=manifest['profile']['release']
+        self.assertEqual(release['lto'],'off')
+        self.assertTrue(release['incremental'])
+        self.assertEqual(release.get('opt-level',3),3)
+        for key in ('panic','debug-assertions','overflow-checks','codegen-units'):
+            self.assertNotIn(key,release)
+
+    def test_build_tool_exclusions_preserve_runtime_and_existing_build_flags(self):
+        command = json.loads((ROOT / "package.json").read_text())["scripts"]["build:backend"]
+        argv = shlex.split(command)
+        excluded = {argv[i+1] for i,value in enumerate(argv) if value == "--exclude-module"}
+        self.assertTrue({"setuptools","distutils","_distutils_hack"}.issubset(excluded))
+        self.assertTrue(excluded.isdisjoint({"app","numpy","pandas","pyarrow","NewareNDA","alembic","sqlalchemy","tkinter","tzdata"}))
+        self.assertIn("--onedir",argv)
+        self.assertNotIn("--optimize",argv)
+        self.assertEqual(argv[-1],"packaging/backend_entry.py")
+
     def _bundle(self, root: Path) -> None:
         for name in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd",
                      "_internal/pyarrow/lib.pyd", "_internal/pyarrow/arrow.dll", "_internal/numpy/native.pyd",
@@ -36,7 +58,8 @@ class RuntimePackageTests(unittest.TestCase):
             self.assertEqual(report["inventory"][0]["sha256"], hashlib.sha256(b"test fixture").hexdigest())
 
     def test_sdk_and_accidental_optional_dependencies_are_rejected(self):
-        for unwanted in ["_internal/pyarrow/libarrow.lib", "_internal/pyarrow/include/arrow.h", "_internal/pyarrow/tests/data/sample.parquet", "_internal/scipy/native.pyd"]:
+        for unwanted in ["_internal/pyarrow/libarrow.lib", "_internal/pyarrow/include/arrow.h", "_internal/pyarrow/tests/data/sample.parquet", "_internal/scipy/native.pyd",
+                         "_internal/setuptools/build.py", "_internal/distutils/compiler.py", "_internal/_distutils_hack/__init__.py"]:
             with self.subTest(unwanted=unwanted), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._bundle(root)

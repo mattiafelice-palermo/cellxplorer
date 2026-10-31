@@ -161,6 +161,21 @@ function Get-Hash([string]$Path) {
     }
 }
 
+function Invoke-TimedNativeStep([string]$Name, [scriptblock]$Action) {
+    # Worker stdout is replayed later by the coordinator: measure in the worker,
+    # never infer durations from the coordinator's adjacent log timestamps.
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $status = 'failed'
+    Write-Host ('CXCI_TIMING ' + (@{ event = 'begin'; name = $Name; utc = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress))
+    try {
+        & $Action
+        $status = 'passed'
+    } finally {
+        $timer.Stop()
+        Write-Host ('CXCI_TIMING ' + (@{ event = 'end'; name = $Name; utc = [DateTime]::UtcNow.ToString('o'); elapsed_ms = $timer.Elapsed.TotalMilliseconds; status = $status } | ConvertTo-Json -Compress))
+    }
+}
+
 function Get-InstallerCase([string]$Scope, [string]$Layout, [string]$Operation, [bool]$HasBaseline, [string]$Directory) {
     $scopeFlag = if ($Scope -eq 'machine') { '/CXALLUSERS' } else { '/CXCURRENTUSER' }
     $fresh = -not $HasBaseline -and $Layout -eq 'default' -and $Operation -eq 'upgrade'
@@ -462,8 +477,10 @@ function Invoke-Worker {
         if ($entry.Key -eq $Channel -and -not $hasBaseline) { continue }
         Assert-True ($plan.previous.($entry.Key).("supports_${WorkerScope}_baseline")) "Prior $($entry.Key) installer has no proven $WorkerScope selection; cannot fake an old install"
         Assert-True ((Get-Hash "$Root\previous-$($entry.Key).exe") -ceq $plan.previous.($entry.Key).sha256) 'Verified previous installer bytes changed'
-        Invoke-Setup "$Root\previous-$($entry.Key).exe" "/S /NS $scopeFlag" $plan.previous.($entry.Key).sha256
-        Assert-Install $entry.Value $WorkerScope $directories[$entry.Key] $plan.previous.($entry.Key).tag.Substring(1)
+        Invoke-TimedNativeStep "$WorkerScope/baseline-$($entry.Key)/setup-and-assertions" {
+            Invoke-Setup "$Root\previous-$($entry.Key).exe" "/S /NS $scopeFlag" $plan.previous.($entry.Key).sha256
+            Assert-Install $entry.Value $WorkerScope $directories[$entry.Key] $plan.previous.($entry.Key).tag.Substring(1)
+        }
         Write-Host "Verified baseline: scope=$WorkerScope product=$($entry.Value) tag=$($plan.previous.($entry.Key).tag) binary=$(Get-Hash "$($directories[$entry.Key])\cellxplorer.exe")"
     }
     $protected = @{}
@@ -477,9 +494,13 @@ function Invoke-Worker {
             # this verified fresh payload/registration to a custom legacy path.
             $seed = if ($hasBaseline) { "$Root\previous-$Channel.exe" } else { "$Root\candidate.exe" }
             $seedHash = if ($hasBaseline) { $plan.previous.$Channel.sha256 } else { $plan.candidate_sha256 }
-            Invoke-Setup $seed "/S /NS $scopeFlag" $seedHash
+            Invoke-TimedNativeStep "$WorkerScope/$layout/reset-baseline" {
+                Invoke-Setup $seed "/S /NS $scopeFlag" $seedHash
+            }
             $custom = Join-Path $Root "custom $WorkerScope $Channel"
-            Move-LegacyFixture $product $WorkerScope $directory $custom
+            Invoke-TimedNativeStep "$WorkerScope/$layout/move-legacy-fixture" {
+                Move-LegacyFixture $product $WorkerScope $directory $custom
+            }
             $directory = $custom
         }
         if ($WorkerScope -eq 'machine') {
@@ -495,19 +516,27 @@ function Invoke-Worker {
             $case = Get-InstallerCase $WorkerScope $layout $operation $hasBaseline $directory
             $priorHash = if (Test-Path -LiteralPath "$directory\cellxplorer.exe") { Get-Hash "$directory\cellxplorer.exe" } else { 'absent' }
             Write-Host "BEGIN $($case.Name): directory=$directory installer=$($plan.candidate_sha256) expectedBinary=$($plan.binary_sha256) priorBinary=$priorHash"
-            Invoke-Setup "$Root\candidate.exe" $case.Options $plan.candidate_sha256
-            Assert-Install $product $WorkerScope $directory $plan.version $plan.binary_sha256
-            Write-Host "PASS $($case.Name): binary=$(Get-Hash "$directory\cellxplorer.exe")"
-            foreach ($entry in $protected.GetEnumerator()) {
-                Assert-True ((Get-IdentitySnapshot $products[$entry.Key] $directories[$entry.Key]) -ceq $entry.Value) 'Another channel identity changed'
+            Invoke-TimedNativeStep "$($case.Name)/setup" {
+                Invoke-Setup "$Root\candidate.exe" $case.Options $plan.candidate_sha256
             }
-            foreach ($entry in $sentinels.GetEnumerator()) {
+            Invoke-TimedNativeStep "$($case.Name)/installation-assertions" {
+                Assert-Install $product $WorkerScope $directory $plan.version $plan.binary_sha256
+            }
+            Write-Host "PASS $($case.Name): binary=$(Get-Hash "$directory\cellxplorer.exe")"
+            Invoke-TimedNativeStep "$($case.Name)/isolation-assertions" {
+              foreach ($entry in $protected.GetEnumerator()) {
+                Assert-True ((Get-IdentitySnapshot $products[$entry.Key] $directories[$entry.Key]) -ceq $entry.Value) 'Another channel identity changed'
+              }
+              foreach ($entry in $sentinels.GetEnumerator()) {
                 Assert-True ((Get-Hash $entry.Key) -ceq $entry.Value) 'Scientific data sentinel changed'
+              }
             }
             $completed += $case.Name
         }
         # Cleanup only the exact successfully verified installation, preserving data.
-        Invoke-Setup "$directory\uninstall.exe" "/S /UPDATE $scopeFlag _?=$directory"
+        Invoke-TimedNativeStep "$WorkerScope/$layout/keep-data-uninstall" {
+            Invoke-Setup "$directory\uninstall.exe" "/S /UPDATE $scopeFlag _?=$directory"
+        }
         Assert-True (-not (Test-Path -LiteralPath "$directory\cellxplorer.exe")) 'Keep-data uninstall left application binary'
         foreach ($hive in @('CurrentUser', 'LocalMachine')) {
             Assert-True (@(Get-Registration $product $hive).Count -eq 0) 'Uninstall left selected registration'
@@ -528,9 +557,11 @@ function Invoke-Worker {
 Assert-CI
 if ($WorkerScope) {
     Assert-TempRoot $Root
-    Initialize-WorkerTemp $WorkerScope
-    Remove-NativeCredentials
-    Invoke-Worker
+    Invoke-TimedNativeStep "$WorkerScope/worker-total" {
+        Initialize-WorkerTemp $WorkerScope
+        Remove-NativeCredentials
+        Invoke-Worker
+    }
     exit 0
 }
 Assert-True ($ProfileProbe -or ($Channel -and $Version)) 'Channel and Version required'

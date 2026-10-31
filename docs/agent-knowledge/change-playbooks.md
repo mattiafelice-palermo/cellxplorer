@@ -1,5 +1,36 @@
 # Change playbooks
 
+## Verified build boundaries
+
+Cargo's default release `lto = false` can still perform local ThinLTO between
+one crate's codegen units. The explicit string `lto = "off"` disables that pass.
+Do not conflate this with reducing optimization level, assertions, panic policy,
+security features, or a measured runtime speedup. Separate dependency preparation
+from warm application compilation; retain full native/runtime acceptance.
+
+The builder's installed dependencies are not the frozen application's runtime.
+Setuptools/Distutils remain installed for PyInstaller/tests but are excluded from
+the sidecar. `Get-BackendFingerprint` includes the build command, so changed flags
+invalidate a staged old bundle. Compare actual native/resource hashes and runtime
+module sets, then run the frozen API and lossless scientific checks. Use fresh
+PyInstaller work directories when measuring analysis, not a reused Analysis TOC.
+
+Tabler is a pinned MIT-licensed local subset. Keep the rendering factory and icon
+modules byte-identical to upstream; retain licence, source hashes and independently
+captured SVG references. The import inventory and parity test fail when icons
+are added without deliberate regeneration. Do not replace missing icons silently.
+Vendored files participate in both preflight cache fingerprints; the parity
+scripts also participate in the policy fingerprint so edits cannot reuse a stale pass.
+
+Native worker stdout is buffered. `CXCI_TIMING` begin/end JSON records contain
+worker UTC, Stopwatch elapsed milliseconds and pass/fail status; failures remain
+exceptions. Read these with `scripts/summarize_native_timings.py`, not adjacent
+coordinator log timestamps. Overlapping phases/workers are not additive wall time.
+
+The explicit workflow-dispatch cache seed prepares only the current ref's cache.
+The release workflow stays restore-only and executes every mandatory gate. Keep
+four preflight workers; neither seed compilation nor a cache hit proves acceptance.
+
 ## Persistent schema change
 
 1. Add a forward-only revision under `backend/app/migrations/`.
@@ -173,7 +204,9 @@ PyInstaller caches its own stages, so an unchanged rebuild is ~3s and a changed 
 most is re-analysing the pandas/numpy/pyarrow dependency graph. `scripts/build-app.ps1` fingerprints
 the Python sources and skips the stage entirely when nothing changed; `-ForceBackend` overrides.
 
-Do not try to shrink the sidecar by excluding modules. `tkinter` is used by `routers/files.py` for
+Do not omit runtime modules to shrink the sidecar. The verified build-tool-only
+Setuptools/Distutils exclusion above is not permission to trim scientific modules.
+`tkinter` is used by `routers/files.py` for
 the native folder picker, and the remaining unused modules are ~3MB against pandas 62MB, numpy 31MB
 and pyarrow 84MB.
 

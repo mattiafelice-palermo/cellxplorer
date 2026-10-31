@@ -279,6 +279,32 @@ class FinalAssetRecheckTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
 class PowerShellGateTests(unittest.TestCase):
+    def test_native_timing_markers_record_elapsed_and_preserve_failure(self):
+        command = r'''
+Invoke-TimedNativeStep 'fixture/setup' { Start-Sleep -Milliseconds 15 }
+$failed = $false
+try { Invoke-TimedNativeStep 'fixture/failure' { throw 'timing-sentinel' } }
+catch { $failed = $_.Exception.Message -eq 'timing-sentinel' }
+Assert-True $failed 'Timing wrapper swallowed or replaced the failure'
+'''
+        result = self.run_functions(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        events = [json.loads(line.split('CXCI_TIMING ', 1)[1])
+                  for line in result.stdout.splitlines() if line.startswith('CXCI_TIMING ')]
+        self.assertEqual([(row['name'], row['event']) for row in events], [
+            ('fixture/setup', 'begin'), ('fixture/setup', 'end'),
+            ('fixture/failure', 'begin'), ('fixture/failure', 'end')])
+        self.assertEqual([row['status'] for row in events if row['event'] == 'end'], ['passed', 'failed'])
+        self.assertGreaterEqual(events[1]['elapsed_ms'], 10)
+        self.assertGreaterEqual(events[3]['elapsed_ms'], 0)
+        self.assertTrue(all(row['utc'].endswith('Z') for row in events))
+        spec = importlib.util.spec_from_file_location('native_timings', ROOT / 'scripts/summarize_native_timings.py')
+        timings = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(timings)
+        buffered = '\n'.join('2026-01-01T00:00:00Z CXCI_TIMING ' + json.dumps(row) for row in events)
+        self.assertEqual(timings.parse_markers(buffered), events)
+        self.assertIn('Invoke-TimedNativeStep "$WorkerScope/worker-total"', SMOKE.read_text())
+
     def test_whole_file_hash_needs_no_cmdlet_module_and_missing_files_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Path(temporary) / '[literal-file].bin'

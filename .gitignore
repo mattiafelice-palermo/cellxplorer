@@ -34,6 +34,8 @@ cache/
 _internal/
 build/
 dist/
+!frontend/vendor/tabler-icons-react/dist/
+!frontend/vendor/tabler-icons-react/dist/**
 src-tauri/target/
 scripts/rust_derivative_kernel/target/
 scripts/rust_time_capacity_display/target/

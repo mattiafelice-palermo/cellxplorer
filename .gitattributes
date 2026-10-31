@@ -1,0 +1,2 @@
+# Vendored icon integrity hashes bind exact upstream bytes on every platform.
+frontend/vendor/tabler-icons-react/** -text

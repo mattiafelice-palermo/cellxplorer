@@ -237,6 +237,7 @@ Cellxplorer/
 ├── frontend/
 │   ├── package.json, vite.config.ts, tsconfig.json, index.html
 │   ├── public/                     Static application assets, including whats-new/ MP4, poster and captions
+│   ├── vendor/tabler-icons-react/   Pinned licensed subset of used icons and upstream SVG parity references
 │   ├── src/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
@@ -385,6 +386,9 @@ Cellxplorer/
 │   ├── profile_analysis_family_concurrency.py Five-family S1/P4/P8 route benchmark (Spec 050.23)
 │   ├── profile_analysis_families.py Cross-family production-route profiler (Spec 050.17)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
+│   ├── tabler_subset.mjs           Generate/check used icon inventory and pinned source hashes
+│   ├── verify_tabler_subset.mjs    Check every subset icon against upstream SVG references
+│   ├── summarize_native_timings.py Read worker-measured native matrix phase markers
 │   ├── profile_time_capacity_refinement.py Focused adaptive-refinement S25 measurement (Spec 050.15)
 │   ├── profile_import_search.py     Disposable indexed-search catalog benchmark (Spec 060)
 │   ├── profile_import_search_filters.py Disposable whole-catalog filter/relationship benchmark (Spec 064)

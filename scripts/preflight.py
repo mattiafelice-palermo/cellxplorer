@@ -101,6 +101,11 @@ def iter_frontend_build_inputs(root: Path) -> Iterable[Path]:
         for path in sorted(public_root.rglob("*")):
             if path.is_file():
                 yield path
+    vendor_root = root / "frontend" / "vendor"
+    if vendor_root.is_dir():
+        for path in sorted(vendor_root.rglob("*")):
+            if path.is_file():
+                yield path
 
 
 def iter_frontend_policy_inputs(root: Path) -> Iterable[Path]:
@@ -110,6 +115,8 @@ def iter_frontend_policy_inputs(root: Path) -> Iterable[Path]:
         root / "frontend" / "tsconfig.json",
         root / "scripts" / "preflight.py",
         root / "scripts" / "run_backend_tests.py",
+        root / "scripts" / "tabler_subset.mjs",
+        root / "scripts" / "verify_tabler_subset.mjs",
     ]
     for path in explicit:
         if path.is_file():
@@ -117,6 +124,7 @@ def iter_frontend_policy_inputs(root: Path) -> Iterable[Path]:
     for directory in (
         root / "frontend" / "src",
         root / "frontend" / "tests",
+        root / "frontend" / "vendor",
     ):
         if directory.is_dir():
             for path in sorted(directory.rglob("*")):

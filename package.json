@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "check:packaging-tools": "rustc --version && cargo --version && python -m PyInstaller --version && npx.cmd tauri --version",
-    "build:backend": "python -m PyInstaller --noconfirm --onedir --noconsole --disable-windowed-traceback --paths backend --additional-hooks-dir packaging/hooks --exclude-module scipy --exclude-module matplotlib --exclude-module IPython --exclude-module PIL --exclude-module psycopg --exclude-module psycopg2 --exclude-module pymysql --exclude-module MySQLdb --exclude-module pytest --add-data \"backend/app/assets/plotly.min.js;app/assets\" --name cellxplorer-backend packaging/backend_entry.py",
+    "build:backend": "python -m PyInstaller --noconfirm --onedir --noconsole --disable-windowed-traceback --paths backend --additional-hooks-dir packaging/hooks --exclude-module scipy --exclude-module matplotlib --exclude-module IPython --exclude-module PIL --exclude-module psycopg --exclude-module psycopg2 --exclude-module pymysql --exclude-module MySQLdb --exclude-module pytest --exclude-module setuptools --exclude-module distutils --exclude-module _distutils_hack --add-data \"backend/app/assets/plotly.min.js;app/assets\" --name cellxplorer-backend packaging/backend_entry.py",
     "build:frontend:stable": "python scripts/build_frontend_channel.py stable",
     "build:frontend:beta": "python scripts/build_frontend_channel.py beta",
     "build:frontend:alpha": "python scripts/build_frontend_channel.py alpha",
