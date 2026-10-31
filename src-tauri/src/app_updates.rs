@@ -369,6 +369,8 @@ pub async fn check_app_update(
         .on_before_exit(move || {
             crate::prepare_exit_for_update(&app_for_exit);
         })
+        .header("Cache-Control", "no-cache")
+        .map_err(|error| user_safe_error(error))?
         .build()
         .map_err(|error| user_safe_error(error))?
         .check()

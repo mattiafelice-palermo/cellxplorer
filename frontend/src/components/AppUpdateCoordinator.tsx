@@ -65,6 +65,8 @@ type AppUpdateContextValue = {
   showUpdateBadge: boolean;
   updateUiEnabled: boolean;
   modalOpen: boolean;
+  refreshing: boolean;
+  refreshError: string | null;
   lastCheckedAt: string | null;
   nextCheckAt: string | null;
   openUpdateModal: () => void;
@@ -105,6 +107,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const [state, dispatch] = useReducer(appUpdateReducer, { status: "idle" });
   const [modalOpen, setModalOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [upToDateModal, setUpToDateModal] = useState(false);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(() =>
@@ -120,6 +124,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const modalOpenRef = useRef(modalOpen);
   const checkInFlight = useRef<Promise<void> | null>(null);
   const checkFeedbackSource = useRef<UpdateCheckSource>("automatic");
+  const checkModalDismissed = useRef(false);
   const checkEpochRef = useRef(0);
   const downloadInFlight = useRef(false);
   const mountedRef = useRef(true);
@@ -195,6 +200,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       const release = getCurrentRelease(current);
       if (release && release.version === version) {
         openMatchingUpdateModal();
+        void performCheckRef.current("manual");
         return;
       }
 
@@ -243,8 +249,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         if (merged) {
           writeNotifiedVersion(window.localStorage, merged.version);
         }
-        setUpToDateModal(!merged);
-        setModalOpen(true);
+        if (!checkModalDismissed.current) {
+          setUpToDateModal(!merged);
+          setModalOpen(true);
+        }
         return;
       }
 
@@ -286,9 +294,16 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         if (source === "manual") openMatchingUpdateModal();
         return;
       }
+      if (isProtectedUpdateFlow(stateRef.current)) {
+        if (source === "manual") openMatchingUpdateModal();
+        return;
+      }
       if (checkInFlight.current) {
         if (source === "manual") {
+          checkModalDismissed.current = false;
           checkFeedbackSource.current = "manual";
+          openMatchingUpdateModal();
+          dispatch({ type: "check_started", source: "manual" });
         }
         await checkInFlight.current;
         return;
@@ -299,10 +314,16 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       }
 
       checkFeedbackSource.current = source;
+      if (source === "manual") checkModalDismissed.current = false;
       const epochAtStart = checkEpochRef.current;
+      setRefreshing(true);
+      setRefreshError(null);
+      if (source === "manual") { setUpToDateModal(false); setModalOpen(true); }
       dispatch({ type: "check_started", source });
 
-      const run = (async () => {
+      // Start on the next microtask so even synchronous dev paths publish the
+      // in-flight promise before its finally block clears it.
+      const run = Promise.resolve().then(async () => {
         try {
           if (
             devMock === "available" ||
@@ -312,8 +333,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             devMock === "install-error"
           ) {
             if (
-              source === "automatic" &&
-              (epochAtStart !== checkEpochRef.current ||
+              epochAtStart !== checkEpochRef.current ||
+              (checkFeedbackSource.current === "automatic" &&
                 shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
             ) {
               return;
@@ -324,8 +345,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           }
           if (!tauri) {
             if (
-              source === "automatic" &&
-              (epochAtStart !== checkEpochRef.current ||
+              epochAtStart !== checkEpochRef.current ||
+              (checkFeedbackSource.current === "automatic" &&
                 shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
             ) {
               return;
@@ -337,8 +358,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           const release = await checkAppUpdateTauri();
           if (!mountedRef.current) return;
           if (
-            source === "automatic" &&
-            (epochAtStart !== checkEpochRef.current ||
+            epochAtStart !== checkEpochRef.current ||
+            (checkFeedbackSource.current === "automatic" &&
               shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
           ) {
             return;
@@ -348,27 +369,29 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           if (!mountedRef.current) return;
           if (
-            source === "automatic" &&
-            (epochAtStart !== checkEpochRef.current ||
+            epochAtStart !== checkEpochRef.current ||
+            (checkFeedbackSource.current === "automatic" &&
               shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
           ) {
             return;
           }
           const feedbackSource = checkFeedbackSource.current;
           const message = normalizeUpdaterError(error, "Could not check for updates.");
+          setRefreshError(message);
           if (feedbackSource === "automatic") {
             addDebugEvent("app-update:check-error", { message });
             dispatch({ type: "check_error", source: "automatic", message });
           } else {
             setUpToDateModal(false);
             dispatch({ type: "check_error", source: "manual", message });
-            setModalOpen(true);
+            if (!checkModalDismissed.current) setModalOpen(true);
           }
           recordCheckCompleted();
         } finally {
           checkInFlight.current = null;
+          if (mountedRef.current) setRefreshing(false);
         }
-      })();
+      });
 
       checkInFlight.current = run;
       await run;
@@ -428,12 +451,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [devMock, updateUiEnabled]);
 
   const openUpdateModal = useCallback(() => {
-    if (stateRef.current.status === "available") {
-      checkEpochRef.current += 1;
-      setUpToDateModal(false);
-      setModalOpen(true);
-    }
-  }, []);
+    openMatchingUpdateModal();
+    void performCheck("manual");
+  }, [openMatchingUpdateModal, performCheck]);
 
   const closeUpdateModal = useCallback(() => {
     if (upToDateModal) {
@@ -442,6 +462,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (!canDismissUpdateModal(stateRef.current)) return;
+    checkModalDismissed.current = true;
     setModalOpen(false);
     if (stateRef.current.status === "error" && stateRef.current.phase === "check") {
       dispatch({ type: "dismiss_check_error" });
@@ -631,17 +652,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [devMock]);
 
   const handleMenuClick = useCallback(() => {
-    const current = stateRef.current;
-    if (current.status === "available" ||
-        (current.status === "error" && current.release && canDismissUpdateModal(current))) {
-      checkEpochRef.current += 1;
-      setUpToDateModal(false);
-      setModalOpen(true);
-      return;
-    }
-    if (current.status === "checking") return;
-    void performCheck("manual");
-  }, [performCheck]);
+    openUpdateModal();
+  }, [openUpdateModal]);
 
   const value = useMemo<AppUpdateContextValue>(
     () => ({
@@ -649,6 +661,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       showUpdateBadge: shouldPersistUpdateBadge(state),
       updateUiEnabled,
       modalOpen,
+      refreshing,
+      refreshError,
       lastCheckedAt,
       nextCheckAt,
       openUpdateModal,
@@ -668,6 +682,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       handleMenuClick,
       lastCheckedAt,
       modalOpen,
+      refreshing,
+      refreshError,
       nextCheckAt,
       openUpdateModal,
       performCheck,
@@ -689,6 +705,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         state={state}
         currentVersion={currentVersion}
         upToDate={upToDateModal}
+        refreshing={refreshing}
+        refreshError={refreshError}
+        onRefresh={() => void performCheck("manual")}
         onClose={closeUpdateModal}
         onDownload={() => void downloadAndLaunchInstaller()}
         onRetry={() => void retryDownload()}

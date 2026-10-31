@@ -369,6 +369,23 @@ compilation and these fixture executions do not establish it.
    re-encode with PowerShell `ConvertTo-Json`; that can emit nested arrays or stringified rows and
    fail `verify_updater_manifest.py` with `release asset at index 0 must be an object`.
 
+Alpha/Beta bootstrap edition availability is native, read-only installation
+evidence, not the existence of a `.cellxplorer*` data folder. `installed_editions`
+checks both registry hives/views and keeps failed or incomplete reads unknown.
+Only a verified sole edition can bypass the chooser through the guarded backend
+`complete-single-edition` acknowledgement; it never resets data, discards a stage,
+or activates a copy. Stable has no bootstrap chooser. Test production confirmation
+paths with `bootstrapConfirmationFlow.test.ts`, not development mocks alone.
+
+Opening the standard update dialog joins or starts a manual remote refresh.
+Keep the previous available release visible until success; show refresh failure
+separately. Staged local payloads and protected transfer/handoff state are excluded.
+The provider's epoch must reject superseded manual as well as automatic checks,
+and a manual opener must promote an in-flight automatic check rather than drop its
+result when the dialog becomes visible. Numeric Alpha/Beta prerelease identifiers
+participate in full SemVer ordering. `appUpdateRefresh.test.ts` exercises these
+production-provider paths with native IO isolated.
+
 Updater check preferences are local UI state under `cellxplorer-update-preferences`. The default is
 12 hours with discovery notifications enabled. Saving **Settings → App updates** dispatches
 `cellxplorer-update-preferences-changed`, which makes both Standard and opted-in Beta discovery

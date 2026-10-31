@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Group, Loader, Modal, Paper, Progress, SimpleGrid, Stack, Text } from "@mantine/core";
+import { Alert, Button, Checkbox, Group, Image, Loader, Modal, Paper, Progress, SimpleGrid, Stack, Text } from "@mantine/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconLoader2 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,11 +30,14 @@ import {
   shouldShowBetaBootstrapUi,
   type BootstrapChannel,
   type BootstrapStatus,
+  type InstalledEdition,
+  editionAvailability,
+  canAutoUseOnlyInstalledEdition,
 } from "../betaBootstrapPolicy";
 import { addDebugEvent } from "../debug";
 import { isTauriApp } from "../downloads";
 
-type CoordinatorPhase = "idle" | "staging" | "applying" | "restarting" | "error";
+type CoordinatorPhase = "idle" | "acknowledging" | "staging" | "applying" | "restarting" | "error";
 
 export function BetaBootstrapCoordinator({
   backendReady,
@@ -56,6 +59,7 @@ export function BetaBootstrapCoordinator({
   const enabled = shouldShowBetaBootstrapUi(APP_BRANDING.channel, tauri, devMock);
   const actionInFlight = useRef(false);
   const [phase, setPhase] = useState<CoordinatorPhase>("idle");
+  const [automaticSetup, setAutomaticSetup] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [retainedToken, setRetainedToken] = useState<string | null>(null);
   const [retainedOperation, setRetainedOperation] = useState<"copy" | "reset-alpha" | null>(null);
@@ -79,6 +83,24 @@ export function BetaBootstrapCoordinator({
   const status = devMock
     ? mockBetaBootstrapStatus(devMock, bootstrapChannel)
     : statusQuery.data;
+  const editionsQuery = useQuery({
+    queryKey: ["bootstrap-installed-editions"],
+    queryFn: async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke<InstalledEdition[]>("detect_installed_editions");
+    },
+    enabled: enabled && !devMock && backendReady,
+    staleTime: Infinity,
+    retry: 1,
+  });
+  const editions = devMock
+    ? (["stable", "beta", "alpha"] as const).map((channel) => ({ channel, availability: "installed" as const }))
+    : editionsQuery.data;
+  const stableInstalled = editionAvailability(editions, "stable") === "installed";
+  const betaInstalled = editionAvailability(editions, "beta") === "installed";
+  const installationUnknown = (["stable", "beta", "alpha"] as const).some(
+    (channel) => editionAvailability(editions, channel) === "unknown",
+  );
   const preparationStatus = useQuery({
     queryKey: [`${bootstrapChannel}-bootstrap-preparation-status`],
     queryFn: () =>
@@ -358,22 +380,25 @@ export function BetaBootstrapCoordinator({
     }
   }, [acknowledgeEmpty, devMock, isAlpha, outstandingToken]);
 
-  const runUseCurrent = useCallback(async () => {
+  const runUseCurrent = useCallback(async (automatic = false) => {
     if (actionInFlight.current) return;
     actionInFlight.current = true;
+    setPhase("acknowledging");
     setErrorMessage(null);
     try {
       if (devMock) {
         setPhase("idle");
         return;
       }
-      if (outstandingToken) {
+      if (outstandingToken && !automatic) {
         await post(`/api/${bootstrapChannel}-bootstrap/discard-stage`, {
           token: outstandingToken,
         });
       }
       await post(
-        hasExistingLibrary
+        automatic
+          ? `/api/${bootstrapChannel}-bootstrap/complete-single-edition`
+          : hasExistingLibrary
           ? `/api/${bootstrapChannel}-bootstrap/use-current`
           : `/api/${bootstrapChannel}-bootstrap/start-empty`,
       );
@@ -395,11 +420,28 @@ export function BetaBootstrapCoordinator({
     }
   }, [bootstrapChannel, devMock, hasExistingLibrary, isAlpha, outstandingToken, queryClient]);
 
+  // Only a positively verified single-edition install may skip the chooser.
+  // The guarded acknowledgement rechecks live recovery and pristine/current state.
+  const autoUseAttempted = useRef(false);
+  const autoUseEligible = !devMock && !errorMessage && !statusQuery.isFetching &&
+    canAutoUseOnlyInstalledEdition({
+      channel: bootstrapChannel, editions, status,
+      statusError: statusQuery.isError || editionsQuery.isError,
+      busy: phase !== "idle" || actionInFlight.current,
+    });
+  useEffect(() => {
+    if (!autoUseEligible || autoUseAttempted.current) return;
+    autoUseAttempted.current = true;
+    setAutomaticSetup(true);
+    void runUseCurrent(true).finally(() => setAutomaticSetup(false));
+  }, [autoUseEligible, runUseCurrent]);
+
   const retryStatus = useCallback(() => {
     setErrorMessage(null);
     void queryClient.invalidateQueries({
       queryKey: [`${bootstrapChannel}-bootstrap-status`],
     });
+    void queryClient.invalidateQueries({ queryKey: ["bootstrap-installed-editions"] });
   }, [bootstrapChannel, queryClient]);
 
   const discardStage = useCallback(async () => {
@@ -440,7 +482,7 @@ export function BetaBootstrapCoordinator({
     }
   }, [tauri]);
 
-  const busy = phase === "staging" || phase === "applying" || phase === "restarting";
+  const busy = phase === "acknowledging" || phase === "staging" || phase === "applying" || phase === "restarting";
   const copyStableDisabled = isAlpha
     ? alphaSourceCopyDisabled(alphaStatus, "stable", busy, devMock) || Boolean(outstandingToken && outstandingOperation === "reset-alpha")
     : copyStableLibraryDisabled(betaStatus, busy, devMock);
@@ -453,10 +495,10 @@ export function BetaBootstrapCoordinator({
   const betaBlockingReason = isAlpha
     ? alphaSourceBlockingReason(alphaStatus, "beta", devMock)
     : null;
-  const showChoice = setupState === "choice-required";
+  const showChoice = setupState === "choice-required" && !autoUseEligible && !automaticSetup;
   const showLoading = setupLoading;
   const showBlocked = setupState === "blocked-error";
-  const requiresSetupDecisionOrRecovery = showChoice || showBlocked;
+  const requiresSetupDecisionOrRecovery = showChoice || showBlocked || autoUseEligible || automaticSetup;
   const modalOpen =
     requiresSetupDecisionOrRecovery ||
     (preparationPending
@@ -476,7 +518,7 @@ export function BetaBootstrapCoordinator({
       closeOnClickOutside={false}
       closeOnEscape={false}
       centered
-      size={isAlpha ? "32rem" : "md"}
+      size={showChoice ? (isAlpha ? "64rem" : "36rem") : "md"}
       title={
         preparationPending
           ? `Preparing copied ${isAlpha ? "Alpha" : "Beta"} library`
@@ -485,6 +527,10 @@ export function BetaBootstrapCoordinator({
       zIndex={400}
     >
       <Stack gap="md">
+        {autoUseEligible || automaticSetup ? <Group gap="sm">
+          <Loader size="sm" />
+          <Text size="sm">Opening your {isAlpha ? "Alpha" : "Beta"} library…</Text>
+        </Group> : null}
         {preparationPending ? (
           <>
             <Text size="sm">
@@ -564,6 +610,16 @@ export function BetaBootstrapCoordinator({
         </Text>
       ) : null}
 
+        {showChoice && !devMock && editionsQuery.isLoading ? <Group gap="xs">
+          <Loader size="xs" /><Text size="xs" c="dimmed">Checking installed editions…</Text>
+        </Group> : null}
+        {showChoice && installationUnknown && !editionsQuery.isLoading ? (
+          <Alert color="yellow" title="Edition installation could not be verified">
+            <Text size="sm">Only verified installed editions are offered for copying. Your current library is unchanged.</Text>
+            <Button variant="default" size="compact-sm" mt="xs" onClick={retryStatus}>Retry detection</Button>
+          </Alert>
+        ) : null}
+
         {showChoice && !isAlpha && hasExistingBeta ? (
           <Alert color="yellow" title="Copying will overwrite Beta data">
             Copying from Stable replaces the current Beta database and Beta-managed imports. Stable
@@ -585,20 +641,20 @@ export function BetaBootstrapCoordinator({
           </Alert>
         ) : null}
 
-        {copyBlockedReason && showChoice && !isAlpha ? (
+        {copyBlockedReason && showChoice && !isAlpha && stableInstalled ? (
           <Alert color="yellow" title="Copy unavailable">
             {copyBlockedReason}
           </Alert>
         ) : null}
 
-        {isAlpha && showChoice && (stableBlockingReason || betaBlockingReason) ? (
+        {isAlpha && showChoice && ((stableInstalled && stableBlockingReason) || (betaInstalled && betaBlockingReason)) ? (
           <Stack gap={4}>
-            {stableBlockingReason ? (
+            {stableInstalled && stableBlockingReason ? (
               <Text size="xs" c="orange">
                 Copy Stable library unavailable: {stableBlockingReason}
               </Text>
             ) : null}
-            {betaBlockingReason ? (
+            {betaInstalled && betaBlockingReason ? (
               <Text size="xs" c="orange">
                 Copy Beta library unavailable: {betaBlockingReason}
               </Text>
@@ -686,8 +742,11 @@ export function BetaBootstrapCoordinator({
               ) : null}
             </Group>
             {isAlpha ? (
-              <SimpleGrid cols={2} spacing="sm" w="100%">
-                <Stack gap={2}>
+              <SimpleGrid spacing="sm" w="100%" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))" }}>
+                {stableInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
+                  <Image src="/setup/copy-stable.png" alt="Stable library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Text size="xs" fw={700} ta="center">Stable → Alpha</Text>
+                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Stable stays unchanged.</Text>
                   <Button
                     variant="default"
                     color={hasExistingAlpha && confirmReplace ? "red" : APP_BRANDING.primaryColor}
@@ -715,8 +774,11 @@ export function BetaBootstrapCoordinator({
                       {stableBlockingReason}
                     </Text>
                   ) : null}
-                </Stack>
-                <Stack gap={2}>
+                </Stack></Paper> : null}
+                {betaInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
+                  <Image src="/setup/copy-beta.png" alt="Beta library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Text size="xs" fw={700} ta="center">Beta → Alpha</Text>
+                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Beta stays unchanged.</Text>
                   <Button
                     variant="default"
                     color={hasExistingAlpha && confirmReplace ? "red" : APP_BRANDING.primaryColor}
@@ -744,12 +806,19 @@ export function BetaBootstrapCoordinator({
                       {betaBlockingReason}
                     </Text>
                   ) : null}
-                </Stack>
-                {hasExistingAlpha ? (
-                  <Button onClick={() => void runUseCurrent()} disabled={busy}>
+                </Stack></Paper> : null}
+                <Paper withBorder p="sm"><Stack gap="xs" h="100%">
+                  <Image src="/setup/keep-alpha.png" alt="Keep the current Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Text size="xs" fw={700} ta="center">Current Alpha</Text>
+                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Keep your Alpha cells, analyses and settings.</Text>
+                  <Button px="sm" onClick={() => void runUseCurrent()} disabled={busy}>
                     Keep current Alpha library
                   </Button>
-                ) : null}
+                </Stack></Paper>
+                <Paper withBorder p="sm"><Stack gap="xs" h="100%">
+                  <Image src="/setup/start-empty.png" alt="An empty Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Text size="xs" fw={700} ta="center">Empty Alpha</Text>
+                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Replace Alpha with a blank library. Confirmation required.</Text>
                 <Button color="red" variant="light" onClick={() => {
                   setAcknowledgeEmpty(false);
                   setConfirmReplace(false);
@@ -757,26 +826,22 @@ export function BetaBootstrapCoordinator({
                 }} disabled={busy}>
                   Start empty
                 </Button>
-                {confirmReplace ? (
-                  <Button variant="default" onClick={() => setConfirmReplace(false)} disabled={busy}>
-                    Cancel
-                  </Button>
-                ) : null}
+                </Stack></Paper>
               </SimpleGrid>
             ) : (
-              <Group gap="sm">
+              <SimpleGrid spacing="sm" w="100%" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))" }}>
+                <Paper withBorder p="sm"><Stack gap="xs" h="100%">
+                  <Image src={hasExistingBeta ? "/setup/keep-beta.png" : "/setup/empty-beta.png"} alt={hasExistingBeta ? "Keep the current Beta library" : "An empty Beta library"} w={88} h={88} mx="auto" fit="contain" />
+                  <Text size="xs" fw={700} ta="center">{hasExistingBeta ? "Current Beta" : "Empty Beta"}</Text>
+                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>{hasExistingBeta ? "Keep your Beta cells, analyses and settings." : "Open a clean, independent Beta library."}</Text>
                 <Button variant="default" onClick={() => void runUseCurrent()} disabled={busy}>
                   {hasExistingBeta ? "Use existing Beta library" : "Start clean"}
                 </Button>
-                {hasExistingBeta && confirmReplace ? (
-                  <Button
-                    variant="default"
-                    onClick={() => setConfirmReplace(false)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </Button>
-                ) : null}
+                </Stack></Paper>
+                {stableInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
+                  <Image src="/setup/copy-stable-to-beta.png" alt="Stable library copied into a separate Beta library" w={88} h={88} mx="auto" fit="contain" />
+                  <Text size="xs" fw={700} ta="center">Stable → Beta</Text>
+                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Stable stays unchanged.</Text>
                 <Button
                   color={hasExistingBeta && confirmReplace ? "red" : APP_BRANDING.primaryColor}
                   onClick={() => {
@@ -796,9 +861,19 @@ export function BetaBootstrapCoordinator({
                       ? "Replace Beta library"
                       : "Copy Stable library"}
                 </Button>
-              </Group>
+                </Stack></Paper> : null}
+              </SimpleGrid>
             )}
           </Group>
+        ) : null}
+        {showChoice && confirmReplace ? <Group justify="flex-end">
+          <Button variant="default" onClick={() => setConfirmReplace(false)} disabled={busy}>Cancel</Button>
+        </Group> : null}
+        {showChoice && outstandingToken && outstandingOperation === "copy" ? (
+          <Button color={confirmReplace ? "red" : APP_BRANDING.primaryColor} disabled={busy} onClick={() => {
+            if (hasExistingLibrary && !confirmReplace) { setConfirmReplace(true); return; }
+            void runCopyFlow();
+          }}>{hasExistingLibrary && confirmReplace ? "Replace with staged library" : "Retry staged copy"}</Button>
         ) : null}
       </Stack>
     </Modal>

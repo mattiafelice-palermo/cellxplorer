@@ -140,6 +140,76 @@ class AlphaBootstrapTests(unittest.TestCase):
     def _alpha_session(self):
         return self._session(self.alpha_root)
 
+    def test_single_edition_acknowledges_existing_library_without_resetting_data(self):
+        db = self._alpha_session()
+        db.add(Cell(name="Retained Alpha cell"))
+        db.commit()
+        imports = self.alpha_root / "imports"
+        imports.mkdir()
+        source = imports / "retained.nda"
+        source.write_bytes(b"original managed source bytes")
+        before = source.read_bytes()
+        result = beta_bootstrap.complete_single_edition_setup(db)
+        self.assertEqual(result, {"decision": "current", "restartRequired": False})
+        self.assertEqual(db.query(Cell).one().name, "Retained Alpha cell")
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual(beta_bootstrap.read_alpha_marker()["decision"], "current")
+        self.assertIsNone(beta_bootstrap.find_outstanding_stage_token())
+
+    def test_single_edition_pristine_acknowledgement_creates_no_copy_or_reset(self):
+        db = self._alpha_session()
+        result = beta_bootstrap.complete_single_edition_setup(db)
+        self.assertEqual(result["decision"], "empty")
+        self.assertEqual(db.query(Cell).count(), 0)
+        self.assertIsNone(beta_bootstrap.find_outstanding_stage_token())
+
+    def test_single_edition_never_hides_recovery_or_invalid_source(self):
+        db = self._alpha_session()
+        status = beta_bootstrap.build_alpha_status(db)
+        variants = [
+            {"outstandingStageToken": "a" * 32},
+            {"setupError": "Invalid marker", "setupState": "blocked-error"},
+            {"applyFailureMessage": "Activation failed"},
+            {"scientificPreparationPending": True},
+            {"sources": [{"exists": True, "compatible": False}]},
+        ]
+        for variant in variants:
+            with self.subTest(variant=variant), patch.object(beta_bootstrap, "build_alpha_status", return_value={**status, **variant}):
+                with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+                    beta_bootstrap.complete_single_edition_setup(db)
+                self.assertIsNone(beta_bootstrap.read_alpha_marker())
+        # A stage can appear after the status snapshot; the live lock guard must win.
+        with patch.object(beta_bootstrap, "build_alpha_status", return_value=status):
+            beta_bootstrap._active_stage_token = "b" * 32
+            with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+                beta_bootstrap.complete_single_edition_setup(db)
+        self.assertIsNone(beta_bootstrap.read_alpha_marker())
+
+    def test_single_edition_blocks_an_incomplete_stage_without_discarding_it(self):
+        db = self._alpha_session()
+        stage = beta_bootstrap.alpha_bootstrap_root() / ("e" * 32)
+        stage.mkdir(parents=True)
+        manifest = stage / beta_bootstrap.MANIFEST_NAME
+        manifest.write_text("{invalid", encoding="utf8")
+        with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+            beta_bootstrap.complete_single_edition_setup(db)
+        self.assertEqual(manifest.read_text(encoding="utf8"), "{invalid")
+        self.assertIsNone(beta_bootstrap.read_alpha_marker())
+
+    def test_single_edition_blocks_a_corrupt_failure_record_without_hiding_it(self):
+        db = self._alpha_session()
+        failure = beta_bootstrap.alpha_apply_failure_path()
+        failure.write_text("{invalid", encoding="utf8")
+        with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+            beta_bootstrap.complete_single_edition_setup(db)
+        self.assertEqual(failure.read_text(encoding="utf8"), "{invalid")
+        self.assertIsNone(beta_bootstrap.read_alpha_marker())
+
+    def test_single_edition_does_not_treat_a_filesystem_error_as_absence(self):
+        with patch.object(Path, "stat", side_effect=PermissionError("Denied")):
+            with self.assertRaises(beta_bootstrap.BetaBootstrapValidation):
+                beta_bootstrap._automatic_setup_artifact_present(Path("unreadable-recovery"))
+
     def _populate_source(self, root: Path, label: str):
         imports = root / "imports" / "batch"
         imports.mkdir(parents=True)

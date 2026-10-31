@@ -8,11 +8,12 @@ import {
   Stack,
   Text,
 } from "@mantine/core";
-import { IconDownload } from "@tabler/icons-react";
+import { IconDownload, IconRefresh } from "@tabler/icons-react";
 
 import { APP_BRANDING } from "../appChannel";
 import {
   canDismissUpdateModal,
+  canRefreshAppUpdate,
   computeDownloadProgress,
   describeUpdateCheckFailure,
   explainUpdateCheckFailure,
@@ -34,6 +35,9 @@ type AppUpdateModalProps = {
   onRetryInstall: () => void;
   onRetryCheck: () => void;
   onRestart: () => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+  refreshError?: string | null;
 };
 
 function CurrentVersionBadge({ version }: { version: string | null }) {
@@ -56,6 +60,9 @@ export function AppUpdateModal({
   onRetryInstall,
   onRetryCheck,
   onRestart,
+  onRefresh,
+  refreshing = false,
+  refreshError = null,
 }: AppUpdateModalProps) {
   const release =
     state.status === "available" ||
@@ -125,6 +132,8 @@ export function AppUpdateModal({
           )}
 
           <Group justify="flex-end" gap="sm" mt={4}>
+            <Button variant="default" leftSection={<IconRefresh size={16} />} onClick={onRefresh}
+              loading={refreshing} disabled={refreshing || !canRefreshAppUpdate(state)}>Refresh</Button>
             {!checkingManual ? (
               <Button variant="default" onClick={onClose}>
                 Close
@@ -165,6 +174,14 @@ export function AppUpdateModal({
       <Stack gap="sm">
         <Text size="sm">{transferError ? "The update could not be completed." : release!.localInstaller ? "The local signed installer is verified and ready. This performs a real update or reinstall, not a dry run." : "A new version of CellXplorer is ready to install."}</Text>
         {release!.localInstaller ? <Badge variant="light" color="gray" style={{ alignSelf: "flex-start" }}>Local installer</Badge> : null}
+        {!release!.localInstaller ? <Group justify="flex-end">
+          <Button variant="default" size="sm" leftSection={<IconRefresh size={16} />} onClick={onRefresh}
+            loading={refreshing} disabled={refreshing || !canRefreshAppUpdate(state)}>Refresh</Button>
+        </Group> : null}
+        {refreshError && !release!.localInstaller ? <Alert color="orange" title="Could not refresh updates">
+          <Text size="sm">{refreshError}</Text>
+          <Text size="xs">The previously found release is still shown. Refresh to try again.</Text>
+        </Alert> : null}
 
         <Stack gap={6}>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
@@ -240,6 +257,7 @@ export function AppUpdateModal({
                 color={APP_BRANDING.primaryColor}
                 leftSection={<IconDownload size={16} />}
                 onClick={onDownload}
+                disabled={refreshing}
               >
                 {release!.localInstaller ? "Install local update" : "Download update"}
               </Button>

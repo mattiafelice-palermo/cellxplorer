@@ -59,8 +59,11 @@ installed, it updates itself from the Beta channel; Stable never updates the ins
 On Beta's first launch you choose whether to copy a safe snapshot of the Stable library or start
 empty. The two libraries remain independent afterward.
 
-On Alpha's first launch you choose exactly one of **Copy Stable library**, **Copy Beta library**, or
-**Start empty**. Alpha copies are one-time snapshots: the selected source is not modified, managed
+On Alpha's first launch you can **Copy Stable library**, **Copy Beta library**, **Keep current Alpha
+library**, or **Start empty**. Alpha/Beta setup offers only verified installed source editions;
+a verified single-edition installation opens its current or pristine library automatically unless
+setup needs recovery. Starting empty in Alpha requires an explicit data-loss acknowledgement.
+Alpha copies are one-time snapshots: the selected source is not modified, managed
 imports are rewritten into `%USERPROFILE%\.cellxplorer-alpha\imports`, and Alpha never synchronizes
 with Stable or Beta afterward. It uses the dedicated `release-channels/alpha/latest.json` feed and
 the same standard updater state as Stable and Beta; Alpha versions are exact dotted

@@ -4,6 +4,18 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.16 - 2026-10-31
+
+### New features
+
+- Illustrated Alpha and Beta setup choices with edition-branded artwork and installation-aware library selection.
+- A labelled Refresh action checks for newer releases whenever the update dialog opens.
+
+### Bug fixes
+
+- Single-edition setup preserves the current library without an unnecessary chooser, while pending stages and recovery errors still require an explicit decision.
+- Update refreshes retain the last found release on failure, correctly order Alpha and Beta prerelease versions, and preserve staged local installers and active handoffs.
+
 ## 0.28.0-alpha.15 - 2026-10-31
 
 ### New features
