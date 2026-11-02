@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.17 - 2026-11-02
+
+### Bug fixes
+
+- Fix a crash when replacing plot titles or editing descriptions in analysis save and rename dialogs.
+- Ignore conclusively stale installation records so removed editions do not interfere with installed-edition detection.
+
 ## 0.28.0-alpha.16 - 2026-10-31
 
 ### New features
