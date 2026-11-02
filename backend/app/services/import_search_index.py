@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import tempfile
+import traceback
 from pathlib import Path
 
 from .import_search_transport import BatchSpool
@@ -97,6 +98,7 @@ class SearchIndexer:
         self.monitor_thread = None
         self.revision = 0
         self.last_delta_root = None
+        self.last_failure = None
 
     def root_snapshots(self, *, counts=True):
         with self.lock:
@@ -264,9 +266,16 @@ class SearchIndexer:
                         self._delta(root, config, epoch, changes)
                     else:
                         self._scan(root, config, epoch)
-                except Exception:
+                except Exception as error:
                     with self.lock:
                         if epoch == self.epoch:
+                            # Keep bounded, path-free diagnostics. Exception text
+                            # and traceback filenames may contain private paths.
+                            self.last_failure = dict(
+                                type=type(error).__name__, errno=getattr(error, "errno", None),
+                                winerror=getattr(error, "winerror", None),
+                                frames=[(frame.name, frame.lineno) for frame in
+                                        traceback.extract_tb(error.__traceback__)[-8:]])
                             if self.live and self.live.items.get(root["id"], {}).get("state") != "reconnecting":
                                 self.live.require_recovery(root["id"], "Indexing stopped unexpectedly. Previous results are retained; retrying.")
                             try:

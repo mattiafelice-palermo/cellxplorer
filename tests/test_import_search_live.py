@@ -294,6 +294,8 @@ class LifecycleTests(DeltaTests):
                 wait_until(lambda: indexer.root_snapshots()[0]["monitor_state"] == "reconnecting")
                 self.assertTrue(indexer.live.items["root"]["recovery"])
                 self.assertEqual(self.catalog.search(self.config)["total"], 1)
+                self.assertEqual(indexer.last_failure["type"], "OSError")
+                self.assertNotIn("injected write failure", str(indexer.last_failure))
             finally:
                 indexer.stop()
 
@@ -455,7 +457,8 @@ class LifecycleTests(DeltaTests):
                     detail = dict(roots=indexer.root_snapshots(), active=indexer.active_root,
                                   pending=list(indexer.pending),
                                   events={key: dict(item['events']) for key,item in indexer.live.items.items()},
-                                  worker_alive=indexer.process.is_alive() if indexer.process else None)
+                                  worker_alive=indexer.process.is_alive() if indexer.process else None,
+                                  failure=indexer.last_failure)
                 raise AssertionError(f"{error}; native search state: {detail}") from error
         try:
             wait_state(lambda: indexer.root_snapshots()[0].get("monitor_state") == "connected")
