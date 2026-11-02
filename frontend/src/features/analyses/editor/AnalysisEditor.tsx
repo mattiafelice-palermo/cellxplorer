@@ -6035,9 +6035,10 @@ function AnalysisEditorView({
           <TextInput
             label="Title"
             value={saveDraft?.name ?? ""}
-            onChange={(event) =>
-              setSaveDraft((draft) => (draft ? { ...draft, name: event.currentTarget.value } : draft))
-            }
+            onChange={(event) => {
+              const name = event.currentTarget.value;
+              setSaveDraft((draft) => (draft ? { ...draft, name } : draft));
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter") commitSavedPlot();
             }}
@@ -6049,11 +6050,12 @@ function AnalysisEditorView({
             label="Description"
             minRows={3}
             value={saveDraft?.description ?? ""}
-            onChange={(event) =>
+            onChange={(event) => {
+              const description = event.currentTarget.value;
               setSaveDraft((draft) =>
-                draft ? { ...draft, description: event.currentTarget.value } : draft
-              )
-            }
+                draft ? { ...draft, description } : draft
+              );
+            }}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setSaveDraft(null)}>
@@ -6077,11 +6079,12 @@ function AnalysisEditorView({
           <TextInput
             label="Plot name"
             value={quantityRenamePrompt?.name ?? ""}
-            onChange={(event) =>
+            onChange={(event) => {
+              const name = event.currentTarget.value;
               setQuantityRenamePrompt((prompt) =>
-                prompt ? { ...prompt, name: event.currentTarget.value } : prompt
-              )
-            }
+                prompt ? { ...prompt, name } : prompt
+              );
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && quantityRenamePrompt?.name.trim()) {
                 confirmQuantityRenameUpdate();
@@ -6157,11 +6160,12 @@ function AnalysisEditorView({
               <TextInput
                 label="Title"
                 value={leavePrompt?.name ?? ""}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const name = event.currentTarget.value;
                   setLeavePrompt((prompt) =>
-                    prompt ? { ...prompt, name: event.currentTarget.value } : prompt
-                  )
-                }
+                    prompt ? { ...prompt, name } : prompt
+                  );
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && leavePrompt?.name.trim()) savePlotAndLeave();
                 }}
@@ -6174,13 +6178,14 @@ function AnalysisEditorView({
                 label="Description"
                 minRows={3}
                 value={leavePrompt?.description ?? ""}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const description = event.currentTarget.value;
                   setLeavePrompt((prompt) =>
                     prompt
-                      ? { ...prompt, description: event.currentTarget.value }
+                      ? { ...prompt, description }
                       : prompt
-                  )
-                }
+                  );
+                }}
               />
             </>
           )}

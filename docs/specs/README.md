@@ -1,5 +1,10 @@
 # Feature specs
 
+- [082 — Analysis plot save input crash](082-analysis-save-input-crash.md).
+  **Implemented.** Capture text values before deferred save/rename modal state
+  updates; six production-handler regressions, full browser save/reload acceptance
+  and canonical no-cache preflight passed.
+
 - [081 — Illustrated setup and explicit updater refresh](081-illustrated-setup-and-update-refresh.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.16.** Compact 88 px Direct actions
   chooser, installation-aware safe setup and protected remote update refresh.

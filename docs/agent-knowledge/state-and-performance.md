@@ -1,5 +1,15 @@
 # State, caching, and performance
 
+## Input events and deferred React updates
+
+Capture an input's `event.currentTarget.value` in the change handler before
+queueing a functional state update. React clears `currentTarget` after event
+dispatch; retaining the event inside an updater can crash on a later render even
+without event pooling. Keep functional updates to merge with current modal state,
+including preserving `null` when a dialog has closed. The save/rename modal
+regressions in `frontend/tests/analysisSaveInputEvents.test.ts` execute production
+handlers after dispatch cleanup, with intervening state changes and cancellation.
+
 ## Import readability and source identity
 
 Header hints remain cheap and provisional. A terminal adapter `SourceFormatError`
