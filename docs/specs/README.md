@@ -1,14 +1,16 @@
 # Feature specs
 
 - [083 — Live-search release recovery](083-live-search-release-recovery.md).
-  **Release recovery in progress.** Path-free failure diagnostics, 30 local native
-  lifecycle runs and fresh hosted preflight pass without relaxing deadlines or
-  changing indexing behavior. Original intermittent cause remains unproven.
+  **Complete; Alpha.17 published.** Path-free failure diagnostics, 30 local native
+  lifecycle runs, local/exact-main preflight, signed native release gates and
+  independent public signature/feed verification pass. No deadlines or indexing
+  behavior changed; original intermittent cause remains unproven.
 
 - [082 — Analysis plot save input crash](082-analysis-save-input-crash.md).
   **Implemented.** Capture text values before deferred save/rename modal state
   updates; six production-handler regressions, full browser save/reload acceptance
   and canonical no-cache preflight passed.
+  Published in Alpha 0.28.0-alpha.17 with signed native gates and public-feed verification.
 
 - [081 — Illustrated setup and explicit updater refresh](081-illustrated-setup-and-update-refresh.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.16.** Compact 88 px Direct actions
@@ -19,7 +21,7 @@
   installer/signature/feed verification pass; other channel blobs are unchanged.
   [R1 stale-entry follow-up](reviews/081-illustrated-setup-and-update-refresh-review.md)
   is implemented and verified (97 native tests, no-cache preflight 4/4).
-  It awaits a subsequent app release; the published Alpha.16 tag remains unchanged.
+  Published in Alpha.17; the published Alpha.16 tag remains unchanged.
 
 - [080 — Local signed installer updates](080-local-signed-installer-updates.md).
   **Complete; merged and published in Alpha 0.28.0-alpha.15.**

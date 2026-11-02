@@ -1,6 +1,6 @@
 # 082 — Analysis plot save input crash
 
-Status: Implemented; browser acceptance and canonical no-cache preflight passed.
+Status: Implemented; browser acceptance and canonical no-cache preflight passed; published in Alpha.17.
 Branch: `codex/fix-save-as-input-crash`.
 
 ## Report
@@ -40,3 +40,8 @@ persist after reload, and the analysis name remains `Test`.
 Canonical `python scripts/preflight.py --no-cache` passed all four stages with
 the supported four-worker budget, including frontend type checking and production
 build. No release, installed-app change or real-profile writes are included.
+
+Subsequent user-authorized publication: Alpha `0.28.0-alpha.17` contains this fix.
+Exact-main preflight and signed native installer gates passed, with independent
+public installer/signature/feed verification; see Spec 083 for release recovery
+evidence. The implementation above did not itself change installed applications.

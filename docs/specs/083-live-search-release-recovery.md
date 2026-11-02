@@ -1,6 +1,6 @@
 # 083 — Live-search release recovery
 
-Status: Diagnostics verified; release recovery in progress.
+Status: Release recovery complete; Alpha.17 published. Original intermittent cause unproven.
 Branch: `codex/fix-live-search-release-gate`.
 
 ## Report and scope
@@ -28,6 +28,25 @@ root cause of the original failure. Retain the bounded diagnostics so a recurren
 can identify the boundary instead of replacing the original error with only a
 catalog-wait timeout. No speculative indexing change is justified by these runs.
 
-Publication still requires a successful canonical main run for the release commit
-and every mandatory signed/native release gate. Alpha.17 remains unpublished;
-only an unpublished tag may be moved as permitted by the release playbook.
+## Verified publication
+
+Canonical main preflight on release commit `f680302f` passed all 213 committed
+backend/frontend files/modules (run `41493440755`). Local no-cache preflight
+passed 4/4 stages and 214 files/modules, including the unrelated local-only
+protocol-converter test, which was not staged or shipped.
+
+Only the unpublished Alpha.17 tag was moved, with its previous object SHA as an
+explicit push lease. The signed release workflow `41493528372` passed, including
+the mandatory native upgrade/reinstall matrix and final asset recheck, and
+published Alpha `0.28.0-alpha.17` on 2026-11-02. No published version was replaced.
+
+Independent public-download verification passed: installer SHA256
+`4a6583b8996dc9c9898142fa20882ef12616dabaf948f379382de11e58688cb5`,
+signature against the embedded updater public key, exact manifest version,
+release notes, signature and asset identity. The public raw Alpha pointer serves
+Alpha.17. Stable, Beta and channel README blob SHAs are unchanged.
+
+This recovers publication and improves diagnostics; it does not establish or
+claim a behavioral fix for the original intermittent coordinator exception.
+Scientific calculations, indexing behavior, all deadlines and release gates are
+unchanged. No installation or real-profile data mutation was performed locally.
