@@ -103,6 +103,12 @@ checks that root's identity every 30 seconds, without walking descendants; ident
 failure reconnects and reconciles. Roots without stable file identity fall back to scheduled scans.
 Delta roots are selected fairly in rotation. Application/IPC/catalog exceptions request recovery,
 and manual-only fallback preferences never suppress reconciliation after a monitoring/pause gap.
+The coordinator retains one bounded `last_failure` diagnostic: exception type,
+numeric OS codes and the final eight function/line frames. Include it in native
+acceptance failures to distinguish a catalog-wait timeout from its original
+coordinator exception. Do not retain exception text, traceback paths or locals;
+they may contain private source locations. A passing rerun establishes
+intermittency, not the original cause, and is not evidence of a behavioral fix.
 Subtree changes stabilize at most 128 first samples together, then publish those filenames before
 header enrichment. Both filename and metadata writes use bounded batches; a per-file 250ms sleep
 and individual catalog transactions imposed avoidable bulk latency. Source disappearance during

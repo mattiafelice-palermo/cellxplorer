@@ -1,8 +1,9 @@
 # Feature specs
 
 - [083 — Live-search release recovery](083-live-search-release-recovery.md).
-  **In progress.** Diagnose and fix the native incremental-indexing failure
-  blocking Alpha.17 without relaxing test deadlines or release gates.
+  **Release recovery in progress.** Path-free failure diagnostics, 30 local native
+  lifecycle runs and fresh hosted preflight pass without relaxing deadlines or
+  changing indexing behavior. Original intermittent cause remains unproven.
 
 - [082 — Analysis plot save input crash](082-analysis-save-input-crash.md).
   **Implemented.** Capture text values before deferred save/rename modal state
