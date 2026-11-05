@@ -1842,11 +1842,26 @@ def import_quick_access(db: Session) -> list[dict]:
 
 
 def remember_import_folder(db: Session, path: Path) -> None:
-    existing = _path_setting(db, IMPORT_RECENT_FOLDERS_KEY)
-    key = os.path.normcase(str(path))
-    recent = [str(path)] + [item for item in existing if os.path.normcase(item) != key]
-    _set_path_setting(db, IMPORT_RECENT_FOLDERS_KEY, recent[:8])
+    _remember_import_folders(db, [path])
     db.commit()
+
+
+def _remember_import_folders(db: Session, paths: list[Path]) -> None:
+    """Stage an import's actual source directories with its registration transaction."""
+    if not paths:
+        return
+    existing = _path_setting(db, IMPORT_RECENT_FOLDERS_KEY)
+    recent: list[str] = []
+    seen: set[str] = set()
+    for raw in [*(str(path) for path in reversed(paths)), *existing]:
+        key = _quick_access_path_key(Path(raw))
+        if key in seen:
+            continue
+        seen.add(key)
+        recent.append(raw)
+        if len(recent) == 8:
+            break
+    _set_path_setting(db, IMPORT_RECENT_FOLDERS_KEY, recent)
 
 
 def import_browse_roots() -> list[dict[str, str]]:
@@ -1924,8 +1939,6 @@ def browse_import_directory(path: str | None = None, db: Session | None = None) 
 
     entries.sort(key=lambda item: (item["kind"] != "folder", item["name"].casefold()))
     parent = current.parent
-    if db is not None:
-        remember_import_folder(db, current)
     return {
         "current_path": str(current),
         "parent_path": None if parent == current else str(parent),
@@ -5266,6 +5279,12 @@ def _create_imported_cells_impl_raw(
         },
     )
     _validate_prepared_source_fingerprints(prepared_sources_by_staged_name)
+    _remember_import_folders(db, [
+        Path(source.path).parent
+        for pending in pending_cells
+        for draft, source in pending["source_objects"]
+        if draft.source_path
+    ])
     if submission_id is not None:
         submission = db.get(ImportSubmission, submission_id)
         if submission is not None:
@@ -6023,6 +6042,7 @@ def attach_continuations(
 
     base_position = max((link.position for link in test.file_links), default=-1) + 1
     attached_ids: list[int] = []
+    recent_import_folders: list[Path] = []
     cache_jobs: list[dict] = []
     source_file_ids_by_staged_name: dict[str, int] = {}
     try:
@@ -6051,6 +6071,8 @@ def attach_continuations(
                 sf.capacity_summary_status = "pending"
             db.flush()
             attached_ids.append(sf.id)
+            if source_draft.source_path:
+                recent_import_folders.append(source_path.parent)
             source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
             if sf.parse_status != "metadata_only":
                 cache_jobs.append(
@@ -6086,6 +6108,7 @@ def attach_continuations(
             },
         )
         _validate_registered_source_fingerprints(db, attached_ids)
+        _remember_import_folders(db, recent_import_folders)
         db.commit()
     except HTTPException:
         db.rollback()

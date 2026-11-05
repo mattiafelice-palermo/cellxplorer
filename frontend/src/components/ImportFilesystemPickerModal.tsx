@@ -30,6 +30,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useElementSize } from "@mantine/hooks";
 import {
   IconArrowDown,
+  IconArrowLeft,
   IconArrowUp,
   IconAlertTriangle,
   IconChevronDown,
@@ -101,6 +102,7 @@ import {
   parseImportPathBreadcrumbs,
   shouldEnterImportPathEdit,
 } from "../importPathBreadcrumbs";
+import { previousImportFolder, recordImportFolderVisit } from "../importFolderHistory";
 import {
   EMPTY_IMPORT_BROWSER_FILTERS,
   filterAndSortImportEntries,
@@ -232,6 +234,9 @@ export function ImportFilesystemPickerModal({
   const pathInputRef = useRef<HTMLInputElement>(null);
   const lastValidPathRef = useRef<string | null>(null);
   const lastSuccessfulBrowseRef = useRef<ImportBrowseResult | null>(null);
+  const [folderHistory, setFolderHistory] = useState<readonly string[]>([]);
+  const backTargetRef = useRef<string | null>(null);
+  const historyInitialRequestRef = useRef<{ path: string | null } | null>(null);
   const [search, setSearch] = useState("");
   const [fileFilters, setFileFilters] = useState<ImportBrowserFilters>(EMPTY_IMPORT_BROWSER_FILTERS);
   const [fileSort, setFileSort] = useState<ImportBrowserSort>({ key: "name", direction: "asc" });
@@ -590,7 +595,13 @@ export function ImportFilesystemPickerModal({
     const lastFolder = typeof window === "undefined"
       ? null
       : window.localStorage.getItem(IMPORT_LAST_FOLDER_STORAGE_KEY);
-    setRequestedPath(mode === "folder" ? initialPath ?? null : initialPath ?? lastFolder);
+    const startingPath = mode === "folder" ? initialPath ?? null : initialPath ?? lastFolder;
+    setFolderHistory([]);
+    backTargetRef.current = null;
+    historyInitialRequestRef.current = { path: startingPath };
+    lastValidPathRef.current = null;
+    lastSuccessfulBrowseRef.current = null;
+    setRequestedPath(startingPath);
     setPathInput("");
     setPathEditing(false);
     setPendingPathEditTarget(null);
@@ -632,11 +643,18 @@ export function ImportFilesystemPickerModal({
   useEffect(() => {
     const data = browseQuery.data;
     const path = data?.current_path;
-    if (data && path && !browseQuery.isError && !browseQuery.isPlaceholderData) {
+    if (opened && data && path && !browseQuery.isError && !browseQuery.isPlaceholderData && !browseQuery.isFetching) {
+      const initialRequest = historyInitialRequestRef.current;
+      if (initialRequest && !(initialRequest.path === requestedPath
+        || (initialRequest.path && requestedPath && importPathsEqual(initialRequest.path, requestedPath)))) return;
+      historyInitialRequestRef.current = null;
       lastValidPathRef.current = path;
       lastSuccessfulBrowseRef.current = data;
+      const backTarget = backTargetRef.current;
+      backTargetRef.current = null;
+      if (!indexedScope) setFolderHistory(current => recordImportFolderVisit(current, path, backTarget));
     }
-  }, [browseQuery.data, browseQuery.isError, browseQuery.isPlaceholderData]);
+  }, [opened, indexedScope, requestedPath, browseQuery.data, browseQuery.isError, browseQuery.isPlaceholderData, browseQuery.isFetching]);
 
   useEffect(() => {
     entryViewportRef.current?.scrollTo({ top: 0 });
@@ -743,6 +761,8 @@ export function ImportFilesystemPickerModal({
   }, [opened]);
 
   const navigate = (path: string | null) => {
+    historyInitialRequestRef.current = null;
+    backTargetRef.current = null;
     pendingRevealRef.current = null;
     setIndexedScope(false);
     headerHintGeneration.current += 1;
@@ -762,6 +782,18 @@ export function ImportFilesystemPickerModal({
     setSelectedPreviewPath((current) => current && selected.has(current) ? current : null);
     setPathEditing(false);
     setPendingPathEditTarget(null);
+  };
+
+  const previousFolder = previousImportFolder(folderHistory);
+  const goBack = () => {
+    if (!previousFolder || browseQuery.isFetching) return;
+    const retryFailedBack = browseQuery.isError && requestedPath
+      && importPathsEqual(requestedPath, previousFolder);
+    navigate(previousFolder);
+    backTargetRef.current = previousFolder;
+    // A disconnected folder keeps the same failed query key. Retry it when
+    // the user presses Back again after reconnecting, without losing history.
+    if (retryFailedBack) void browseQuery.refetch();
   };
 
   const refreshFolder = () => {
@@ -785,6 +817,8 @@ export function ImportFilesystemPickerModal({
   };
 
   const cancelPathEdit = () => {
+    historyInitialRequestRef.current = null;
+    backTargetRef.current = null;
     setPendingPathEditTarget(null);
     setPathEditError(null);
     setPathEditing(false);
@@ -804,6 +838,8 @@ export function ImportFilesystemPickerModal({
       cancelPathEdit();
     } else {
       const targetPath = pathInput.trim();
+      historyInitialRequestRef.current = null;
+      backTargetRef.current = null;
       setPathEditError(null);
       setPendingPathEditTarget(targetPath);
       setRequestedPath(targetPath);
@@ -1380,6 +1416,9 @@ export function ImportFilesystemPickerModal({
             {mode === "files" && <SegmentedControl aria-label="File search scope" value={indexedScope ? "indexed" : "folder"} onChange={(value) => { setIndexedScope(value === "indexed"); if (value === "indexed") { setSearchPanelTab("filters"); setPreviewCollapsed(false); } }} data={[{ value: "folder", label: "This folder" }, { value: "indexed", label: "Search indexed locations" }]} />}
             {!indexedScope && <>
             <Group gap="xs" wrap="nowrap">
+              <Tooltip label="Back to previous folder" withArrow>
+                <ActionIcon variant="default" size="lg" aria-label="Back to previous folder" disabled={!previousFolder || browseQuery.isFetching} onClick={goBack}><IconArrowLeft size={18} /></ActionIcon>
+              </Tooltip>
               <ActionIcon variant="default" size="lg" aria-label="Go to parent folder" disabled={!browseData?.parent_path} onClick={() => navigate(browseData?.parent_path ?? null)}><IconArrowUp size={18} /></ActionIcon>
               <Paper
                 withBorder

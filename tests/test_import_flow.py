@@ -1735,6 +1735,35 @@ class ImportFlowTests(unittest.TestCase):
         match = next(item for item in items if item["path"] == str(folder))
         self.assertTrue(match["pinned"])
 
+    def test_browsing_nested_folders_and_refreshing_does_not_change_recents(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            inner = root / "outer" / "inner"
+            inner.mkdir(parents=True)
+            for path in (root, inner.parent, inner, inner, root):
+                files.browse_import_directory(str(path), db=db)
+            self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), [])
+            files.remember_import_folder(db, inner)
+            files.browse_import_directory(str(root), db=db)
+            db.expire_all()
+            self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), [str(inner)])
+        db.close()
+
+    def test_recent_import_folders_are_bounded_deduplicated_and_rollback_with_registration(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [Path(tmp) / str(i) for i in range(12)]
+            files._remember_import_folders(db, [*paths, paths[-1]])
+            db.commit()
+            expected = [str(p) for p in reversed(paths[-8:])]
+            self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), expected)
+            files._remember_import_folders(db, [paths[0]])
+            db.flush()
+            db.rollback()
+            self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), expected)
+        db.close()
+
     def test_staged_path_rejects_directory_escape(self):
         with self.assertRaises(ValueError):
             files.resolve_import_staged_path("../outside.ndax")
@@ -3262,6 +3291,7 @@ class ImportFlowTests(unittest.TestCase):
                 parsing.read_header_metadata = original_meta
 
         self.assertEqual(result["created"][0]["cell_name"], "Async import cell")
+        self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), [str(path.parent)])
         self.assertTrue(result["parsing_started"])
         self.assertEqual(
             result["cache_jobs"],

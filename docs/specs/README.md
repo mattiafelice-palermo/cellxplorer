@@ -1,5 +1,9 @@
 # Feature specs
 
+- [088 — Import Recents and Back navigation](088-import-folder-history.md).
+  **Complete; preflight, browser verification and Astra Medium review passed.** Record actual source folders at
+  registration and return to prior visited folders with Back.
+
 - [087 — Table sizing and electrode display names](087-table-electrode-controls.md).
   **Complete; preflight and cumulative Astra Medium review passed.** Persistent
   column sizing, saved channel display labels and live sample-name refresh.

@@ -299,6 +299,7 @@ Cellxplorer/
 │   │   ├── importSearch.ts          Indexed search result contract and staging policy
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
+│   │   ├── importFolderHistory.ts  Successful-folder Back navigation for the import picker (Spec 088)
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
 │   │   ├── notificationPreferences.ts  Independent notification preferences and native batch baseline
 │   │   ├── analysisUpdateNotifications.ts  Desktop data-update toast and activation bridge

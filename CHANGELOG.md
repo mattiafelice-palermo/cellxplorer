@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.21 - 2026-11-05
+
+### New features
+
+- Return to the previously viewed import folder with Back navigation.
+
+### Bug fixes
+
+- Add folders to import Recents only when source files are registered, rather than while browsing.
+
 ## 0.28.0-alpha.20 - 2026-11-05
 
 ### New features

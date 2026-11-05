@@ -31,6 +31,13 @@ or successful save.
 
 ## Import completion
 
+Import directory listing is read-only. Recents are staged from the parent
+folders of explicitly located source files in the registration/attachment
+transaction, so browsing, previews and cancelled imports cannot populate them.
+Do not use the recent list as browsing history. The picker keeps its bounded
+successful-visit stack per open dialog; its last-visited startup path is a
+separate local preference. Failed requests and refreshes do not add visits.
+
 Relational registration commits before scientific preparation starts. The
 registration job's `cache_handoff_complete` and linked `cache_job_id` are
 published only after final durable registration bookkeeping. A separate global
