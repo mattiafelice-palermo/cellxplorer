@@ -61,6 +61,21 @@ def blocked_header_worker(root, settings, catalog, directory):
         spool.put(dict(kind="done", warnings=0))
 
 
+def crashed_header_worker(root, settings, catalog, directory):
+    spool = BatchSpool(directory)
+    if "resume_after" not in root:
+        facts = [fact(f"C:\\cycling\\{i:03d}.ndax") for i in range(3)]
+        for item in facts:
+            item["metadata_state"] = "pending"
+        spool.put(dict(kind="batch", facts=facts, discovered=3))
+        spool.put(dict(kind="traversed", complete=True, discovered=3))
+        spool.put(dict(kind="header", fact=facts[0]))
+        os._exit(1)
+    else:
+        spool.put(dict(kind="batch", facts=[fact(f"C:\\cycling\\{i:03d}.ndax") for i in range(1, 3)]))
+        spool.put(dict(kind="done", warnings=0))
+
+
 def completed_worker(root, settings, catalog, directory):
     spool = BatchSpool(directory)
     spool.put(dict(kind="batch", facts=[fact(f"C:\\cycling\\{i:03d}.ndax") for i in range(150)], discovered=150))
@@ -78,6 +93,17 @@ class CatalogTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_pending_count_excludes_unsupported_entries(self):
+        supported = fact("C:\\cycling\\supported.mpr")
+        supported["metadata_state"] = "pending"
+        unsupported = fact("C:\\cycling\\unsupported.xlsx")
+        unsupported.update(recognition="unsupported", metadata_state="pending")
+        self.catalog.apply_batch("root", "one", [supported, unsupported])
+
+        state = self.catalog.roots()[0]
+        self.assertEqual(state["count"], 1)
+        self.assertEqual(state["pending"], 1)
 
     def test_literal_unicode_metadata_and_filters(self):
         self.catalog.apply_batch("root", "one", [fact(), fact("C:\\cycling\\ÄCCENT%.mpr")])
@@ -236,6 +262,24 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.catalog.search(self.config)["total"], 150)
         self.assertEqual(states[0]["pending"], 0)
         self.assertFalse(indexer.thread.is_alive())
+
+    def test_header_worker_crash_keeps_failed_file_retryable_and_continues(self):
+        indexer = SearchIndexer(self.catalog, monitoring=False, timeout=10, worker=crashed_header_worker)
+        indexer.start(self.config)
+        indexer.refresh()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            state = self.catalog.roots()[0]
+            if state["status"] == "needs_attention":
+                break
+            time.sleep(0.05)
+        indexer.stop()
+        self.assertEqual(state["status"], "needs_attention")
+        self.assertEqual(state["count"], 3)
+        self.assertEqual(state["pending"], 0)
+        with self.catalog.connect() as db:
+            states = db.execute("SELECT metadata_state FROM entries ORDER BY canonical").fetchall()
+        self.assertEqual([row[0] for row in states], ["unavailable", "ready", "ready"])
 
     def test_actual_spawn_scan_refresh_change_delete_offline_and_restart(self):
         source = Path(__file__).parent / "fixtures/golden_analysis/sources/cycles_time_steps.ndax"

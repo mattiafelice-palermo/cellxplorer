@@ -167,7 +167,7 @@ class Catalog:
                 FROM roots r LEFT JOIN (
                   SELECT m.root_id,
                     sum(e.recognition!='unsupported') AS count,
-                    sum(e.recognition='pending' OR e.metadata_state='pending') AS pending
+                    sum(e.recognition!='unsupported' AND (e.recognition='pending' OR e.metadata_state='pending')) AS pending
                   FROM memberships m JOIN entries e INDEXED BY entry_search_state ON e.canonical=m.canonical
                   GROUP BY m.root_id
                 ) s ON s.root_id=r.id ORDER BY r.path""")]

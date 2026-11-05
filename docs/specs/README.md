@@ -1,5 +1,9 @@
 # Feature specs
 
+- [085 — Indexed scan recovery and progress](085-indexed-scan-recovery.md).
+  **Complete.** Continue after an identified header worker exit and clarify
+  counts. The reported Alpha.17 network-drive failure remains unverified.
+
 - [084 — BioLogic recording variants and permissive reading](084-biologic-reader-modes-and-recording-variants.md).
   **Complete.** Verified MPR reader extensions and per-source Safe/Permissive
   import, cache and plotting modes; independent Astra review, both private

@@ -413,14 +413,28 @@ class SearchIndexer:
                                     try:
                                         message = messages.get(timeout=0)
                                     except queue.Empty:
+                                        if last_header:
+                                            # The worker may die while reading a single
+                                            # header (for example on an inaccessible
+                                            # network source). Preserve its retryable
+                                            # state and continue with later files.
+                                            last_header.update(metadata_state="unavailable", metadata={}, metadata_version=0)
+                                            with self.lock:
+                                                if epoch == self.epoch:
+                                                    self.catalog.apply_batch(root["id"], generation, [last_header])
+                                                    self.revision += 1
+                                            root["resume_after"] = last_header["canonical"]
+                                            warnings += 1
+                                            restart = True
                                         break
                                 elif time.monotonic() - last_message > self.timeout:
                                     if last_header and process.is_alive():
                                         # Skip a stalled header, not the rest of the root.
-                                        last_header.update(metadata_state="unavailable")
+                                        last_header.update(metadata_state="unavailable", metadata={}, metadata_version=0)
                                         with self.lock:
                                             if epoch == self.epoch:
                                                 self.catalog.apply_batch(root["id"], generation, [last_header])
+                                                self.revision += 1
                                         root["resume_after"] = last_header["canonical"]
                                         warnings += 1
                                         restart = True

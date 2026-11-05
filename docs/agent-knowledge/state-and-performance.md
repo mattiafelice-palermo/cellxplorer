@@ -93,6 +93,12 @@ incomplete; drain complete frames normally, never infer success from exit alone.
 This applies to both full scans and deltas and does not extend the silence budget.
 Exercise the ordering deterministically: publish completion between the empty
 poll and the process-death observation, retaining real atomic spool frames.
+When a full-scan worker dies after announcing a header, mark only that file's
+metadata unavailable, clear any stale header values, and resume after its canonical
+identity. The same rule applies to a stalled header. Both paths advance the
+catalog revision; later files remain discoverable and an explicit rescan retries
+the unavailable file. A worker exit before a header is identified still leaves
+the scan incomplete rather than guessing which source failed.
 
 The producer's atomic rename can also encounter a short Windows sharing lock on
 its just-closed `.tmp` file. Retry only that rename of the same complete frame,
