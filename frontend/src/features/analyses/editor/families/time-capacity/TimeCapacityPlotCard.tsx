@@ -801,7 +801,7 @@ export function timeCapacityTracesForResult(
       excluded: trace.excluded,
     };
     const color = pick(seriesKey);
-    const descriptor = timeCapacitySeriesDescriptor(trace);
+    const descriptor = timeCapacitySeriesDescriptor(trace, selectedVoltageChannels.length === 1 ? selectedVoltageChannels[0] : undefined);
     const resolved = resolveTrace(
       descriptor,
       color,

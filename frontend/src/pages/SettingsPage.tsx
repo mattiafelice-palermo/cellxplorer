@@ -1,3 +1,4 @@
+import { ElectrodeDisplayLabelSettings } from "../components/ElectrodeDisplayLabelSettings";
 import {
   Alert,
   Badge,
@@ -1179,6 +1180,7 @@ export function SettingsPage() {
         </Tabs.Panel>
 
         <Tabs.Panel value="metadata" pt="lg">
+          <ElectrodeDisplayLabelSettings />
           <Paper withBorder p="lg">
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">

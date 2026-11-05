@@ -1021,3 +1021,22 @@ test("measureLabel is set on primary and CE descriptors when provided", () => {
   const noDescriptorsWithCE = noCE.filter((d) => d.axis === "y2" && d.measure === "coulombic_efficiency");
   assert.equal(noDescriptorsWithCE.length, 0, "Should have no CE descriptors when includeCoulombicEfficiency is false");
 });
+
+
+test("electrode suffixes share a saved base name and invert only display labels", () => {
+  const trace = { cell_id: 1, group_id: null, label: "Original", cell_name: "Original", group_name: null };
+  const naming = { enabled: true, base_name: "Sample A", labels: { voltage: "Cell", working_potential: "Cathode", counter_potential: "Anode" }, invert_electrode_labels: false };
+  const overrides = { c1: { channel_naming: naming }, "c1|working_potential": { color: "#abcdef" } };
+  const descriptors = timeCapacitySeriesDescriptors([trace], ["voltage", "working_potential", "counter_potential"]);
+  assert.deepEqual(descriptors.map(d => resolveSeriesStyle(base, d, [], overrides).name), ["Sample A — Cell", "Sample A — Cathode", "Sample A — Anode"]);
+  const restored = JSON.parse(JSON.stringify(overrides));
+  restored.c1.channel_naming.invert_electrode_labels = true;
+  assert.deepEqual(descriptors.map(d => resolveSeriesStyle(base, d, [], restored).name), ["Sample A — Cell", "Sample A — Anode", "Sample A — Cathode"]);
+  assert.deepEqual(descriptors.map(d => d.channel), ["voltage", "working_potential", "counter_potential"]);
+  assert.equal(resolveSeriesStyle(base, descriptors[1], [], restored).color, "#abcdef");
+  const single = timeCapacitySeriesDescriptors([trace], ["working_potential"])[0];
+  assert.equal(single.key, "c1");
+  assert.equal(resolveSeriesStyle(base, single, [], restored).name, "Sample A — Anode");
+  restored.c1.channel_naming.enabled = false;
+  assert.equal(resolveSeriesStyle(base, descriptors[1], [], restored).name, descriptors[1].label);
+});

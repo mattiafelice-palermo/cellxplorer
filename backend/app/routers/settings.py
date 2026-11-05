@@ -28,6 +28,38 @@ PLOT_STYLE_PRESETS_KEY = "plot_style_presets"
 COLOR_PALETTES_KEY = "color_palettes"
 EXPORT_FILENAME_TEMPLATE_KEY = "export_filename_template"
 
+DEFAULT_ELECTRODE_DISPLAY_LABELS = {
+    "voltage": ["Full cell", "Cell"],
+    "working_potential": ["Working electrode", "Cathode", "Anode"],
+    "counter_potential": ["Counter electrode", "Anode", "Cathode"],
+}
+
+
+class ElectrodeDisplayLabels(BaseModel):
+    voltage: list[str]
+    working_potential: list[str]
+    counter_potential: list[str]
+
+
+@router.get("/settings/electrode-display-labels", response_model=ElectrodeDisplayLabels)
+def get_electrode_display_labels(db: Session = Depends(get_db)):
+    setting = db.get(AppSetting, "electrode_display_labels")
+    return ElectrodeDisplayLabels.model_validate(
+        json.loads(setting.value) if setting else DEFAULT_ELECTRODE_DISPLAY_LABELS
+    )
+
+
+@router.put("/settings/electrode-display-labels", response_model=ElectrodeDisplayLabels)
+def update_electrode_display_labels(payload: ElectrodeDisplayLabels, db: Session = Depends(get_db)):
+    normalized = {}
+    for channel, labels in payload.model_dump().items():
+        if not 1 <= len(labels) <= 50 or any(not label.strip() or len(label.strip()) > 80 for label in labels):
+            raise HTTPException(422, "Each channel needs 1–50 labels of 1–80 characters.")
+        normalized[channel] = list(dict.fromkeys(label.strip() for label in labels))
+    _set_setting(db, "electrode_display_labels", json.dumps(normalized))
+    db.commit()
+    return ElectrodeDisplayLabels.model_validate(normalized)
+
 
 class DownloadSettings(BaseModel):
     download_mode: str = "ask"

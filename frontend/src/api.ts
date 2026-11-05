@@ -1151,6 +1151,13 @@ export type PlotMarkerMode = "none" | "points" | "lines_points";
  * override only carries what the user actually changed.
  */
 export interface SeriesStyleOverride {
+  /** Shared channel naming on the Cell/group source key; presentation only. */
+  channel_naming?: {
+    enabled: boolean;
+    base_name: string;
+    labels: { voltage: string; working_potential: string; counter_potential: string };
+    invert_electrode_labels: boolean;
+  } | null;
   /** Legend label. Unset keeps the series' own name. */
   name?: string | null;
   color?: string | null;

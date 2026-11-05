@@ -186,3 +186,12 @@ test("multi-source direct export retains per-row source provenance", () => {
     "Cell A-hash", "continued-hash", "continued-hash",
   ]);
 });
+
+
+test("saved automatic electrode naming reaches native export without changing data channels", () => {
+  const spec = makeSpec([{cell_id: 2}]);
+  const style = spec.presentation.plot_styles!.time_capacity!;
+  style.series_overrides = { c1: { channel_naming: { enabled: true, base_name: "Specimen", labels: { voltage: "Cell", working_potential: "Cathode", counter_potential: "Anode" }, invert_electrode_labels: true } } };
+  const plan = timeCapacityNativeExportPlan(makeResult(), spec, config, style);
+  assert.deepEqual(plan.traces[0].voltage_series, [{channel: "voltage", name: "Specimen — Cell", y_title: "Cell voltage (V)"}]);
+});

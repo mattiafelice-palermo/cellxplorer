@@ -4,6 +4,17 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.20 - 2026-11-05
+
+### New features
+
+- Resize Cell Database, replicate and Projects columns with remembered widths.
+- Choose custom electrode labels and automatic series-name suffixes, with per-sample display-label inversion.
+
+### Bug fixes
+
+- Show current Cell names immediately when replacing analysis samples.
+
 ## 0.28.0-alpha.19 - 2026-11-05
 
 ### New features

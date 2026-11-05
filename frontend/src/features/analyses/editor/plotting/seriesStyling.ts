@@ -17,6 +17,7 @@
 import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "../../../../api";
 import { cycleCellIsDisplayed, hasFiniteCycleValues } from "../families/cycles/cycleDisplayPolicy.ts";
 import { plotlySafeText } from "../policies/voltageChannelPolicy.ts";
+import { normalizeChannelNaming } from "../../../../electrodeDisplayLabels.ts";
 
 export type SeriesKind = "cell" | "group";
 
@@ -316,7 +317,7 @@ export function cyclesSeriesDescriptors(
  * use the same scheme as the trace builder, or the editor would list series
  * the plot cannot match.
  */
-export function timeCapacitySeriesDescriptor(trace: CellSeriesLike): SeriesDescriptor {
+export function timeCapacitySeriesDescriptor(trace: CellSeriesLike, channel?: TimeCapacityVoltageChannel): SeriesDescriptor {
   const key = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
   return {
     key,
@@ -325,6 +326,7 @@ export function timeCapacitySeriesDescriptor(trace: CellSeriesLike): SeriesDescr
     cellName: trace.cell_name,
     groupName: trace.group_name,
     visibilityKey: `time_capacity:${key}`,
+    ...(channel ? { channel, sourceKey: key } : {}),
   };
 }
 
@@ -363,7 +365,7 @@ export function timeCapacitySeriesDescriptors(
     if (trace.excluded) continue;
     const descriptors = channels
       ? channels.map((channel) => timeCapacityVoltageSeriesDescriptor(trace, channel))
-      : [timeCapacitySeriesDescriptor(trace)];
+      : [timeCapacitySeriesDescriptor(trace, voltageChannels[0])];
     for (const descriptor of descriptors) {
       if (seen.has(descriptor.key)) continue;
       seen.add(descriptor.key);
@@ -737,7 +739,16 @@ export function resolveSeriesStyle(
   const override =
     overrides?.[descriptor.key] ??
     (descriptor.channel && descriptor.sourceKey ? overrides?.[descriptor.sourceKey] : undefined);
-  return applyOverride(resolved, override);
+  resolved = applyOverride(resolved, override);
+  const naming = normalizeChannelNaming(descriptor.sourceKey ? overrides?.[descriptor.sourceKey]?.channel_naming : undefined);
+  if (descriptor.channel && naming?.enabled) {
+    const shownChannel = naming.invert_electrode_labels && descriptor.channel !== "voltage"
+      ? descriptor.channel === "working_potential" ? "counter_potential" : "working_potential"
+      : descriptor.channel;
+    const baseName = naming.base_name.trim() || (descriptor.kind === "group" ? descriptor.groupName : descriptor.cellName) || descriptor.label;
+    resolved.name = `${baseName} — ${naming.labels[shownChannel]}`;
+  }
+  return resolved;
 }
 
 /**

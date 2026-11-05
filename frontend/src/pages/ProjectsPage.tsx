@@ -1,3 +1,4 @@
+import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
 import {
   ActionIcon,
   Alert,
@@ -40,7 +41,7 @@ import {
   IconTrash,
   IconUnlink,
 } from "@tabler/icons-react";
-import { DragEvent, MouseEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DragEvent, MouseEvent, useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import {
@@ -250,7 +251,7 @@ const TREE_ACTIONS_WIDTH = 52;
 
 function treeGridTemplate(showMetrics: boolean) {
   return showMetrics
-    ? `minmax(0, 1fr) ${CYCLES_COLUMN_WIDTH}px ${CAPACITY_COLUMN_WIDTH}px ${PLOTS_COLUMN_WIDTH}px ${TREE_ACTIONS_WIDTH}px`
+    ? `var(--tree-name, minmax(260px, 1fr)) var(--tree-cycles, ${CYCLES_COLUMN_WIDTH}px) var(--tree-capacity, ${CAPACITY_COLUMN_WIDTH}px) var(--tree-plots, ${PLOTS_COLUMN_WIDTH}px) ${TREE_ACTIONS_WIDTH}px`
     : `minmax(0, 1fr) ${TREE_ACTIONS_WIDTH}px`;
 }
 
@@ -261,6 +262,7 @@ function treeRowGridStyle(showMetrics: boolean) {
     alignItems: "center" as const,
     columnGap: 0,
     width: "100%",
+    minWidth: showMetrics ? "calc(var(--tree-name, 260px) + var(--tree-cycles, 64px) + var(--tree-capacity, 72px) + var(--tree-plots, 72px) + 52px)" : undefined,
     boxSizing: "border-box" as const,
   };
 }
@@ -276,23 +278,29 @@ function EmptyMetricCells() {
 }
 
 /** Sticky header inside the scroll area so it shares the scrollbar width with rows. */
-function ProjectTreeColumnHeader() {
+const PROJECT_COLUMN_DEFAULTS = { name: 380, cycles: 64, capacity: 72, plots: 72 };
+
+function ProjectTreeColumnHeader({ widths, resize }: { widths: typeof PROJECT_COLUMN_DEFAULTS; resize: (name: keyof typeof PROJECT_COLUMN_DEFAULTS, width: number) => void }) {
   return (
     <div
       className="project-tree-header"
       style={{ ...treeRowGridStyle(true), position: "sticky", top: 0, zIndex: 2 }}
     >
-      <Text size="xs" fw={700} c="dimmed" lh={1.4} component="div" className="project-tree-header-name">
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} component="div" pos="relative" className="project-tree-header-name">
         Name
+        <ColumnResizeHandle label="Project Name" width={widths.name} onResize={value => resize("name", value)} />
       </Text>
-      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" className="project-tree-header-metric">
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" pos="relative" className="project-tree-header-metric">
         Cycles
+        <ColumnResizeHandle label="Project Cycles" width={widths.cycles} onResize={value => resize("cycles", value)} />
       </Text>
-      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" className="project-tree-header-metric">
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" pos="relative" className="project-tree-header-metric">
         mAh/g
+        <ColumnResizeHandle label="Project mAh/g" width={widths.capacity} onResize={value => resize("capacity", value)} />
       </Text>
-      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" className="project-tree-header-metric">
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" pos="relative" className="project-tree-header-metric">
         Plots
+        <ColumnResizeHandle label="Project Plots" width={widths.plots} onResize={value => resize("plots", value)} />
       </Text>
       <div aria-hidden />
     </div>
@@ -618,6 +626,7 @@ function AddReferencesModal({
 }
 
 export function ProjectsPage() {
+  const { widths: projectWidths, resize: resizeProjectColumn } = useColumnWidths("cellxplorer.project-columns.v1", PROJECT_COLUMN_DEFAULTS);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1687,8 +1696,8 @@ export function ProjectsPage() {
               </Group>
             </Group>
             <Divider />
-            <ScrollArea h={650} type="auto" offsetScrollbars className="project-tree-scroll">
-              {viewPreferences.showMetrics ? <ProjectTreeColumnHeader /> : null}
+            <ScrollArea h={650} type="auto" offsetScrollbars className="project-tree-scroll" style={{ "--tree-name": `${projectWidths.name}px`, "--tree-cycles": `${projectWidths.cycles}px`, "--tree-capacity": `${projectWidths.capacity}px`, "--tree-plots": `${projectWidths.plots}px` } as CSSProperties}>
+              {viewPreferences.showMetrics ? <ProjectTreeColumnHeader widths={projectWidths} resize={resizeProjectColumn} /> : null}
               {tree.isLoading ? (
                 <Text size="sm" c="dimmed">
                   Loading folders

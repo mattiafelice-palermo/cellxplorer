@@ -3182,7 +3182,7 @@ function SamplePanelView({
 }) {
   const hiddenGroups = new Set(selection.hidden_replicate_group_ids ?? []);
   const groupById = new Map(groups.map((g) => [g.id, g]));
-  const cellById = new Map(cells.map((c) => [c.id, c]));
+
   // Read the startup-persisted caches directly: the popovers must open without
   // waiting on a request. `enabled: false` keeps this from issuing one.
   const allAnalyses = useQuery({
@@ -3195,6 +3195,7 @@ function SamplePanelView({
     queryFn: () => get<CellSummary[]>("/api/cells"),
     staleTime: 5 * 60_000,
   });
+  const cellById = new Map([...cells, ...(allCells.data ?? [])].map(cell => [cell.id, cell]));
   const allGroups = useQuery({
     queryKey: ["replicate-groups"],
     queryFn: () => get<ReplicateGroupSummary[]>("/api/replicate-groups"),

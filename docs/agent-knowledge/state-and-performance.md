@@ -1,5 +1,20 @@
 # State, caching, and performance
 
+## Electrode display names
+
+Time/Capacity channel naming is presentation state under the Cell/group source
+key's `series_overrides.channel_naming`. It stores the base name, three chosen
+label strings and optional working/counter label inversion with the plot.
+Settings stores only the reusable choices; changing those choices never renames
+an existing plot. `resolveSeriesStyle` resolves names for live figures, previews
+and native export plans. Channel identities, arrays and export quantity columns
+retain their original measurement meaning. A Cell's ordered source chain shares
+one plotted series identity; label inversion applies to that whole plotted sample.
+
+The analysis sample sidebar must merge the current library's Cell names with
+the last saved selection details. A newly added sample is already in the live
+selection before the saved AnalysisFull response includes it.
+
 ## Scientific preset creation
 
 Inline material and area preset creation appends through dedicated Settings

@@ -1,5 +1,9 @@
 # Feature specs
 
+- [087 — Table sizing and electrode display names](087-table-electrode-controls.md).
+  **Implemented; final preflight and cumulative Astra review pending.** Persistent
+  column sizing, saved channel display labels and live sample-name refresh.
+
 - [086 — Create scientific presets during Cell editing](086-inline-scientific-presets.md).
   **Complete; preflight passed.** Add material and area presets directly
   from imports or Cell metadata, using the shared Settings lists.

@@ -71,6 +71,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { get } from "../../../../api";
+import { DEFAULT_ELECTRODE_LABELS, FIXED_ELECTRODE_LABELS, normalizeChannelNaming, type ElectrodeDisplayLabels } from "../../../../electrodeDisplayLabels";
 
 import type {
   PlotLineDash,
@@ -322,6 +325,11 @@ export function SeriesStyleModal({
   cycleShadingSupported?: boolean;
   availableCycleMaximum?: number | null;
 }) {
+  const electrodeLabels = useQuery({
+    queryKey: ["electrode-display-labels"],
+    queryFn: () => get<ElectrodeDisplayLabels>("/api/settings/electrode-display-labels"),
+    enabled: opened,
+  });
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
@@ -1158,6 +1166,17 @@ export function SeriesStyleModal({
   );
 
   const activeOverride = active ? draftOverrides[active.key] ?? {} : {};
+  const namingKey = active?.sourceKey ?? active?.key ?? "";
+  const channelNaming = normalizeChannelNaming(draftOverrides[namingKey]?.channel_naming) ?? {
+    enabled: false,
+    base_name: (active?.kind === "group" ? active.groupName : active?.cellName) ?? "",
+    labels: { ...FIXED_ELECTRODE_LABELS },
+    invert_electrode_labels: false,
+  };
+  const patchNaming = (patch: Partial<typeof channelNaming>) =>
+    setOverride(namingKey, { channel_naming: { ...channelNaming, ...patch } });
+  const shownChannel = active?.channel && channelNaming.invert_electrode_labels && active.channel !== "voltage"
+    ? active.channel === "working_potential" ? "counter_potential" : "working_potential" : active?.channel;
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
   const activeRules = active ? matchingRules(active, draftRules) : [];
   const markerMode = activeResolved?.markerMode ?? "none";
@@ -2200,13 +2219,31 @@ export function SeriesStyleModal({
                   />
                 )}
 
+                {active.channel && <Stack gap="xs">
+                  <Text size="sm" fw={700}>{FIXED_ELECTRODE_LABELS[active.channel]} · Showing: {channelNaming.enabled && shownChannel ? channelNaming.labels[shownChannel] : active.measureLabel ?? FIXED_ELECTRODE_LABELS[active.channel]}</Text>
+                  <Switch label="Automatic electrode suffixes" checked={channelNaming.enabled}
+                    onChange={event => patchNaming({ enabled: event.currentTarget.checked })} />
+                  {channelNaming.enabled && <>
+                    <TextInput label="Shared base name" value={channelNaming.base_name}
+                      onChange={event => patchNaming({ base_name: event.currentTarget.value })} />
+                    {(Object.keys(FIXED_ELECTRODE_LABELS) as (keyof ElectrodeDisplayLabels)[]).map(channel =>
+                      <Select key={channel} label={`${FIXED_ELECTRODE_LABELS[channel]} label`}
+                        value={channelNaming.labels[channel]} allowDeselect={false}
+                        data={Array.from(new Set([channelNaming.labels[channel], ...(electrodeLabels.data ?? DEFAULT_ELECTRODE_LABELS)[channel]]))}
+                        onChange={value => { if (value) patchNaming({ labels: { ...channelNaming.labels, [channel]: value } }); }} />)}
+                    <Switch label="Invert working/counter display labels for this sample"
+                      checked={channelNaming.invert_electrode_labels}
+                      onChange={event => patchNaming({ invert_electrode_labels: event.currentTarget.checked })} />
+                    <Text size="xs" c="dimmed">Applies to this plotted Cell/source chain. Working and counter measurement channels remain fixed. Add custom label choices in Settings → Metadata.</Text>
+                  </>}
+                </Stack>}
                 <Group grow align="start">
-                  <LegendNameInput
+                  {(!active.channel || !channelNaming.enabled) && <LegendNameInput
                     seriesKey={active.key}
                     placeholder={active.label}
                     value={activeOverride.name ?? ""}
                     onCommit={commitLegendName}
-                  />
+                  />}
                   <div>
                     <ColorInput
                       size="xs"

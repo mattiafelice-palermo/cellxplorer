@@ -153,7 +153,7 @@ export function timeCapacityNativeExportPlan(
     if (!multipleChannels && isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
     const color = style.custom_colors[seriesKey] ??
       paletteColorAt(palette, colorIndex++, paletteOverflow);
-    const descriptor = timeCapacitySeriesDescriptor(trace);
+    const descriptor = timeCapacitySeriesDescriptor(trace, selectedChannels.length === 1 ? selectedChannels[0] : undefined);
     const resolved = resolveSeriesStyle(
       {
         color,

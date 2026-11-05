@@ -1,3 +1,4 @@
+import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
 import {
   ActionIcon,
   Alert,
@@ -421,7 +422,7 @@ const CELL_SEARCH_DEBOUNCE_MS = 300;
 
 const LIBRARY_CELL_TABLE_COL_WIDTHS = {
   select: 42,
-  cell: "26%",
+  cell: 320,
   replicates: 98,
   cycles: 76,
   maxSpecific: 156,
@@ -433,6 +434,8 @@ const LIBRARY_CELL_TABLE_COL_WIDTHS = {
 } as const;
 
 export function LibraryPage() {
+  const { widths: cellWidths, resize: resizeCellColumn } = useColumnWidths("cellxplorer.cell-columns.v1", LIBRARY_CELL_TABLE_COL_WIDTHS);
+  const { widths: groupWidths, resize: resizeGroupColumn } = useColumnWidths("cellxplorer.replicate-columns.v1", { name: 260, cells: 100, charge: 130, discharge: 130, created: 140, actions: 100 });
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const openCellImportRef = useRef<(() => void) | null>(null);
@@ -1575,23 +1578,23 @@ export function LibraryPage() {
           </Alert>
         )}
         <Paper withBorder>
-          <ScrollArea type="auto">
-            <Table highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
+          <ScrollArea type="auto" offsetScrollbars="x">
+            <Table highlightOnHover style={{ tableLayout: "fixed", width: Object.values(cellWidths).reduce((a, b) => a + b, 0), minWidth: "100%" }}>
               <colgroup>
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.select }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.cell }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.replicates }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.cycles }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.maxSpecific }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.charge }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.discharge }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.status }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.created }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.actions }} />
+                <col style={{ width: cellWidths.select }} />
+                <col style={{ width: cellWidths.cell }} />
+                <col style={{ width: cellWidths.replicates }} />
+                <col style={{ width: cellWidths.cycles }} />
+                <col style={{ width: cellWidths.maxSpecific }} />
+                <col style={{ width: cellWidths.charge }} />
+                <col style={{ width: cellWidths.discharge }} />
+                <col style={{ width: cellWidths.status }} />
+                <col style={{ width: cellWidths.created }} />
+                <col style={{ width: cellWidths.actions }} />
               </colgroup>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th w={LIBRARY_CELL_TABLE_COL_WIDTHS.select}>
+                  <Table.Th w={cellWidths.select}>
                     <Checkbox
                       aria-label="Select cells on this page"
                       checked={allVisibleSelected}
@@ -1612,7 +1615,7 @@ export function LibraryPage() {
                       }}
                     />
                   </Table.Th>
-                  <Table.Th>
+                  <Table.Th pos="relative">
                     <CellLibraryColumnMenu
                       column="cell"
                       sort={cellSort}
@@ -1622,8 +1625,8 @@ export function LibraryPage() {
                       replicateFiltersEnabled={replicateFiltersEnabled}
                       replicateFiltersFailed={replicateFiltersFailed}
                     />
-                  </Table.Th>
-                  <Table.Th ta="right">
+                  <ColumnResizeHandle label="Cell" width={cellWidths.cell} onResize={value => resizeCellColumn("cell", value)} /></Table.Th>
+                  <Table.Th pos="relative" ta="right">
                     <CellLibraryColumnMenu
                       column="replicates"
                       sort={cellSort}
@@ -1634,8 +1637,8 @@ export function LibraryPage() {
                       replicateFiltersFailed={replicateFiltersFailed}
                       align="right"
                     />
-                  </Table.Th>
-                  <Table.Th ta="right">
+                  <ColumnResizeHandle label="Replicates" width={cellWidths.replicates} onResize={value => resizeCellColumn("replicates", value)} /></Table.Th>
+                  <Table.Th pos="relative" ta="right">
                     <CellLibraryColumnMenu
                       column="cycles"
                       sort={cellSort}
@@ -1646,8 +1649,8 @@ export function LibraryPage() {
                       replicateFiltersFailed={replicateFiltersFailed}
                       align="right"
                     />
-                  </Table.Th>
-                  <Table.Th ta="right">
+                  <ColumnResizeHandle label="Cycles" width={cellWidths.cycles} onResize={value => resizeCellColumn("cycles", value)} /></Table.Th>
+                  <Table.Th pos="relative" ta="right">
                     <CellLibraryColumnMenu
                       column="maxSpecificDischarge"
                       sort={cellSort}
@@ -1658,8 +1661,8 @@ export function LibraryPage() {
                       replicateFiltersFailed={replicateFiltersFailed}
                       align="right"
                     />
-                  </Table.Th>
-                  <Table.Th ta="right">
+                  <ColumnResizeHandle label="Max specific discharge" width={cellWidths.maxSpecific} onResize={value => resizeCellColumn("maxSpecific", value)} /></Table.Th>
+                  <Table.Th pos="relative" ta="right">
                     <CellLibraryColumnMenu
                       column="totalCharge"
                       sort={cellSort}
@@ -1670,8 +1673,8 @@ export function LibraryPage() {
                       replicateFiltersFailed={replicateFiltersFailed}
                       align="right"
                     />
-                  </Table.Th>
-                  <Table.Th ta="right">
+                  <ColumnResizeHandle label="Total charge" width={cellWidths.charge} onResize={value => resizeCellColumn("charge", value)} /></Table.Th>
+                  <Table.Th pos="relative" ta="right">
                     <CellLibraryColumnMenu
                       column="totalDischarge"
                       sort={cellSort}
@@ -1682,8 +1685,8 @@ export function LibraryPage() {
                       replicateFiltersFailed={replicateFiltersFailed}
                       align="right"
                     />
-                  </Table.Th>
-                  <Table.Th style={{ whiteSpace: "nowrap" }}>
+                  <ColumnResizeHandle label="Total discharge" width={cellWidths.discharge} onResize={value => resizeCellColumn("discharge", value)} /></Table.Th>
+                  <Table.Th pos="relative" style={{ whiteSpace: "nowrap" }}>
                     <Group gap={4} wrap="nowrap" justify="space-between">
                       <CellLibraryColumnMenu
                         column="status"
@@ -1696,8 +1699,8 @@ export function LibraryPage() {
                       />
                       <StatusHeaderHelp />
                     </Group>
-                  </Table.Th>
-                  <Table.Th>
+                  <ColumnResizeHandle label="Status" width={cellWidths.status} onResize={value => resizeCellColumn("status", value)} /></Table.Th>
+                  <Table.Th pos="relative">
                     <CellLibraryColumnMenu
                       column="created"
                       sort={cellSort}
@@ -1707,7 +1710,7 @@ export function LibraryPage() {
                       replicateFiltersEnabled={replicateFiltersEnabled}
                       replicateFiltersFailed={replicateFiltersFailed}
                     />
-                  </Table.Th>
+                  <ColumnResizeHandle label="Created" width={cellWidths.created} onResize={value => resizeCellColumn("created", value)} /></Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -1974,8 +1977,9 @@ export function LibraryPage() {
             </Group>
           </Group>
           <Paper withBorder p="sm">
-          <ScrollArea type="auto">
-            <Table highlightOnHover>
+          <ScrollArea type="auto" offsetScrollbars="x">
+            <Table highlightOnHover style={{ tableLayout: "fixed", width: 36 + Object.values(groupWidths).reduce((a,b) => a+b,0), minWidth: "100%" }}>
+              <colgroup><col style={{width:36}} />{Object.values(groupWidths).map((width,i) => <col key={i} style={{width}} />)}</colgroup>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th w={36}>
@@ -1999,11 +2003,11 @@ export function LibraryPage() {
                       }
                     />
                   </Table.Th>
-                  <Table.Th>Replicate group</Table.Th>
-                  <Table.Th>Cells</Table.Th>
-                  <Table.Th>Avg charge</Table.Th>
-                  <Table.Th>Avg discharge</Table.Th>
-                  <Table.Th>Created</Table.Th>
+                  <Table.Th pos="relative">Replicate group<ColumnResizeHandle label="Replicate group" width={groupWidths.name} onResize={value => resizeGroupColumn("name", value)} /></Table.Th>
+                  <Table.Th pos="relative">Cells<ColumnResizeHandle label="Cells" width={groupWidths.cells} onResize={value => resizeGroupColumn("cells", value)} /></Table.Th>
+                  <Table.Th pos="relative">Avg charge<ColumnResizeHandle label="Avg charge" width={groupWidths.charge} onResize={value => resizeGroupColumn("charge", value)} /></Table.Th>
+                  <Table.Th pos="relative">Avg discharge<ColumnResizeHandle label="Avg discharge" width={groupWidths.discharge} onResize={value => resizeGroupColumn("discharge", value)} /></Table.Th>
+                  <Table.Th pos="relative">Created<ColumnResizeHandle label="Created" width={groupWidths.created} onResize={value => resizeGroupColumn("created", value)} /></Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>

@@ -20,6 +20,20 @@ from app.routers import settings
 
 
 class SettingsTests(unittest.TestCase):
+    def test_electrode_display_labels_persist_and_validate(self):
+        db = self.make_session()
+        defaults = settings.get_electrode_display_labels(db=db)
+        self.assertIn("Working electrode", defaults.working_potential)
+        updated = defaults.model_copy(update={"working_potential": [" Cathode ", "Custom reference", "Cathode"]})
+        saved = settings.update_electrode_display_labels(updated, db=db)
+        self.assertEqual(saved.working_potential, ["Cathode", "Custom reference"])
+        self.assertEqual(settings.get_electrode_display_labels(db=db), saved)
+        for labels in ([], [" "], ["a" * 81], ["Label"] * 51):
+            with self.assertRaises(HTTPException):
+                settings.update_electrode_display_labels(saved.model_copy(update={"voltage": labels}), db=db)
+        self.assertEqual(settings.get_electrode_display_labels(db=db), saved)
+        db.close()
+
     def make_session(self):
         engine = create_engine(
             "sqlite://",
