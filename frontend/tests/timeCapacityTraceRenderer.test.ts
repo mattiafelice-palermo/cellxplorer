@@ -430,3 +430,35 @@ test("replicate-group shading resolves the group sample key and ignores inserted
   assert.equal(interactive[0].line!.color, cycleShadedColor("red", 1, style.cycle_shading!.samples.g2));
   assert.equal(interactive[0].line!.color, interactive[1].line!.color);
 });
+
+
+test("exploratory voltage curves retain native backward clocks and gaps without invented cycles or current", async () => {
+  const result = makeResult();
+  const trace = result.cell_traces[0];
+  trace.cycle = [0, 0, 0, 0];
+  trace.time_s = [20, 30, 10, 20];
+  trace.display_x = [20, 30, 10, 20];
+  trace.display_break_before = [2];
+  trace.display_only_cycle = [true, true, true, true];
+  trace.voltage_v = [3, 3.1, 3.2, 3.3];
+  trace.voltage_v_by_channel = { voltage: trace.voltage_v };
+  trace.current_ma = [null, null, null, null];
+  trace.capacity_mah = [null, null, null, null];
+  trace.capacity_mah_g = [null, null, null, null];
+  // The standard compact consecutive-Time response deliberately omits phase.
+  trace.phase = [];
+  trace.status = ["Unverified", "Unverified", "Unverified", "Unverified"];
+  trace.derivative_x = [null, null, null, null];
+  trace.derivative_y = [null, null, null, null];
+  trace.source_cycle = [1, 1, 2, 2];
+  trace.source_position = [1, 1, 1, 1];
+  trace.source_filename = ["exploratory.mpr", "exploratory.mpr", "exploratory.mpr", "exploratory.mpr"];
+  trace.source_hash = ["explore", "explore", "explore", "explore"];
+  const { interactive, exported } = await assertParity(result, makeSpec());
+  assert.equal(interactive.length, 1);
+  assert.deepEqual(interactive[0].x, [20, 30, null, 10, 20]);
+  assert.deepEqual(interactive[0].y, [3, 3.1, null, 3.2, 3.3]);
+  assert.ok((interactive[0].customdata as unknown[][]).filter((_item, index) => (interactive[0].y as unknown[])[index] != null).every((item) => item[0] === "curve only (not a counted cycle)"));
+  const current = exported[0].cellxplorer_export_columns?.find((column) => column.header === "Current (mA)");
+  assert.ok(!current || current.values.every((value) => value == null));
+});

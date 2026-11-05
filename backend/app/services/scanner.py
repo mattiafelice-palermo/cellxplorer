@@ -71,6 +71,7 @@ def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
     sf.total_discharge_capacity_mah = info.get("total_discharge_capacity_mah")
     sf.max_discharge_capacity_mah = info.get("max_discharge_capacity_mah")
     sf.capacity_summary_status = "ready"
+    parsing.record_source_interpretation(sf, info)
 
 
 def _has_current_scientific_cache(sf: SourceFile) -> bool:
@@ -80,7 +81,7 @@ def _has_current_scientific_cache(sf: SourceFile) -> bool:
     alone (Spec 040.3) — no file I/O, no parser import — so this stays safe
     to call from list/backfill paths for many sources at once.
     """
-    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    expected = parsing.current_parser_identity_for_source(sf) or parsing.PARSER_VERSION
     return cache.raw_path(sf.hash, expected).is_file() and cache.has_cycles(
         sf.hash,
         expected,
@@ -96,7 +97,7 @@ def _needs_raw_layout_preparation(sf: SourceFile) -> bool:
     worker and is never performed while a list endpoint or startup renderer is
     waiting on this predicate.
     """
-    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    expected = parsing.current_parser_identity_for_source(sf) or parsing.PARSER_VERSION
     if not cache.raw_path(sf.hash, expected).is_file():
         return False
     return not cache.raw_layout_is_current(sf.hash, expected)
@@ -105,7 +106,7 @@ def _needs_raw_layout_preparation(sf: SourceFile) -> bool:
 def _needs_time_capacity_derived_preparation(sf: SourceFile) -> bool:
     """Return true only for an existing current raw layout without its sidecar."""
 
-    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    expected = parsing.current_parser_identity_for_source(sf) or parsing.PARSER_VERSION
     if not cache.raw_path(sf.hash, expected).is_file():
         # A deliberately cleaned raw cache must not be recreated solely for
         # this optional optimization.
@@ -155,7 +156,7 @@ def _needs_identity_bring_forward(sf: SourceFile) -> bool:
         return False
     if sf.parser_version is None:
         return False
-    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    expected = parsing.current_parser_identity_for_source(sf) or parsing.PARSER_VERSION
     return sf.parser_version != expected
 
 
@@ -514,6 +515,7 @@ def _capacity_source_job(
         "size": observed_size,
         "filename": sf.filename,
         "ext": sf.ext,
+        "read_mode": parsing.source_read_mode(sf),
         "source_fingerprint": {
             "hash": sf.hash,
             "size": observed_size,
@@ -553,7 +555,7 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
             else None
         )
         expected = (
-            parsing.current_parser_identity_for_extension(job.get("ext"))
+            parsing.current_parser_identity_for_extension(job.get("ext"), read_mode=job.get("read_mode", "safe"))
             or parsing.PARSER_VERSION
         )
         cycles = cache.load_cycles(
@@ -591,6 +593,7 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
                     job["hash"],
                     source_path,
                     expected_fingerprint=expected_fingerprint,
+                    **({"read_mode": job["read_mode"]} if job.get("read_mode", "safe") != "safe" else {}),
                 )
             except cache.SourceChangedDuringBuild as exc:
                 location_status = "changed"
@@ -1188,7 +1191,7 @@ def _run_scan(job_id: int, root: str, parse_now: bool) -> None:
             _jobs[job_id]["errors"].append(str(exc))
 
 
-def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | None = None) -> SourceFile:
+def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | None = None, *, read_mode: str = "safe") -> SourceFile:
     """Hash + header-parse one supported source and upsert its SourceFile row."""
     if not parsing.source_filename_allowed(path.name):
         raise ValueError(
@@ -1252,7 +1255,7 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             _bump(job_id, "changed")
         db.commit()
 
-    meta = parsing.read_header_metadata(path)
+    meta = parsing.metadata_for_read_mode(path, parsing.read_header_metadata(path), read_mode)
     parsing.ensure_supported_source_metadata(path, meta)
     parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
     metadata_only = parsing.source_metadata_only(meta)
@@ -1309,7 +1312,7 @@ def parse_file(db: Session, sf: SourceFile) -> SourceFile:
             not parsing.source_uses_retired_biologic_parser(sf)
             and not parsing.source_requires_biologic_mpr_reinspection(sf)
         ):
-            sf.parser_version = parsing.current_parser_identity_for_extension(sf.ext)
+            sf.parser_version = parsing.current_parser_identity_for_source(sf)
         sf.parse_status = "metadata_only"
         sf.parse_error = metadata_only_message
         sf.capacity_summary_status = "unavailable"
@@ -1328,7 +1331,7 @@ def parse_file(db: Session, sf: SourceFile) -> SourceFile:
             if sf.observed_mtime_ns is not None
             else None
         )
-        info = cache.build(sf.hash, sf.path, expected_fingerprint=expected)
+        info = cache.build(sf.hash, sf.path, expected_fingerprint=expected, **({"read_mode": parsing.source_read_mode(sf)} if parsing.source_read_mode(sf) != "safe" else {}))
         sf.parse_status = "parsed"
         sf.parse_error = None
         sf.parser_version = info["parser_version"]
@@ -1392,7 +1395,7 @@ def update_source_from_path(db: Session, sf: SourceFile, *, update_batch_key: st
     if duplicate is not None:
         raise ValueError("Another source file already has this content hash")
 
-    meta = parsing.read_header_metadata(p)
+    meta = parsing.metadata_for_read_mode(p, parsing.read_header_metadata(p), parsing.source_read_mode(sf))
     parsing.ensure_supported_source_metadata(p, meta)
     metadata_only = parsing.source_metadata_only(meta)
     pending_biologic_candidate = parsing.source_metadata_cycling_pending(meta)
@@ -1401,7 +1404,7 @@ def update_source_from_path(db: Session, sf: SourceFile, *, update_batch_key: st
         info = (
             None
             if metadata_only
-            else cache.build(new_hash, p, expected_fingerprint=fingerprint)
+            else cache.build(new_hash, p, expected_fingerprint=fingerprint, **({"read_mode": parsing.source_read_mode(sf)} if parsing.source_read_mode(sf) != "safe" else {}))
         )
     except Exception as exc:
         # Do not replace a usable SourceFile identity until its replacement
@@ -1431,7 +1434,7 @@ def update_source_from_path(db: Session, sf: SourceFile, *, update_batch_key: st
         parsing.source_metadata_only_message(meta) if metadata_only else None
     )
     sf.parser_version = (
-        parsing.current_parser_identity_for_extension(sf.ext) if metadata_only else info["parser_version"]
+        parsing.current_parser_identity_for_source(sf) if metadata_only else info["parser_version"]
     )
     sf.row_count = None if metadata_only else info["rows"]
     sf.cycle_count = None if metadata_only else info["cycles"]
@@ -1500,7 +1503,7 @@ def update_source_from_path_if_stable(
     if duplicate is not None:
         raise ValueError("Another source file already has this content hash")
 
-    meta = parsing.read_header_metadata(p)
+    meta = parsing.metadata_for_read_mode(p, parsing.read_header_metadata(p), parsing.source_read_mode(sf))
     parsing.ensure_supported_source_metadata(p, meta)
     metadata_only = parsing.source_metadata_only(meta)
     pending_biologic_candidate = parsing.source_metadata_cycling_pending(meta)
@@ -1509,7 +1512,7 @@ def update_source_from_path_if_stable(
         info = (
             None
             if metadata_only
-            else cache.build(new_hash, p, expected_fingerprint=expected_fingerprint)
+            else cache.build(new_hash, p, expected_fingerprint=expected_fingerprint, **({"read_mode": parsing.source_read_mode(sf)} if parsing.source_read_mode(sf) != "safe" else {}))
         )
     except cache.SourceChangedDuringBuild as exc:
         raise SourceChangedDuringRead(str(exc)) from exc
@@ -1537,7 +1540,7 @@ def update_source_from_path_if_stable(
         parsing.source_metadata_only_message(meta) if metadata_only else None
     )
     sf.parser_version = (
-        parsing.current_parser_identity_for_extension(sf.ext) if metadata_only else info["parser_version"]
+        parsing.current_parser_identity_for_source(sf) if metadata_only else info["parser_version"]
     )
     sf.row_count = None if metadata_only else info["rows"]
     sf.cycle_count = None if metadata_only else info["cycles"]

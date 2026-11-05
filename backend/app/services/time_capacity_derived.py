@@ -18,15 +18,18 @@ from . import calc
 PHASE_CODE_REST = 0
 PHASE_CODE_CHARGE = 1
 PHASE_CODE_DISCHARGE = 2
+PHASE_CODE_UNVERIFIED = 3
 PHASE_TO_CODE = {
     "rest": PHASE_CODE_REST,
     "charge": PHASE_CODE_CHARGE,
     "discharge": PHASE_CODE_DISCHARGE,
+    "unverified": PHASE_CODE_UNVERIFIED,
 }
 CODE_TO_PHASE = {
     PHASE_CODE_REST: "rest",
     PHASE_CODE_CHARGE: "charge",
     PHASE_CODE_DISCHARGE: "discharge",
+    PHASE_CODE_UNVERIFIED: "unverified",
 }
 
 
@@ -103,7 +106,12 @@ def phase_from_raw(frame: pd.DataFrame) -> list[str]:
     with np.errstate(invalid="ignore"):
         is_dchg = has_dchg.to_numpy() | (cur < 0)
         is_chg = ~is_dchg & (has_chg.to_numpy() | (cur > 0))
-    return np.select([is_dchg, is_chg], ["discharge", "charge"], default="rest").tolist()
+    phases = np.select([is_dchg, is_chg], ["discharge", "charge"], default="rest")
+    if "mpr_elapsed_time_s" in frame.columns:
+        unverified = pd.to_numeric(frame["mpr_elapsed_time_s"], errors="coerce").notna().to_numpy()
+        phases = phases.astype(object)
+        phases[unverified] = "unverified"
+    return phases.tolist()
 
 
 def phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:

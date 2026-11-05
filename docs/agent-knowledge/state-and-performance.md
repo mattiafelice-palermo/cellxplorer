@@ -44,6 +44,29 @@ content hash even when metadata eligibility fails: the preview callback uses it
 to bind the error to the focused source before removing selection. Verify this
 through an actual preview/import-picker interaction, not policy tests alone.
 
+## MPR mode and cache ownership (Spec 084)
+
+Source metadata persists requested MPR mode and actual interpretation separately.
+Permissive parser identities append `:p1`; all rebuild/refresh, preview, inspection
+receipt, continuation and portable-source paths must resolve that source mode.
+Do not resolve an existing source through extension-only Safe identity. Header
+inspection caches include mode, and a Permissive success must not erase remembered
+Safe rejection. Mode lookup prefers the scalar parser identity to avoid loading
+deferred full headers on a list request.
+
+Concurrent Safe and Permissive cache writers can share one content hash while
+writing different identity-specific paths. Pending ownership must track every
+writer until all finish; one completing writer cannot remove another's cleanup
+protection. Raw-layout provenance recognizes `exploratory_unverified`, preventing
+ready exploratory caches from being reparsed on every use. Persist bounded
+interpretation diagnostics with original record examples without reading full
+raw data on the UI path.
+
+Standalone portable HTML owns visible interpretation notices independently of
+client-supplied figures. Source summaries preserve mode/outcome/diagnostics;
+matching local library sources remain authoritative on reimport. Legacy embedded
+cache descriptors cannot cross Safe/Permissive namespaces in either direction.
+
 ## Indexed source discovery
 
 Spec 060 owns a disposable local `search-index/catalog.sqlite` separate from the scientific

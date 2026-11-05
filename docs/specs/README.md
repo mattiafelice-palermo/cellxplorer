@@ -1,5 +1,10 @@
 # Feature specs
 
+- [084 — BioLogic recording variants and permissive reading](084-biologic-reader-modes-and-recording-variants.md).
+  **Complete.** Verified MPR reader extensions and per-source Safe/Permissive
+  import, cache and plotting modes; independent Astra review, both private
+  corpora, thirteen-file browser import and four-stage/219-module preflight pass.
+
 - [083 — Live-search release recovery](083-live-search-release-recovery.md).
   **Complete; Alpha.17 published.** Path-free failure diagnostics, 30 local native
   lifecycle runs, local/exact-main preflight, signed native release gates and

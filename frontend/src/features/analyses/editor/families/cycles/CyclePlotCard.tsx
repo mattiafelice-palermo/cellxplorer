@@ -1,3 +1,4 @@
+import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   ActionIcon,
@@ -1059,7 +1060,7 @@ export function cyclePlotLayout(
   const yRange = numericTraceExtent(traces, "y", ["y"]);
   const y2Range = numericTraceExtent(traces, "y", ["y2"]);
 
-  return withReferenceLines({
+  return withMprReadNotice(withReferenceLines({
     height: 500,
     margin: {
       l: 66 + lm.l + leftGap,
@@ -1122,7 +1123,7 @@ export function cyclePlotLayout(
     referenceAxis("x", "cycles:cycle", "", "Cycle"),
     referenceAxis("y", `cycles:${quantityInfo.key}:${quantityInfo.column}`, referenceUnits(quantityInfo.label), quantityInfo.label),
     ...(showCeOverlay ? [referenceAxis("y2", "cycles:ce", "%", "CE (%)")] : []),
-  ]);
+  ]), result?.badges);
 }
 
 function isPolarizationQuantity(quantity: string): boolean {

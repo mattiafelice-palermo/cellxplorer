@@ -80,6 +80,7 @@ from stat import S_ISREG
 from typing import Any
 
 import NewareNDA
+import numpy as np
 import pandas as pd
 
 from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, neware_excel
@@ -329,7 +330,116 @@ def _identity_for_format(format_id: str) -> str:
     return identity
 
 
-def current_parser_identity_for_extension(ext: str | None) -> str | None:
+def normalize_mpr_read_mode(value: object = "safe") -> str:
+    mode = str(value or "safe")
+    if mode not in {"safe", "permissive"}:
+        raise ValueError("MPR read mode must be safe or permissive")
+    return mode
+
+
+def source_read_mode(source: object) -> str:
+    # Parsed records encode mode in their scalar identity, avoiding a deferred
+    # full-header load on every library/analysis availability check.
+    identity = getattr(source, "parser_version", None) if not isinstance(source, dict) else source.get("parser_version")
+    if identity:
+        return "permissive" if str(identity).endswith(":p1") else "safe"
+    header = source.get("raw", source.get("header_meta", source)) if isinstance(source, dict) else getattr(source, "header_meta", None)
+    return "permissive" if isinstance(header, dict) and header.get("mpr_read_mode") == "permissive" else "safe"
+
+
+def source_interpretation(source: object) -> str:
+    if source_read_mode(source) != "permissive":
+        status = source.get("parse_status") if isinstance(source, dict) else getattr(source, "parse_status", None)
+        return "verified" if status == "parsed" else "unavailable" if status in {"error", "metadata_only"} else "pending"
+    header = source.get("raw", source.get("header_meta", source)) if isinstance(source, dict) else getattr(source, "header_meta", None)
+    value = header.get("mpr_interpretation") if isinstance(header, dict) else None
+    return value if value in {"verified", "exploratory"} else "pending"
+
+
+def source_is_exploratory(source: object) -> bool:
+    return source_interpretation(source) == "exploratory"
+
+
+def source_interpretation_warnings(source: object) -> list[dict]:
+    if not source_is_exploratory(source):
+        return []
+    header = source.get("raw", source.get("header_meta", source)) if isinstance(source, dict) else getattr(source, "header_meta", None)
+    entries = header.get("mpr_diagnostics", []) if isinstance(header, dict) else []
+    result = []
+    for item in entries[:8] if isinstance(entries, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("message"), str):
+            continue
+        warning = {"code": str(item.get("code", ""))[:80], "message": item["message"][:500], "count": item.get("count", 1)}
+        examples = item.get("examples")
+        if isinstance(examples, list):
+            warning["examples"] = [{str(key)[:80]: value[:240] if isinstance(value, str) else value for key, value in example.items() if isinstance(value, (str, int, float, bool, type(None)))} for example in examples[:3] if isinstance(example, dict)]
+        result.append(warning)
+    return result
+
+
+def record_source_interpretation(source: object, info: dict) -> None:
+    if source_read_mode(source) != "permissive":
+        return
+    header = deepcopy(getattr(source, "header_meta", None) or {})
+    interpretation = info.get("scientific_interpretation")
+    if interpretation not in {"verified", "exploratory"}:
+        cycle_source = info.get("cycle_identity_source")
+        if not cycle_source:
+            return
+        interpretation = "exploratory" if cycle_source == "exploratory_unverified" else "verified"
+    header["mpr_interpretation"] = interpretation
+    if interpretation == "exploratory":
+        from . import cache
+        file_hash = getattr(source, "hash", None)
+        identity = info.get("parser_version") or getattr(source, "parser_version", None)
+        if file_hash and identity:
+            header["mpr_diagnostics"] = cache.load_parser_warnings(file_hash, identity)[:8]
+    else:
+        header.pop("mpr_diagnostics", None)
+    source.header_meta = header
+
+
+def current_parser_identity_for_source(source: object) -> str | None:
+    return current_parser_identity_for_extension(getattr(source, "ext", None), read_mode=source_read_mode(source))
+
+
+def metadata_for_read_mode(path: str | Path, metadata: dict, read_mode: str = "safe") -> dict:
+    mode = normalize_mpr_read_mode(read_mode)
+    if mode != "permissive" or Path(path).suffix.casefold() != ".mpr":
+        return metadata
+    from copy import deepcopy
+    result = deepcopy(metadata)
+    # Validate the binary container/layout even when settings semantics failed.
+    with biologic_mpr.read_mpr_header(path) as document:
+        from .biologic_mpr_exploratory import validate_metadata_envelopes
+        validate_metadata_envelopes(document)
+        fields = document.vmp_data.field_offsets
+        has_voltage = bool({"raw_ewe_v", "raw_context_dependent_working_potential"}.intersection(fields))
+        is_curve = biologic_mpr.mpr_technique_id(document) in {biologic_mpr.MPR_CP_TECHNIQUE_ID, biologic_mpr.MPR_OCV_TECHNIQUE_ID}
+        has_counter = "raw_ece_v" in fields and not is_curve
+        if not has_voltage:
+            raise UnsupportedSourceFormatError("MPR permissive reading requires a verified voltage field")
+    result.pop("error", None)
+    result.pop("error_kind", None)
+    result.pop("error_message", None)
+    raw = result.setdefault("raw", {})
+    raw["mpr_read_mode"] = "permissive"
+    raw["mpr_interpretation"] = "pending"
+    voltage = (result.get("voltage_capabilities") or canonical_cycling.voltage_capabilities(voltage_origin="measured")) if is_curve else canonical_cycling.voltage_capabilities(working_potential_available=has_counter, counter_potential_available=has_counter, voltage_derived=has_counter, voltage_role="cell" if has_counter else "working_vs_reference", voltage_origin="derived_working_minus_counter" if has_counter else "measured_ewe")
+    raw[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY] = voltage
+    result["voltage_capabilities"] = voltage
+    caps = dict(result.get("capabilities") or raw.get("capabilities") or {})
+    caps.update(metadata_only=False, canonical_cycling=True, canonical_cycling_pending=False)
+    for key in list(caps):
+        if key.endswith("_candidate"):
+            caps[key] = False
+    result["capabilities"] = caps
+    raw["capabilities"] = caps
+    result["read_mode"] = "permissive"
+    return result
+
+
+def current_parser_identity_for_extension(ext: str | None, *, read_mode: str = "safe") -> str | None:
     """Cheap, no-I/O "what identity would building this extension produce now".
 
     Derived purely from the static format registry — never opens the source
@@ -352,10 +462,11 @@ def current_parser_identity_for_extension(ext: str | None) -> str | None:
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix.casefold())
     if format_id is None:
         return None
-    return _identity_for_format(format_id)
+    identity = _identity_for_format(format_id)
+    return identity + ":p1" if format_id == FORMAT_BIOLOGIC_MPR and normalize_mpr_read_mode(read_mode) == "permissive" else identity
 
 
-def parser_identity(path: str | Path) -> str:
+def parser_identity(path: str | Path, *, read_mode: str = "safe") -> str:
     """Content-aware effective parser identity for an actual source file.
 
     Use this at real build/parse time, when `path` is available and
@@ -373,7 +484,7 @@ def parser_identity(path: str | Path) -> str:
         raise UnsupportedSourceFormatError(
             f"Unsupported cycling source format: {Path(str(path)).suffix or '<none>'}."
         )
-    return _identity_for_format(format_id)
+    return current_parser_identity_for_extension(Path(path).suffix, read_mode=read_mode)
 
 
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
@@ -385,7 +496,7 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
 
     from . import source_readability
 
-    rejection = source_readability.known_rejection(path)
+    rejection = source_readability.known_rejection(path) if source_read_mode(metadata) != "permissive" else None
     if rejection is not None:
         error_type = UnsupportedSourceFormatError if rejection.kind == "unsupported" else InvalidSourceFormatError
         raise error_type(rejection.error)
@@ -595,6 +706,8 @@ def _metadata_capabilities(metadata: dict | None) -> dict | None:
 def source_metadata_cycling_pending(metadata: dict | None) -> bool:
     """Return whether header facts describe a candidate awaiting full parsing."""
 
+    if source_read_mode(metadata) == "permissive":
+        return False
     capabilities = _metadata_capabilities(metadata)
     if not capabilities:
         return False
@@ -728,6 +841,8 @@ def source_has_pending_biologic_cycle_verification(source: object) -> bool:
     """Return whether a registered MPR is awaiting decoded-row promotion."""
 
     if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
+        return False
+    if source_read_mode(source) == "permissive":
         return False
     header = getattr(source, "header_meta", None)
     return any(
@@ -1282,7 +1397,7 @@ def source_presentation(source: object) -> dict[str, object]:
 
     header = getattr(source, "header_meta", None)
     if not isinstance(header, dict):
-        return {**empty, "source_format": "BioLogic EC-Lab"}
+        return {**empty, "source_format": "BioLogic EC-Lab", "read_mode": source_read_mode(source), "exploratory": source_is_exploratory(source), "scientific_interpretation": source_interpretation(source), "interpretation_warnings": source_interpretation_warnings(source)}
 
     voltage = header.get(canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY)
     if not isinstance(voltage, dict):
@@ -1324,6 +1439,8 @@ def source_presentation(source: object) -> dict[str, object]:
     origin = _bounded_source_presentation_text(voltage.get("voltage_v_origin"), 64)
     return {
         "source_format": "BioLogic EC-Lab",
+        "read_mode": source_read_mode(source),
+        "exploratory": source_is_exploratory(source), "scientific_interpretation": source_interpretation(source), "interpretation_warnings": source_interpretation_warnings(source),
         "technique": _bounded_source_presentation_text(settings.get("technique"), 64),
         "software_version": _bounded_source_presentation_text(
             log.get("ec_lab_version"), 64
@@ -1341,21 +1458,24 @@ def source_presentation(source: object) -> dict[str, object]:
     }
 
 
-def parse_timeseries(path: str | Path) -> pd.DataFrame:
+def parse_timeseries(path: str | Path, *, read_mode: str = "safe") -> pd.DataFrame:
     """Parse canonically and retain only identity-stable adapter rejections."""
     from . import source_readability
 
+    mode = normalize_mpr_read_mode(read_mode)
     before = source_readability.file_identity(path)
     try:
-        frame = _parse_source_timeseries(path)
+        frame = _parse_source_timeseries(path, read_mode=mode) if mode != "safe" else _parse_source_timeseries(path)
     except SourceFormatError as exc:
-        source_readability.remember_rejection(path, before, exc)
+        if mode == "safe":
+            source_readability.remember_rejection(path, before, exc)
         raise
-    source_readability.clear_success(path, before)
+    if mode == "safe":
+        source_readability.clear_success(path, before)
     return frame
 
 
-def _parse_source_timeseries(path: str | Path) -> pd.DataFrame:
+def _parse_source_timeseries(path: str | Path, *, read_mode: str = "safe") -> pd.DataFrame:
     """Full parse of a supported cycling source into a normalized DataFrame.
 
     This is the shared dispatch point for both binary and Excel sources, but
@@ -1381,21 +1501,45 @@ def _parse_source_timeseries(path: str | Path) -> pd.DataFrame:
         return _parse_neware_binary_timeseries(source_path)
     if format_id == FORMAT_BIOLOGIC_MPR:
         with biologic_mpr.read_mpr(source_path) as document:
+            if read_mode == "permissive":
+                from .biologic_mpr_exploratory import validate_metadata_envelopes
+                validate_metadata_envelopes(document)
             technique_id = biologic_mpr.mpr_technique_id(document)
             if technique_id in {
                 biologic_mpr.MPR_CP_TECHNIQUE_ID,
                 biologic_mpr.MPR_OCV_TECHNIQUE_ID,
             }:
                 start_time = biologic_gcpl.decode_gcpl_log(document.vmp_log).get("start_time")
-                return biologic_cp_ocv.map_curve_to_canonical(
+                try:
+                    if read_mode == "permissive" and np.any(np.diff(document.vmp_data.records["elapsed_time_s"]) < 0):
+                        raise UnsupportedSourceFormatError("BioLogic CP/OCV acquisition clock decreases in recorded order")
+                    frame = biologic_cp_ocv.map_curve_to_canonical(
+                        document, technique_id=technique_id, acquisition_start=start_time,
+                    )
+                except SourceFormatError as exc:
+                    if read_mode != "permissive":
+                        raise
+                    from .biologic_mpr_exploratory import map_measurements
+                    return map_measurements(document, exc)
+                frame.attrs.setdefault("biologic_gcpl", {})["cycle_source"] = "verified_cp_ocv_curve"
+                if read_mode == "permissive":
+                    frame["mpr_read_mode"] = "permissive"
+                    frame.attrs.setdefault("biologic_gcpl", {}).update(read_mode="permissive", scientific_interpretation="verified")
+                return frame
+            try:
+                frame = biologic_gcpl.map_gcpl_to_canonical(
                     document,
-                    technique_id=technique_id,
-                    acquisition_start=start_time,
+                    acquisition_start=biologic_gcpl.decode_gcpl_log(document.vmp_log).get("start_time"),
                 )
-            return biologic_gcpl.map_gcpl_to_canonical(
-                document,
-                acquisition_start=biologic_gcpl.decode_gcpl_log(document.vmp_log).get("start_time"),
-            )
+            except SourceFormatError as exc:
+                if read_mode != "permissive":
+                    raise
+                from .biologic_mpr_exploratory import map_measurements
+                return map_measurements(document, exc)
+            if read_mode == "permissive":
+                frame["mpr_read_mode"] = "permissive"
+                frame.attrs.setdefault("biologic_gcpl", {}).update(read_mode="permissive", scientific_interpretation="verified")
+            return frame
     raise UnsupportedSourceFormatError(
         f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
     )

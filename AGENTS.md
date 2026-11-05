@@ -162,6 +162,8 @@ production migrations. See `docs/database-migrations.md`.
   every adapter's errors derive from (Spec 040.2)
 - `backend/app/services/biologic_mpr.py`: independent BioLogic MPR reader with verified GCPL/CP/OCV layouts (Spec 041.1)
 - `backend/app/services/biologic_gcpl.py`: direct GCPL-to-canonical cycling adapter (Spec 041.2)
+- `backend/app/services/biologic_mpr_exploratory.py`: explicit permissive measurement-only fallback (Spec 084)
+- `backend/app/services/exploratory_plotting.py`: native-clock and discontinuity handling for unverified curves
 - `backend/app/services/biologic_cp_ocv.py`: CP/OCV voltage-curve adapter with current-polarity cycle inference
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
@@ -215,6 +217,8 @@ Cellxplorer/
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR reader with verified GCPL/CP/OCV layouts (Spec 041.1)
 │           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)
+│           ├── biologic_mpr_exploratory.py Per-source permissive measurement-only fallback (Spec 084)
+│           ├── exploratory_plotting.py Native exploratory clocks and acquisition discontinuities
 │           ├── biologic_cp_ocv.py BioLogic CP/OCV voltage curves and polarity cycle inference
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
@@ -247,6 +251,8 @@ Cellxplorer/
 │   │   │   ├── CellPreviewPlot.tsx Shared controls, legend, and Plotly surface for cell previews
 │   │   │   ├── cellPreviewPlotModel.ts Shared voltage/capacity layouts, traces, and CE range
 │   │   │   ├── ImportSourcePreview.tsx Staged source voltage and cycle preview
+│   │   │   ├── MprReadStatus.tsx Persistent per-source MPR reading/interpretation status
+│   │   │   ├── CellQuickPlot.tsx Cycle summaries and recorded-voltage fallback for zero-cycle Cells
 │   │   │   ├── IndexedSourceSearch.tsx Virtualized indexed discovery in the import picker (Spec 060)
 │   │   │   ├── IndexedSearchFilters.tsx Searchable filter sections and saved searches (Spec 064)
 │   │   │   ├── FileSearchSettings.tsx Chosen roots, indexing and refresh controls
@@ -288,6 +294,8 @@ Cellxplorer/
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisCellPreviewPolicy.ts Cycle preview range navigation policy
 │   │   ├── importFilePickerPolicy.ts Import-browser metadata filters and sorting policy
+│   │   ├── mprReadMode.ts          Per-source Safe/Permissive selection and mixed-mode inspection
+│   │   ├── mprWarningExample.ts    Original-record and reason formatting for MPR diagnostics
 │   │   ├── importSearch.ts          Indexed search result contract and staging policy
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)

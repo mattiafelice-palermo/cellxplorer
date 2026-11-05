@@ -1,3 +1,4 @@
+import { inspectPathsWithReadModes, type MprReadModes } from "../mprReadMode";
 import {
   Alert,
   Badge,
@@ -171,7 +172,7 @@ function useImportPreviewLoader(
   const load = useCallback((draft: ImportPreviewDraftState, retry = false) => {
     if (draft.metadata_only) return;
     const currentSession = sessionVersion.current;
-    const previewKey = importPreviewQueryKey(draft.hash)[1];
+    const previewKey = importPreviewQueryKey(draft.hash, draft.read_mode)[1];
     const version = (requestVersions.current.get(draft.staged_name) ?? 0) + 1;
     requestVersions.current.set(draft.staged_name, version);
 
@@ -1202,6 +1203,7 @@ function ImportModal({
     post<ImportRawDataResult>("/api/imports/raw-data", {
       staged_name: targetDraft.staged_name,
       source_path: targetDraft.source_path,
+      read_mode: targetDraft.read_mode,
       offset,
       limit: RAW_PAGE_SIZE,
     }, { signal: controller.signal })
@@ -1419,6 +1421,7 @@ function ImportModal({
                 .map((item) => ({
                   staged_name: item.staged_name,
                   source_path: item.source_path,
+                  read_mode: item.read_mode,
                   filename: item.filename,
                   inspection: item.inspection,
                   allow_metadata_only: item.metadata_only &&
@@ -1441,6 +1444,7 @@ function ImportModal({
           : includedDrafts.map((d) => ({
           staged_name: d.staged_name,
           source_path: d.source_path,
+          read_mode: d.read_mode,
           filename: d.filename,
           inspection: d.inspection,
           allow_metadata_only: d.metadata_only,
@@ -2676,8 +2680,12 @@ export function ImportCellsLauncher({
   };
 
   const inspectPaths = useMutation({
-    mutationFn: ({ paths, append, jobToken }: { paths: string[]; append: boolean; jobToken: string }) =>
-      post<ImportInspectResult>("/api/imports/inspect-paths", { paths, job_token: jobToken }).then((result) => ({
+    mutationFn: ({ paths, append, jobToken, readModes = {} }: { paths: string[]; append: boolean; jobToken: string; readModes?: MprReadModes }) =>
+      inspectPathsWithReadModes(paths, readModes, (group, read_mode) => {
+        const groupToken = `${jobToken}-${read_mode}`;
+        setProgressToken(groupToken);
+        return post<ImportInspectResult>("/api/imports/inspect-paths", { paths: group, job_token: groupToken, read_mode });
+      }).then((result) => ({
         result,
         append,
       })),
@@ -2719,7 +2727,9 @@ export function ImportCellsLauncher({
       folderPaths,
       append,
       jobToken,
+      readModes = {},
     }: {
+      readModes?: MprReadModes;
       filePaths: string[];
       folderPaths: string[];
       append: boolean;
@@ -2729,8 +2739,8 @@ export function ImportCellsLauncher({
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
-      }).then((result) => ({ result, append, folderPaths })),
-    onSuccess: ({ result, append, folderPaths }) => {
+      }).then((result) => ({ result, append, folderPaths, readModes })),
+    onSuccess: ({ result, append, folderPaths, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
@@ -2755,6 +2765,7 @@ export function ImportCellsLauncher({
           paths: candidates.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
           append,
           jobToken,
+          readModes,
         });
         return;
       }
@@ -2782,12 +2793,12 @@ export function ImportCellsLauncher({
     setSourcePickerOpen(true);
   };
 
-  const continueSourceSelection = ({ filePaths, folderPaths }: ImportSourceSelection) => {
-    setSourceSelection({ filePaths, folderPaths });
+  const continueSourceSelection = ({ filePaths, folderPaths, readModes }: ImportSourceSelection) => {
+    setSourceSelection({ filePaths, folderPaths, readModes });
     const jobToken = newImportJobToken();
     setProgressStage("scan");
     setProgressToken(jobToken);
-    listSources.mutate({ filePaths, folderPaths, append: sourceAppend, jobToken });
+    listSources.mutate({ filePaths, folderPaths, readModes, append: sourceAppend, jobToken });
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
@@ -2804,6 +2815,7 @@ export function ImportCellsLauncher({
       paths: selected.map((candidate) => candidate.path).filter(Boolean) as string[],
       append: sourceAppend,
       jobToken,
+      readModes: sourceSelection?.readModes,
     });
   };
 
@@ -2983,8 +2995,12 @@ export function InboxPage() {
   };
 
   const inspectPaths = useMutation({
-    mutationFn: ({ paths, append, jobToken }: { paths: string[]; append: boolean; jobToken: string }) =>
-      post<ImportInspectResult>("/api/imports/inspect-paths", { paths, job_token: jobToken }).then((result) => ({
+    mutationFn: ({ paths, append, jobToken, readModes = {} }: { paths: string[]; append: boolean; jobToken: string; readModes?: MprReadModes }) =>
+      inspectPathsWithReadModes(paths, readModes, (group, read_mode) => {
+        const groupToken = `${jobToken}-${read_mode}`;
+        setProgressToken(groupToken);
+        return post<ImportInspectResult>("/api/imports/inspect-paths", { paths: group, job_token: groupToken, read_mode });
+      }).then((result) => ({
         result,
         append,
       })),
@@ -3024,7 +3040,9 @@ export function InboxPage() {
       folderPaths,
       append,
       jobToken,
+      readModes = {},
     }: {
+      readModes?: MprReadModes;
       filePaths: string[];
       folderPaths: string[];
       append: boolean;
@@ -3034,8 +3052,8 @@ export function InboxPage() {
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
-      }).then((result) => ({ result, append, folderPaths })),
-    onSuccess: ({ result, append, folderPaths }) => {
+      }).then((result) => ({ result, append, folderPaths, readModes })),
+    onSuccess: ({ result, append, folderPaths, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
@@ -3059,6 +3077,7 @@ export function InboxPage() {
           paths: candidates.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
           append,
           jobToken,
+          readModes,
         });
         return;
       }
@@ -3086,12 +3105,12 @@ export function InboxPage() {
     setSourcePickerOpen(true);
   };
 
-  const continueSourceSelection = ({ filePaths, folderPaths }: ImportSourceSelection) => {
-    setSourceSelection({ filePaths, folderPaths });
+  const continueSourceSelection = ({ filePaths, folderPaths, readModes }: ImportSourceSelection) => {
+    setSourceSelection({ filePaths, folderPaths, readModes });
     const jobToken = newImportJobToken();
     setProgressStage("scan");
     setProgressToken(jobToken);
-    listSources.mutate({ filePaths, folderPaths, append: sourceAppend, jobToken });
+    listSources.mutate({ filePaths, folderPaths, readModes, append: sourceAppend, jobToken });
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
@@ -3108,6 +3127,7 @@ export function InboxPage() {
       paths: selected.map((candidate) => candidate.path).filter(Boolean) as string[],
       append: sourceAppend,
       jobToken,
+      readModes: sourceSelection?.readModes,
     });
   };
 

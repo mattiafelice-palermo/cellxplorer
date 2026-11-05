@@ -55,6 +55,26 @@ class CorpusTests(unittest.TestCase):
             corpus.register(self.root,'case-two',self.source,'pair')
             with self.assertRaisesRegex(ValueError,'membership'):corpus.run(self.root,'verify')
 
+    def test_mode_change_cannot_reuse_safe_scientific_baseline(self):
+        with patch.object(corpus,'scientific_snapshot',return_value={'chains':{}}) as compute:
+            corpus.run(self.root,'snapshot')
+            manifest=corpus.read_manifest(self.root)
+            manifest['cases'][0]['read_mode']='permissive'
+            corpus.write_json(self.root/'manifest.json',manifest)
+            compute.reset_mock()
+            with self.assertRaisesRegex(ValueError,'read modes'):corpus.run(self.root,'verify')
+            compute.assert_not_called()
+            corpus.run(self.root,'snapshot',replace=True)
+            self.assertTrue(corpus.run(self.root,'verify')['verified'])
+
+    def test_invalid_modes_do_not_copy_sources(self):
+        with self.assertRaisesRegex(ValueError,'read mode'):
+            corpus.register(self.root,'invalid-mode',self.source,'pair',read_mode='guess')
+        self.assertFalse((self.root/'sources'/'invalid-mode.mpr').exists())
+        self.manifest['cases'][0]['read_mode']='guess'
+        corpus.write_json(self.root/'manifest.json',self.manifest)
+        with self.assertRaisesRegex(ValueError,'read mode'):corpus.read_manifest(self.root)
+
     def tearDown(self):
         for path in self.root.rglob('*.mpr'):path.chmod(stat.S_IREAD|stat.S_IWRITE)
 

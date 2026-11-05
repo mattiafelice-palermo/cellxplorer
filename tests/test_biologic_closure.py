@@ -340,7 +340,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         source = scanner.ingest_path(self.db, path, parse_now=True)
 
         self.assertEqual(source.parse_status, "parsed")
-        self.assertEqual(source.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(source.row_count, 4)
         self.assertEqual(source.cycle_count, 0)
         self.assertEqual(source.capacity_summary_status, "ready")
@@ -359,6 +359,47 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertEqual(raw["cycle"].tolist(), [1, 1, 1, 1])
         self.assertFalse(raw["cycle_complete"].any())
 
+    def test_neutral_only_header_registers_voltage_curves_without_cycle_summary(self) -> None:
+        from app.routers import files as files_router
+
+        rows = [
+            {"total_time_s": 0., "ns": 0, "mode": 3, "control": 0.,
+             "q_mAh": 0., "ewe_v": 1.2, "ece_v": .1},
+            {"total_time_s": 1., "ns": 0, "mode": 3, "control": 0.,
+             "q_mAh": 0., "ewe_v": 1.1, "ece_v": .1},
+        ]
+        payload = encode_gcpl_settings([{"current": 0., "rest_duration_s": 1.}])
+        path = write_gcpl_mpr(self.root / "neutral-only.mpr", rows, settings_payload=payload)
+        header = read_gcpl_header_metadata(path)
+        self.assertTrue(header["raw"]["capabilities"]["neutral_voltage_candidate"])
+        self.assertFalse(header["raw"]["capabilities"]["metadata_only"])
+        self.assertTrue(header["raw"]["capabilities"]["canonical_cycling_pending"])
+
+        source = scanner.ingest_path(self.db, path, parse_now=True)
+        self.assertEqual(source.parse_status, "parsed")
+        self.assertEqual(source.row_count, 2)
+        self.assertEqual(source.cycle_count, 0)
+        self.assertFalse(parsing.source_record_metadata_only(source))
+        raw = cache.load_raw(source.hash, source.parser_version)
+        self.assertFalse(raw["cycle_complete"].any())
+        preview = files_router.preview_file(source.id, kind="raw", db=self.db)
+        self.assertEqual(len(preview["voltage_v"]), 2)
+        self.assertEqual(preview["current_ma"], [0., 0.])
+        self.assertEqual(files_router.preview_file(source.id, kind="cycles", db=self.db)["rows"], [])
+
+        # Header admission remains a candidate: contradictory decoded transfer
+        # must fail full parsing and may never acquire a usable raw cache.
+        bad_rows = deepcopy(rows)
+        bad_rows[1].update(q_mAh=.1, raw_dq_mAh=.1)
+        bad_path = write_gcpl_mpr(self.root / "neutral-transfer.mpr", bad_rows,
+                                  settings_payload=payload)
+        bad_source = scanner.ingest_path(self.db, bad_path, parse_now=True)
+        self.assertNotEqual(bad_source.parse_status, "parsed")
+        self.assertIsNone(cache.load_raw(bad_source.hash, bad_source.parser_version))
+        with self.assertRaises(HTTPException) as caught:
+            files_router.preview_file(bad_source.id, kind="raw", db=self.db)
+        self.assertEqual(caught.exception.status_code, 422)
+
     def test_biologic_cache_hit_preserves_exact_cycle_identity_provenance(self) -> None:
         cases = (
             ("loop-one-cycle.mpr", [1, 1], "protocol_loop_reconstruction"),
@@ -375,7 +416,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
             self.assertEqual(fresh["cycle_identity_source"], cycle_source)
             self.assertEqual(cached["cycle_identity_source"], cycle_source)
-            index = cache.load_raw_layout_index(file_hash, "bm:gcpl17cpocv1:r1")
+            index = cache.load_raw_layout_index(file_hash, "bm:gcpl18cpocv1:r1")
             self.assertIsNotNone(index)
             self.assertEqual(index["biologic_cycle_identity_source"], cycle_source)
 
@@ -422,7 +463,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.cycle_count, 0)
         self.assertFalse(parsing.source_record_metadata_only(refreshed))
@@ -447,7 +488,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.cycle_count, 0)
 
@@ -461,7 +502,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         )
 
         source = scanner.ingest_path(self.db, path, parse_now=True)
-        self.assertEqual(source.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(source.parse_status, "parsed")
 
         # Recreate the persisted state produced when gcpl7 rejected this
@@ -485,15 +526,15 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.row_count, 4)
         self.assertEqual(refreshed.cycle_count, 0)
         self.assertEqual(refreshed.capacity_summary_status, "ready")
         self.assertFalse(parsing.source_record_metadata_only(refreshed))
-        self.assertTrue(cache.raw_path(refreshed.hash, "bm:gcpl17cpocv1:r1").exists())
+        self.assertTrue(cache.raw_path(refreshed.hash, "bm:gcpl18cpocv1:r1").exists())
         self.assertTrue(
-            cache.has_cycles(refreshed.hash, "bm:gcpl17cpocv1:r1", cache.CALC_VERSION)
+            cache.has_cycles(refreshed.hash, "bm:gcpl18cpocv1:r1", cache.CALC_VERSION)
         )
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
@@ -528,9 +569,9 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
-        self.assertFalse(cache.raw_path(refreshed.hash, "bm:gcpl17cpocv1:r1").exists())
+        self.assertFalse(cache.raw_path(refreshed.hash, "bm:gcpl18cpocv1:r1").exists())
         self.assertFalse(
-            cache.cycles_path(refreshed.hash, "bm:gcpl17cpocv1:r1", cache.CALC_VERSION).exists()
+            cache.cycles_path(refreshed.hash, "bm:gcpl18cpocv1:r1", cache.CALC_VERSION).exists()
         )
 
     def _add_retired_source(
@@ -676,7 +717,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_scanner_registers_single_direction_and_builds_a_cache(self) -> None:
         self.assertEqual(self.source.parse_status, "parsed")
-        self.assertEqual(self.source.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(self.source.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(self.source.row_count, 4)
         self.assertEqual(self.source.cycle_count, 0)
         self.assertEqual(self.source.capacity_summary_status, "ready")
@@ -708,13 +749,13 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
 
         refreshed = self.db.get(SourceFile, self.source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.row_count, 4)
 
     def test_parser_revision_invalidates_the_previous_canonical_identity(self) -> None:
         current_identity = parsing.parser_identity(self.mpr_path)
-        self.assertEqual(current_identity, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(current_identity, "bm:gcpl18cpocv1:r1")
         file_hash = parsing.capture_source_fingerprint(self.mpr_path).hash
         old_identity = "bm:gcpl3:r1"
         old_raw = cache.raw_path(file_hash, old_identity)
@@ -745,7 +786,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         for source in (online, offline):
             refreshed = self.db.get(SourceFile, source.id)
-            self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+            self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
             self.assertEqual(refreshed.parse_status, "metadata_only")
             self.assertEqual(refreshed.capacity_summary_status, "unavailable")
             self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -777,7 +818,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.parse_status, "metadata_only")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -803,7 +844,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.parse_status, "metadata_only")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -1156,7 +1197,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
         self.assertEqual(refreshed.parse_status, "metadata_only")
-        self.assertEqual(refreshed.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertEqual(background_jobs.get_job(job_id)["counters"]["failed"], 1)
 
@@ -1175,7 +1216,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         source = scanner.ingest_path(self.db, path, parse_now=True)
 
         self.assertEqual(source.parse_status, "metadata_only")
-        self.assertEqual(source.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertTrue(parsing.source_record_metadata_only(source))
         self.assertEqual(source.capacity_summary_status, "unavailable")
         self.assertIn("declared charge", source.parse_error or "")
@@ -1189,7 +1230,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
             "single_direction_inferred",
         )
         self.assertFalse(
-            cache.raw_path(source.hash, "bm:gcpl17cpocv1:r1").exists()
+            cache.raw_path(source.hash, "bm:gcpl18cpocv1:r1").exists()
         )
         capability = parsing.source_record_capability(source)
         self.assertEqual(capability["status"], "metadata_only")
@@ -1239,7 +1280,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         refreshed_online = self.db.get(SourceFile, online.id)
         refreshed_offline = self.db.get(SourceFile, offline.id)
-        self.assertEqual(refreshed_online.parser_version, "bm:gcpl17cpocv1:r1")
+        self.assertEqual(refreshed_online.parser_version, "bm:gcpl18cpocv1:r1")
         self.assertEqual(refreshed_online.parse_status, "parsed")
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())

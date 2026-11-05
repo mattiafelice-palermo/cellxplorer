@@ -72,6 +72,8 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
         "protocol_loop_reconstruction",
         "non_repeating_cycle_1",
         "verified_repeated_executions",
+        "exploratory_unverified",
+        "verified_cp_ocv_curve",
     }
 )
 
@@ -267,7 +269,7 @@ def _require_source_fingerprint(
 # build_write_behind(). Everything that reads or rebuilds a cache waits on
 # any in-flight write for that hash first.
 _pending_lock = threading.Lock()
-_pending: dict[str, threading.Thread] = {}
+_pending: dict[str, set[threading.Thread]] = {}
 _protected_hashes: set[str] = set()
 
 # Continuation inspection can be repeated while a source cache is preparing. Keep
@@ -288,20 +290,20 @@ CACHE_WAIT_TIMEOUT_SECONDS = 300.0
 
 
 def _wait_for_pending(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS) -> None:
-    with _pending_lock:
-        thread = _pending.get(file_hash)
-    # The write-behind owner may publish optional derived data from its own
-    # in-memory frame before clearing the pending marker.  It must not join
-    # itself, while external readers/builders still wait for the complete
-    # raw/cycle/derived publication boundary.
-    if thread is not None and thread is not threading.current_thread():
-        thread.join(timeout)
-        if thread.is_alive():
-            logger.warning(
-                "timed out waiting %.0fs for the cache write of %s; continuing",
-                timeout,
-                file_hash[:12],
-            )
+    deadline = time.monotonic() + timeout
+    while True:
+        with _pending_lock:
+            threads = tuple(_pending.get(file_hash, ()))
+        # Writers prepare their own immutable raw frame; they must not wait on
+        # themselves or sibling mode writers that may be doing the same work.
+        if not threads or threading.current_thread() in threads:
+            return
+        for thread in threads:
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(remaining)
+            if thread.is_alive():
+                logger.warning("timed out waiting %.0fs for the cache write of %s; continuing", timeout, file_hash[:12])
+                return
 
 
 @contextmanager
@@ -346,7 +348,7 @@ def pending_hashes() -> set[str]:
         return set(_pending) | set(_protected_hashes)
 
 
-def schedule_build(file_hash: str, source_path: str | Path) -> dict[str, str | None]:
+def schedule_build(file_hash: str, source_path: str | Path, *, read_mode: str = "safe") -> dict[str, str | None]:
     """Start at most one current-version cache build for ``file_hash``.
 
     The result status is ``ready``, ``building``, ``started``, or ``failed``.
@@ -360,7 +362,7 @@ def schedule_build(file_hash: str, source_path: str | Path) -> dict[str, str | N
     global version used to be assumed.
     """
     try:
-        parser_identity = parsing.parser_identity(source_path)
+        parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
     except Exception:
         # Unrecognized/unreadable source: fall back to the legacy bundle for
         # the dedup key so behavior degrades to "attempt exactly one build",
@@ -395,7 +397,7 @@ def schedule_build(file_hash: str, source_path: str | Path) -> dict[str, str | N
                 # Deferring that independent artifact removes it from the
                 # preview-readiness critical path; registered cells can still
                 # prepare it through the existing scanner/warmup flow.
-                build(file_hash, source_path, prepare_time_capacity=False)
+                build(file_hash, source_path, prepare_time_capacity=False, **({"read_mode": read_mode} if read_mode != "safe" else {}))
             except Exception as exc:
                 error = str(exc) or exc.__class__.__name__
                 with _background_build_lock:
@@ -531,6 +533,9 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "future_duplicate_records_skipped",
                 "ambiguous_cycle_summary_times_ignored",
                 "biologic_replayed_records_skipped",
+                "biologic_permissive_reading",
+                "biologic_instrument_errors",
+                "biologic_clock_regressions",
             }
             and isinstance(item.get("message"), str)
         ):
@@ -587,6 +592,9 @@ def _write_parser_diagnostics(
                 "future_duplicate_records_skipped",
                 "ambiguous_cycle_summary_times_ignored",
                 "biologic_replayed_records_skipped",
+                "biologic_permissive_reading",
+                "biologic_instrument_errors",
+                "biologic_clock_regressions",
             }
             or not isinstance(item.get("message"), str)
         ):
@@ -2622,6 +2630,7 @@ def build(
     source_path: str | Path,
     force: bool = False,
     *,
+    read_mode: str = "safe",
     expected_fingerprint: parsing.SourceFingerprint | None = None,
     prepare_time_capacity: bool = True,
 ) -> dict:
@@ -2630,7 +2639,7 @@ def build(
     version. Returns {rows, cycles, parser_version, calc_version}.
 
     ``parser_version`` in the return value is this source's own identity
-    (`parsing.parser_identity(source_path)`), not a process-global bundle —
+    (`parsing.parser_identity(source_path, read_mode=read_mode)`), not a process-global bundle —
     callers persist it verbatim into `SourceFile.parser_version`.
 
     ``prepare_time_capacity=False`` skips the optional Time/Capacity derived
@@ -2646,7 +2655,7 @@ def build(
         source_path, file_hash, expected_fingerprint
     )
     _require_source_fingerprint(source_path, expected_source_fingerprint)
-    parser_identity = parsing.parser_identity(source_path)
+    parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     rp, cp = raw_path(file_hash, parser_identity), cycles_path(file_hash, parser_identity)
     reparse_for_biologic_provenance = False
@@ -2686,6 +2695,7 @@ def build(
                 "calc_version": CALC_VERSION,
                 "cached": True,
                 "cycle_identity_source": cached_cycle_identity_source,
+                "scientific_interpretation": "exploratory" if cached_cycle_identity_source == "exploratory_unverified" else "verified",
                 **totals,
             }
 
@@ -2695,7 +2705,7 @@ def build(
     parsed_from_source = reparse_for_biologic_provenance or not (rp.exists() and not force)
     if parsed_from_source:
         _require_source_fingerprint(source_path, expected_source_fingerprint)
-        raw = parsing.parse_timeseries(source_path)
+        raw = parsing.parse_timeseries(source_path, read_mode=read_mode) if read_mode != "safe" else parsing.parse_timeseries(source_path)
         # Full-parse / cache-build boundary (Spec 040.1): a frame already on
         # disk was validated when it was first written, so this only runs on
         # an actual new parse, never on every cache read.
@@ -2746,6 +2756,7 @@ def build(
         "calc_version": CALC_VERSION,
         "cached": False,
         "cycle_identity_source": cycle_identity_source,
+        "scientific_interpretation": "exploratory" if cycle_identity_source == "exploratory_unverified" else "verified",
         **capacity_totals(cycles),
     }
 
@@ -2754,6 +2765,7 @@ def build_write_behind(
     file_hash: str,
     source_path: str | Path,
     *,
+    read_mode: str = "safe",
     expected_fingerprint: parsing.SourceFingerprint | None = None,
 ) -> pd.DataFrame:
     """Parse now, return the per-cycle frame immediately, and write the
@@ -2768,7 +2780,7 @@ def build_write_behind(
         source_path, file_hash, expected_fingerprint
     )
     _require_source_fingerprint(source_path, expected_source_fingerprint)
-    parser_identity = parsing.parser_identity(source_path)
+    parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     if raw_path(file_hash, parser_identity).exists() and cycles_path(
         file_hash, parser_identity
@@ -2781,7 +2793,7 @@ def build_write_behind(
         return load_cycles(file_hash, parser_identity, CALC_VERSION)
 
     _require_source_fingerprint(source_path, expected_source_fingerprint)
-    raw = parsing.parse_timeseries(source_path)
+    raw = parsing.parse_timeseries(source_path, read_mode=read_mode) if read_mode != "safe" else parsing.parse_timeseries(source_path)
     canonical_cycling.validate_raw_timeseries(raw)
     cycles = calc.per_cycle(raw)
     parsing.validate_parsed_output(source_path, raw, cycles)
@@ -2819,12 +2831,16 @@ def build_write_behind(
             logger.exception("background cache write failed for %s", file_hash)
         finally:
             with _pending_lock:
-                _pending.pop(file_hash, None)
+                owners = _pending.get(file_hash)
+                if owners is not None:
+                    owners.discard(threading.current_thread())
+                    if not owners:
+                        _pending.pop(file_hash, None)
 
     thread = threading.Thread(target=_write, daemon=True, name=f"cache-write-{file_hash[:8]}")
     with _pending_lock:
-        _pending[file_hash] = thread
-    thread.start()
+        _pending.setdefault(file_hash, set()).add(thread)
+        thread.start()
     return cycles
 
 

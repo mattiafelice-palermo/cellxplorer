@@ -470,7 +470,7 @@ def current_parser_identity(source_file: SourceFile) -> str:
     format registry does not recognize, which should not happen for a
     successfully registered source.
     """
-    return parsing.current_parser_identity_for_extension(source_file.ext) or parsing.PARSER_VERSION
+    return parsing.current_parser_identity_for_source(source_file) or parsing.PARSER_VERSION
 
 
 def resolve_source_parser_versions(
@@ -548,7 +548,8 @@ def source_file_entries(
     used elsewhere in this module.
     """
     return [
-        {"hash": f.hash, "position": index, "parser_version": versions[f.hash]}
+        {"hash": f.hash, "position": index, "parser_version": versions[f.hash],
+         **({"read_mode": "permissive", "exploratory": parsing.source_is_exploratory(f), "scientific_interpretation": parsing.source_interpretation(f)} if versions[f.hash].endswith(":p1") else {})}
         for index, f in enumerate(files, start=1)
     ]
 
@@ -625,6 +626,21 @@ def protocol_analysis_guard(
     """Build the structured fail-closed response for protocol plot families."""
     if plot_family not in PROTOCOL_DERIVED_FAMILIES:
         return None
+    if request_context is None:
+        selected_units, _missing = resolve_selection(db, spec)
+        preload_cell_sources(db, [unit["cell"] for unit in selected_units])
+    else:
+        selected_units = list(request_context.units)
+    exploratory = []
+    for unit in selected_units:
+        cell = unit["cell"]
+        files = list(request_context.files_by_cell[cell.id]) if request_context is not None else cell_ordered_hashes(db, cell)[1]
+        if any(parsing.source_read_mode(source) == "permissive" and parsing.source_interpretation(source) != "verified" for source in files):
+            exploratory.append({"id": cell.id, "name": cell.name})
+    if exploratory:
+        return {"code": "exploratory_mpr_protocol_unavailable", "plot_family": plot_family,
+                "unsupported_cells": exploratory, "supported_alternatives": ["cycles", "time_capacity"],
+                "message": "Permissive MPR sources do not establish verified protocol mappings. Use Time / capacity to inspect recordings, or import in Safe mode for protocol analyses."}
     unsupported = multi_source_cells_for_spec(
         db,
         spec,
@@ -689,6 +705,7 @@ def source_descriptors(
             "source_position": position,
             "filename": source_file.filename,
             "source_hash": source_file.hash,
+            **({"read_mode": "permissive", "exploratory": parsing.source_is_exploratory(source_file), "scientific_interpretation": parsing.source_interpretation(source_file)} if parsing.source_read_mode(source_file) == "permissive" else {}),
             **(
                 {"parser_version": parser_versions[source_file.hash]}
                 if parser_versions and source_file.hash in parser_versions
@@ -1259,6 +1276,7 @@ def time_capacity_sampling_metadata(
     row_indices: np.ndarray | None,
     selected_count: int,
     window_break_rows: np.ndarray | None = None,
+    *, raw: pd.DataFrame | None = None,
 ) -> dict:
     """Keep sampling density separate from explicitly clipped-out x intervals.
 
@@ -1271,6 +1289,9 @@ def time_capacity_sampling_metadata(
     if row_indices is not None and window_break_rows is not None:
         positions = np.searchsorted(row_indices, window_break_rows)
         breaks = np.unique(positions[(positions > 0) & (positions < len(row_indices))]).tolist()
+    if raw is not None and "mpr_acquisition_segment" in raw.columns:
+        from . import exploratory_plotting
+        breaks = sorted(set(breaks).union(exploratory_plotting.break_before(raw)))
     return {
         "display_sampled": row_indices is not None and len(row_indices) < selected_count,
         "display_break_before": breaks,
@@ -1820,6 +1841,14 @@ def _phase_from_raw(frame: pd.DataFrame) -> list[str]:
     return time_capacity_derived.phase_from_raw(frame)
 
 
+def _time_capacity_sort_columns(frame: pd.DataFrame) -> list[str]:
+    if "_stitch_order" in frame.columns:
+        return ["_stitch_order"]
+    if "mpr_elapsed_time_s" in frame.columns:
+        return [column for column in ("segment", "record_index") if column in frame.columns]
+    return ["cycle", "segment", "record_index"] if "record_index" in frame.columns else ["cycle", "segment"]
+
+
 def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     """Make time_s monotonic across Neware step resets (vectorized).
 
@@ -1828,6 +1857,16 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     which offsets x per half-cycle — a CV hold re-drew from x=0 as a flat
     line at the cutoff voltage. Each drop adds the pre-drop value as a
     running offset, turning per-step time into cumulative elapsed time."""
+    if "mpr_elapsed_time_s" in frame.columns:
+        from . import exploratory_plotting
+        # Preserve native clocks only for exploratory rows. Ordinary sources in
+        # the same Cell keep their established step-clock transformation.
+        ordinary = _continuous_time(frame.drop(columns="mpr_elapsed_time_s"))
+        native = exploratory_plotting.native_time(frame)
+        values = ordinary["time_s"].to_numpy(dtype=float).copy()
+        present = np.isfinite(native)
+        values[present] = native[present]
+        return frame.assign(time_s=values)
     if "_stitch_time_s" in frame.columns:
         return frame.assign(time_s=frame["_stitch_time_s"].to_numpy(dtype=float))
     if "time_s" not in frame.columns or len(frame) < 2:
@@ -1856,6 +1895,11 @@ def _restore_time_capacity_cycle_times(
     first = frame.groupby("cycle", sort=False)["time_s"].transform("first").to_numpy(dtype="float64")
     expected = frame["cycle"].map(cycle_starts).to_numpy(dtype="float64")
     restored = np.where(np.isfinite(expected), values + expected - first, values)
+    if "mpr_elapsed_time_s" in frame.columns:
+        from . import exploratory_plotting
+        native = exploratory_plotting.native_time(frame)
+        present = np.isfinite(native)
+        restored[present] = native[present]
     return frame.assign(time_s=restored)
 
 
@@ -1922,6 +1966,15 @@ def _time_capacity_display_x(
         "capacity_mah_g",
         "capacity_mah_cm2",
     }
+    native = None
+    if not capacity_axis and "mpr_elapsed_time_s" in raw.columns:
+        from . import exploratory_plotting
+        native = exploratory_plotting.native_time(raw) / factor
+    def preserve_native(output: np.ndarray) -> np.ndarray:
+        if native is not None:
+            present = np.isfinite(native)
+            output[present] = native[present]
+        return output
     if settings["display_mode"] == "consecutive":
         if capacity_axis and settings.get("view") == "voltage_current":
             return time_capacity_derived.consecutive_capacity_display(
@@ -1938,12 +1991,12 @@ def _time_capacity_display_x(
                 if settings["time_unit"] == "min"
                 else 1.0
             )
-            return values - float(origin_time_s) / time_factor
+            return preserve_native(values - float(origin_time_s) / time_factor)
         finite_mask = np.isfinite(values)
         if origin_cycle_start is not None and "cycle" in raw.columns:
             finite_mask &= raw["cycle"].to_numpy() >= int(origin_cycle_start)
         finite = np.flatnonzero(finite_mask)
-        return values - values[finite[0]] if len(finite) else values
+        return preserve_native(values - values[finite[0]] if len(finite) else values)
 
     cycles = raw["cycle"].to_numpy() if "cycle" in raw.columns else np.zeros(len(raw))
     phase_values = np.asarray(phases)
@@ -1957,7 +2010,7 @@ def _time_capacity_display_x(
             if settings["display_mode"] == "overlap_mirror" and phase == "discharge":
                 reset = np.nanmax(reset) - reset
             output[indices] = reset
-    return output
+    return preserve_native(output)
 
 
 def time_capacity_display_budget(
@@ -2011,6 +2064,13 @@ def _aligned_prepared_transform_values(
     need_capacity: bool,
 ) -> tuple[list[str], np.ndarray | None] | None:
     """Validate prepared identity/order and return exact phase/capacity values."""
+
+    if "mpr_elapsed_time_s" in raw.columns:
+        from . import exploratory_plotting
+        if np.isfinite(exploratory_plotting.native_time(raw)).any():
+            # Scientific-cycle sidecars sort by cycle. Exploratory rows retain
+            # acquisition order and must use the exact transform on that order.
+            return None
 
     identity_columns = (
         "source_hash",
@@ -2427,7 +2487,7 @@ def refresh_availability_badges(
     fields only — no disk probing on the hot path; the source-check jobs and
     fresh computes keep ``location_status`` current.
     """
-    availability_kinds = {"source_offline", "source_changed"}
+    availability_kinds = {"source_offline", "source_changed", "exploratory_mpr"}
     kept = [
         badge
         for badge in (result.get("badges") or [])
@@ -2440,7 +2500,7 @@ def refresh_availability_badges(
     )
 
 
-AVAILABILITY_BADGE_KINDS = {"source_offline", "source_changed"}
+AVAILABILITY_BADGE_KINDS = {"source_offline", "source_changed", "exploratory_mpr"}
 
 
 def availability_badges(
@@ -2469,6 +2529,11 @@ def availability_badges(
             else cell_ordered_hashes(db, cell)[1]
         )
         for f in files:
+            if parsing.source_read_mode(f) == "permissive":
+                fresh.append({"kind": "exploratory_mpr", "cell_id": cell.id, "cell_name": cell.name,
+                              "file": f.filename, "exploratory": parsing.source_is_exploratory(f),
+                              "scientific_interpretation": parsing.source_interpretation(f),
+                              "detail": ("Permissive MPR source: unverified interpretation; unresolved scientific quantities are unavailable." if parsing.source_is_exploratory(f) else "Permissive MPR mode selected; the recording passed verified scientific interpretation." if parsing.source_interpretation(f) == "verified" else "Permissive MPR mode selected; scientific interpretation is pending.")})
             if f.location_status == "offline":
                 fresh.append(
                     {"kind": "source_offline", "cell_id": cell.id, "cell_name": cell.name,
@@ -4302,11 +4367,7 @@ def compute_time_capacity(
             continue
 
         if canonical_time and not indexed_path:
-            raw = raw.sort_values(
-                ["_stitch_order"] if "_stitch_order" in raw.columns else
-                ["cycle", "segment", "record_index"] if "record_index" in raw.columns
-                else ["cycle", "segment"]
-            )
+            raw = raw.sort_values(_time_capacity_sort_columns(raw), kind="stable")
             raw = _continuous_time(raw)
             time_prepared_before_filter = True
             origin_rows = raw.loc[raw["cycle"] >= int(display_origin_cycle_start or 1), "time_s"]
@@ -4360,12 +4421,7 @@ def compute_time_capacity(
                         | (raw.get("display_only_cycle", False) & include_display_only_rows)
                     ]
 
-            raw = raw.sort_values(
-                ["_stitch_order"] if "_stitch_order" in raw.columns else
-                ["cycle", "segment", "record_index"]
-                if "record_index" in raw.columns
-                else ["cycle", "segment"]
-            )
+            raw = raw.sort_values(_time_capacity_sort_columns(raw), kind="stable")
             cell_diagnostics["selected_rows_before_transforms"] = len(raw)
 
         with time_capacity_path.timed_stage(
@@ -4806,7 +4862,7 @@ def compute_time_capacity(
                 "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
                 "display_x": _jsonsafe_plot(display_x, None if full_precision else 6),
-                **time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows),
+                **time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows, raw=raw),
                 **({"display_cycle_spans": display_cycle_spans} if not refinement else {}),
                 **(
                     {"display_x_cycle_origins": display_x_cycle_origins}

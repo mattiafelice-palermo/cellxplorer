@@ -12,16 +12,17 @@ export type ImportPreviewDraftState = ImportPreview & {
 
 export type ImportPreviewDraft = Pick<
   ImportPreview,
-  "staged_name" | "source_path" | "hash" | "size" | "inspection"
+  "staged_name" | "source_path" | "hash" | "size" | "inspection" | "read_mode"
 >;
 
-export function importPreviewQueryKey(hash: string): readonly [string, string] {
-  return ["import-capacity-preview", hash.toLowerCase()];
+export function importPreviewQueryKey(hash: string, readMode: "safe" | "permissive" = "safe"): readonly [string, string] {
+  return ["import-capacity-preview", hash.toLowerCase() + (readMode === "permissive" ? ":permissive" : "")];
 }
 
 export function importPreviewRequest(draft: ImportPreviewDraft) {
   return {
     staged_name: draft.staged_name,
+    ...(draft.read_mode ? { read_mode: draft.read_mode } : {}),
     source_path: draft.source_path,
     expected_hash: draft.hash,
     expected_size: draft.inspection?.size ?? draft.size,

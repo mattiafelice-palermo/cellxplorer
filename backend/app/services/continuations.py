@@ -823,10 +823,10 @@ def analyze_continuation_chain(
     )
 
 
-def _maybe_schedule_cache_build(file_hash: str, source_path) -> dict[str, str | None]:
+def _maybe_schedule_cache_build(file_hash: str, source_path, read_mode: str = "safe") -> dict[str, str | None]:
     if source_path is None:
         return {"status": "failed", "error": "Source path is unavailable for cache preparation."}
-    return cache.schedule_build(file_hash, source_path)
+    return cache.schedule_build(file_hash, source_path, **({"read_mode": read_mode} if read_mode != "safe" else {}))
 
 
 def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[str, Any]:
@@ -834,7 +834,7 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
     if source_path is not None:
         from . import source_readability
 
-        rejection = source_readability.known_rejection(source_path)
+        rejection = source_readability.known_rejection(source_path) if source.get("read_mode", "safe") == "safe" else None
         if rejection is not None:
             source.update(inspection_status="error", inspection_error=rejection.error,
                           source_error_kind=rejection.kind, unreadable=True)
@@ -867,7 +867,8 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
     filename = source.get("filename") or ""
     expected_identity = (
         parsing.current_parser_identity_for_extension(
-            filename.rsplit(".", 1)[-1] if "." in filename else None
+            filename.rsplit(".", 1)[-1] if "." in filename else None,
+            read_mode=source.get("read_mode", "safe"),
         )
         or parsing.PARSER_VERSION
     )
@@ -924,7 +925,7 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
     if not raw_ready:
         missing_cache.append("raw")
     if missing_cache:
-        build_result = _maybe_schedule_cache_build(file_hash, source_path)
+        build_result = _maybe_schedule_cache_build(file_hash, source_path, source.get("read_mode", "safe"))
         source["cache_build_status"] = build_result["status"]
         if build_result["status"] == "failed":
             source["inspection_status"] = "error"
@@ -935,7 +936,7 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
             if source_path is not None:
                 from . import source_readability
 
-                rejection = source_readability.known_rejection(source_path)
+                rejection = source_readability.known_rejection(source_path) if source.get("read_mode", "safe") == "safe" else None
                 if rejection is not None:
                     source["source_error_kind"] = rejection.kind
         else:

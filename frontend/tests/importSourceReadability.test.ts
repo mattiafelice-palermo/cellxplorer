@@ -68,3 +68,17 @@ test("a file that was selected before rejection is removed without removing vali
   assert.deepEqual([...pruneRejectedImportSelection(selected, failures).keys()], [good.path]);
   assert.equal(selected.size, 2);
 });
+
+
+test("safe and permissive rejections do not poison the other mode", () => {
+  const safeFailure = recordImportSourceRejection(new Map(), rejection, bad);
+  const permissive = { ...bad, read_mode: "permissive" as const };
+  assert.equal(importSourceRejection(permissive, safeFailure), undefined);
+  assert.equal(pruneRejectedImportSelection(new Map([[bad.path, permissive]]), safeFailure).size, 1);
+  // A safe request finishing after a mode change is stale for this observation.
+  assert.equal(recordImportSourceRejection(new Map(), rejection, permissive).size, 0);
+  const both = recordImportSourceRejection(safeFailure, { ...rejection, read_mode: "permissive" }, permissive);
+  assert.equal(both.size, 2);
+  assert.equal(importSourceRejection(permissive, both)?.error, rejection.error);
+  assert.equal(resetImportSourceRejections(both, [bad.path]).size, 0);
+});

@@ -108,7 +108,7 @@ def prepare_segmented_raw(
         time_column = next(
             (
                 column
-                for column in ("total_time_s", "time_s", "record_index")
+                for column in ("mpr_elapsed_time_s", "total_time_s", "time_s", "record_index")
                 if column in frame.columns
             ),
             None,
@@ -135,7 +135,10 @@ def prepare_segmented_raw(
                     if supplied_origin is not None
                     else float(valid_time.iloc[0])
                 )
-                frame["preview_time_s"] = local_time - first_time + time_offset
+                frame["preview_time_s"] = (
+                    local_time if time_column == "mpr_elapsed_time_s"
+                    else local_time - first_time + time_offset
+                )
         valid_preview_time = pd.to_numeric(frame["preview_time_s"], errors="coerce").dropna()
         if not valid_preview_time.empty:
             time_offset = float(valid_preview_time.max())
@@ -268,7 +271,7 @@ def voltage_preview_from_raw(
         x_column = next(
             (
                 column
-                for column in ("preview_time_s", "total_time_s", "time_s", "record_index", "cycle")
+                for column in ("preview_time_s", "mpr_elapsed_time_s", "total_time_s", "time_s", "record_index", "cycle")
                 if column in frame.columns
             ),
             None,
@@ -289,9 +292,14 @@ def voltage_preview_from_raw(
         rows["_execution"] = pd.to_numeric(frame[identity_column], errors="coerce")
     if "current_ma" in frame.columns:
         rows["current_ma"] = pd.to_numeric(frame["current_ma"], errors="coerce")
+    exploratory = "mpr_acquisition_segment" in frame.columns
+    if exploratory:
+        rows["mpr_acquisition_segment"] = frame["mpr_acquisition_segment"]
+        if "segment" in frame.columns:
+            rows["segment"] = frame["segment"]
     if rows.empty:
         return empty
-    if x_axis != "capacity":
+    if x_axis != "capacity" and not exploratory:
         rows = rows.sort_values("x", kind="stable")
     rows = rows.reset_index(drop=True)
     if max_points is not None and max_points > 0 and len(rows) > max_points:
@@ -301,12 +309,15 @@ def voltage_preview_from_raw(
             last = len(rows) - 1
             positions = sorted({round(index * last / (max_points - 1)) for index in range(max_points)})
             rows = rows.iloc[positions]
+    from . import exploratory_plotting
+    breaks = set(exploratory_plotting.break_before(rows))
+    if "_execution" in rows.columns:
+        breaks.update(index for index in range(1, len(rows))
+                      if rows["_execution"].iloc[index] != rows["_execution"].iloc[index - 1])
     return {
         "x": [float(value) for value in rows["x"]],
         "y": [float(value) for value in rows["y"]],
-        **({"display_break_before": [index for index in range(1, len(rows))
-                                      if rows["_execution"].iloc[index] != rows["_execution"].iloc[index - 1]]}
-           if "_execution" in rows.columns else {}),
+        **({"display_break_before": sorted(breaks)} if exploratory or "_execution" in rows.columns else {}),
         **({"current_ma": [None if pd.isna(value) else float(value) for value in rows["current_ma"]]} if "current_ma" in rows.columns else {}),
         "quantity": "voltage",
         "label": "Voltage (V)",

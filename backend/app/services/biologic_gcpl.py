@@ -52,7 +52,7 @@ from .source_format_errors import (
 # active-to-active returns after an interrupted phase, without inventing rest.
 # gcpl17 omits only fully matched, adjacent replayed measurement blocks.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl17"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl18"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -112,9 +112,15 @@ _ID13_ZERO_ID211_CAPACITY_COUNTER_PROFILE = GcplCapacityCounterProfile(
     counter_field="raw_q_minus_q0_mAh",
     boundary_policy="unassigned_small_active_to_rest_residual",
 )
+_ID13_LEADING_CHARGE_CAPACITY_COUNTER_PROFILE = GcplCapacityCounterProfile(
+    profile_id="gcpl-capacity-id13-leading-charge-id211-v1",
+    counter_field="raw_q_minus_q0_mAh:first-charge;raw_q_charge_discharge_mAh:remaining",
+    boundary_policy="strict",
+)
 GCPL_CAPACITY_COUNTER_PROFILES = (
     _ID211_CAPACITY_COUNTER_PROFILE,
     _ID13_ZERO_ID211_CAPACITY_COUNTER_PROFILE,
+    _ID13_LEADING_CHARGE_CAPACITY_COUNTER_PROFILE,
 )
 
 
@@ -144,9 +150,23 @@ _TECHNIQUE_04_GCPL_SETTINGS_PROFILE = GcplSettingsProfile(
     counter_increment_policy="latched_after_loop_wrap",
     capacity_boundary_policy="delayed_active_transfer",
 )
+_TECHNIQUE_04_SIGNED_GCPL_SETTINGS_PROFILE = GcplSettingsProfile(
+    profile_id="gcpl-technique-04-signed-v1",
+    layout="ec-lab-gcpl-technique-04-signed-v1",
+    technique_ids=frozenset(),  # Selected by the bounded signed-Is discriminator below.
+    parameter_offset=GCPL_SETTINGS_PARAMETER_OFFSET,
+    parameter_count=GCPL_SETTINGS_PARAMETER_COUNT,
+    parameter_itemsize=GCPL_SETTINGS_PARAMETER_ITEMSIZE,
+    current_sign_factors=((0, 1),),
+    current_is_magnitude=False,
+    ns_change_policy="strict",
+    counter_increment_policy="reject",
+    capacity_boundary_policy="strict",
+)
 GCPL_SETTINGS_PROFILES = (
     _PRIMARY_GCPL_SETTINGS_PROFILE,
     _TECHNIQUE_04_GCPL_SETTINGS_PROFILE,
+    _TECHNIQUE_04_SIGNED_GCPL_SETTINGS_PROFILE,
 )
 _GCPL_SETTINGS_PROFILE_BY_TECHNIQUE_ID = {
     technique_id: profile
@@ -569,6 +589,19 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
     )
     if params_end > len(payload):
         raise UnsupportedBiologicGcplError("GCPL settings parameter block is truncated")
+
+    if technique_id == 0x04:
+        bases = [profile.parameter_offset + 4 + index * profile.parameter_itemsize
+                 for index in range(n_sequences)]
+        if any(struct.unpack_from("<f", payload, base + 1)[0] < 0 for base in bases):
+            # A negative stored Is establishes the signed variant. Selector 1
+            # would make its meaning ambiguous and remains unsupported. Full
+            # record validation still requires every declared direction to agree.
+            if any(struct.unpack_from("<I", payload, base + 14)[0] != 0 for base in bases):
+                raise UnsupportedBiologicGcplError(
+                    "signed GCPL technique-04 current requires sign selector zero"
+                )
+            profile = _TECHNIQUE_04_SIGNED_GCPL_SETTINGS_PROFILE
 
     raw_comments = _pascal_text(payload, _GCPL_PASCAL_FIELDS["comments"], "comments")
     raw_reference = _pascal_text(
@@ -1083,6 +1116,12 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
             "pending until decoded Ns execution verifies the loop edge and every completed "
             "iteration."
         )
+    elif candidate_kind == "neutral_voltage":
+        protocol_warnings.append(
+            "This BioLogic MPR declares only neutral operations. Voltage curves remain "
+            "pending until decoded rows verify neutral control and zero capacity transfer; "
+            "no complete charge/discharge cycles are claimed."
+        )
     elif candidate:
         if single_direction_candidate:
             candidate_description = "a non-repeating single-direction episode"
@@ -1123,6 +1162,7 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
             ),
             "protocol_loop_cycle_candidate": candidate_kind == "protocol_loop",
             "non_repeating_cycle_candidate": candidate_kind == "non_repeating",
+            "neutral_voltage_candidate": candidate_kind == "neutral_voltage",
             "cycle_identity_source": (
                 "protocol_loop_pending"
                 if candidate_kind == "protocol_loop"
@@ -1130,6 +1170,8 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
                 if single_direction_candidate
                 else "non_repeating_cycle_1_pending"
                 if candidate_kind == "non_repeating"
+                else "neutral_voltage_pending"
+                if candidate_kind == "neutral_voltage"
                 else "unresolved"
             ),
             "absolute_timestamps": bool(log.get("absolute_timestamps")),
@@ -1622,16 +1664,50 @@ def _resolve_capacity_counter_profile(
 ) -> tuple[GcplCapacityCounterProfile, np.ndarray, dict[int, float]]:
     """Select an ID-211 or narrowly evidenced ID-13 record-counter profile."""
 
+    ranges = _block_ranges(boundaries)
+    raw_capacity_id13 = _optional_column(records, "raw_q_minus_q0_mAh")
+    # Some recordings leave ID-211 disabled for precisely the first charge.
+    # ID-13 independently measures that entire phase. Admit the bounded leading
+    # Rest/charge/discharge shape only after proving its increments and join.
+    if (raw_capacity_id13 is not None and len(ranges) >= 3
+            and np.isfinite(raw_capacity_id13).all()):
+        rest_start, first_start = ranges[0]
+        active_start, active_end = ranges[1]
+        next_start, _ = ranges[2]
+        q13 = raw_capacity_id13[active_start:active_end]
+        if (rest_start == 0 and first_start == active_start and active_end == next_start
+                and active_end - active_start >= 2
+                and np.all(mode[:active_start] == MPR_MODE_REST)
+                and np.all(mode[active_start:active_end] == MPR_MODE_GALVANOSTATIC)
+                and mode[next_start] == MPR_MODE_GALVANOSTATIC
+                and np.all(current_ma[active_start:active_end] > _CURRENT_TOLERANCE_MA)
+                and current_ma[next_start] < -_CURRENT_TOLERANCE_MA
+                and np.all(np.abs(raw_capacity_id211[:active_end]) <= _CAPACITY_TOLERANCE_MAH)
+                and np.all(np.abs(raw_capacity_id13[:active_start]) <= _CAPACITY_TOLERANCE_MAH)
+                and np.all(np.abs(raw_dq_mAh[:active_start]) <= _CAPACITY_TOLERANCE_MAH)
+                and abs(q13[0]) <= _CAPACITY_COUNTER_RESET_TOLERANCE_MAH
+                and abs(q13[0] - raw_dq_mAh[active_start]) <= _CAPACITY_TOLERANCE_MAH
+                and np.all(np.abs(np.diff(q13) - raw_dq_mAh[active_start + 1:active_end])
+                           <= _ID13_ACTIVE_INCREMENT_PARITY_TOLERANCE_MAH)
+                and np.all(np.diff(q13) >= -_CAPACITY_TOLERANCE_MAH)
+                and q13[-1] - q13[0] > _CAPACITY_TOLERANCE_MAH
+                and abs(raw_capacity_id211[next_start] - raw_dq_mAh[next_start])
+                    <= _CAPACITY_TOLERANCE_MAH
+                and abs(raw_capacity_id211[next_start]) <= _CAPACITY_COUNTER_RESET_TOLERANCE_MAH
+                and abs(raw_capacity_id13[next_start] - q13[-1] - raw_dq_mAh[next_start])
+                    <= _ID13_ACTIVE_INCREMENT_PARITY_TOLERANCE_MAH):
+            capacity = raw_capacity_id211.copy()
+            capacity[active_start:active_end] = q13
+            return _ID13_LEADING_CHARGE_CAPACITY_COUNTER_PROFILE, capacity, {}
+
     if np.any(np.abs(raw_capacity_id211) > _CAPACITY_TOLERANCE_MAH):
         return _ID211_CAPACITY_COUNTER_PROFILE, raw_capacity_id211, {}
 
-    raw_capacity_id13 = _optional_column(records, "raw_q_minus_q0_mAh")
     if raw_capacity_id13 is None or not np.isfinite(raw_capacity_id13).all():
         return _ID211_CAPACITY_COUNTER_PROFILE, raw_capacity_id211, {}
     if np.ptp(raw_capacity_id13) <= _CAPACITY_TOLERANCE_MAH:
         return _ID211_CAPACITY_COUNTER_PROFILE, raw_capacity_id211, {}
 
-    ranges = _block_ranges(boundaries)
     if (
         len(ranges) != 2
         or ranges[0][0] != 0
@@ -1699,6 +1775,52 @@ def _resolve_capacity_counter_profile(
     )
 
 
+def _verified_neutral_boundary_transfers(
+    records: np.ndarray, settings: Mapping[str, Any] | None, *,
+    mode: np.ndarray, ns: np.ndarray, current_ma: np.ndarray,
+    raw_capacity: np.ndarray, raw_dq_mAh: np.ndarray, boundaries: np.ndarray,
+) -> frozenset[int]:
+    """Prove the short final active interval recorded on the first Rest row.
+
+    This is not a general active/Rest bypass. The same programmed sequence,
+    sub-millisecond switch to zero control, signed dQ/counter agreement and a
+    flat zero-transfer neutral remainder jointly own the interval. Keep its
+    capacity with the preceding phase, as for the older delayed-transfer profile.
+    The nominal current/interval transfer must also agree within 2%. This is a
+    bounded admission envelope for the observed switching interval (all supplied
+    cases agree within 1%), not a claim of instrument accuracy or a measured
+    transient waveform. The 1e-12 mAh floor only covers clock arithmetic noise.
+    """
+    if (settings or {}).get("settings_profile") not in {
+        "gcpl-technique-77-v1", "gcpl-technique-04-signed-v1",
+    }:
+        return frozenset()
+    time = records["elapsed_time_s"]
+    control = records["raw_control_v_or_mA"]
+    starts = np.flatnonzero(boundaries)
+    ends = np.r_[starts[1:], len(records)]
+    verified = set()
+    for start, end in zip(starts[1:], ends[1:], strict=True):
+        if (mode[start - 1] != MPR_MODE_GALVANOSTATIC or mode[start] != MPR_MODE_REST
+                or ns[start] != ns[start - 1] or end - start < 2):
+            continue
+        dq = float(raw_dq_mAh[start])
+        delta = float(raw_capacity[start] - raw_capacity[start - 1])
+        interval = float(time[start] - time[start - 1])
+        nominal_transfer = float(current_ma[start - 1]) * interval / 3600.0
+        if (0 < interval <= 0.001
+                and _CAPACITY_TOLERANCE_MAH < abs(dq) <= _CAPACITY_COUNTER_RESET_TOLERANCE_MAH
+                and current_ma[start - 1] * dq > 0
+                and abs(dq - nominal_transfer) <= 0.02 * abs(nominal_transfer) + 1e-12
+                and abs(delta - dq) <= _CAPACITY_TOLERANCE_MAH
+                and control[start] == 0 and np.all(current_ma[start:end] == 0)
+                and np.all(mode[start:end] == MPR_MODE_REST)
+                and np.all(np.abs(raw_dq_mAh[start + 1:end]) <= _CAPACITY_TOLERANCE_MAH)
+                and np.ptp(raw_capacity[start:end]) <= _CAPACITY_TOLERANCE_MAH):
+            verified.add(int(start))
+    return frozenset(verified)
+
+
 def _validate_capacity_boundaries(
     raw_capacity: np.ndarray,
     raw_dq_mAh: np.ndarray,
@@ -1708,6 +1830,7 @@ def _validate_capacity_boundaries(
     mode: np.ndarray | None = None,
     allow_delayed_active_transfer: bool = False,
     allow_unassigned_rest_residual: bool = False,
+    verified_delayed_transfer_starts: frozenset[int] = frozenset(),
 ) -> tuple[dict[int, float], dict[int, float]]:
     """Reject ambiguous capacity ownership at an executed-step boundary.
 
@@ -1741,12 +1864,13 @@ def _validate_capacity_boundaries(
         verified_resets = ns_transition & active_start & counter_origin & first_interval
         ambiguous &= ~verified_resets
     delayed_active_transfers: dict[int, float] = {}
-    if allow_delayed_active_transfer and mode is not None:
+    if (allow_delayed_active_transfer or verified_delayed_transfer_starts) and mode is not None:
         delayed = (
             (mode[starts - 1] != MPR_MODE_REST)
             & (mode[starts] == MPR_MODE_REST)
             & (np.abs(q_delta) > _CAPACITY_TOLERANCE_MAH)
             & (np.abs(q_delta - boundary_dq) <= _CAPACITY_TOLERANCE_MAH)
+            & (allow_delayed_active_transfer | np.isin(starts, list(verified_delayed_transfer_starts)))
         )
         ambiguous &= ~delayed
         delayed_active_transfers = {
@@ -1971,8 +2095,9 @@ def _protocol_cycle_candidate(settings: Mapping[str, Any]) -> dict[str, Any]:
             }
     if not active:
         return {
-            "kind": None,
-            "reason": "GCPL protocol contains no independently resolved cycling direction",
+            "kind": "neutral_voltage",
+            "loop": None,
+            "reason": None,
         }
     if len(active_order) > 2:
         return {
@@ -2140,9 +2265,10 @@ def _reconstruct_non_repeating_cycle(
 
     active = [direction for direction in directions if direction != 0]
     if not active:
-        raise UnsupportedBiologicGcplError(
-            "GCPL execution contains no active charge or discharge phase"
-        )
+        # The block validator has established neutral mode, zero transfer and
+        # zero resolved current. Preserve these voltage recordings; the usual
+        # cycle_complete contract excludes them from scientific cycle summaries.
+        return np.ones(len(directions), dtype=np.int64)
     collapsed: list[int] = []
     for direction in active:
         if not collapsed or collapsed[-1] != direction:
@@ -2541,6 +2667,10 @@ def map_gcpl_to_canonical(
         boundaries,
         ns=ns,
         mode=mode,
+        verified_delayed_transfer_starts=_verified_neutral_boundary_transfers(
+            records, declared_settings, mode=mode, ns=ns, current_ma=current_ma,
+            raw_capacity=raw_capacity, raw_dq_mAh=raw_dq_mAh, boundaries=boundaries,
+        ),
         allow_delayed_active_transfer=(
             capacity_boundary_policy == "delayed_active_transfer"
         ),
@@ -2728,6 +2858,11 @@ def map_gcpl_to_canonical(
             skipped_replayed_blocks=list(recovery.skipped_blocks),
             parser_warnings=recovery.warnings(),
         )
+    if delayed_active_transfers:
+        frame.attrs["biologic_gcpl"]["delayed_active_boundary_transfers_mah"] = [
+            {"record_index": int(frame["record_index"].iloc[boundary]), "delta_mah": float(delta)}
+            for boundary, delta in sorted(delayed_active_transfers.items())
+        ]
     canonical_cycling.validate_raw_timeseries(frame)
     return frame
 

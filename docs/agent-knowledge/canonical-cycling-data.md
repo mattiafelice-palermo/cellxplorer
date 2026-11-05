@@ -486,6 +486,38 @@ actually drives the frontend selector. `cycling_rows`,
 `absolute_timestamps` and `declared_protocol` remain documentation-only
 reserved names; no consumer computes them yet.
 
+## Per-source MPR reading modes (Spec 084)
+
+Safe is the default. A source's requested `mpr_read_mode` is independent of its
+actual `mpr_interpretation` (`pending`, `verified`, or `exploratory`). Permissive
+first tries the verified adapter. Only a semantic rejection enables the bounded
+measurement-only fallback; settings/LOG truncation and unsafe binary layouts
+still reject. Successful verified interpretation retains its ordinary scientific
+capabilities even when Permissive was selected.
+
+Exploratory rows retain all independently decoded evidence with original physical
+record positions. They provide voltage with `cycle_complete=False`, unknown
+current/capacity and status `Unverified`; they never claim complete cycles or CE.
+GCPL voltage roles use the established electrode difference; CP/OCV preserve
+their technique's independently verified primary voltage field. Do not interpret
+a control target as measured exploratory current.
+
+The native clock is `mpr_elapsed_time_s`, and `mpr_acquisition_segment` changes
+at every backward clock transition. These evidence columns deliberately bypass
+canonical `total_time_s`'s monotonic contract. Preview and Time/Capacity preserve
+native coordinates and acquisition order, with `display_break_before` at segment
+boundaries even after sampling. Unknown phase uses prepared primitive code `3`
+(`unverified`), never Rest. Scientific-cycle sidecars are not applied across an
+exploratory/mixed acquisition ordering; use the exact transform instead. Reusable
+arrays already decline sources with incomplete display-only labels.
+
+The Safe `gcpl18` extensions separately prove signed technique-04 settings,
+first-charge ID13 fallback when ID211 is inert, and physically bounded delayed
+discharge-to-Rest transfer. A neutral-only header is a pending voltage candidate,
+requiring zero-transfer full-record validation before promotion. Replay omission
+can prove an exact neutral carry from the two preceding discharge endpoints;
+this does not relax active-field equality or raise the earlier residual tolerance.
+
 ## Repeated BioLogic executions
 
 The `gcpl16` adapter can label independently evidenced returns to one declared

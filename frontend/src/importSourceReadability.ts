@@ -1,4 +1,4 @@
-import type { ImportBrowseEntry } from "./api";
+import type { ImportBrowseEntry, MprReadMode } from "./api";
 
 export type SourceRejectionKind = "unsupported" | "invalid";
 export type ImportSourceRejection = {
@@ -7,6 +7,7 @@ export type ImportSourceRejection = {
   error: string;
   kind: SourceRejectionKind;
   requestGeneration?: number;
+  read_mode?: MprReadMode;
 };
 
 export class ImportSourceRejectedError extends Error {
@@ -25,11 +26,15 @@ export function importSourcePathKey(path: string): string {
   return path.replaceAll("/", "\\").replace(/\\+$/, "").toLocaleLowerCase();
 }
 
+function rejectionKey(path: string, mode?: MprReadMode): string {
+  return importSourcePathKey(path) + (mode === "permissive" ? "::permissive" : "");
+}
+
 export function importSourceRejection(
   entry: ImportBrowseEntry, rejections: ReadonlyMap<string, ImportSourceRejection>,
 ): ImportSourceRejection | undefined {
   if (entry.kind !== "file") return undefined;
-  const rejection = rejections.get(importSourcePathKey(entry.path));
+  const rejection = rejections.get(rejectionKey(entry.path, entry.read_mode));
   if (!rejection) return undefined;
   // Unknown staged identities cannot establish that a known-bad path changed.
   return rejection.version === importSourceVersion(entry)
@@ -44,8 +49,9 @@ export function recordImportSourceRejection(
   const next = new Map(rejections);
   if ((currentGeneration !== undefined && rejection.requestGeneration !== currentGeneration)
     || !currentEntry || currentEntry.kind !== "file"
+    || (rejection.read_mode ?? "safe") !== (currentEntry.read_mode ?? "safe")
     || rejection.version !== importSourceVersion(currentEntry)) return next;
-  const key = importSourcePathKey(rejection.path);
+  const key = rejectionKey(rejection.path, rejection.read_mode);
   next.delete(key);
   next.set(key, rejection);
   while (next.size > 1024) next.delete(next.keys().next().value!);
@@ -63,5 +69,5 @@ export function resetImportSourceRejections(
   rejections: ReadonlyMap<string, ImportSourceRejection>, paths: readonly string[],
 ): Map<string, ImportSourceRejection> {
   const keys = new Set(paths.map(importSourcePathKey));
-  return new Map([...rejections].filter(([key]) => !keys.has(key)));
+  return new Map([...rejections].filter(([key]) => !keys.has(key.replace(/::permissive$/, ""))));
 }

@@ -34,6 +34,8 @@ TIME_CAPACITY_REQUIRED_COLUMNS: tuple[str, ...] = canonical_cycling.REQUIRED_CYC
 TIME_CAPACITY_OPTIONAL_COLUMNS: tuple[str, ...] = (
     "working_potential_v",
     "counter_potential_v",
+    "mpr_elapsed_time_s",
+    "mpr_acquisition_segment",
 )
 
 
@@ -274,6 +276,8 @@ def time_capacity_request_columns(
         "status",
         "time_s",
         "current_ma",
+        "mpr_elapsed_time_s",
+        "mpr_acquisition_segment",
     ]
     if protocol_active:
         requested.append("step_index" if "step_index" in available else "Step_Index")

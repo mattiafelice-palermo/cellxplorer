@@ -204,15 +204,16 @@ def _inspect_import_path(
     match_rows: list[SourceFile] | None = None,
     inspected: import_inspection.FileInspection | None = None,
     match_snapshot: import_inspection.ImportIdentitySnapshot | None = None,
+    read_mode: str = "safe",
 ) -> dict:
     if inspected is None:
         try:
-            inspected = import_inspection.inspect_file(str(path))
+            inspected = import_inspection.inspect_file(str(path), read_mode=read_mode) if read_mode != "safe" else import_inspection.inspect_file(str(path))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
     original = _clean_filename(inspected.filename)
     file_hash = inspected.hash
-    meta = inspected.metadata
+    meta = parsing.metadata_for_read_mode(path, inspected.metadata, read_mode)
     preview_meta = _metadata_preview(meta)
     metadata_only = parsing.source_metadata_only(meta)
     canonical_cycling_pending = parsing.source_metadata_cycling_pending(meta)
@@ -257,7 +258,10 @@ def _inspect_import_path(
         "ext": inspected.ext,
         "hash": file_hash,
         **metadata_facts,
-        "parser_version": parsing.current_parser_identity_for_extension(inspected.ext),
+        "read_mode": read_mode,
+        "exploratory": False,
+        "scientific_interpretation": "pending" if read_mode == "permissive" else None,
+        "parser_version": parsing.current_parser_identity_for_extension(inspected.ext, read_mode=read_mode),
         "canonical_cycling": not metadata_only and not canonical_cycling_pending,
         "canonical_cycling_pending": canonical_cycling_pending,
         "metadata_only": metadata_only,
@@ -267,6 +271,7 @@ def _inspect_import_path(
             else import_match_info(db, file_hash, original, meta, rows=match_rows)
         ),
         "inspection": {
+            **({"read_mode": read_mode} if read_mode != "safe" else {}),
             "hash": file_hash,
             "size": inspected.size,
             # JSON numbers cannot represent Windows nanosecond timestamps
@@ -759,6 +764,7 @@ def build_capacity_preview(
     file_hash: str | None = None,
     expected_size: int | None = None,
     expected_mtime_ns: int | None = None,
+    read_mode: str = "safe",
 ) -> tuple[dict | None, str | None]:
     """Preview via the versioned cache: one parse per file content, ever.
     The preview responds as soon as the parse finishes; the Parquet caches
@@ -779,6 +785,7 @@ def build_capacity_preview(
             )
             if metadata is None:
                 metadata = parsing.read_header_metadata(path)
+            metadata = parsing.metadata_for_read_mode(path, metadata, read_mode)
             parsing.ensure_supported_source_metadata(path, metadata)
             if parsing.source_metadata_only(metadata):
                 return None, parsing.source_metadata_only_message(metadata)
@@ -787,6 +794,8 @@ def build_capacity_preview(
             if expected_fingerprint is not None
             else {}
         )
+        if read_mode != "safe":
+            cache_kwargs["read_mode"] = read_mode
         cycles = cache.build_write_behind(verified_hash, path, **cache_kwargs)
         if cycles is None:
             raise RuntimeError("cycle cache could not be built")
@@ -809,6 +818,7 @@ def _build_import_cache_worker(job: dict) -> dict:
             job["hash"],
             job["path"],
             expected_fingerprint=fingerprint,
+            **({"read_mode": job["read_mode"]} if job.get("read_mode", "safe") != "safe" else {}),
         )
         return {
             "staged_name": job["staged_name"],
@@ -1373,6 +1383,9 @@ def file_dict(sf: SourceFile) -> dict:
         "voltage_capabilities": presentation["voltage_capabilities"],
         "voltage_v_origin": presentation["voltage_v_origin"],
         "voltage_v_derived": presentation["voltage_v_derived"],
+        **{key: presentation[key] for key in (
+            "read_mode", "exploratory", "scientific_interpretation", "interpretation_warnings"
+        ) if key in presentation},
         "row_count": sf.row_count,
         "cycle_count": sf.cycle_count,
         "registered": link is not None,
@@ -1390,6 +1403,7 @@ class ScanRequest(BaseModel):
 
 
 class ImportIdentityReceipt(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     """Server-issued inspection identity echoed by the browser at submit time."""
 
     hash: str
@@ -1401,6 +1415,7 @@ class ImportIdentityReceipt(BaseModel):
 
 
 class ImportSourceDraft(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     staged_name: str
     source_path: str | None = None
     filename: str
@@ -1423,6 +1438,7 @@ class FolderWatchPreviewRequest(FolderWatchDraft):
 
 
 class ImportCellDraft(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     staged_name: str | None = None
     source_path: str | None = None
     filename: str | None = None
@@ -1470,6 +1486,7 @@ def normalize_import_cell_sources(draft: ImportCellDraft) -> list[ImportSourceDr
                 filename=draft.filename,
                 inspection=draft.inspection,
                 allow_metadata_only=draft.allow_metadata_only,
+                read_mode=draft.read_mode,
             )
         ]
     raise HTTPException(400, "Each cell draft needs at least one source")
@@ -1637,6 +1654,7 @@ def import_replicate_plan(
 
 
 class ImportPreviewRequest(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     staged_name: str
     source_path: str | None = None
     expected_hash: str | None = None
@@ -1660,6 +1678,7 @@ class ImportQuickExcelPreviewRequest(BaseModel):
 
 
 class ImportRawDataRequest(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     staged_name: str
     source_path: str | None = None
     offset: int = 0
@@ -1667,6 +1686,7 @@ class ImportRawDataRequest(BaseModel):
 
 
 class ImportPathInspectRequest(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     paths: list[str]
     job_token: str | None = Field(default=None, max_length=100)
 
@@ -1676,6 +1696,7 @@ class ImportHeaderHintsRequest(BaseModel):
 
 
 class ContinuationInspectSourceRequest(BaseModel):
+    read_mode: Literal["safe", "permissive"] = "safe"
     staged_name: str
     source_path: str | None = None
     inspection: ImportIdentityReceipt | None = None
@@ -2225,6 +2246,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             req.paths,
             on_completed=report_completed,
             on_phase=report_phase,
+            **({"read_mode": req.read_mode} if req.read_mode != "safe" else {}),
         )
         if job_id is not None:
             background_jobs.update_job(
@@ -2243,7 +2265,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             path_string = outcome.path
             from ..services import source_readability
 
-            rejection = source_readability.known_rejection(path_string)
+            rejection = source_readability.known_rejection(path_string) if req.read_mode == "safe" else None
             if outcome.inspection is None or rejection is not None:
                 failure_path = Path(outcome.path)
                 error = rejection.error if rejection is not None else outcome.error or f"Could not inspect {failure_path.name or outcome.path}."
@@ -2272,6 +2294,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                     db,
                     inspected=inspected,
                     match_snapshot=match_snapshot,
+                    read_mode=req.read_mode,
                 )
                 previews.append(preview)
                 completed_bytes += max(0, int(preview.get("size") or 0))
@@ -2328,6 +2351,7 @@ def _continuation_existing_source(
     source = {
         "key": f"existing-{sf.id}",
         "kind": "existing",
+        "read_mode": parsing.source_read_mode(sf),
         "source_file_id": sf.id,
         "filename": sf.filename,
         "source_path": sf.path,
@@ -2396,6 +2420,7 @@ def _continuation_staged_source(
     unsupported = not import_filename_allowed(filename)
     source = {
         "key": draft.staged_name,
+        "read_mode": draft.read_mode,
         "kind": "staged",
         "source_file_id": None,
         "filename": filename,
@@ -2501,7 +2526,7 @@ def _continuation_staged_source(
         and _mtime_fingerprint_matches(hint.get("mtime_ns"), source_stat.st_mtime_ns)
     )
     meta = (
-        import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
+        import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns, **({"read_mode": draft.read_mode} if draft.read_mode != "safe" else {}))
         if hint_is_valid and source_stat is not None
         else None
     )
@@ -2511,6 +2536,7 @@ def _continuation_staged_source(
     # the preview binds rejection notifications to this hash before pruning.
     source["hash"] = file_hash
     try:
+        meta = parsing.metadata_for_read_mode(source_path, meta, draft.read_mode)
         parsing.ensure_supported_source_metadata(source_path, meta)
     except ValueError as exc:
         source["inspection_status"] = "error"
@@ -2620,6 +2646,7 @@ def _inspect_cell_draft_chain(
                 source_path=source.source_path,
                 inspection=source.inspection,
                 allow_metadata_only=source.allow_metadata_only,
+                read_mode=source.read_mode,
             )
             for source in sources
         ],
@@ -2706,7 +2733,7 @@ def _inspection_identity_values(inspection: object) -> dict[str, object]:
             "mtime_ns": inspection.mtime_ns,
         }
     if isinstance(inspection, dict):
-        allowed = {"hash", "size", "mtime_ns"}
+        allowed = {"hash", "size", "mtime_ns", "read_mode"}
         extra = sorted(set(inspection) - allowed)
         if extra:
             raise HTTPException(
@@ -3880,7 +3907,7 @@ def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile |
             raise HTTPException(409, f"{prepared['filename']} is already registered")
 
     expected_parser_version = (
-        parsing.current_parser_identity_for_extension(existing.ext)
+        parsing.current_parser_identity_for_extension(prepared["ext"], read_mode=prepared.get("read_mode", "safe"))
         if existing is not None
         else None
     ) or parsing.PARSER_VERSION
@@ -3896,6 +3923,12 @@ def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile |
         and existing.capacity_summary_status == "ready"
         and cache.has_cycles(existing.hash, existing.parser_version, CALC_VERSION)
     )
+    if prepared["cache_ready"] and existing is not None and prepared.get("read_mode", "safe") == "permissive":
+        outcome = parsing.source_interpretation(existing)
+        if outcome in {"verified", "exploratory"}:
+            prepared["meta"].setdefault("raw", {})["mpr_interpretation"] = outcome
+            if outcome == "exploratory":
+                prepared["meta"]["raw"]["mpr_diagnostics"] = parsing.source_interpretation_warnings(existing)
     return prepared
 
 
@@ -3993,6 +4026,7 @@ def _prepare_import_source_file(
     inspection: object = None,
     allow_metadata_only: bool = False,
     existing_sources_by_hash: dict[str, SourceFile] | None = None,
+    read_mode: str = "safe",
 ) -> dict:
     """Prepare immutable source facts before the relational write transaction."""
     try:
@@ -4004,6 +4038,9 @@ def _prepare_import_source_file(
 
     ext = _ensure_import_source_admitted(source_path, filename)
     inspection_values = _inspection_identity_values(inspection)
+    receipt_mode = getattr(inspection, "read_mode", None) if not isinstance(inspection, dict) else inspection.get("read_mode")
+    if inspection is not None and (receipt_mode or "safe") != read_mode:
+        raise HTTPException(409, "MPR read mode changed after inspection; inspect again.")
     expected_hash = (
         expected_hash
         or str(inspection_values.get("hash") or "").strip().lower()
@@ -4021,9 +4058,11 @@ def _prepare_import_source_file(
         file_hash,
         fingerprint.size,
         fingerprint.mtime_ns,
+        **({"read_mode": read_mode} if read_mode != "safe" else {}),
     )
     if not isinstance(meta, dict):
         meta = parsing.read_header_metadata(source_path)
+    meta = parsing.metadata_for_read_mode(source_path, meta, read_mode)
     parsing.ensure_supported_source_metadata(source_path, meta)
     try:
         parsing.assert_source_fingerprint(source_path, fingerprint, verify_hash=False)
@@ -4045,6 +4084,7 @@ def _prepare_import_source_file(
         "observed_mtime_ns": fingerprint.mtime_ns,
         "ext": ext,
         "meta": meta,
+        "read_mode": read_mode,
     }
     existing = (
         db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
@@ -4107,7 +4147,7 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
             parser_version=(
                 parsing.current_parser_identity_for_extension(prepared["ext"])
                 if metadata_only
-                else None
+                else parsing.current_parser_identity_for_extension(prepared["ext"], read_mode="permissive") if prepared.get("read_mode", "safe") == "permissive" else None
             ),
             capacity_summary_status=(
                 "unavailable"
@@ -4123,6 +4163,7 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
     for key, value in values.items():
         setattr(existing, key, value)
     if not prepared["cache_ready"]:
+        existing.parser_version = parsing.current_parser_identity_for_extension(prepared["ext"], read_mode=prepared.get("read_mode", "safe"))
         existing.parse_status = "metadata_only" if metadata_only else "parsing"
         existing.parse_error = metadata_only_error
         existing.capacity_summary_status = "unavailable" if metadata_only else "pending"
@@ -4141,6 +4182,7 @@ def _register_or_refresh_source_file(
     expected_hash: str | None = None,
     inspection: object = None,
     allow_metadata_only: bool = False,
+    read_mode: str = "safe",
 ) -> SourceFile:
     if not source_path.exists():
         raise HTTPException(404, f"Source file is missing: {filename}")
@@ -4148,6 +4190,9 @@ def _register_or_refresh_source_file(
     ext = _ensure_import_source_admitted(source_path, filename)
 
     inspection_values = _inspection_identity_values(inspection)
+    receipt_mode = getattr(inspection, "read_mode", None) if not isinstance(inspection, dict) else inspection.get("read_mode")
+    if inspection is not None and (receipt_mode or "safe") != read_mode:
+        raise HTTPException(409, "MPR read mode changed after inspection; inspect again.")
     initial_fingerprint = _established_source_fingerprint(
         source_path,
         expected_hash=(
@@ -4185,6 +4230,7 @@ def _register_or_refresh_source_file(
     )
     if meta is None:
         meta = parsing.read_header_metadata(source_path)
+    meta = parsing.metadata_for_read_mode(source_path, meta, read_mode)
     parsing.ensure_supported_source_metadata(source_path, meta)
     try:
         parsing.assert_source_fingerprint(
@@ -4232,7 +4278,7 @@ def _register_or_refresh_source_file(
             parser_version=(
                 parsing.current_parser_identity_for_extension(ext)
                 if parsing.source_metadata_only(meta)
-                else None
+                else parsing.current_parser_identity_for_extension(ext, read_mode="permissive") if read_mode == "permissive" else None
             ),
             capacity_summary_status=(
                 "unavailable" if parsing.source_metadata_only(meta) else "pending"
@@ -4243,6 +4289,7 @@ def _register_or_refresh_source_file(
         return sf
 
     sf = existing
+    sf.parser_version = parsing.current_parser_identity_for_extension(ext, read_mode=read_mode)
     sf.path = str(source_path)
     sf.filename = filename
     sf.size = source_size
@@ -4390,6 +4437,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
         if not isinstance(meta, dict):
             meta = parsing.read_header_metadata(source_path)
         try:
+            meta = parsing.metadata_for_read_mode(source_path, meta, draft.read_mode)
             parsing.ensure_supported_source_metadata(source_path, meta)
         except ValueError as exc:
             unavailable.append(
@@ -4414,7 +4462,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             continue
 
         try:
-            parser_version = parsing.parser_identity(source_path)
+            parser_version = parsing.parser_identity(source_path, read_mode=draft.read_mode) if draft.read_mode != "safe" else parsing.parser_identity(source_path)
         except (OSError, ValueError) as exc:
             unavailable.append(
                 {
@@ -4775,8 +4823,10 @@ def preview_import_file(req: ImportPreviewRequest):
         file_hash=verified_hash,
         expected_size=source_stat.st_size,
         expected_mtime_ns=source_stat.st_mtime_ns,
+        **({"read_mode": req.read_mode} if req.read_mode != "safe" else {}),
     )
     return {
+        "read_mode": req.read_mode,
         "capacity_preview": capacity_preview,
         "preview_error": preview_error,
         "verified_hash": verified_hash,
@@ -4795,7 +4845,7 @@ def raw_import_file_data(req: ImportRawDataRequest):
         # served from the hash-keyed raw cache; the parse happens at most
         # once per file content, not once per page view
         file_hash = parsing.compute_hash(source_path)
-        info = cache.build(file_hash, source_path)
+        info = cache.build(file_hash, source_path, **({"read_mode": req.read_mode} if req.read_mode != "safe" else {}))
         raw = cache.load_raw(file_hash, info["parser_version"])
         if raw is None:
             raise RuntimeError("raw cache could not be built")
@@ -4964,6 +5014,7 @@ def _create_imported_cells_impl_raw(
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
                 inspection=source_draft.inspection,
                 allow_metadata_only=source_draft.allow_metadata_only,
+                read_mode=source_draft.read_mode,
                 existing_sources_by_hash={},
             )
             source_hashes.add(prepared_sources_by_staged_name[source_draft.staged_name]["hash"])
@@ -5107,6 +5158,7 @@ def _create_imported_cells_impl_raw(
                         "staged_name": source_draft.staged_name,
                         "hash": prepared_source["hash"],
                         "path": str(prepared_source["source_path"]),
+                        "read_mode": prepared_source.get("read_mode", "safe"),
                         "source_fingerprint": {
                             "hash": prepared_source["hash"],
                             "size": prepared_source["size"],
@@ -5635,7 +5687,7 @@ def preview_file(file_id: int, kind: str = "cycles", db: Session = Depends(get_d
             raise HTTPException(422, f"Parse failed: {sf.parse_error}")
 
     pv = sf.parser_version or (
-        parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+        parsing.current_parser_identity_for_source(sf) or parsing.PARSER_VERSION
     )
     if kind == "raw":
         df = cache.load_raw(sf.hash, pv)
@@ -5988,6 +6040,7 @@ def attach_continuations(
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
                 inspection=source_draft.inspection,
                 allow_metadata_only=source_draft.allow_metadata_only,
+                read_mode=source_draft.read_mode,
             )
             db.add(TestFile(test_id=test.id, file_id=sf.id, position=base_position + offset))
             if not parsing.source_metadata_only({"raw": sf.header_meta}):
@@ -6003,6 +6056,7 @@ def attach_continuations(
                         "staged_name": source_draft.staged_name,
                         "hash": sf.hash,
                         "path": str(source_path),
+                        "read_mode": source_draft.read_mode,
                         "source_fingerprint": {
                             "hash": sf.hash,
                             "size": sf.observed_size if sf.observed_size is not None else sf.size,

@@ -49,6 +49,13 @@ python scripts/parser_regression_corpus.py register --case-id case-04 --chain ca
 python scripts/parser_regression_corpus.py register --case-id case-06 --chain case-pair --source 'C:\path\source06.mpr'
 ```
 
+For a source intentionally inspected in permissive mode, pass
+`--read-mode permissive`. The manifest and frozen expectations bind that mode
+as well as the source checksum; switching mode requires an explicit reviewed
+baseline capture. Omitted modes retain the original Safe behavior. Use a
+separate `--root` for a new experimental corpus to preserve the existing
+six-source expectations unchanged during investigation.
+
 Registration adds immutable copies and manifest entries only. Existing IDs/files
 cannot be replaced. Add negative/unsupported examples as public synthetic fixtures;
 the private CLI currently requires readable sources.

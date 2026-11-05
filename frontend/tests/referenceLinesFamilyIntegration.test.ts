@@ -6,6 +6,7 @@ import ts from "typescript";
 import * as plotStyle from "../src/features/analyses/editor/plotting/plotStyle.ts";
 import * as plotLayout from "../src/features/analyses/editor/plotting/plotLayout.ts";
 import * as axisLayout from "../src/features/analyses/editor/plotting/plotAxisLayout.ts";
+import * as mprReadNotice from "../src/features/analyses/editor/plotting/mprReadNotice.ts";
 import * as referenceLines from "../src/features/analyses/editor/plotting/plotReferenceLines.ts";
 import * as cycleShading from "../src/features/analyses/editor/plotting/cycleShading.ts";
 import * as voltage from "../src/features/analyses/editor/policies/voltageChannelPolicy.ts";
@@ -19,7 +20,7 @@ function family(name: string, file: string): Record<string, any> {
   const compiled = ts.transpileModule(source.replaceAll("import.meta.env.DEV", "false"), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
   const stubs = new Map<string, unknown>([
-    ["plotStyle", plotStyle], ["plotLayout", plotLayout], ["plotAxisLayout", axisLayout], ["plotReferenceLines", referenceLines], ["cycleShading", cycleShading],
+    ["mprReadNotice", mprReadNotice], ["plotStyle", plotStyle], ["plotLayout", plotLayout], ["plotAxisLayout", axisLayout], ["plotReferenceLines", referenceLines], ["cycleShading", cycleShading],
     ["voltageChannelPolicy", voltage], ["timeCapacityQueryPolicy", timePolicy], ["timeCapacityVisibility", timeVisibility], ["analysisVisibility", visibility],
   ]);
   runInNewContext(compiled, { exports: module.exports, require(id: string) {

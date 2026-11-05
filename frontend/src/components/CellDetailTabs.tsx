@@ -20,6 +20,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
+import { MprReadStatus } from "./MprReadStatus";
 import {
   IconActivity,
   IconArrowRight,
@@ -381,6 +382,8 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
         ["nda_version", file.nda_version], ["barcode", file.barcode], ["remarks", file.remarks],
         ["active_mass_mg", file.active_mass_mg], ["nominal_capacity_mah", file.nominal_capacity_mah],
         ["parser_version", file.parser_version],
+        ["mpr_read_mode", file.read_mode],
+        ["interpretation", file.exploratory ? "Exploratory measurements" : null],
         ["format", file.source_format], ["technique", file.technique],
         ["software_version", file.software_version],
         ["reference_electrode", file.reference_electrode],
@@ -527,7 +530,7 @@ function LegacyFilesPanel({
               <Table.Tbody>
                 {cell.sources.map((file) => (
                   <Table.Tr key={file.id}>
-                    <Table.Td><Text size="sm" fw={600}>{file.filename}</Text><Text size="xs" c="dimmed" lineClamp={1}>{file.path}</Text></Table.Td>
+                    <Table.Td><Text size="sm" fw={600}>{file.filename}</Text>{file.read_mode === "permissive" && <Badge color="orange" size="xs" variant="light">{file.exploratory ? "Exploratory" : "Permissive"}</Badge>}<Text size="xs" c="dimmed" lineClamp={1}>{file.path}</Text></Table.Td>
                     <Table.Td><Badge size="xs" color={file.tracked_tail ? "teal" : "gray"} variant="light">{file.tracked_tail ? "Tracked tail" : "Historical source"}</Badge></Table.Td>
                     <Table.Td>{file.row_count ?? "-"}</Table.Td><Table.Td>{file.cycle_count ?? "-"}</Table.Td>
                     <Table.Td><Text size="xs" c="dimmed">{file.start_time ?? "—"}</Text></Table.Td>
@@ -568,6 +571,9 @@ function FilesPanel({
 
 export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationChanged }: { cell: CellDetail; onUpdateFile?: (file: CellSource) => void; updating?: boolean; onContinuationChanged?: () => void }) {
   return (
+    <Stack gap="xs">
+    {cell.sources.filter((source) => source.exploratory).map((source) =>
+      <MprReadStatus key={source.id} source={source} sourceName={source.filename} />)}
     <Tabs defaultValue="overview" keepMounted={false}>
       <Tabs.List>
         <Tabs.Tab value="overview" leftSection={<IconActivity size={14} />}>Overview</Tabs.Tab>
@@ -580,5 +586,6 @@ export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationCha
       <Tabs.Panel value="metadata" pt="sm"><MetadataPanel cell={cell} /></Tabs.Panel>
       <Tabs.Panel value="files" pt="sm"><FilesPanel cell={cell} onUpdateFile={onUpdateFile} updating={updating} onContinuationChanged={onContinuationChanged} /></Tabs.Panel>
     </Tabs>
+    </Stack>
   );
 }

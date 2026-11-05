@@ -32,7 +32,9 @@ from app.models import (
     TestFile,
 )
 from app.routers.analyses import _portable_local_path
-from app.services import analysis_cache, analysis_engine, cache, calc, parsing, portable_analysis
+from app.services import analysis_cache, analysis_engine, cache, calc, parsing, portable_analysis, scanner
+from tests.biologic_mpr_fixture import encode_gcpl_settings, write_gcpl_mpr
+from tests.test_biologic_permissive import rows as exploratory_mpr_rows
 
 
 def raw_frame() -> pd.DataFrame:
@@ -240,6 +242,148 @@ class PortableAnalysisTests(unittest.TestCase):
             "total_charge_capacity_mah": 1.0,
             "total_discharge_capacity_mah": 0.95,
         }
+
+    def create_mpr_analysis(self, *, exploratory=True):
+        db, analysis, previous_source, _path, _hash = self.create_analysis()
+        values = exploratory_mpr_rows()
+        if not exploratory:
+            values[2].update(total_time_s=12., error=False)
+            values[3]["total_time_s"] = 13.
+        path = write_gcpl_mpr(self.root / "recording.mpr", values,
+            settings_payload=encode_gcpl_settings([{"current": 1.}, {"current": -1.}]))
+        source = scanner.ingest_path(db, path, parse_now=True, read_mode="permissive")
+        self.assertEqual(source.parse_status, "parsed")
+        self.assertEqual(parsing.source_interpretation(source), "exploratory" if exploratory else "verified")
+        link = db.query(TestFile).filter(TestFile.file_id == previous_source.id).one()
+        link.file = source
+        db.commit()
+        return db, analysis, source, path
+
+    def test_portable_mpr_warning_and_source_state_are_server_owned(self):
+        db, analysis, source, _path = self.create_mpr_analysis()
+        destination = self.root / "exploratory.html"
+        portable_analysis.export_analysis_html(db, analysis, destination, include_original_files=False)
+        report = self.read_report(destination)
+        document = report["sources"][0]
+        self.assertEqual(document["read_mode"], "permissive")
+        self.assertEqual(document["scientific_interpretation"], "exploratory")
+        self.assertTrue(document["diagnostic_summary"])
+        self.assertTrue(any("Exploratory MPR interpretation" in item for item in report["warnings"]))
+        # No client figure annotation is required: the server emits a plain
+        # escaped HTML notice as well as the compressed report warning.
+        markup = destination.read_text(encoding="utf-8")
+        self.assertIn('id="scientific-warnings"', markup)
+        self.assertIn("Exploratory MPR interpretation", markup)
+        self.assertIn("Read mode / interpretation", markup)
+
+        verified_db, verified_analysis, _verified_source, _verified_original = self.create_mpr_analysis(exploratory=False)
+        verified_path = self.root / "verified.html"
+        portable_analysis.export_analysis_html(verified_db, verified_analysis, verified_path, include_original_files=False)
+        verified_report = self.read_report(verified_path)
+        self.assertEqual(verified_report["sources"][0]["read_mode"], "permissive")
+        self.assertEqual(verified_report["sources"][0]["scientific_interpretation"], "verified")
+        self.assertEqual(verified_report["sources"][0]["diagnostic_summary"], [])
+        self.assertFalse(any("Exploratory MPR interpretation" in item for item in verified_report["warnings"]))
+
+    def test_portable_exploratory_mpr_roundtrip_rebuilds_or_retains_offline_state(self):
+        db, analysis, source, path = self.create_mpr_analysis()
+        linked = self.root / "exploratory-linked.html"
+        embedded = self.root / "exploratory-embedded.html"
+        portable_analysis.export_analysis_html(db, analysis, linked, include_original_files=False)
+        portable_analysis.export_analysis_html(db, analysis, embedded, include_original_files=True)
+        source_hash = source.hash
+        path.unlink()
+        for name, destination in [("embedded", embedded), ("offline", linked)]:
+            with self.subTest(mode=name):
+                cache.CACHE_DIR = self.root / f"new-cache-{name}"
+                imported_db = self.make_session()
+                _analysis, warnings = portable_analysis.import_analysis_html(imported_db, destination)
+                restored = imported_db.query(SourceFile).filter_by(hash=source_hash).one()
+                self.assertEqual(parsing.source_read_mode(restored), "permissive")
+                self.assertEqual(parsing.source_interpretation(restored), "exploratory")
+                self.assertTrue(any("Exploratory MPR interpretation" in item for item in warnings))
+                if name == "embedded":
+                    self.assertEqual(restored.parse_status, "parsed")
+                    self.assertTrue(cache.load_cycles(restored.hash, restored.parser_version, cache.CALC_VERSION).empty)
+                else:
+                    self.assertEqual(restored.location_status, "offline")
+                    self.assertTrue(portable_analysis._source_document(restored)["diagnostic_summary"])
+
+    def test_portable_mpr_exact_hash_keeps_library_interpretation_and_reports_difference(self):
+        db, analysis, source, _path = self.create_mpr_analysis(exploratory=False)
+        destination = self.root / "different-report-mode.html"
+        portable_analysis.export_analysis_html(db, analysis, destination, include_original_files=False)
+        report = self.read_report(destination)
+        report["sources"][0]["scientific_interpretation"] = "exploratory"
+        report["sources"][0]["header_meta"]["mpr_interpretation"] = "exploratory"
+        rewritten = self.root / "modified-report-state.html"
+        self.rewrite_report(destination, report, rewritten)
+        before = deepcopy(source.header_meta)
+        review = portable_analysis.inspect_analysis_html(db, rewritten)
+        self.assertIn("library source remains authoritative", review["sources"][0]["message"])
+        _analysis, warnings = portable_analysis.import_analysis_html(db, rewritten)
+        self.assertTrue(any("Interpretation differs" in item for item in warnings))
+        self.assertEqual(source.header_meta, before)
+        self.assertEqual(parsing.source_interpretation(source), "verified")
+
+    def test_permissive_report_never_installs_legacy_caches_in_safe_namespace(self):
+        db, analysis, source, path = self.create_mpr_analysis()
+        destination = self.root / "exploratory-legacy-cache.html"
+        portable_analysis.export_analysis_html(db, analysis, destination, include_original_files=False)
+        path.unlink()
+        cache.CACHE_DIR = self.root / "legacy-import-cache"
+        safe_identity = parsing.current_parser_identity_for_extension("mpr")
+        original_payload_by_kind = portable_analysis._payload_by_kind
+
+        def legacy_descriptors(manifest, kind):
+            if kind in {"raw_cache", "cycle_cache"}:
+                return [{"id": f"legacy-{kind}", "kind": kind,
+                         "source_id": f"source-{source.hash}", "parser_version": safe_identity,
+                         "calc_version": cache.CALC_VERSION}]
+            return original_payload_by_kind(manifest, kind)
+
+        imported_db = self.make_session()
+        with patch.object(portable_analysis, "_payload_by_kind", side_effect=legacy_descriptors), \
+                patch.object(portable_analysis, "_decode_payload", wraps=portable_analysis._decode_payload) as decoded:
+            portable_analysis.import_analysis_html(imported_db, destination)
+        self.assertFalse(any(call.args[1].get("id", "").startswith("legacy-") for call in decoded.call_args_list))
+        self.assertFalse(cache.raw_path(source.hash, safe_identity).exists())
+        self.assertFalse(cache.cycles_path(source.hash, safe_identity, cache.CALC_VERSION).exists())
+        self.assertEqual(imported_db.query(SourceFile).filter_by(hash=source.hash).one().parse_status, "unparsed")
+
+    def test_safe_report_never_installs_legacy_permissive_cache_descriptors(self):
+        db, analysis, source, path = self.create_mpr_analysis()
+        destination = self.root / "safe-report-permissive-descriptor.html"
+        portable_analysis.export_analysis_html(db, analysis, destination, include_original_files=False)
+        report = self.read_report(destination)
+        document = report["sources"][0]
+        document.update(read_mode="safe", scientific_interpretation="verified",
+                        parser_version=parsing.current_parser_identity_for_extension("mpr"))
+        document["header_meta"].update(mpr_read_mode="safe", mpr_interpretation="verified")
+        rewritten = self.root / "safe-rewritten.html"
+        self.rewrite_report(destination, report, rewritten)
+        path.unlink()
+        cache.CACHE_DIR = self.root / "inverted-legacy-import-cache"
+        permissive_identity = source.parser_version
+        original_payload_by_kind = portable_analysis._payload_by_kind
+
+        def legacy_descriptors(manifest, kind):
+            if kind in {"raw_cache", "cycle_cache"}:
+                return [{"id": f"legacy-{kind}", "kind": kind,
+                         "source_id": f"source-{source.hash}", "parser_version": permissive_identity,
+                         "calc_version": cache.CALC_VERSION}]
+            return original_payload_by_kind(manifest, kind)
+
+        imported_db = self.make_session()
+        with patch.object(portable_analysis, "_payload_by_kind", side_effect=legacy_descriptors), \
+                patch.object(portable_analysis, "_decode_payload", wraps=portable_analysis._decode_payload) as decoded:
+            portable_analysis.import_analysis_html(imported_db, rewritten)
+        self.assertFalse(any(call.args[1].get("id", "").startswith("legacy-") for call in decoded.call_args_list))
+        self.assertFalse(cache.raw_path(source.hash, permissive_identity).exists())
+        self.assertFalse(cache.cycles_path(source.hash, permissive_identity, cache.CALC_VERSION).exists())
+        restored = imported_db.query(SourceFile).filter_by(hash=source.hash).one()
+        self.assertEqual(parsing.source_read_mode(restored), "safe")
+        self.assertEqual(restored.parse_status, "unparsed")
 
     def test_source_preflight_detects_changed_and_unavailable_originals(self):
         db, analysis, source, source_path, _ = self.create_analysis()

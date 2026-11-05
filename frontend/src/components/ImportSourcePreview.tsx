@@ -30,6 +30,9 @@ import {
 } from "./cellPreviewPlotModel";
 import { IconAlertTriangle, IconInfoCircle, IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 
+import { MprReadStatus } from "./MprReadStatus";
+import { mprWarningExample } from "../mprWarningExample";
+
 export type ImportPreviewView = "voltage" | "cycles";
 export type ImportPreviewVoltageXAxis = "time" | "capacity";
 export type ImportPreviewCapacityView = "discharge" | "both" | "charge";
@@ -56,6 +59,7 @@ function requestFor(
 ) {
   return {
     sources: [{
+      read_mode: source.read_mode,
       staged_name: source.staged_name,
       source_path: source.source_path,
       inspection: source.inspection,
@@ -72,6 +76,8 @@ function requestFor(
 }
 
 function formatParserWarningExample(example: Record<string, number | string | boolean | null>): string | null {
+  const exploratoryExample = mprWarningExample(example);
+  if (exploratoryExample) return exploratoryExample;
   if (typeof example.record_start === "number" && typeof example.record_end === "number"
     && typeof example.matching_record_start === "number" && typeof example.matching_record_end === "number") {
     return `Records ${example.record_start}–${example.record_end} repeat ${example.matching_record_start}–${example.matching_record_end}; the repeated copy was skipped.`;
@@ -384,10 +390,10 @@ export function ImportSourcePreview({
   const supportsQuickVoltagePreview = quickNewareExcelPath || quickNdaxPath;
   useEffect(() => {
     setNormalizeByMass(activeMassG !== null);
-  }, [source.staged_name, source.hash, activeMassG]);
+  }, [source.staged_name, source.hash, source.read_mode, activeMassG]);
   useEffect(() => {
     if (!preferences) setSurfaceMode("theme");
-  }, [source.staged_name, source.hash, preferences]);
+  }, [source.staged_name, source.hash, source.read_mode, preferences]);
   const quickVoltageQuery = useQuery({
     queryKey: ["import-quick-voltage", quickNewareExcelPath ? "neware-excel" : "ndax", quickSourcePath, quickSourceVersion, voltageXAxis, voltageCycleRange?.start, voltageCycleRange?.end],
     queryFn: ({ signal }) => quickNewareExcelPath
@@ -481,6 +487,7 @@ export function ImportSourcePreview({
   }, [supportsQuickVoltagePreview, quickSourcePath, quickSourceVersion, activeQuickPreviewSettled, activeQuickPreviewNeedsInspection, onQuickPreviewSettled]);
   const inspectRequest = {
     sources: [{
+      read_mode: source.read_mode,
       staged_name: source.staged_name,
       source_path: source.source_path,
       inspection: source.inspection,
@@ -496,7 +503,7 @@ export function ImportSourcePreview({
       : (view === "cycles" || !quickNdaxPath || quickVoltageTerminal)
   );
   const inspectionQuery = useQuery({
-    queryKey: ["import-source-continuation-inspection", source.staged_name, source.hash],
+    queryKey: ["import-source-continuation-inspection", source.staged_name, source.hash, source.read_mode],
     queryFn: () => inspectContinuationSources(inspectRequest),
     enabled: inspectionEnabled,
     staleTime: Infinity,
@@ -525,10 +532,10 @@ export function ImportSourcePreview({
     if (quickSourcePath && quickSourceVersion && inspectionFailure?.source_error_kind
       && inspectionFailure.hash === source.hash) {
       onSourceRejected?.({ path: quickSourcePath, version: quickSourceVersion,
-        error: inspectionFailureMessage, kind: inspectionFailure.source_error_kind });
+        error: inspectionFailureMessage, kind: inspectionFailure.source_error_kind, read_mode: source.read_mode });
     }
   }, [quickSourcePath, quickSourceVersion, inspectionFailure?.source_error_kind,
-    inspectionFailure?.hash, source.hash, inspectionFailureMessage, onSourceRejected]);
+    inspectionFailure?.hash, source.hash, source.read_mode, inspectionFailureMessage, onSourceRejected]);
   const quickExcelDiagnosticMessage = quickNewareExcelPath
     ? sourceInspectionError ?? inspectionError ?? null
     : null;
@@ -558,7 +565,7 @@ export function ImportSourcePreview({
   const usesCapacityBundlePreview = /\.(ndax|xlsx)$/i.test(source.source_path ?? source.staged_name);
   const canRequestFastVoltagePreview = view === "voltage"
     && quickNdaxPath;
-  const sourceSupportsCycles = !source.metadata_only && source.technique?.trim().toLocaleUpperCase() !== "OCV";
+  const sourceSupportsCycles = !source.metadata_only && !source.exploratory && source.technique?.trim().toLocaleUpperCase() !== "OCV";
   // Excel's independent cycle-summary sheet can be previewed even when its
   // raw record sheet is invalid. Let the user open Cycles so that quick path
   // can report the summary (or its own clear failure) instead of dead-ending
@@ -595,7 +602,7 @@ export function ImportSourcePreview({
     && ((!quickNdaxPath && !quickNewareExcelPath) || quickVoltageTerminal || quickVoltageFallbackReady)
     && (continuationReady || canRequestFastVoltagePreview);
   const voltageQuery = useQuery({
-    queryKey: ["import-source-preview", source.staged_name, source.hash, "voltage", voltageXAxis, requestedVoltageCycleRange?.start, requestedVoltageCycleRange?.end, continuationReady],
+    queryKey: ["import-source-preview", source.staged_name, source.hash, source.read_mode, "voltage", voltageXAxis, requestedVoltageCycleRange?.start, requestedVoltageCycleRange?.end, continuationReady],
     queryFn: ({ signal }) => previewContinuationSources(
       requestFor(source, "voltage", voltageXAxis, requestedVoltageCycleRange),
       { signal },
@@ -613,6 +620,7 @@ export function ImportSourcePreview({
       "import-source-preview",
       source.staged_name,
       source.hash,
+      source.read_mode,
       "capacity_bundle",
       continuationReady,
       capacityBundleCycleRange?.start,
@@ -629,7 +637,7 @@ export function ImportSourcePreview({
   });
   const capacityQueries = useQueries({
     queries: (["discharge_capacity_mah", "charge_capacity_mah"] as const).map((quantity) => ({
-      queryKey: ["import-source-preview", source.staged_name, source.hash, quantity, cycleRange?.start ?? null, cycleRange?.end ?? null],
+      queryKey: ["import-source-preview", source.staged_name, source.hash, source.read_mode, quantity, cycleRange?.start ?? null, cycleRange?.end ?? null],
       queryFn: ({ signal }: { signal: AbortSignal }) => previewContinuationSources(
         requestFor(source, quantity, voltageXAxis, cycleRange),
         { signal },
@@ -737,7 +745,7 @@ export function ImportSourcePreview({
     setCycleRange(null);
     setVoltageCycleRange(null);
     setCycleRangeUserEdited(false);
-  }, [source.staged_name, source.hash]);
+  }, [source.staged_name, source.hash, source.read_mode]);
   useEffect(() => {
     const fullRange = quickNewareExcelPath && quickExcelCycleIdBounds
       ? quickExcelCycleIdBounds
@@ -746,14 +754,14 @@ export function ImportSourcePreview({
     setCycleRange((current) => current === null || (!cycleRangeUserEdited && current.start <= 1)
       ? fullRange
       : current);
-  }, [source.staged_name, source.hash, cycleCount, cycleRangeUserEdited, quickNewareExcelPath, quickExcelCycleIdBounds]);
+  }, [source.staged_name, source.hash, source.read_mode, cycleCount, cycleRangeUserEdited, quickNewareExcelPath, quickExcelCycleIdBounds]);
   useEffect(() => {
     if (!inspectionCycleCount || quickNewareExcelPath) return;
     setVoltageCycleRange((current) => current ?? {
       start: Math.max(1, inspectionCycleCount - 19),
       end: inspectionCycleCount,
     });
-  }, [source.staged_name, source.hash, inspectionCycleCount, quickNewareExcelPath]);
+  }, [source.staged_name, source.hash, source.read_mode, inspectionCycleCount, quickNewareExcelPath]);
   useEffect(() => {
     if (!sourceSupportsCycles) {
       if (view === "cycles") setView("voltage");
@@ -934,6 +942,7 @@ export function ImportSourcePreview({
   return (
     <>
       <Stack ref={previewContentRef} gap="xs">
+        <MprReadStatus source={source} />
       {parserNotices.map((notice, index) => (
         <Alert key={`${notice.code}-${index}`} color="blue" title="Import note" p="xs">
           {notice.message}

@@ -506,7 +506,21 @@ export interface SourceCheckJob {
 
 // ------------------------------------------------------------------ types
 
-export interface SourceFile {
+export type MprReadMode = "safe" | "permissive";
+
+export interface MprReadPresentation {
+  read_mode?: MprReadMode;
+  exploratory?: boolean;
+  scientific_interpretation?: "pending" | "verified" | "exploratory" | "unavailable";
+  interpretation_warnings?: {
+    code: string;
+    message: string;
+    count?: number;
+    examples?: Record<string, number | string | boolean | null>[];
+  }[];
+}
+
+export interface SourceFile extends MprReadPresentation {
   id: number;
   hash: string;
   path: string;
@@ -1641,7 +1655,7 @@ export interface PortableAnalysisInspection {
   requires_resolution: boolean;
 }
 
-export interface ProvenanceSourceFile {
+export interface ProvenanceSourceFile extends MprReadPresentation {
   hash: string;
   position: number;
   parser_version: string;
@@ -1665,7 +1679,7 @@ export interface Provenance {
   }[];
 }
 
-export interface SourceDescriptor {
+export interface SourceDescriptor extends MprReadPresentation {
   source_file_id?: number | null;
   source_position: number;
   filename: string;
@@ -2099,7 +2113,7 @@ export interface Meta {
   source_extensions: string[];
 }
 
-export interface ImportPreview {
+export interface ImportPreview extends MprReadPresentation {
   staged_name: string;
   source_path: string | null;
   filename: string;
@@ -2166,6 +2180,7 @@ export interface ImportPreview {
     hash: string;
     size: number;
     mtime_ns: number | string;
+    read_mode?: MprReadMode;
   };
 }
 
@@ -2197,7 +2212,7 @@ export interface ImportFolderSelectionResult {
   files: ImportFolderFile[];
 }
 
-export interface ImportBrowseEntry {
+export interface ImportBrowseEntry extends MprReadPresentation {
   path: string;
   name: string;
   kind: "folder" | "file";
@@ -2228,6 +2243,7 @@ export interface ImportPreviewResult {
 }
 
 export interface ImportPreviewRequest {
+  read_mode?: MprReadMode;
   staged_name: string;
   source_path?: string | null;
   expected_hash: string;
@@ -2252,6 +2268,7 @@ export type ContinuationFindingSeverity =
   | "blocking";
 
 export interface ContinuationInspectSourceRequest {
+  read_mode?: MprReadMode;
   staged_name: string;
   source_path?: string | null;
   inspection?: ImportPreview["inspection"] | null;
@@ -2313,11 +2330,12 @@ export interface ImportSourceListRequest {
 }
 
 export interface ImportPathInspectRequest {
+  read_mode?: MprReadMode;
   paths: string[];
   job_token?: string;
 }
 
-export interface ContinuationInspectSource {
+export interface ContinuationInspectSource extends MprReadPresentation {
   key: string;
   kind: ContinuationSourceKind;
   source_file_id: number | null;
@@ -2414,6 +2432,7 @@ export function previewQuickNewareExcel(
 }
 
 export interface ImportSourceDraft {
+  read_mode?: MprReadMode;
   staged_name: string;
   source_path?: string | null;
   filename: string;
@@ -2432,6 +2451,7 @@ export interface ImportFolderWatchDraft {
 }
 
 export interface ImportCellDraft {
+  read_mode?: MprReadMode;
   staged_name?: string | null;
   source_path?: string | null;
   filename?: string | null;

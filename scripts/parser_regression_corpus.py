@@ -33,6 +33,8 @@ def read_manifest(root: Path) -> dict:
     ids = [case['id'] for case in value['cases']]
     if len(set(ids)) != len(ids) or any(not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', x) for x in ids):
         raise ValueError('Invalid or duplicate case IDs')
+    if any(case.get('read_mode', 'safe') not in {'safe', 'permissive'} for case in value['cases']):
+        raise ValueError('Invalid corpus read mode')
     return value
 
 
@@ -55,7 +57,9 @@ def write_json(path: Path, value) -> None:
     temp.replace(path)
 
 
-def register(root: Path, case_id: str, source: Path, chain: str) -> None:
+def register(root: Path, case_id: str, source: Path, chain: str, *, read_mode: str='safe') -> None:
+    if read_mode not in {'safe', 'permissive'}:
+        raise ValueError('Invalid corpus read mode')
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', case_id):
         raise ValueError('Case ID must contain lowercase letters, digits and hyphens')
     if not source.is_file() or source.suffix.lower() != '.mpr':
@@ -74,6 +78,8 @@ def register(root: Path, case_id: str, source: Path, chain: str) -> None:
     destination.chmod(stat.S_IREAD)
     manifest['cases'].append({'id':case_id,'file':destination.relative_to(root).as_posix(),
                               'sha256':checksum,'original_name':source.name,'chain':chain})
+    if read_mode != 'safe':
+        manifest['cases'][-1]['read_mode'] = read_mode
     write_json(root/'manifest.json',manifest)
 
 
@@ -106,11 +112,13 @@ def scientific_snapshot(manifest: dict, paths: dict[str, Path], work: Path) -> d
         sources={}
         for case in manifest['cases']:
             case_id=case['id'];path=paths[case_id]
-            source=scanner.ingest_path(db,path,parse_now=True)
+            mode = case.get('read_mode', 'safe')
+            mode_options = {'read_mode': mode} if mode != 'safe' else {}
+            source=scanner.ingest_path(db,path,parse_now=True,**mode_options)
             if source.parse_status != 'parsed':
                 raise ValueError(f"Parse failed for {case_id}: {source.parse_error}")
             sources[case_id]=source
-            fresh=parsing.parse_timeseries(path)
+            fresh=parsing.parse_timeseries(path,**mode_options)
             raw=cache.load_raw(source.hash,source.parser_version)
             pd.testing.assert_frame_equal(fresh,raw,check_exact=True)
             cycles=cache.load_cycles(source.hash,source.parser_version,cache.CALC_VERSION)
@@ -153,7 +161,9 @@ def scientific_snapshot(manifest: dict, paths: dict[str, Path], work: Path) -> d
                     spec['computation']['quantity']=quantity
                     series=analysis_engine.compute(db,spec,None,use_current_versions=True)['cell_series'][0]
                     values=series['quantities'][column]
-                    np.testing.assert_allclose(values,cycles[column],rtol=0,atol=1e-10,equal_nan=True)
+                    np.testing.assert_allclose(np.asarray(values,dtype=float),
+                                               np.asarray(cycles[column],dtype=float),
+                                               rtol=0,atol=1e-10,equal_nan=True)
                     analyzed[quantity]={'x':series['x'],'y':values}
                 staged=[{'hash':s.hash,'parser_version':s.parser_version,'source_key':str(i),
                          'filename':s.filename} for i,s in enumerate(ordered)]
@@ -209,6 +219,10 @@ def run(root: Path, command: str, *, replace: bool=False) -> dict:
         checksums={case['id']:case['sha256'] for case in manifest['cases']}
         if baseline.get('version')!=1 or baseline.get('sources')!=checksums:
             raise ValueError('Expectations do not match registered source membership/checksums')
+        modes={case['id']:case.get('read_mode','safe') for case in manifest['cases']}
+        baseline_modes=baseline.get('read_modes',dict.fromkeys(checksums,'safe'))
+        if baseline_modes != modes:
+            raise ValueError('Expectations do not match registered read modes')
     elif expected.exists() and not replace:
         raise ValueError('Expectations already exist; replacement requires --replace-expectations')
     # Windows AppContainer temp roots can exceed MAX_PATH when Parquet adds its
@@ -223,7 +237,10 @@ def run(root: Path, command: str, *, replace: bool=False) -> dict:
         if actual != baseline['science']:
             raise ValueError('Scientific regression: current output differs from frozen expectations')
     else:
-        write_json(expected,{'version':1,'sources':{c['id']:c['sha256'] for c in manifest['cases']},'science':actual})
+        snapshot={'version':1,'sources':{c['id']:c['sha256'] for c in manifest['cases']},'science':actual}
+        if any(c.get('read_mode','safe') != 'safe' for c in manifest['cases']):
+            snapshot['read_modes']={c['id']:c.get('read_mode','safe') for c in manifest['cases']}
+        write_json(expected,snapshot)
     return {'verified':command=='verify','cases':len(paths),'chains':len(actual['chains']),
             'chain_cycles':{name:len(value['cycles']['rows']) for name,value in actual['chains'].items()}}
 
@@ -236,13 +253,14 @@ def main(argv=None):
     registration.add_argument('--case-id',required=True)
     registration.add_argument('--source',required=True,type=Path)
     registration.add_argument('--chain',required=True)
+    registration.add_argument('--read-mode',choices=('safe','permissive'),default='safe')
     snapshot=sub.add_parser('snapshot')
     snapshot.add_argument('--replace-expectations',action='store_true')
     sub.add_parser('verify')
     args=parser.parse_args(argv)
     try:
         if args.command=='register':
-            register(args.root.resolve(),args.case_id,args.source,args.chain)
+            register(args.root.resolve(),args.case_id,args.source,args.chain,read_mode=args.read_mode)
             print(json.dumps({'registered':args.case_id}))
         else:print(json.dumps(run(args.root.resolve(),args.command,replace=getattr(args,'replace_expectations',False))))
     except (ValueError,KeyError,OSError,AssertionError) as error:

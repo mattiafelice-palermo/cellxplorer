@@ -15,8 +15,11 @@ import { importSourceRejection, type ImportSourceRejection } from "../importSour
 import { indexedFileAvailable, indexedFileStatus, indexedMatchExplanation, searchLocationName, searchRootStatus, type FileSearchResults, type FileSearchSettings as Settings, type IndexedFile } from "../importSearch";
 import { FileSearchSettings } from "./FileSearchSettings";
 
-export function IndexedSourceSearch({ active, selected, sourceRejections, currentPath, onPreview, onSelection, onDialogChange, onPopupChange, onReveal, filterContainer, onFilterCount, onOpenFilters, onOpenEntity }: {
+import { withMprReadMode, type MprReadModes } from "../mprReadMode";
+
+export function IndexedSourceSearch({ active, selected, sourceRejections, readModes = {}, currentPath, onPreview, onSelection, onDialogChange, onPopupChange, onReveal, filterContainer, onFilterCount, onOpenFilters, onOpenEntity }: {
   active: boolean; onReveal: (file: IndexedFile) => void;
+  readModes?: MprReadModes;
   sourceRejections?: ReadonlyMap<string, ImportSourceRejection>;
   selected: ReadonlyMap<string, ImportBrowseEntry>; currentPath?: string | null;
   onPreview: (file: IndexedFile) => void;
@@ -94,7 +97,8 @@ export function IndexedSourceSearch({ active, selected, sourceRejections, curren
   useEffect(() => { if (active && !manage) requestAnimationFrame(() => viewport.current?.scrollTo({ top: scrollTop })); }, [active, manage]);
   useEffect(() => { if (query.data && page && page * 100 >= query.data.total) setPage(Math.max(0, Math.ceil(query.data.total / 100) - 1)); }, [query.data, page]);
   const files: IndexedFile[] = (query.data?.items ?? []).map((file) => {
-    const entry: IndexedFile = { ...file, kind: "file", root_status: settings.data?.roots.find((r) => r.id === file.root_id)?.status ?? file.root_status };
+    const entry: IndexedFile = withMprReadMode({ ...file, kind: "file", root_status: settings.data?.roots.find((r) => r.id === file.root_id)?.status ?? file.root_status }, readModes);
+    if (entry.read_mode === "permissive") { entry.readability_error = null; entry.source_error_kind = null; }
     const rejection = sourceRejections ? importSourceRejection(entry, sourceRejections) : undefined;
     return rejection ? { ...entry, readability_error: rejection.error, source_error_kind: rejection.kind } : entry;
   });

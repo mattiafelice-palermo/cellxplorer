@@ -1181,6 +1181,7 @@ function CellPickerMetricCells({ cell, selected = false }: { cell: CellPickerCel
 function BadgeBar({ badges }: { badges: ApiBadge[] }) {
   if (badges.length === 0) return null;
   const colors: Record<string, string> = {
+    exploratory_mpr: "orange",
     source_offline: "orange",
     source_changed: "yellow",
     cache_missing: "gray",
@@ -1196,7 +1197,7 @@ function BadgeBar({ badges }: { badges: ApiBadge[] }) {
       {badges.map((b, i) => (
         <Tooltip key={i} label={b.detail} multiline w={320}>
           <Badge color={colors[b.kind] ?? "gray"} variant="light" size="sm">
-            {b.kind.replace(/_/g, " ")}
+            {b.kind === "exploratory_mpr" ? "Permissive MPR" : b.kind.replace(/_/g, " ")}
             {b.cell_name ? `: ${b.cell_name}` : ""}
           </Badge>
         </Tooltip>

@@ -1,3 +1,4 @@
+import { inspectPathsWithReadModes } from "../mprReadMode";
 import {
   Alert,
   Badge,
@@ -56,6 +57,8 @@ function sourceFromFile(file: SourceChainFile): ContinuationInspectSource {
     source_file_id: file.id,
     filename: file.filename,
     source_path: file.path,
+    read_mode: file.read_mode,
+    exploratory: file.exploratory,
     hash: file.hash,
     start_time: file.start_time,
     end_time: null,
@@ -82,6 +85,7 @@ function stagedSource(source: ImportPreview) {
   return {
     staged_name: source.staged_name,
     source_path: source.source_path,
+    read_mode: source.read_mode,
     inspection: source.inspection,
     allow_metadata_only: source.metadata_only,
   };
@@ -308,7 +312,7 @@ export function ContinuationManagementPanel({
     },
   });
 
-  const loadStagedSources = async ({ filePaths, folderPaths }: ImportSourceSelection) => {
+  const loadStagedSources = async ({ filePaths, folderPaths, readModes = {} }: ImportSourceSelection) => {
     setPickerLoading(true);
     try {
       let paths = filePaths;
@@ -316,7 +320,7 @@ export function ContinuationManagementPanel({
         const listed = await post<ImportFolderSelectionResult>("/api/imports/list-sources", { file_paths: filePaths, folder_paths: folderPaths });
         paths = listed.files.map((file) => file.path).filter((path): path is string => Boolean(path));
       }
-      const inspected = await post<ImportInspectResult>("/api/imports/inspect-paths", { paths });
+      const inspected = await inspectPathsWithReadModes(paths, readModes, (group, read_mode) => post<ImportInspectResult>("/api/imports/inspect-paths", { paths: group, read_mode }));
       if (inspected.failures.length > 0) {
         const details = inspected.failures
           .map((failure) => `${failure.filename}: ${failure.error}`)

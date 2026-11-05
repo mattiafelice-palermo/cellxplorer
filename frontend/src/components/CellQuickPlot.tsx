@@ -1,10 +1,11 @@
-// Quick per-cycle plot for one cell — usable seconds after import,
-// no classification or analysis required.
-import { Alert, Center, Loader, SegmentedControl, Stack, Text } from "@mantine/core";
+// Quick scientific preview for one Cell, including recordings without complete cycles.
+import { Alert, Center, Loader, SegmentedControl, Stack, Text, useComputedColorScheme, useMantineTheme } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { get } from "../api";
+import { get, type ContinuationPreviewResult } from "../api";
+import { CellPreviewPlot, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
+import { cellPreviewVoltageLayout, cellPreviewVoltageTraces } from "./cellPreviewPlotModel";
 import Plot from "./Plot";
 
 interface CyclesPayload {
@@ -49,11 +50,7 @@ export function CellQuickPlot({ cellId, cellName }: { cellId: number; cellName: 
   if (cycles.data?.capability?.metadata_only)
     return <Alert color="orange" title="Cycle data unavailable">{cycles.data.capability.message}</Alert>;
   if (rows.length === 0)
-    return (
-      <Alert color="gray">
-        No cycle data yet — this cell has no parsed files (or sources are offline).
-      </Alert>
-    );
+    return <CellRecordingPreview cellId={cellId} />;
 
   return (
     <Stack gap="xs">
@@ -94,4 +91,46 @@ export function CellQuickPlot({ cellId, cellName }: { cellId: number; cellName: 
       )}
     </Stack>
   );
+}
+
+
+function CellRecordingPreview({ cellId }: { cellId: number }) {
+  const theme = useMantineTheme();
+  const scheme = useComputedColorScheme("light");
+  const [surfaceMode, setSurfaceMode] = useState<CellPreviewSurfaceMode>("theme");
+  const preview = useQuery({
+    queryKey: ["cell-cycles", cellId, "recorded-voltage"],
+    queryFn: () => get<ContinuationPreviewResult>(`/api/cells/${cellId}/voltage-preview`),
+    retry: false,
+  });
+  if (preview.isLoading) return <Center h={220}><Loader size="sm" /><Text size="sm" c="dimmed" ml="sm">Loading recorded voltage…</Text></Center>;
+  if (preview.isError) return <Alert color="red">Could not load the voltage recording. {preview.error instanceof Error ? preview.error.message : ""}</Alert>;
+  const segments = preview.data?.segments.filter((segment) => segment.x.some((value, index) => Number.isFinite(value) && Number.isFinite(segment.y[index]))) ?? [];
+  if (!segments.length) return <Alert color="gray">No complete cycles or available voltage records. Check source preparation and availability.</Alert>;
+  const dark = surfaceMode === "theme" ? scheme === "dark" : surfaceMode !== "sun";
+  const colors = surfaceMode === "gray"
+    ? { background: theme.colors.dark[4], text: theme.colors.gray[0], border: theme.colors.dark[1], grid: theme.colors.dark[3] }
+    : dark
+      ? { background: theme.colors.dark[7], text: theme.colors.gray[0], border: theme.colors.dark[3], grid: theme.colors.dark[5] }
+      : { background: theme.white, text: theme.black, border: theme.colors.gray[5], grid: theme.colors.gray[3] };
+  const hasCurrent = segments.some((segment) => segment.current_ma?.some((value) => value !== null && Number.isFinite(value)));
+  const traces = cellPreviewVoltageTraces(segments.map((segment) => ({
+    x: segment.x,
+    voltage: segment.y,
+    ...(segment.current_ma?.some((value) => value !== null && Number.isFinite(value)) ? { current: segment.current_ma } : {}),
+    breakBefore: segment.display_break_before,
+    name: segment.filename,
+  })));
+  return <Stack gap="xs">
+    <Text size="sm" c="dimmed">No complete charge/discharge cycles. Showing the recorded voltage{hasCurrent ? " and current" : ""}.</Text>
+    <CellPreviewPlot
+      data={traces}
+      layout={cellPreviewVoltageLayout(colors, preview.data?.x_label ?? "Time (s)", `cell-recording-${cellId}`)}
+      config={{ displaylogo: false, responsive: true }}
+      style={{ width: "100%" }}
+      surfaceMode={surfaceMode}
+      onSurfaceModeChange={setSurfaceMode}
+      legend={[{ name: "Voltage", color: "#12b886" }, ...(hasCurrent ? [{ name: "Current", color: "#2E86AB" }] : [])]}
+    />
+  </Stack>;
 }

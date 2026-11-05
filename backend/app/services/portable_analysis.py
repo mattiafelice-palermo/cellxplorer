@@ -457,6 +457,18 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
     return views
 
 
+def _source_diagnostic_summary(source: SourceFile) -> list[str]:
+    """Bounded parser explanations, independent of client plot annotations."""
+    warnings = cache.load_parser_warnings(source.hash, source.parser_version or parsing.PARSER_VERSION)
+    messages = [item["message"][:300] for item in warnings if isinstance(item.get("message"), str)]
+    if not messages and source.location_status == "offline":
+        header = source.header_meta or {}
+        recorded = header.get("portable_diagnostic_summary") if isinstance(header, dict) else None
+        if isinstance(recorded, list):
+            messages = [item[:300] for item in recorded if isinstance(item, str)]
+    return list(dict.fromkeys(messages))[:8]
+
+
 def _source_document(source: SourceFile) -> dict:
     capability = parsing.source_record_capability(source)
     return {
@@ -486,7 +498,57 @@ def _source_document(source: SourceFile) -> dict:
         "metadata_only": capability["metadata_only"],
         "canonical_cycling": capability["canonical_cycling"],
         "capability_warning": capability["warning"],
+        "read_mode": parsing.source_read_mode(source),
+        "scientific_interpretation": (
+            "unavailable" if capability["metadata_only"] else parsing.source_interpretation(source)
+        ),
+        "diagnostic_summary": _source_diagnostic_summary(source),
     }
+
+
+def _source_interpretation_warnings(documents: Iterable[dict]) -> list[str]:
+    warnings = []
+    for source in documents:
+        interpretation = source.get("scientific_interpretation")
+        if interpretation in {"exploratory", "pending"}:
+            warnings.append(
+                f'{str(source.get("filename") or "MPR source")[:200]}: '
+                + ("Exploratory MPR interpretation; cycle identity, capacity and CE are unverified."
+                   if interpretation == "exploratory"
+                   else "MPR interpretation is pending; verified scientific results are not established.")
+                + " Requested read mode: " + str(source.get("read_mode") or "safe") + "."
+            )
+    return warnings
+
+
+def _reported_source_interpretation(document: dict) -> tuple[str, str]:
+    """Read optional version-2 provenance while retaining older packages."""
+    state = {"header_meta": document.get("header_meta"),
+             "parser_version": document.get("parser_version"),
+             "parse_status": document.get("parse_status")}
+    try:
+        mode = parsing.normalize_mpr_read_mode(document.get("read_mode") or parsing.source_read_mode(state))
+    except ValueError as exc:
+        raise HTTPException(400, "Portable source has an unsupported MPR read mode.") from exc
+    interpretation = document.get("scientific_interpretation") or parsing.source_interpretation(state)
+    if not isinstance(interpretation, str) or interpretation not in {"verified", "exploratory", "pending", "unavailable"}:
+        raise HTTPException(400, "Portable source has an unsupported scientific interpretation.")
+    if interpretation == "exploratory" and mode != "permissive":
+        raise HTTPException(400, "Portable exploratory source must retain permissive read mode.")
+    return mode, interpretation
+
+
+def _interpretation_difference_warning(document: dict, source: SourceFile) -> str | None:
+    reported_mode, reported_interpretation = _reported_source_interpretation(document)
+    local_interpretation = ("unavailable" if parsing.source_record_metadata_only(source)
+                            else parsing.source_interpretation(source))
+    local_mode = parsing.source_read_mode(source)
+    if (reported_mode, reported_interpretation) == (local_mode, local_interpretation):
+        return None
+    return (f'Interpretation differs for "{str(document.get("filename") or "source")[:200]}": '
+            f'the report records {reported_mode} / {reported_interpretation}; '
+            f'the library source uses {local_mode} / {local_interpretation}. '
+            "The library source remains authoritative and keeps its interpretation.")
 
 
 def _portable_document_fingerprint(
@@ -899,6 +961,8 @@ def export_analysis_html(
         payload_paths: dict[str, Path] = {}
 
         source_documents = [_source_document(source) for source in sources]
+        scientific_warnings = _source_interpretation_warnings(source_documents)
+        warnings.extend(scientific_warnings)
         # Draft plots are local workspace state — never ship them in a portable report.
         export_spec = deepcopy(analysis.spec or {})
         export_spec.pop("draft_plot", None)
@@ -999,6 +1063,7 @@ def export_analysis_html(
             "created_at": _now_iso(),
             "export_id": export_id,
             "analysis_title": analysis.title,
+            "scientific_warnings": scientific_warnings,
             "includes_original_files": any(
                 item["kind"] == "original_source" for item in payloads
             ),
@@ -1057,7 +1122,7 @@ def _write_html(destination: Path, manifest: dict, payload_paths: dict[str, Path
     )
     title = html.escape(str(manifest.get("analysis_title") or "CellXplorer analysis"))
     with destination.open("wb") as output:
-        output.write(_html_head(title).encode("utf-8"))
+        output.write(_html_head(title, manifest.get("scientific_warnings") or []).encode("utf-8"))
         output.write(
             f'<script id="{MANIFEST_ID}" type="application/json">{manifest_text}</script>\n'.encode(
                 "utf-8"
@@ -1076,8 +1141,14 @@ def _write_html(destination: Path, manifest: dict, payload_paths: dict[str, Path
         output.write(_html_tail().encode("utf-8"))
 
 
-def _html_head(title: str) -> str:
+def _html_head(title: str, scientific_warnings: Iterable[str] = ()) -> str:
     deep_link = _deep_link_import_base()
+    scientific_notice = "".join(
+        '<div class="warning">' + html.escape(str(warning)) + '</div>'
+        for warning in scientific_warnings
+    )
+    if scientific_notice:
+        scientific_notice = '<section id="scientific-warnings" aria-label="Scientific interpretation" style="padding:0 28px">' + scientific_notice + '</section>'
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1124,6 +1195,7 @@ table{{border-collapse:collapse;width:100%}} th,td{{border-bottom:1px solid var(
 <body>
 <div id="report-cover"><div><div class="cover-mark">X</div><h1>{title}</h1><p class="muted">CellXplorer portable battery analysis</p></div></div>
 <header><div><h1 id="title">Portable analysis</h1><p class="muted" id="subtitle">Loading report...</p></div><div class="header-actions"><a class="action-link primary" id="open-cellxplorer" href="{deep_link}">Open in CellXplorer</a><button class="action" id="download-originals" hidden>Download source files</button><strong style="color:var(--teal)">CellXplorer</strong></div></header>
+{scientific_notice}
 <main>
 <aside class="panel"><h2>Saved plots</h2><div id="views"></div><div id="warnings"></div></aside>
 <section>
@@ -1399,12 +1471,18 @@ def _html_tail() -> str:
         .map((item) => [item.source_id, item])
     );
     const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>File</th><th>SHA-256</th><th></th></tr></thead>";
+    table.innerHTML = "<thead><tr><th>File</th><th>SHA-256</th><th>Read mode / interpretation</th><th></th></tr></thead>";
     const body = document.createElement("tbody");
     (report.sources || []).forEach((source) => {
       const tr = document.createElement("tr");
       const name = document.createElement("td"); text(name,source.filename); tr.append(name);
       const hash = document.createElement("td"); text(hash,String(source.hash || "").slice(0,16) + "…"); tr.append(hash);
+      const interpretation = document.createElement("td");
+      text(interpretation,`${source.read_mode || "safe"} / ${source.scientific_interpretation || "not recorded"}`);
+      (source.diagnostic_summary || []).forEach((message) => {
+        const detail = document.createElement("div"); detail.className = "muted"; text(detail,message); interpretation.append(detail);
+      });
+      tr.append(interpretation);
       const action = document.createElement("td");
       const descriptor = originals.get(source.portable_id);
       if (descriptor) {
@@ -2262,6 +2340,10 @@ def inspect_analysis_html(db: Session, html_path: Path) -> dict:
                 source_reviews[source_id]["message"] = (
                     "Exact checksum match found, but its library path is unavailable."
                 )
+            difference = _interpretation_difference_warning(document, exact)
+            if difference:
+                source_reviews[source_id]["message"] += " " + difference
+                source_reviews[source_id]["interpretation_warning"] = difference
             continue
 
         candidates = _possible_source_candidates(db, document)
@@ -2437,6 +2519,10 @@ def import_analysis_html(
                     # portable package is untrusted input, so never restore
                     # its legacy raw/cycle payload over an exact-hash row.
                     cache_reuse_sources.add(source_id)
+            if existing is not None:
+                difference = _interpretation_difference_warning(document, existing)
+                if difference:
+                    warnings.append(difference)
             original_descriptor = originals.get(source_id)
             extracted_path: Path | None = None
             recorded_path: Path | None = None
@@ -2474,7 +2560,29 @@ def import_analysis_html(
             # is the server-owned scientific authority: a stale or modified
             # report must not downgrade a canonical source or upgrade a
             # metadata-only one while importing its analysis shell.
-            document_header = document.get("header_meta")
+            document_header = deepcopy(document.get("header_meta"))
+            reported_mode, reported_interpretation = _reported_source_interpretation(document)
+            # No legacy cache producer knew the permissive identity. A report
+            # cannot use independent cache descriptors to cross either mode's
+            # namespace, even if its source document claims the opposite mode.
+            def accepted_legacy_cache(descriptor: dict | None) -> dict | None:
+                if (reported_mode == "permissive" or descriptor is None
+                        or str(descriptor.get("parser_version") or "").endswith(":p1")):
+                    return None
+                return descriptor
+
+            legacy_raw = accepted_legacy_cache(raw_caches.get(source_id))
+            legacy_cycles = accepted_legacy_cache(cycle_caches.get(source_id))
+            if str(document.get("ext") or Path(document["filename"]).suffix.lstrip(".")).lower() == "mpr":
+                document_header = document_header if isinstance(document_header, dict) else {}
+                document_header["mpr_read_mode"] = reported_mode
+                if reported_interpretation in {"verified", "exploratory"}:
+                    document_header["mpr_interpretation"] = reported_interpretation
+                summary = document.get("diagnostic_summary")
+                if isinstance(summary, list):
+                    document_header["portable_diagnostic_summary"] = [
+                        item[:300] for item in summary if isinstance(item, str)
+                    ][:8]
             report_metadata_only = (
                 bool(document.get("metadata_only"))
                 or document.get("canonical_cycling") is False
@@ -2493,7 +2601,8 @@ def import_analysis_html(
                 )
                 effective_parser_identity = (
                     parsing.current_parser_identity_for_extension(
-                        document.get("ext") or Path(document["filename"]).suffix.lstrip(".")
+                        document.get("ext") or Path(document["filename"]).suffix.lstrip("."),
+                        read_mode=reported_mode,
                     )
                     or document.get("parser_version")
                     or parsing.PARSER_VERSION
@@ -2518,13 +2627,13 @@ def import_analysis_html(
                     start_time=document.get("start_time"),
                     active_mass_mg=document.get("active_mass_mg"),
                     nominal_capacity_mah=document.get("nominal_capacity_mah"),
-                    header_meta=document.get("header_meta"),
+                    header_meta=document_header,
                     location_status="online" if resolved_path else "offline",
                     parse_status=(
                         "metadata_only"
                         if metadata_only
                         else "parsed"
-                        if source_id in raw_caches or source_id in cycle_caches
+                        if legacy_raw is not None or legacy_cycles is not None
                         else "unparsed"
                     ),
                     parse_error=metadata_warning,
@@ -2566,22 +2675,22 @@ def import_analysis_html(
             if not metadata_only:
                 for descriptor, target in (
                     (
-                        None if source_id in cache_reuse_sources else raw_caches.get(source_id),
+                        None if source_id in cache_reuse_sources else legacy_raw,
                         cache.raw_path(
                             effective_hash,
-                            (raw_caches.get(source_id) or {}).get("parser_version")
+                            (legacy_raw or {}).get("parser_version")
                             or document.get("parser_version")
                             or parsing.PARSER_VERSION,
                         ),
                     ),
                     (
-                        None if source_id in cache_reuse_sources else cycle_caches.get(source_id),
+                        None if source_id in cache_reuse_sources else legacy_cycles,
                         cache.cycles_path(
                             effective_hash,
-                            (cycle_caches.get(source_id) or {}).get("parser_version")
+                            (legacy_cycles or {}).get("parser_version")
                             or document.get("parser_version")
                             or parsing.PARSER_VERSION,
-                            (cycle_caches.get(source_id) or {}).get("calc_version") or CALC_VERSION,
+                            (legacy_cycles or {}).get("calc_version") or CALC_VERSION,
                         ),
                     ),
                 ):
@@ -2604,7 +2713,7 @@ def import_analysis_html(
             # needless rebuild (or miss a genuinely stale cache) once raw/
             # cycle caches are keyed by per-source identity.
             expected_identity = (
-                parsing.current_parser_identity_for_extension(existing.ext)
+                parsing.current_parser_identity_for_source(existing)
                 or parsing.PARSER_VERSION
             )
             has_current_cache = (
@@ -2615,7 +2724,7 @@ def import_analysis_html(
                 existing.parse_status = "parsing"
                 existing.capacity_summary_status = "pending"
                 try:
-                    info = cache.build(effective_hash, available_path)
+                    info = cache.build(effective_hash, available_path, **({"read_mode": parsing.source_read_mode(existing)} if parsing.source_read_mode(existing) != "safe" else {}))
                     existing.parse_status = "parsed"
                     existing.parse_error = None
                     existing.parser_version = info["parser_version"]

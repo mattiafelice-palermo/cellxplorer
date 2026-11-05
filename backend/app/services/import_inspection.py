@@ -29,7 +29,7 @@ _HEADER_CACHE_LIMIT = 1024
 INSPECTION_PROCESS_THRESHOLD = 25
 INSPECTION_READING_START_PERCENT = 10.0
 INSPECTION_READING_END_PERCENT = 90.0
-_header_cache: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
+_header_cache: OrderedDict[tuple[str, int, int, str], dict] = OrderedDict()
 _header_cache_lock = threading.Lock()
 
 
@@ -42,7 +42,7 @@ class SourceInspectionRejection(ValueError):
 
 
 def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata: dict) -> None:
-    key = (file_hash, size, mtime_ns)
+    key = (file_hash, size, mtime_ns, parsing.source_read_mode(metadata))
     with _header_cache_lock:
         _header_cache[key] = metadata
         _header_cache.move_to_end(key)
@@ -50,8 +50,8 @@ def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata:
             _header_cache.popitem(last=False)
 
 
-def cached_header_metadata(file_hash: str, size: int, mtime_ns: int) -> dict | None:
-    key = (file_hash, size, mtime_ns)
+def cached_header_metadata(file_hash: str, size: int, mtime_ns: int, *, read_mode: str = "safe") -> dict | None:
+    key = (file_hash, size, mtime_ns, read_mode)
     with _header_cache_lock:
         metadata = _header_cache.get(key)
         if metadata is not None:
@@ -224,7 +224,7 @@ def match_import(snapshot: ImportIdentitySnapshot, file_hash: str, filename: str
     return _payload(item, "possible_update", matched_on)
 
 
-def inspect_file(path_string: str) -> FileInspection:
+def inspect_file(path_string: str, *, read_mode: str = "safe") -> FileInspection:
     """Inspect one file using filesystem/parser work only; no DB/session."""
     path = Path(path_string)
     filename = path.name
@@ -242,7 +242,7 @@ def inspect_file(path_string: str) -> FileInspection:
         raise SourceInspectionRejection(
             f"Could not establish a stable source identity: {filename}"
         ) from exc
-    metadata = parsing.read_header_metadata(path)
+    metadata = parsing.metadata_for_read_mode(path, parsing.read_header_metadata(path), read_mode)
     try:
         parsing.ensure_supported_source_metadata(path, metadata)
     except ValueError as exc:
@@ -268,13 +268,13 @@ def inspect_file(path_string: str) -> FileInspection:
     )
 
 
-def _inspect_file_outcome(path_string: str) -> FileInspectionOutcome:
+def _inspect_file_outcome(path_string: str, read_mode: str = "safe") -> FileInspectionOutcome:
     """Convert source-level inspection errors into a picklable batch outcome."""
 
     try:
         return FileInspectionOutcome(
             path=path_string,
-            inspection=inspect_file(path_string),
+            inspection=inspect_file(path_string, read_mode=read_mode) if read_mode != "safe" else inspect_file(path_string),
             error=None,
         )
     except SourceInspectionRejection as exc:
@@ -290,6 +290,7 @@ def _inspect_file_outcome(path_string: str) -> FileInspectionOutcome:
 def inspect_files(
     paths: list[str],
     *,
+    read_mode: str = "safe",
     on_completed: Callable[[str], None] | None = None,
     on_phase: Callable[[dict], None] | None = None,
     executor_cls: type | None = None,
@@ -332,7 +333,7 @@ def inspect_files(
         progress_percent=0.0,
     )
     sample_started = perf_counter()
-    sampled = _inspect_file_outcome(paths[0])
+    sampled = _inspect_file_outcome(paths[0], read_mode)
     sample_seconds = perf_counter() - sample_started
     results[0] = sampled
     if on_completed is not None:
@@ -445,7 +446,7 @@ def inspect_files(
 
     if strategy == "serial" and executor_cls is None:
         for index, path in enumerate(remaining, start=1):
-            store_result(index, _inspect_file_outcome(path))
+            store_result(index, _inspect_file_outcome(path, read_mode))
     else:
         executor = (
             process_pool_executor(worker_count)
@@ -454,7 +455,7 @@ def inspect_files(
         )
         with executor:
             futures: dict[Future[FileInspectionOutcome], int] = {
-                executor.submit(_inspect_file_outcome, path): index
+                executor.submit(_inspect_file_outcome, path, read_mode): index
                 for index, path in enumerate(remaining, start=1)
             }
             try:

@@ -108,6 +108,7 @@ function draftSource(draft: DraftSource) {
   return {
     staged_name: draft.staged_name,
     source_path: draft.source_path,
+    read_mode: draft.read_mode,
     inspection: draft.inspection,
     allow_metadata_only: draft.metadata_only,
   };
@@ -120,6 +121,7 @@ function fallbackSource(draft: DraftSource) {
     source_file_id: null,
     filename: draft.filename,
     source_path: draft.source_path,
+    read_mode: draft.read_mode,
     hash: draft.hash || null,
     start_time: draft.start_time,
     end_time: null,
@@ -261,7 +263,7 @@ export function ContinuedImportEditor({
     queryKey: [
       "continued-import-inspection",
       order,
-      drafts.map((item) => `${item.staged_name}:${item.hash}:${item.source_path ?? ""}`).join("|"),
+      drafts.map((item) => `${item.staged_name}:${item.hash}:${item.source_path ?? ""}:${item.read_mode ?? "safe"}`).join("|"),
     ],
     queryFn: () => inspectContinuationSources({
       sources: orderedDrafts.map(draftSource),

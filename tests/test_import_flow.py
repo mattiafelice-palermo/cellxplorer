@@ -259,6 +259,9 @@ class ImportFlowTests(unittest.TestCase):
                 encode_gcpl_settings([{"set_i_c": 0, "current": -1.0}])
             )
             unsupported_settings[0] = 0x04
+            # Signed technique-04 with selector zero is now verified. Selector
+            # one combined with negative Is remains semantically ambiguous.
+            unsupported_settings[6219 + 14] = 1
             unsupported = root / "unsupported.mpr"
             write_gcpl_mpr(unsupported, [{"total_time_s": 0.0}], settings_payload=bytes(unsupported_settings))
             with self.assertRaisesRegex(ValueError, r"Unsupported BioLogic \.mpr"):

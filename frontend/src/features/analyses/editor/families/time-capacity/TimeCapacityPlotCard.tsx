@@ -1,3 +1,4 @@
+import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import { referenceAxis, referenceUnits, withReferenceLines, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import {
@@ -496,7 +497,7 @@ function timeCapacitySegments(
       flush();
       continue;
     }
-    const sourcePhase = trace.phase[index] ?? "rest";
+    const sourcePhase = trace.phase[index] ?? (displayOnlyCycle ? "unverified" : "rest");
     const phase = cfg.display_mode === "consecutive" && !consecutiveCapacity
       ? "consecutive"
       : sourcePhase;
@@ -1021,7 +1022,7 @@ export function timeCapacityLayout(
       cfg.view === "dqdv"
         ? specific ? "dQ/dV (mAh/g/V)" : "dQ/dV (mAh/V)"
         : specific ? "dV/dQ (V/(mAh/g))" : "dV/dQ (V/mAh)";
-    return withReferenceLines({
+    return withMprReadNotice(withReferenceLines({
       height: 560,
       hovermode: "closest",
       // Search the whole plot in the cross-axis direction. The old 20 px
@@ -1053,9 +1054,9 @@ export function timeCapacityLayout(
     }, style, [
       referenceAxis("x", `time_capacity:${cfg.view}:x:${specific ? "specific" : "absolute"}`, referenceUnits(xTitle), xTitle),
       referenceAxis("y", `time_capacity:${cfg.view}:y:${specific ? "specific" : "absolute"}`, referenceUnits(yTitle), yTitle),
-    ]);
+    ]), result?.badges);
   }
-  return withCycleShadingKey(withReferenceLines({
+  return withMprReadNotice(withCycleShadingKey(withReferenceLines({
     height: cfg.stacked ? 620 : 560,
     hovermode: "closest",
     // Keep one compact nearest-point label while allowing the pointer to
@@ -1198,7 +1199,7 @@ export function timeCapacityLayout(
     referenceAxis("y", `time_capacity:voltage:${[...cfg.voltage_channels].sort().join(",")}`, "V", `Voltage (${voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)}) (V)`),
     ...(cfg.stacked ? [referenceAxis("y2", `time_capacity:left:${cfg.current_left}`, referenceUnits(leftCurrentLabel), leftCurrentLabel)] : []),
     ...(hasRightCurrent ? [referenceAxis(cfg.stacked ? "y3" : "y2", `time_capacity:right:${cfg.current_right}`, referenceUnits(rightCurrentLabel), rightCurrentLabel)] : []),
-  ]), traces);
+  ]), traces), result?.badges);
 }
 
 function TimeCapacityVoltageChannelSelector({

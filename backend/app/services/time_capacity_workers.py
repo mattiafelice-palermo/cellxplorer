@@ -726,11 +726,7 @@ def _cell_result(
                     (raw["cycle"] <= int(settings["cycle_end"]))
                     | raw.get("display_only_cycle", False)
                 ]
-        raw = raw.sort_values(
-            ["cycle", "segment", "record_index"]
-            if "record_index" in raw.columns
-            else ["cycle", "segment"]
-        )
+        raw = raw.sort_values(analysis_engine._time_capacity_sort_columns(raw), kind="stable")
         diagnostics["selected_rows_before_transforms"] = len(raw)
 
     with time_capacity_path.timed_stage(diagnostics, "continuous_time_phase_capacity"):
@@ -1031,7 +1027,7 @@ def _cell_result(
         "electrode_area_cm2": electrode_area_cm2,
         "cycle": analysis_engine._jsonsafe_int(raw["cycle"].to_numpy()),
         "display_x": analysis_engine._jsonsafe_plot(display_x, None if full_response else 6),
-        **analysis_engine.time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows),
+        **analysis_engine.time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows, raw=raw),
         **({"display_cycle_spans": display_cycle_spans} if not request.refinement else {}),
         **(
             {"display_x_cycle_origins": display_x_cycle_origins}

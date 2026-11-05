@@ -111,8 +111,28 @@ def recover_replayed_blocks(
                 continue
             if name == "raw_q_charge_discharge_mAh":
                 difference = replay[name][rest] - earlier[name][rest]
+                # A second independent proof handles neutral counter carry:
+                # each Rest counter exactly carries its own immediately prior
+                # discharge endpoint, while the independent Q-Q0 counter and
+                # dQ remain zero there. These are diagnostic carried values,
+                # not different active measurements. Do not widen the original
+                # tolerance for arbitrary changed counters.
+                carried_neutral = (
+                    first > 0 and "raw_q_minus_q0_mAh" in names
+                    and records["raw_sample_index"][first - 1] == 2
+                    and records["raw_flags"][first - 1] & 3 == 1
+                    and not records["raw_flags"][first - 1] & 8
+                    and records["raw_control_v_or_mA"][first - 1] < 0
+                    and abs(float(records[name][first - 1])) <= 1e-5
+                    and abs(float(records[name][start - 1])) <= 1e-5
+                    and np.all(earlier[name][rest] == records[name][first - 1])
+                    and np.all(replay[name][rest] == records[name][start - 1])
+                    and np.all(earlier["raw_q_minus_q0_mAh"][rest] == 0)
+                    and np.all(replay["raw_q_minus_q0_mAh"][rest] == 0)
+                )
                 if (not np.array_equal(earlier[name][~rest], replay[name][~rest])
-                        or np.any(np.abs(difference) > REST_COUNTER_TOLERANCE_MAH)
+                        or (np.any(np.abs(difference) > REST_COUNTER_TOLERANCE_MAH)
+                            and not carried_neutral)
                         or not np.all(difference == difference[0])):
                     return unchanged
             elif not np.array_equal(earlier[name], replay[name]):
