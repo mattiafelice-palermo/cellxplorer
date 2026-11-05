@@ -71,6 +71,7 @@ import {
   Tree,
 } from "../api";
 import { CellDetailTabs } from "../components/CellDetailTabs";
+import { AddScientificPresetButton } from "../components/AddScientificPresetButton";
 import { CellHoverCard } from "../components/CellSamplePopovers";
 import { CellLibraryColumnMenu } from "../components/CellLibraryColumnMenu";
 import {
@@ -2528,6 +2529,11 @@ export function LibraryPage() {
                     }}
                   />
                 </Group>
+                <AddScientificPresetButton kind="material" onCreated={(preset) => {
+                  setEditMaterialSelection(preset.id);
+                  const mass = editActiveMass ?? detail.data!.scientific_metadata.active_mass_mg.source_value;
+                  setEditNominalCapacity(nominalCapacityFromMass(mass, preset.specific_capacity_mah_g));
+                }} />
                 <NumberInput
                   label="Nominal capacity (mAh)"
                   description={
@@ -2582,6 +2588,10 @@ export function LibraryPage() {
                     }
                   />
                 </Group>
+                <AddScientificPresetButton kind="area" onCreated={(preset) => {
+                  setEditAreaSelection(preset.id);
+                  setEditElectrodeArea(preset.area_cm2);
+                }} />
               </Stack>
             ) : (
               detail.data.description && <Alert color="gray">{detail.data.description}</Alert>

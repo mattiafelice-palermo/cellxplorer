@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 
@@ -27,6 +28,45 @@ class SettingsTests(unittest.TestCase):
         )
         Base.metadata.create_all(engine)
         return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+    def test_inline_preset_addition_preserves_existing_values_and_validates(self):
+        db = self.make_session()
+        area = settings.add_electrode_area_preset(
+            settings.NewAreaPreset(name=" Custom area ", area_cm2=2.5), db=db,
+        )
+        self.assertEqual([p.name for p in area.presets], ["14 mm circular electrode", "15 mm circular electrode", "Custom area"])
+        self.assertTrue(area.presets[0].is_default)
+        material = settings.add_active_material_preset(
+            settings.NewMaterialPreset(name=" Zinc ", specific_capacity_mah_g=820), db=db,
+        )
+        self.assertEqual(material.presets[-1].name, "Zinc")
+        self.assertEqual(material.presets[-1].specific_capacity_mah_g, 820)
+        with self.assertRaises(HTTPException) as duplicate:
+            settings.add_active_material_preset(
+                settings.NewMaterialPreset(name="zinc", specific_capacity_mah_g=800), db=db,
+            )
+        self.assertEqual(duplicate.exception.status_code, 409)
+        db.rollback()
+        with self.assertRaises(HTTPException):
+            settings.add_electrode_area_preset(settings.NewAreaPreset(name="bad", area_cm2=float("nan")), db=db)
+        db.close()
+
+    def test_concurrent_inline_additions_do_not_replace_each_other(self):
+        with tempfile.TemporaryDirectory() as folder:
+            engine = create_engine(f"sqlite:///{Path(folder) / 'settings.db'}", connect_args={"timeout": 10})
+            Base.metadata.create_all(engine)
+            make_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+            def add(name):
+                with make_session() as db:
+                    settings.add_electrode_area_preset(settings.NewAreaPreset(name=name, area_cm2=2.0), db=db)
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                list(pool.map(add, ["Area A", "Area B"]))
+            with make_session() as db:
+                names = {preset.name for preset in settings.get_electrode_area_presets(db=db).presets}
+            self.assertTrue({"Area A", "Area B", "14 mm circular electrode"} <= names)
+            engine.dispose()
 
     def test_download_settings_default_to_ask_and_persist_folder(self):
         db = self.make_session()

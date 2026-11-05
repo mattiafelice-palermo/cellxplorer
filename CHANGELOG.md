@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.28.0-alpha.19 - 2026-11-05
+
+### New features
+
+- Create active-material and electrode-area presets directly while importing or editing Cells.
+
+### Bug fixes
+
+- Keep the analysis table scrollbar below its rows and close completed imports without a countdown.
+
 ## 0.28.0-alpha.18 - 2026-11-05
 
 ### Bug fixes

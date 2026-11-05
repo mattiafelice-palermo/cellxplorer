@@ -76,6 +76,7 @@ import {
 } from "../api";
 import Plot from "../components/Plot";
 import { ImportSourcePreview } from "../components/ImportSourcePreview";
+import { AddScientificPresetButton } from "../components/AddScientificPresetButton";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { FolderTrackingSettingsModal } from "../components/FolderTrackingSettingsModal";
 import type { ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
@@ -990,7 +991,6 @@ function appendUniqueDrafts(current: ImportDraft[], files: ImportPreview[]): Imp
 }
 
 const RAW_PAGE_SIZE = 100;
-const AUTO_CLOSE_SECONDS = 3;
 
 function combinedMetadata(draft: ImportDraft) {
   return {
@@ -1071,8 +1071,6 @@ function ImportModal({
   const [registrationAccepted, setRegistrationAccepted] = useState(false);
   const [handoffPending, setHandoffPending] = useState(false);
   const [closingBranch, setClosingBranch] = useState<"done" | "continue" | null>(null);
-  const [doneCountdown, setDoneCountdown] = useState<number | null>(null);
-  const autoCloseFired = useRef(false);
   const handoffStarted = useRef(false);
   const [loadedFilesScrollTop, setLoadedFilesScrollTop] = useState(0);
   const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
@@ -1145,8 +1143,6 @@ function ImportModal({
         findingAction: null,
         trackingEnabled: false,
       });
-      setDoneCountdown(null);
-      autoCloseFired.current = false;
       setClosingBranch(null);
     } else {
       rawRequestVersion.current += 1;
@@ -1160,8 +1156,6 @@ function ImportModal({
       continuedSubmissionLocked.current = false;
       handoffStarted.current = false;
       setRegisterToken(null);
-      setDoneCountdown(null);
-      autoCloseFired.current = false;
       setClosingBranch(null);
       setFolderTrackingSettingsOpen(false);
     }
@@ -1574,26 +1568,10 @@ function ImportModal({
   const shouldShowContinue =
     !shouldShowDone && (registrationUi.showContinue || committedRegistrationFailure || closingBranch === "continue");
 
-  // Start/cancel the countdown purely from the policy flag (registrationUi.showDone).
+  // Once registration and preparation are complete, return to the library immediately.
   useEffect(() => {
-    if (!registrationUi.showDone) {
-      setDoneCountdown(null);
-      autoCloseFired.current = false;
-      return;
-    }
-    setDoneCountdown(AUTO_CLOSE_SECONDS);
-    const id = setInterval(() => {
-      setDoneCountdown((prev) => (prev === null ? null : Math.max(0, prev - 1)));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [registrationUi.showDone]);
-
-  // Fire the handoff exactly once, when the countdown reaches zero.
-  useEffect(() => {
-    if (doneCountdown !== 0 || autoCloseFired.current) return;
-    autoCloseFired.current = true;
-    void continueInBackground();
-  }, [doneCountdown, continueInBackground]);
+    if (registrationUi.showDone) void continueInBackground();
+  }, [registrationUi.showDone, continueInBackground]);
 
   const groupNames = replicateGroups.map((group) => group.name.trim()).filter(Boolean);
   const duplicateGroupName = new Set(groupNames).size !== groupNames.length;
@@ -1755,7 +1733,7 @@ function ImportModal({
                   disabled={handoffPending || closingBranch !== null}
                   onClick={() => void continueInBackground()}
                 >
-                  Done{doneCountdown !== null && doneCountdown > 0 ? ` (${doneCountdown})` : ""}
+                  Done
                 </Button>
               ) : shouldShowContinue ? (
                 <Button
@@ -2348,6 +2326,13 @@ function ImportModal({
                   }}
                 />
               </Group>
+              <AddScientificPresetButton kind="material" disabled={save.isPending} onCreated={(preset) => {
+                const mass = draft.active_mass_mg_override ?? draft.active_mass_mg;
+                onChange(active, { ...draft, active_material_selection: preset.id,
+                  active_material_preset_id: preset.id, active_material_name: preset.name,
+                  active_material_specific_capacity_mah_g: preset.specific_capacity_mah_g,
+                  nominal_capacity_mah_override: nominalCapacityFromMass(mass, preset.specific_capacity_mah_g) });
+              }} />
               <NumberInput
                   label="Nominal capacity (mAh)"
                   description={
@@ -2417,6 +2402,10 @@ function ImportModal({
                   }
                 />
               </Group>
+              <AddScientificPresetButton kind="area" disabled={save.isPending} onCreated={(preset) => onChange(active, {
+                ...draft, electrode_area_selection: preset.id, electrode_area_preset_id: preset.id,
+                electrode_area_preset_name: preset.name, electrode_area_cm2_override: preset.area_cm2,
+              })} />
 
               {draft.import_match && (
                 <Alert

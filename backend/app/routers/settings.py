@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import uuid
 from pathlib import Path
@@ -77,6 +78,18 @@ class ActiveMaterialPreset(BaseModel):
 
 class ActiveMaterialPresetSettings(BaseModel):
     presets: list[ActiveMaterialPreset]
+
+
+class NewAreaPreset(BaseModel):
+    name: str
+    area_cm2: float
+    description: str | None = None
+
+
+class NewMaterialPreset(BaseModel):
+    name: str
+    specific_capacity_mah_g: float
+    description: str | None = None
 
 
 class PlotStylePreset(BaseModel):
@@ -318,6 +331,22 @@ def update_electrode_area_presets(
     return ElectrodeAreaPresetSettings(presets=normalized)
 
 
+@router.post("/settings/electrode-area-presets", response_model=ElectrodeAreaPresetSettings)
+def add_electrode_area_preset(payload: NewAreaPreset, db: Session = Depends(get_db)):
+    if not math.isfinite(payload.area_cm2):
+        raise HTTPException(422, "Area must be a finite positive value.")
+    # Serialize read/append/write across local requests; a stale picker must not
+    # replace presets created in another open editor.
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    presets = _area_presets(db).presets
+    return update_electrode_area_presets(
+        ElectrodeAreaPresetSettings(presets=[*presets, ElectrodeAreaPreset(
+            id=uuid.uuid4().hex, name=payload.name, area_cm2=payload.area_cm2,
+            description=payload.description,
+        )]), db=db,
+    )
+
+
 @router.get("/settings/active-material-presets", response_model=ActiveMaterialPresetSettings)
 def get_active_material_presets(db: Session = Depends(get_db)):
     return _material_presets(db)
@@ -358,6 +387,21 @@ def update_active_material_presets(
     )
     db.commit()
     return ActiveMaterialPresetSettings(presets=normalized)
+
+
+@router.post("/settings/active-material-presets", response_model=ActiveMaterialPresetSettings)
+def add_active_material_preset(payload: NewMaterialPreset, db: Session = Depends(get_db)):
+    if not math.isfinite(payload.specific_capacity_mah_g):
+        raise HTTPException(422, "Specific capacity must be a finite positive value.")
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    presets = _material_presets(db).presets
+    return update_active_material_presets(
+        ActiveMaterialPresetSettings(presets=[*presets, ActiveMaterialPreset(
+            id=uuid.uuid4().hex, name=payload.name,
+            specific_capacity_mah_g=payload.specific_capacity_mah_g,
+            description=payload.description,
+        )]), db=db,
+    )
 
 
 @router.get("/settings/plot-style-presets", response_model=PlotStylePresetSettings)

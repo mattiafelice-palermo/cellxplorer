@@ -1,5 +1,13 @@
 # State, caching, and performance
 
+## Scientific preset creation
+
+Inline material and area preset creation appends through dedicated Settings
+endpoints under a SQLite immediate transaction. The client must use the returned
+whole list to refresh the shared React Query key; sending a stale picker list
+back as a replacement would lose presets added in another editor. The selected
+Cell's metadata is saved separately from the reusable preset.
+
 ## Input events and deferred React updates
 
 Capture an input's `event.currentTarget.value` in the change handler before

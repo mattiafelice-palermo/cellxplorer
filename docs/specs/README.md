@@ -1,5 +1,9 @@
 # Feature specs
 
+- [086 — Create scientific presets during Cell editing](086-inline-scientific-presets.md).
+  **Complete; preflight passed.** Add material and area presets directly
+  from imports or Cell metadata, using the shared Settings lists.
+
 - [085 — Indexed scan recovery and progress](085-indexed-scan-recovery.md).
   **Complete.** Continue after an identified header worker exit and clarify
   counts. The reported Alpha.17 network-drive failure remains unverified.

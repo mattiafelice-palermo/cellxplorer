@@ -601,6 +601,7 @@ export function AnalysisDatabaseTable({
       </Group>
 
       <ScrollArea type="auto">
+        <Box pb={12}>
         <Table highlightOnHover withTableBorder miw={700} style={{ tableLayout: "fixed" }}>
           <colgroup>
             <col style={{ width: 44 }} />
@@ -739,6 +740,7 @@ export function AnalysisDatabaseTable({
             ))}
           </Table.Tbody>
         </Table>
+        </Box>
       </ScrollArea>
       {displayed.length === 0 && (
         <Text size="sm" c="dimmed" ta="center" py="lg">No analyses match the current filters.</Text>
