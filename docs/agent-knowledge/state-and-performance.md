@@ -101,6 +101,15 @@ inspection caches include mode, and a Permissive success must not erase remember
 Safe rejection. Mode lookup prefers the scalar parser identity to avoid loading
 deferred full headers on a list request.
 
+The import picker offers per-source Permissive recovery beside rejected MPR rows
+and in the error panel. Reuse the same registration/offline eligibility at every
+recovery affordance. Switching modes must retain both mode/version rejection
+facts: only Refresh or source identity change can invalidate a known failure.
+Update the mode ref synchronously before projecting staged selections. A row
+with an enabled recovery button must not inherit `aria-disabled=true`, because
+that makes the nested action inaccessible; keep the selection checkbox disabled
+until the current mode is eligible.
+
 Concurrent Safe and Permissive cache writers can share one content hash while
 writing different identity-specific paths. Pending ownership must track every
 writer until all finish; one completing writer cannot remove another's cleanup

@@ -1,5 +1,9 @@
 # Feature specs
 
+- [089 — Accessible MPR plotting recovery](089-mpr-plot-recovery.md).
+  **Complete; browser, Astra Medium review and preflight passed.** Direct
+  per-source Permissive retries in folder and indexed results.
+
 - [088 — Import Recents and Back navigation](088-import-folder-history.md).
   **Complete; preflight, browser verification and Astra Medium review passed.** Record actual source folders at
   registration and return to prior visited folders with Back.

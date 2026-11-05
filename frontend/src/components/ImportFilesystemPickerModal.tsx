@@ -116,7 +116,7 @@ import {
   type ImportHeaderHint,
 } from "../importFilePickerPolicy";
 
-import { mprReadModeForPath, withMprReadMode, type MprReadModes } from "../mprReadMode";
+import { canTryPermissiveMpr, mprReadModeForPath, withMprReadMode, type MprReadModes } from "../mprReadMode";
 
 export type ImportSourceSelection = {
   readModes?: MprReadModes;
@@ -371,6 +371,11 @@ export function ImportFilesystemPickerModal({
   const selectedPreviewHeaderError = selectedReadMode === "safe" && selectedPreviewEntry && headerHints.get(selectedPreviewEntry.path)?.compatible === false
     ? headerHints.get(selectedPreviewEntry.path)?.error ?? "This source format is not supported."
     : undefined;
+  const selectedRecoverableMpr = Boolean(selectedPreviewEntry
+    && !headerHints.get(selectedPreviewEntry.path)?.registered
+    && !(indexedPreviewEntry?.path === selectedPreviewEntry.path
+      && (indexedPreviewEntry.registered || indexedPreviewEntry.root_status === "offline"))
+    && canTryPermissiveMpr(sourceEntry(selectedPreviewEntry), Boolean(selectedSourceRejection || selectedPreviewHeaderError)));
   const selectedPreviewFallbackKey = selectedPreviewEntry?.path
     ? `${selectedPreviewEntry.path}\u0000${selectedPreviewVersion ?? "unknown"}`
     : null;
@@ -900,6 +905,19 @@ export function ImportFilesystemPickerModal({
     setSelected((current) => new Map(current).set(entry.path, entry));
     setLastSelectedPath(entry.path);
     setSelectedPreviewPath(entry.path);
+  };
+
+  const changeReadMode = (entry: ImportBrowseEntry, mode: MprReadMode) => {
+    const next = { ...readModesRef.current, [importSourcePathKey(entry.path)]: mode };
+    readModesRef.current = next;
+    setReadModes(next);
+    setRawSelected((current) => new Map([...current].map(([path, source]) => [path, withMprReadMode(source, next)])));
+  };
+  const tryPermissive = (entry: ImportBrowseEntry) => {
+    changeReadMode(entry, "permissive");
+    setSelectedPreviewPath(entry.path);
+    setPreviewCollapsed(false);
+    setSearchPanelTab("preview");
   };
 
   const activateRow = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
@@ -1505,7 +1523,7 @@ export function ImportFilesystemPickerModal({
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
               {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch sourceRejections={sourceRejections}
-                  readModes={readModes} onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
+                  readModes={readModes} onTryPermissive={(file) => { setIndexedPreviewEntry(file); tryPermissive(file); }} onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
                 setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (next.has(file.path) && file.recognition === "recognized") hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
               }} /></Box>}
@@ -1536,11 +1554,12 @@ export function ImportFilesystemPickerModal({
                   const cellStyle: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", alignSelf: "center" };
                   const scanPending = headerScanPending(entry);
                   const sourceRejection = importSourceRejection(sourceEntry(entry), sourceRejections);
+                  const recoverableMpr = !registeredFile && canTryPermissiveMpr(sourceEntry(entry), Boolean(sourceRejection || hint?.compatible === false));
                   const disabledReason = sourceRejection ? `Cannot import: ${sourceRejection.error}. Click to view the error.` : registeredFile
                     ? "Already registered in CellXplorer. Click to preview; this file cannot be imported again."
                     : hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe"
                       ? `${hint.error ?? "This source format is not supported."} Click to view the error.`
-                      : hint?.error
+                      : hint?.error && hint.compatible !== false
                         ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
                         : scanPending ? "Checking whether this file can be imported. Click to preview while the check finishes." : null;
                   const rowInstructions = isFolder
@@ -1558,12 +1577,12 @@ export function ImportFilesystemPickerModal({
                     px="sm"
                     role={isFolder ? "button" : "option"}
                     aria-label={rowInstructions}
-                    aria-disabled={!isFolder && disabledFile}
+                    aria-disabled={!isFolder && disabledFile && !recoverableMpr}
                     aria-selected={!isFolder ? isImportFileSelected(selected, entry.path) : undefined}
                     aria-current={previewActive ? "true" : undefined}
                     tabIndex={0}
                     title={disabledFile ? disabledReason ?? undefined : hint?.error ? disabledReason ?? undefined : rowInstructions}
-                    style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: "pointer", opacity: disabledFile && !scanPending ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, userSelect: "none" }}
+                    style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: "pointer", opacity: disabledFile && !scanPending && !recoverableMpr ? 0.52 : 1, borderBottom: "1px solid var(--mantine-color-default-border)", background: rowBackground, display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, userSelect: "none" }}
                     onMouseEnter={() => prefetchHoveredExcelPreview(entry)}
                     onMouseLeave={() => {
                       if (xlsxHoverPrefetchTimer.current !== null) {
@@ -1571,7 +1590,7 @@ export function ImportFilesystemPickerModal({
                         xlsxHoverPrefetchTimer.current = null;
                       }
                     }}
-                    onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)}
+                    onClick={(event) => { if ((event.target as HTMLElement).closest("button")) return; activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey); }}
                     onDoubleClick={(event) => {
                       event.preventDefault();
                       const target = event.target;
@@ -1608,8 +1627,10 @@ export function ImportFilesystemPickerModal({
                     />
                     <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, width: "var(--import-name-width)", minWidth: 0, boxSizing: "border-box", overflow: "hidden", background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
-                      {!isFolder && (hint?.compatible === false || sourceRejection) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
+                      {!isFolder && (sourceRejection || (hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe")) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
                       <Text size="md" truncate title={entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
+                      {recoverableMpr && <Button size="compact-xs" color="orange" variant="light" style={{ flexShrink: 0 }} aria-label={`Try Permissive reading for ${entry.name}`} onClick={(event) => { event.stopPropagation(); tryPermissive(entry); }}>Try Permissive</Button>}
+                      {!isFolder && mprReadModeForPath(entry.path, readModes) === "permissive" && <Text size="xs" c="orange" style={{ flexShrink: 0 }}>Permissive</Text>}
                     </Group>
                     <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntryExtension(entry)} style={cellStyle}>{isFolder ? "" : importEntryExtension(entry)}</Text>
                     <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntrySupplier(entry, hint)} style={cellStyle}>{isFolder ? "" : importEntrySupplier(entry, hint)}</Text>
@@ -1651,19 +1672,15 @@ export function ImportFilesystemPickerModal({
                       <>
                         {/\.mpr$/i.test(selectedPreviewEntry.path) && <Stack gap={4}>
                           <Group justify="space-between" gap="xs"><Text size="sm" fw={700}>MPR reading</Text>
-                            <SegmentedControl size="xs" aria-label="MPR reading mode" value={selectedReadMode} data={[{ value: "safe", label: "Safe" }, { value: "permissive", label: "Permissive" }]} onChange={(value) => {
-                              const next = { ...readModes, [importSourcePathKey(selectedPreviewEntry.path)]: value as MprReadMode };
-                              readModesRef.current = next;
-                              setReadModes(next);
-                              setRawSelected((current) => new Map([...current].map(([path, entry]) => [path, withMprReadMode(entry, next)])));
-                              setSourceRejections((current) => resetImportSourceRejections(current, [selectedPreviewEntry.path]));
-                            }} />
+                            <SegmentedControl size="xs" aria-label="MPR reading mode" value={selectedReadMode} data={[{ value: "safe", label: "Safe" }, { value: "permissive", label: "Permissive" }]} onChange={(value) => changeReadMode(selectedPreviewEntry, value as MprReadMode)} />
                           </Group>
                           <Text size="xs" c="dimmed">{selectedReadMode === "safe" ? "Uses verified cycle and capacity interpretations." : "Attempts exploratory curves when interpretation is uncertain; binary integrity checks remain enabled."}</Text>
                         </Stack>}
                         {selectedSourceRejection || selectedPreviewHeaderError ? (
-                          <Alert color="red" title="This file cannot be imported">
-                            {selectedSourceRejection?.error ?? selectedPreviewHeaderError}
+                          <Alert color="red" title={selectedReadMode === "safe" && /\.mpr$/i.test(selectedPreviewEntry.path) ? "Safe reading could not interpret this recording" : "This file cannot be imported"}>
+                            <Stack gap="xs"><Text size="sm">{selectedSourceRejection?.error ?? selectedPreviewHeaderError}</Text>
+                            {selectedRecoverableMpr && <><Text size="sm">Try Permissive to inspect recorded voltage. Uncertain cycle capacity and CE may be unavailable.</Text><Button size="compact-sm" color="orange" variant="light" onClick={() => tryPermissive(selectedPreviewEntry)}>Try Permissive</Button></>}
+                            </Stack>
                           </Alert>
                         ) : previewMatchesSelection || /\.(ndax|xlsx)$/i.test(selectedPreviewEntry.path) ? (
                           <ImportSourcePreview

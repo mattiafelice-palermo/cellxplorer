@@ -86,3 +86,15 @@ Missing private inputs are an explicit verification boundary, not a passing test
 See [private corpus workflow](../private-parser-regression-corpus.md) for immutable
 registration, independent baseline review and snapshot controls. Synthetic public
 tests remain independent of private files.
+
+
+## Windows verification paths
+
+Canonical preflight nests per-module data directories below its temporary root.
+Raw cache publication also adds the full content hash, parser identity and a
+unique candidate suffix. A Windows `FileNotFoundError` at `os.replace` can
+therefore be a pathname at or above the legacy 260-character limit, even when
+the parent exists and focused tests pass. Inspect the full destination length,
+then rerun unchanged checks with `TEMP` and `TMP` pointing to a short existing
+writable disposable directory. Do not change scientific tolerances or deadlines
+to work around test-environment paths.

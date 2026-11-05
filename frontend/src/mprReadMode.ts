@@ -3,6 +3,12 @@ import { importSourcePathKey } from "./importSourceReadability.ts";
 
 export type MprReadModes = Readonly<Record<string, MprReadMode>>;
 
+/** Offer a retry, never a promise that a structurally unsupported file will decode. */
+export function canTryPermissiveMpr(entry: ImportBrowseEntry, blocked: boolean): boolean {
+  return entry.kind === "file" && /\.mpr$/i.test(entry.path)
+    && entry.read_mode !== "permissive" && blocked;
+}
+
 export function mprReadModeForPath(path: string, modes: MprReadModes = {}): MprReadMode {
   return /\.mpr$/i.test(path) && modes[importSourcePathKey(path)] === "permissive" ? "permissive" : "safe";
 }
