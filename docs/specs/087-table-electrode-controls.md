@@ -1,6 +1,7 @@
 # 087 — Table sizing and electrode display names
 
-Status: Implemented; final preflight and cumulative review pending. Branch: `codex/table-electrode-controls`.
+Status: Complete; final preflight and cumulative Astra Medium review passed. Branch: `codex/table-electrode-controls`.
+Review document: [Cumulative Astra review](reviews/087-table-electrode-controls-review.md).
 
 Complete the approved future-features batch after scanner recovery (085) and
 inline scientific presets (086). Add persistent resizable columns to the Cell
@@ -45,3 +46,18 @@ Browser checks saved a custom electrode label, changed all three series through
 one base name, inverted the displayed labels while keeping the fixed channel
 identity visible, and saved the plot. Cell column resizing persisted after reload.
 Focused Settings and styling/export policy tests passed.
+
+The saved three-channel legend and replacement Cell survived browser reload.
+A 12 px pointer drag changed the Cell column from 336 to 348 px without a jump;
+keyboard sizing and reload persistence also passed for Projects. Both private
+parser corpora verified unchanged (six sources/three chains and thirteen
+sources/twelve chains). Cumulative Astra Medium review found issues corrected
+in the review follow-up; the final re-review is clean. Grouped series can share
+names, but inversion requires adding the particular Cell individually.
+
+Final no-cache preflight passed all four stages and all 219 backend/frontend
+test files/modules after the review corrections. Browser verification also
+confirmed a stale Settings save returns a conflict without losing the unsaved
+edit, and explicit reload restores the current list including the concurrent
+addition. The final implementation is version 0.28.0-alpha.20; no installer
+release or tag was requested.

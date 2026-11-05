@@ -20,6 +20,27 @@ from app.routers import settings
 
 
 class SettingsTests(unittest.TestCase):
+    def test_stale_settings_save_cannot_delete_inline_presets(self):
+        for kind in ("area", "material"):
+            db = self.make_session()
+            if kind == "area":
+                baseline = settings.get_electrode_area_presets(db=db)
+                appended = settings.add_electrode_area_preset(settings.NewAreaPreset(name="New", area_cm2=2), db=db)
+                update = settings.update_electrode_area_presets
+                stale = settings.UpdateElectrodeAreaPresetSettings(presets=baseline.presets, expected_presets=baseline.presets)
+            else:
+                baseline = settings.get_active_material_presets(db=db)
+                appended = settings.add_active_material_preset(settings.NewMaterialPreset(name="New", specific_capacity_mah_g=200), db=db)
+                update = settings.update_active_material_presets
+                stale = settings.UpdateActiveMaterialPresetSettings(presets=baseline.presets, expected_presets=baseline.presets)
+            with self.assertRaises(HTTPException) as conflict:
+                update(stale, db=db)
+            self.assertEqual(conflict.exception.status_code, 409)
+            db.rollback()
+            current = settings.get_electrode_area_presets(db=db) if kind == "area" else settings.get_active_material_presets(db=db)
+            self.assertEqual(current, appended)
+            db.close()
+
     def test_electrode_display_labels_persist_and_validate(self):
         db = self.make_session()
         defaults = settings.get_electrode_display_labels(db=db)

@@ -194,4 +194,5 @@ test("saved automatic electrode naming reaches native export without changing da
   style.series_overrides = { c1: { channel_naming: { enabled: true, base_name: "Specimen", labels: { voltage: "Cell", working_potential: "Cathode", counter_potential: "Anode" }, invert_electrode_labels: true } } };
   const plan = timeCapacityNativeExportPlan(makeResult(), spec, config, style);
   assert.deepEqual(plan.traces[0].voltage_series, [{channel: "voltage", name: "Specimen — Cell", y_title: "Cell voltage (V)"}]);
+  assert.equal(plan.traces[0].current_name, "Cell A");
 });

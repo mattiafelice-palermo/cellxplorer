@@ -1,6 +1,7 @@
 # 085 — Indexed scan recovery and progress
 
 Status: Complete; four-worker no-cache preflight passed. Branch: `codex/bio-scanner-analysis-improvements`.
+Review document: [Cumulative Astra review](reviews/087-table-electrode-controls-review.md).
 
 ## Scope
 

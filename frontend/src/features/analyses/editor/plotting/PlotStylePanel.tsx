@@ -204,7 +204,7 @@ export function PlotStylePanel({
       );
       return timeCapacitySeriesDescriptors(
         timeCapacityResult.cell_traces,
-        selectedVoltageChannels,
+        timeCapacity.view === "voltage_current" ? selectedVoltageChannels : [],
       );
     }
     if (computeResult) {

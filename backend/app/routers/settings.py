@@ -112,6 +112,14 @@ class ActiveMaterialPresetSettings(BaseModel):
     presets: list[ActiveMaterialPreset]
 
 
+class UpdateElectrodeAreaPresetSettings(ElectrodeAreaPresetSettings):
+    expected_presets: list[ElectrodeAreaPreset]
+
+
+class UpdateActiveMaterialPresetSettings(ActiveMaterialPresetSettings):
+    expected_presets: list[ActiveMaterialPreset]
+
+
 class NewAreaPreset(BaseModel):
     name: str
     area_cm2: float
@@ -327,10 +335,16 @@ def get_electrode_area_presets(db: Session = Depends(get_db)):
 
 
 @router.put("/settings/electrode-area-presets", response_model=ElectrodeAreaPresetSettings)
-def update_electrode_area_presets(
-    payload: ElectrodeAreaPresetSettings,
-    db: Session = Depends(get_db),
-):
+def update_electrode_area_presets(payload: UpdateElectrodeAreaPresetSettings, db: Session = Depends(get_db)):
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    db.expire_all()
+    expected = getattr(payload, "expected_presets", None)
+    if expected is not None and expected != _area_presets(db).presets:
+        raise HTTPException(409, "Presets changed in another editor. Reload Settings before saving.")
+    return _save_electrode_area_presets(payload, db)
+
+
+def _save_electrode_area_presets(payload: ElectrodeAreaPresetSettings, db: Session):
     names: set[str] = set()
     normalized: list[ElectrodeAreaPreset] = []
     default_seen = False
@@ -371,7 +385,7 @@ def add_electrode_area_preset(payload: NewAreaPreset, db: Session = Depends(get_
     # replace presets created in another open editor.
     db.connection().exec_driver_sql("BEGIN IMMEDIATE")
     presets = _area_presets(db).presets
-    return update_electrode_area_presets(
+    return _save_electrode_area_presets(
         ElectrodeAreaPresetSettings(presets=[*presets, ElectrodeAreaPreset(
             id=uuid.uuid4().hex, name=payload.name, area_cm2=payload.area_cm2,
             description=payload.description,
@@ -385,10 +399,16 @@ def get_active_material_presets(db: Session = Depends(get_db)):
 
 
 @router.put("/settings/active-material-presets", response_model=ActiveMaterialPresetSettings)
-def update_active_material_presets(
-    payload: ActiveMaterialPresetSettings,
-    db: Session = Depends(get_db),
-):
+def update_active_material_presets(payload: UpdateActiveMaterialPresetSettings, db: Session = Depends(get_db)):
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    db.expire_all()
+    expected = getattr(payload, "expected_presets", None)
+    if expected is not None and expected != _material_presets(db).presets:
+        raise HTTPException(409, "Presets changed in another editor. Reload Settings before saving.")
+    return _save_active_material_presets(payload, db)
+
+
+def _save_active_material_presets(payload: ActiveMaterialPresetSettings, db: Session):
     names: set[str] = set()
     normalized: list[ActiveMaterialPreset] = []
     default_seen = False
@@ -427,7 +447,7 @@ def add_active_material_preset(payload: NewMaterialPreset, db: Session = Depends
         raise HTTPException(422, "Specific capacity must be a finite positive value.")
     db.connection().exec_driver_sql("BEGIN IMMEDIATE")
     presets = _material_presets(db).presets
-    return update_active_material_presets(
+    return _save_active_material_presets(
         ActiveMaterialPresetSettings(presets=[*presets, ActiveMaterialPreset(
             id=uuid.uuid4().hex, name=payload.name,
             specific_capacity_mah_g=payload.specific_capacity_mah_g,

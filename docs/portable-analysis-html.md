@@ -18,6 +18,11 @@ exports. Version 1 packages containing caches remain importable.
 The export dialog lets the user include any subset of the analysis's saved plots. Metadata,
 analysis settings and source references remain part of the package so it can still be imported.
 
+Imported Cell/group source and voltage-channel `series_overrides` keys are
+remapped to the destination library IDs in both current and saved-plot
+presentation. This includes automatic electrode display naming; chosen label
+strings remain frozen with the plot and do not depend on destination Settings.
+
 The scientific package shape is `Cell -> ordered sources`. Each Cell records its sources in the
 canonical `TestFile.position` order, with an explicit position and tracked-tail marker; Test names,
 groups, and per-Test lifecycle state are not portable product data. Cell order, the global source

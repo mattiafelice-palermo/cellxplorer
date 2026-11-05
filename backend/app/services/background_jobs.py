@@ -47,6 +47,8 @@ def _create_job_locked(
         # relational transaction is durable, even while status/progress for a
         # longer handoff is still being observed.
         "registration_committed": False,
+        "cache_handoff_complete": False if kind == "import_register" else None,
+        "cache_job_id": None,
         "total": max(0, int(total)),
         "completed": 0,
         "counters": {},

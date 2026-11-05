@@ -23,6 +23,23 @@ whole list to refresh the shared React Query key; sending a stale picker list
 back as a replacement would lose presets added in another editor. The selected
 Cell's metadata is saved separately from the reusable preset.
 
+Settings list replacement requires the editor's `expected_presets` baseline;
+compare and write under the same immediate transaction. A stale save must
+conflict rather than delete an inline addition. Background query refreshes must
+preserve dirty preset forms and their original baseline until explicit reload
+or successful save.
+
+## Import completion
+
+Relational registration commits before scientific preparation starts. The
+registration job's `cache_handoff_complete` and linked `cache_job_id` are
+published only after final durable registration bookkeeping. A separate global
+job-list snapshot cannot establish readiness. Automatic dialog closing requires
+an explicit no-cache handoff or the exact linked import-cache job with every
+item ready and complete ready counts. Completed jobs can contain failures,
+stale results or missing sources; they are not automatically successful.
+Unknown or failed preparation retains manual return after the commit boundary.
+
 ## Input events and deferred React updates
 
 Capture an input's `event.currentTarget.value` in the change handler before

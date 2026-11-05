@@ -5386,6 +5386,8 @@ def run_import_registration_job(
         background_jobs.update_job(
             background_job_id,
             registration_committed=True,
+            cache_handoff_complete=True,
+            cache_job_id=(result.get("cache_jobs") or {}).get("job_id"),
             status="completed",
             description=(
                 f"Imported {len(result.get('created', []))} cells; "

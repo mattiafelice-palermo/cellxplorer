@@ -916,6 +916,7 @@ class ImportFlowTests(unittest.TestCase):
             committed_counts = []
 
             def capture_cache_handoff(file_ids, jobs):
+                self.assertFalse(background_jobs.get_job(job_id)["cache_handoff_complete"])
                 observer = factory()
                 try:
                     committed_counts.append(observer.query(Cell).count())
@@ -938,6 +939,8 @@ class ImportFlowTests(unittest.TestCase):
                 observer.close()
             self.assertEqual(committed_counts, [1])
             self.assertEqual(background_jobs.get_job(job_id)["status"], "completed")
+            self.assertTrue(background_jobs.get_job(job_id)["cache_handoff_complete"])
+            self.assertEqual(background_jobs.get_job(job_id)["cache_job_id"], 99)
             request_db.close()
             engine.dispose()
         background_jobs.clear_jobs()

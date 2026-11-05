@@ -801,7 +801,7 @@ export function timeCapacityTracesForResult(
       excluded: trace.excluded,
     };
     const color = pick(seriesKey);
-    const descriptor = timeCapacitySeriesDescriptor(trace, selectedVoltageChannels.length === 1 ? selectedVoltageChannels[0] : undefined);
+    const descriptor = timeCapacitySeriesDescriptor(trace);
     const resolved = resolveTrace(
       descriptor,
       color,
@@ -814,15 +814,13 @@ export function timeCapacityTracesForResult(
       const channelKey = `${seriesKey}|${channel}`;
       const channelDescriptor = multipleVoltageChannels
         ? timeCapacityVoltageSeriesDescriptor(trace, channel)
-        : descriptor;
+        : timeCapacitySeriesDescriptor(trace, channel);
       const channelColor = multipleVoltageChannels
         ? style.custom_colors[channelKey] ??
           style.custom_colors[seriesKey] ??
           voltageChannelColor(channel, resolved.color, palette, paletteOverflow, true)
         : resolved.color;
-      const channelResolved = multipleVoltageChannels
-        ? resolveTrace(channelDescriptor, channelColor, style.line_dash)
-        : resolved;
+      const channelResolved = resolveTrace(channelDescriptor, channelColor, style.line_dash);
       return {
         channel,
         channelLabel: voltageChannelLabel(channel, result.voltage_channels),

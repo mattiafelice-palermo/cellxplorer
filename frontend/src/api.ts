@@ -2027,6 +2027,8 @@ export interface BackgroundJob {
   description: string;
   status: "running" | "paused" | "completed" | "failed";
   registration_committed?: boolean;
+  cache_handoff_complete?: boolean;
+  cache_job_id?: number | null;
   total: number;
   completed: number;
   counters: Record<string, number>;

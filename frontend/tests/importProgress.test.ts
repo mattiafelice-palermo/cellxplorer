@@ -13,6 +13,7 @@ import {
   importJobPollInterval,
   importRegistrationSuccessMessage,
   importRegistrationUiState,
+  importPreparationState,
   importRemainingEstimate,
   importStageExplanation,
   importStageTitle,
@@ -257,4 +258,25 @@ test("job polling survives the token-creation race", () => {
   assert.equal(importJobPollInterval(null), 500);
   assert.equal(importJobPollInterval(job({ phase: "starting_workers" })), 250);
   assert.equal(importJobPollInterval(job({ status: "completed" })), false);
+});
+
+
+test("automatic completion waits for its own explicit cache handoff and success", () => {
+  const registration = {kind: "import_register", id: 1, status: "completed", registration_committed: true, cache_handoff_complete: false} as BackgroundJob;
+  assert.equal(importPreparationState(registration, undefined), "unknown");
+  assert.equal(importJobPollInterval(registration), 250);
+  assert.equal(importRegistrationUiState(true, "completed", false, true, importPreparationState(registration, undefined) !== "ready").showDone, false);
+  registration.cache_handoff_complete = true;
+  registration.cache_job_id = 2;
+  assert.equal(importPreparationState(registration, {id: 99, status: "completed"} as BackgroundJob), "unknown");
+  assert.equal(importPreparationState(registration, {id: 2, kind: "import_register", status: "completed"} as BackgroundJob), "unknown");
+  const preparation = {id: 2, kind: "import_cache", total: 1, completed: 1, counters: {ready: 1}, items: [{status: "ready"}]} as BackgroundJob;
+  assert.equal(importPreparationState(registration, {...preparation, status: "running"}), "active");
+  assert.equal(importPreparationState(registration, {...preparation, status: "failed"}), "failed");
+  assert.equal(importPreparationState(registration, {...preparation, status: "completed"}), "ready");
+  for (const status of ["failed", "stale", "missing", "queued"]) {
+    assert.equal(importPreparationState(registration, {...preparation, status: "completed", counters: {[status]: 1}, items: [{status} as BackgroundJob["items"][number]]}), "failed");
+  }
+  registration.cache_job_id = null;
+  assert.equal(importPreparationState(registration, undefined), "ready");
 });

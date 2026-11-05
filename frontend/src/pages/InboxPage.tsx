@@ -110,6 +110,7 @@ import {
 import {
   importRegistrationSuccessMessage,
   importRegistrationUiState,
+  importPreparationState,
   newImportJobToken,
   type ImportProgressStage,
 } from "../importProgress";
@@ -1096,10 +1097,7 @@ function ImportModal({
     queryFn: () =>
       get<ActiveMaterialPresetSettings>("/api/settings/active-material-presets"),
   });
-  const backgroundJobs = useQuery({
-    queryKey: ["background-jobs"],
-    queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),
-  });
+
   const folderSelectData = useMemo(() => folderOptions(treeQuery.data?.folders ?? []), [treeQuery.data]);
   const areaPresetData = useMemo(
     () =>
@@ -1505,9 +1503,16 @@ function ImportModal({
       setRegisterToken(null);
     }
   }, [registrationAccepted, registrationCommitted, registrationStatus]);
-  const cachePreparationActive = (backgroundJobs.data ?? []).some(
-    (job) => job.kind === "import_cache" && (job.status === "running" || job.status === "paused"),
-  );
+  const linkedCacheJobId = registerProgress.data?.cache_job_id;
+  const linkedCachePreparation = useQuery({
+    queryKey: ["import-cache-preparation", linkedCacheJobId],
+    queryFn: () => get<BackgroundJob>(`/api/background-jobs/${linkedCacheJobId}`),
+    enabled: registrationAccepted && registerProgress.data?.cache_handoff_complete === true && linkedCacheJobId != null,
+    refetchInterval: query => !query.state.data || query.state.data.status === "running" || query.state.data.status === "paused" ? 500 : false,
+  });
+  const preparationState = importPreparationState(registerProgress.data, linkedCachePreparation.data);
+  const cachePreparationFailed = preparationState === "failed";
+  const cachePreparationActive = preparationState !== "ready";
   const registrationUi = importRegistrationUiState(
     registrationAccepted,
     registrationStatus,
@@ -1696,7 +1701,7 @@ function ImportModal({
             {shouldShowDone ? (
               <Text size="sm" c="dimmed">Import complete. Cells are ready.</Text>
             ) : shouldShowContinue ? (
-              <Text size="sm" c="dimmed">Registration is committed. Scientific data preparation continues in the background.</Text>
+              <Text size="sm" c="dimmed">{cachePreparationFailed ? "Registration is committed. Scientific preparation did not finish successfully; review Activity for details." : "Registration is committed. Scientific data preparation continues in the background."}</Text>
             ) : continuedMode ? (
               continuedSubmissionState.inspectionStatus === "error" ? (
                 <Text size="sm" c="red">Continuity inspection failed; resolve the source error before importing.</Text>
@@ -1741,7 +1746,7 @@ function ImportModal({
                   disabled={handoffPending || closingBranch !== null}
                   onClick={() => void continueInBackground()}
                 >
-                  {committedRegistrationFailure ? "Return to program" : "Continue in background"}
+                  {committedRegistrationFailure || cachePreparationFailed ? "Return to program" : "Continue in background"}
                 </Button>
               ) : (
                 <>

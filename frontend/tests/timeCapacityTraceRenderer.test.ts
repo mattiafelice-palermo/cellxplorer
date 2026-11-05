@@ -305,6 +305,16 @@ test("stacked current keeps both axes, conversions, styles and WebGL trace types
   for (const trace of interactive) assert.equal(trace.type, "scattergl");
 });
 
+test("automatic voltage names never relabel stacked current", async () => {
+  const spec = makeSpec({ stacked: true, current_left: "current_ma", voltage_channels: ["working_potential"] });
+  spec.presentation.plot_style.series_overrides = { c1: { channel_naming: {
+    enabled: true, base_name: "Specimen", labels: { voltage: "Cell", working_potential: "Cathode", counter_potential: "Anode" }, invert_electrode_labels: true,
+  } } };
+  const { interactive } = await assertParity(makeResult(), spec);
+  assert.equal(interactive.find(trace => !trace.yaxis || trace.yaxis === "y")?.name, "Specimen — Anode");
+  assert.equal(interactive.find(trace => trace.yaxis === "y2")?.name, "Cell A Current (mA)");
+});
+
 test("derivative views retain cycle/phase splits, legend, metadata and nulls", async () => {
   for (const view of ["dqdv", "dvdq"] as const) {
     const { interactive } = await assertParity(makeResult(), makeSpec({ view }));

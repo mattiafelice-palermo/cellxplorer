@@ -742,7 +742,7 @@ export function resolveSeriesStyle(
   resolved = applyOverride(resolved, override);
   const naming = normalizeChannelNaming(descriptor.sourceKey ? overrides?.[descriptor.sourceKey]?.channel_naming : undefined);
   if (descriptor.channel && naming?.enabled) {
-    const shownChannel = naming.invert_electrode_labels && descriptor.channel !== "voltage"
+    const shownChannel = descriptor.kind === "cell" && naming.invert_electrode_labels && descriptor.channel !== "voltage"
       ? descriptor.channel === "working_potential" ? "counter_potential" : "working_potential"
       : descriptor.channel;
     const baseName = naming.base_name.trim() || (descriptor.kind === "group" ? descriptor.groupName : descriptor.cellName) || descriptor.label;

@@ -153,7 +153,7 @@ export function timeCapacityNativeExportPlan(
     if (!multipleChannels && isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
     const color = style.custom_colors[seriesKey] ??
       paletteColorAt(palette, colorIndex++, paletteOverflow);
-    const descriptor = timeCapacitySeriesDescriptor(trace, selectedChannels.length === 1 ? selectedChannels[0] : undefined);
+    const descriptor = timeCapacitySeriesDescriptor(trace);
     const resolved = resolveSeriesStyle(
       {
         color,
@@ -184,16 +184,14 @@ export function timeCapacityNativeExportPlan(
       if (!visibleChannels.has(channel)) continue;
       const channelDescriptor = multipleChannels
         ? timeCapacityVoltageSeriesDescriptor(trace, channel)
-        : descriptor;
+        : timeCapacitySeriesDescriptor(trace, channel);
       const channelKey = `${seriesKey}|${channel}`;
-      const channelResolved = multipleChannels
-        ? resolveSeriesStyle(
-            { ...resolved, color: style.custom_colors[channelKey] ?? resolved.color },
+      const channelResolved = resolveSeriesStyle(
+            { ...resolved, color: multipleChannels ? style.custom_colors[channelKey] ?? resolved.color : resolved.color },
             channelDescriptor,
             style.series_rules,
             style.series_overrides,
-          )
-        : resolved;
+          );
       if (channelResolved.hidden) continue;
       if (!hasFinite(voltageValues(trace, channel, config.voltage_channel))) continue;
       voltageSeries.push({

@@ -12,6 +12,7 @@ export type ImportProgressPhase =
 export function importJobPollInterval(
   job: BackgroundJob | null | undefined,
 ): number | false {
+  if (job?.kind === "import_register" && job.status !== "failed" && job.cache_handoff_complete === false) return 250;
   // The first token lookup can race job creation. Keep polling when the server
   // has not created the job yet; stopping here strands the modal at "Working".
   if (job === null || job?.status === "running") {
@@ -21,6 +22,24 @@ export function importJobPollInterval(
       : 500;
   }
   return false;
+}
+
+/** Completion must be proven by this registration's handoff, never a global cached list. */
+export function importPreparationState(
+  registration: BackgroundJob | null | undefined,
+  preparation: BackgroundJob | null | undefined,
+): "unknown" | "active" | "ready" | "failed" {
+  if (registration?.cache_handoff_complete !== true) return "unknown";
+  if (registration.cache_job_id == null) return "ready";
+  if (!preparation || preparation.id !== registration.cache_job_id || preparation.kind !== "import_cache") return "unknown";
+  if (preparation.status === "completed") {
+    return preparation.completed === preparation.total
+      && preparation.counters?.ready === preparation.total
+      && preparation.items?.length === preparation.total
+      && preparation.items.every(item => item.status === "ready") ? "ready" : "failed";
+  }
+  if (preparation.status === "failed") return "failed";
+  return "active";
 }
 
 export function newImportJobToken(): string {

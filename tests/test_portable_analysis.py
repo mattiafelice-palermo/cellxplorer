@@ -75,6 +75,25 @@ def raw_frame() -> pd.DataFrame:
 
 
 class PortableAnalysisTests(unittest.TestCase):
+    def test_electrode_naming_remaps_swapped_cell_and_group_ids(self):
+        style = {"series_overrides": {
+            "c1": {"channel_naming": {"base_name": "First"}},
+            "c2": {"channel_naming": {"base_name": "Second"}},
+            "c1|working_potential": {"color": "red"},
+            "g5": {"channel_naming": {"base_name": "Group"}},
+        }}
+        presentation = {"plot_styles": {"time_capacity": style}}
+        spec = {"selection": {"entries": []}, "presentation": presentation,
+                "saved_plots": [{"selection": {"entries": []}, "presentation": deepcopy(presentation)}]}
+        mapped = portable_analysis._remap_spec(spec, {1: 2, 2: 1}, {5: 37})
+        for target in (mapped, mapped["saved_plots"][0]):
+            overrides = target["presentation"]["plot_styles"]["time_capacity"]["series_overrides"]
+            self.assertEqual(overrides["c2"]["channel_naming"]["base_name"], "First")
+            self.assertEqual(overrides["c1"]["channel_naming"]["base_name"], "Second")
+            self.assertEqual(overrides["g37"]["channel_naming"]["base_name"], "Group")
+            self.assertEqual(overrides["c2|working_potential"]["color"], "red")
+        self.assertIn("c1|working_potential", style["series_overrides"])
+
     def make_session(self):
         engine = create_engine(
             "sqlite://",

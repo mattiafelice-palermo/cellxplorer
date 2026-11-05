@@ -1175,7 +1175,7 @@ export function SeriesStyleModal({
   };
   const patchNaming = (patch: Partial<typeof channelNaming>) =>
     setOverride(namingKey, { channel_naming: { ...channelNaming, ...patch } });
-  const shownChannel = active?.channel && channelNaming.invert_electrode_labels && active.channel !== "voltage"
+  const shownChannel = active?.kind === "cell" && active?.channel && channelNaming.invert_electrode_labels && active.channel !== "voltage"
     ? active.channel === "working_potential" ? "counter_potential" : "working_potential" : active?.channel;
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
   const activeRules = active ? matchingRules(active, draftRules) : [];
@@ -2231,10 +2231,10 @@ export function SeriesStyleModal({
                         value={channelNaming.labels[channel]} allowDeselect={false}
                         data={Array.from(new Set([channelNaming.labels[channel], ...(electrodeLabels.data ?? DEFAULT_ELECTRODE_LABELS)[channel]]))}
                         onChange={value => { if (value) patchNaming({ labels: { ...channelNaming.labels, [channel]: value } }); }} />)}
-                    <Switch label="Invert working/counter display labels for this sample"
-                      checked={channelNaming.invert_electrode_labels}
+                    <Switch label="Invert working/counter display labels for this sample" disabled={active.kind === "group"}
+                      checked={active.kind === "cell" && channelNaming.invert_electrode_labels}
                       onChange={event => patchNaming({ invert_electrode_labels: event.currentTarget.checked })} />
-                    <Text size="xs" c="dimmed">Applies to this plotted Cell/source chain. Working and counter measurement channels remain fixed. Add custom label choices in Settings → Metadata.</Text>
+                    <Text size="xs" c="dimmed">{active.kind === "group" ? "Names apply to every replicate member. Add a Cell individually to invert its electrode labels." : "Applies to this plotted Cell/source chain. Working and counter measurement channels remain fixed."} Add custom label choices in Settings → Cell metadata.</Text>
                   </>}
                 </Stack>}
                 <Group grow align="start">

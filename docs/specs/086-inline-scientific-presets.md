@@ -1,6 +1,7 @@
 # 086 — Create scientific presets during Cell editing
 
 Status: Complete; four-worker no-cache preflight passed. Branch: `codex/inline-scientific-presets`.
+Review document: [Cumulative Astra review and follow-ups](reviews/087-table-electrode-controls-review.md).
 
 Add a material-specific-capacity or electrode-area preset from separate import,
 continued import, and the Cell metadata editor. A compact modal validates the

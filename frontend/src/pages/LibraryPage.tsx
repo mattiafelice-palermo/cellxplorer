@@ -1579,7 +1579,7 @@ export function LibraryPage() {
         )}
         <Paper withBorder>
           <ScrollArea type="auto" offsetScrollbars="x">
-            <Table highlightOnHover style={{ tableLayout: "fixed", width: Object.values(cellWidths).reduce((a, b) => a + b, 0), minWidth: "100%" }}>
+            <Table highlightOnHover style={{ tableLayout: "fixed", width: Object.values(cellWidths).reduce((a, b) => a + b, 0) }}>
               <colgroup>
                 <col style={{ width: cellWidths.select }} />
                 <col style={{ width: cellWidths.cell }} />
@@ -1978,7 +1978,7 @@ export function LibraryPage() {
           </Group>
           <Paper withBorder p="sm">
           <ScrollArea type="auto" offsetScrollbars="x">
-            <Table highlightOnHover style={{ tableLayout: "fixed", width: 36 + Object.values(groupWidths).reduce((a,b) => a+b,0), minWidth: "100%" }}>
+            <Table highlightOnHover style={{ tableLayout: "fixed", width: 36 + Object.values(groupWidths).reduce((a,b) => a+b,0) }}>
               <colgroup><col style={{width:36}} />{Object.values(groupWidths).map((width,i) => <col key={i} style={{width}} />)}</colgroup>
               <Table.Thead>
                 <Table.Tr>

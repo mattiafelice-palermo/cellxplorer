@@ -1040,3 +1040,10 @@ test("electrode suffixes share a saved base name and invert only display labels"
   restored.c1.channel_naming.enabled = false;
   assert.equal(resolveSeriesStyle(base, descriptors[1], [], restored).name, descriptors[1].label);
 });
+
+
+test("group naming cannot invert the measurement labels of every replicate member", () => {
+  const descriptor = timeCapacityVoltageSeriesDescriptor({ cell_id: 1, group_id: 5, label: "Cell", cell_name: "Cell", group_name: "Group" }, "working_potential");
+  const style = resolveSeriesStyle(base, descriptor, [], { g5: { channel_naming: { enabled: true, base_name: "Replicates", labels: {voltage: "Cell", working_potential: "Cathode", counter_potential: "Anode"}, invert_electrode_labels: true } } });
+  assert.equal(style.name, "Replicates \u2014 Cathode");
+});

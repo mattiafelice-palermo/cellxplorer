@@ -338,6 +338,8 @@ export function SettingsPage() {
     last_finished_at: null,
     last_status: null,
   });
+  const [areaPresetBaseline, setAreaPresetBaseline] = useState<ElectrodeAreaPreset[]>([]);
+  const [materialPresetBaseline, setMaterialPresetBaseline] = useState<ActiveMaterialPreset[]>([]);
   const [presetForm, setPresetForm] = useState<ElectrodeAreaPreset[]>([]);
   const [materialPresetForm, setMaterialPresetForm] = useState<ActiveMaterialPreset[]>([]);
   const [paletteForm, setPaletteForm] = useState<ColorPalette[]>([]);
@@ -360,11 +362,15 @@ export function SettingsPage() {
   }, [monitoring.data]);
 
   useEffect(() => {
-    if (areaPresets.data) setPresetForm(areaPresets.data.presets);
+    if (areaPresets.data && JSON.stringify(presetForm) === JSON.stringify(areaPresetBaseline)) {
+      setPresetForm(areaPresets.data.presets); setAreaPresetBaseline(areaPresets.data.presets);
+    }
   }, [areaPresets.data]);
 
   useEffect(() => {
-    if (materialPresets.data) setMaterialPresetForm(materialPresets.data.presets);
+    if (materialPresets.data && JSON.stringify(materialPresetForm) === JSON.stringify(materialPresetBaseline)) {
+      setMaterialPresetForm(materialPresets.data.presets); setMaterialPresetBaseline(materialPresets.data.presets);
+    }
   }, [materialPresets.data]);
   useEffect(() => {
     if (colorPalettes.data) setPaletteForm(colorPalettes.data.palettes);
@@ -443,11 +449,12 @@ export function SettingsPage() {
   const saveAreaPresets = useMutation({
     mutationFn: () =>
       put<ElectrodeAreaPresetSettings>("/api/settings/electrode-area-presets", {
-        presets: presetForm,
+        presets: presetForm, expected_presets: areaPresetBaseline,
       }),
     onSuccess: (saved) => {
       queryClient.setQueryData(["electrode-area-presets"], saved);
       setPresetForm(saved.presets);
+      setAreaPresetBaseline(saved.presets);
       notifications.show({ message: "Electrode-area presets saved.", color: "teal" });
     },
     onError: (error: Error) =>
@@ -456,11 +463,12 @@ export function SettingsPage() {
   const saveMaterialPresets = useMutation({
     mutationFn: () =>
       put<ActiveMaterialPresetSettings>("/api/settings/active-material-presets", {
-        presets: materialPresetForm,
+        presets: materialPresetForm, expected_presets: materialPresetBaseline,
       }),
     onSuccess: (saved) => {
       queryClient.setQueryData(["active-material-presets"], saved);
       setMaterialPresetForm(saved.presets);
+      setMaterialPresetBaseline(saved.presets);
       notifications.show({ message: "Active-material presets saved.", color: "teal" });
     },
     onError: (error: Error) =>
@@ -660,10 +668,10 @@ export function SettingsPage() {
   const monitoringDirty = Boolean(monitoring.data) &&
     JSON.stringify(monitorConfig(monitorForm)) !== JSON.stringify(monitorConfig(monitoring.data!));
   const presetsDirty = Boolean(areaPresets.data) &&
-    JSON.stringify(presetForm) !== JSON.stringify(areaPresets.data?.presets ?? []);
+    JSON.stringify(presetForm) !== JSON.stringify(areaPresetBaseline);
   const materialPresetsDirty = Boolean(materialPresets.data) &&
     JSON.stringify(materialPresetForm) !==
-      JSON.stringify(materialPresets.data?.presets ?? []);
+      JSON.stringify(materialPresetBaseline);
   const palettesDirty = Boolean(colorPalettes.data) &&
     JSON.stringify(paletteForm) !== JSON.stringify(colorPalettes.data?.palettes ?? []);
   const cacheDirty = Boolean(cacheSettings.data) &&
@@ -1295,6 +1303,11 @@ export function SettingsPage() {
               </Table>
               {presetForm.length === 0 && <Alert color="gray">No presets. Custom areas remain available.</Alert>}
               <Group justify="flex-end">
+                <Button variant="default" disabled={saveAreaPresets.isPending} onClick={() => {
+                  void areaPresets.refetch().then(({ data }) => {
+                    if (data) { setPresetForm(data.presets); setAreaPresetBaseline(data.presets); }
+                  });
+                }}>Reload and discard edits</Button>
                 <Button
                   leftSection={<IconDeviceFloppy size={16} />}
                   loading={saveAreaPresets.isPending}
@@ -1438,6 +1451,11 @@ export function SettingsPage() {
                     </Alert>
                   )}
                   <Group justify="flex-end">
+                    <Button variant="default" disabled={saveMaterialPresets.isPending} onClick={() => {
+                      void materialPresets.refetch().then(({ data }) => {
+                        if (data) { setMaterialPresetForm(data.presets); setMaterialPresetBaseline(data.presets); }
+                      });
+                    }}>Reload and discard edits</Button>
                     <Button
                       leftSection={<IconDeviceFloppy size={16} />}
                       loading={saveMaterialPresets.isPending}

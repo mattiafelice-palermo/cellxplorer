@@ -2198,6 +2198,32 @@ def _remap_spec(spec: dict, cell_map: dict[int, int], group_map: dict[int, int])
     result["selection"] = _remap_selection(result.get("selection", {}), cell_map, group_map)
     for plot in result.get("saved_plots", []) or []:
         plot["selection"] = _remap_selection(plot.get("selection", {}), cell_map, group_map)
+    # Presentation is copied with the plot, but source IDs belong to the source
+    # library. Build new dictionaries once so swapped IDs cannot overwrite each
+    # other or apply electrode naming to another imported Cell.
+    def remap_presentation(value):
+        if isinstance(value, dict):
+            overrides = value.get("series_overrides")
+            if isinstance(overrides, dict):
+                mapped = {}
+                for key, override in overrides.items():
+                    match = re.fullmatch(r"([cg])(\d+)(\|.*)?", key)
+                    if match:
+                        mapping = cell_map if match[1] == "c" else group_map
+                        new_id = mapping.get(int(match[2]))
+                        if new_id is None:
+                            continue
+                        key = f"{match[1]}{new_id}{match[3] or ''}"
+                    mapped[key] = override
+                value["series_overrides"] = mapped
+            for child in value.values():
+                remap_presentation(child)
+        elif isinstance(value, list):
+            for child in value:
+                remap_presentation(child)
+    remap_presentation(result.get("presentation", {}))
+    for plot in result.get("saved_plots", []) or []:
+        remap_presentation(plot.get("presentation", {}))
     return result
 
 
