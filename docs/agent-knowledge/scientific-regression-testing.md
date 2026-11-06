@@ -98,3 +98,11 @@ the parent exists and focused tests pass. Inspect the full destination length,
 then rerun unchanged checks with `TEMP` and `TMP` pointing to a short existing
 writable disposable directory. Do not change scientific tolerances or deadlines
 to work around test-environment paths.
+
+Hosted Windows TEMP can use an 8.3 user-directory alias such as `RUNNER~1`.
+Source registration resolves existing source paths to their canonical spelling.
+Tests asserting persisted import locations must capture `Path.resolve()` while
+the temporary source still exists, before cleanup removes the path needed to
+expand the alias. Raw temporary-path text can differ from the stored path while
+referring to exactly the same directory; do not change application path handling
+to satisfy that textual mismatch.

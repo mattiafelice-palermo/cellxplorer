@@ -3245,6 +3245,9 @@ class ImportFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "large.ndax"
             path.write_bytes(b"fake-import-test-content")
+            # Windows TEMP may use an 8.3 alias. Registration resolves source
+            # paths; capture that identity before temporary-folder cleanup.
+            expected_recent_folder = str(path.parent.resolve())
             started = []
             original_start = files.start_import_cache_jobs
             original_hash = parsing.compute_hash
@@ -3291,7 +3294,7 @@ class ImportFlowTests(unittest.TestCase):
                 parsing.read_header_metadata = original_meta
 
         self.assertEqual(result["created"][0]["cell_name"], "Async import cell")
-        self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), [str(path.parent)])
+        self.assertEqual(files._path_setting(db, files.IMPORT_RECENT_FOLDERS_KEY), [expected_recent_folder])
         self.assertTrue(result["parsing_started"])
         self.assertEqual(
             result["cache_jobs"],

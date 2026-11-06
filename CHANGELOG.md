@@ -4,6 +4,31 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+Alpha.18–21 below are development checkpoints, not published installers.
+Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
+
+## 0.28.0-alpha.22 - 2026-11-06
+
+### New features
+
+- Expand verified BioLogic MPR support for additional GCPL recording patterns.
+- Add per-source Safe and Permissive MPR reading, defaulting new MPR selections to Permissive while retaining explicit Safe choices. When scientific interpretation is unresolved, show recorded-voltage curves with persistent exploratory warnings rather than claiming complete cycles, capacity or coulombic efficiency. Safe rejections offer a direct Try Permissive action.
+- Create active-material specific-capacity and electrode-area presets directly during import or Cell metadata editing, without changing the global default.
+- Resize Cell Database, replicate and Projects columns with remembered widths and live drag feedback. Keep Cell row actions pinned at the right and the horizontal scrollbar reachable while scrolling vertically.
+- Customize electrode display labels and shared series names, including per-Cell label inversion, without changing measured channels or exported scientific identities.
+- Return to previously visited import folders with Back navigation.
+- Show each Cell's last import or scientific-data refresh time in the Cell Database and details; older records without a known timestamp display a dash.
+- Add About CellXplorer to the power menu with the edition, running version and repository/release links.
+
+### Bug fixes
+
+- Continue indexed scans after a worker exits during an identified source header, leaving that source retryable and inspecting later files. Clarify discovered and pending file counts.
+- Reuse scientifically proven-compatible Neware caches across BioLogic-only changes, avoiding unnecessary regeneration of unchanged cycling and prepared Time/Capacity data.
+- Add folders to import Recents only after successful source registration, not while browsing. Preserve the current folder and allow retry when Back encounters an unavailable folder.
+- Refresh analysis sample names after replacing a Cell and protect scientific preset lists from concurrent editor changes.
+- Keep table scrollbars clear of rows, remove duplicate Projects header dividers, and close completed imports without the previous countdown.
+- Remove the legacy Protocol tab from Cell details while retaining Overview, Metadata and Files.
+
 ## 0.28.0-alpha.21 - 2026-11-05
 
 ### New features
