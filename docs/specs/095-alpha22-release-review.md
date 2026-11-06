@@ -1,6 +1,6 @@
 # 095 — Cumulative Alpha.22 release review
 
-Status: Review and local verification complete; hosted publication pending.
+Status: Complete; merged and published in Alpha 0.28.0-alpha.22.
 Branch: `codex/release-alpha-22`.
 
 ## Scope and baseline
@@ -65,3 +65,24 @@ and production bundle. The count includes the unrelated untracked converter
 test, which is not part of the release; hosted verification covers committed
 files only. The initial unmodified local run also passed, and the corrected
 assertion was then verified with the complete suite again.
+
+## Verified publication — 2026-11-06
+
+- Release commit `9d252d17` includes all reviewed updates through `b428b7f1`,
+  synchronized Alpha.22 declarations, cumulative notes and the canonical-path
+  test correction. The branch was pushed, fast-forwarded to main and tagged
+  `v0.28.0-alpha.22`; no earlier published tag or installer was replaced.
+- Exact-main CI `42196676208` passed all 221 committed backend/frontend test
+  files/modules and all four preflight stages in 211.57 seconds. The formerly
+  failing import-flow module passes on the hosted runner.
+- Release workflow `42196681003` succeeded, including signed artifact staging,
+  registry/NSIS policy, mandatory native upgrade/reinstall matrix, final asset
+  recheck, publication and channel-pointer verification.
+- Public installer SHA256:
+  `1999038666ce6f8518da02e78be65cfd02efc4ab642fe0d1510618979c56e2e3`.
+  The independent verifier accepts those downloaded bytes against the committed
+  updater public key. Public manifest verification passes exact version, notes,
+  asset identity and signature, and the raw Alpha pointer serves Alpha.22.
+- Stable, Beta and the release-channel README retain their pre-release blob SHAs.
+  Only the Alpha pointer changed. No local application installation or mutation
+  of a real user profile was performed.

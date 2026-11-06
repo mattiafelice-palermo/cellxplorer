@@ -1,9 +1,10 @@
 # Feature specs
 
 - [095 — Cumulative Alpha.22 release review](095-alpha22-release-review.md).
-  **Local verification complete; publication pending.** Reviewed accumulated
-  084–094 updates and cumulative notes from Alpha.17. Both private corpora,
-  native short-path regression and four-stage no-cache preflight pass.
+  **Complete; published in Alpha 0.28.0-alpha.22.** Cumulative 084–094 changes
+  since published Alpha.17, with both private corpora, native short-path test,
+  local/exact-main preflight, signed native gates and independent public
+  installer/signature/notes/feed verification. Stable and Beta are unchanged.
 
 - [094 — Pinned Cell actions](094-pinned-cell-actions.md).
   **Complete; browser and preflight passed.** Keep row actions visible while scrolling.
