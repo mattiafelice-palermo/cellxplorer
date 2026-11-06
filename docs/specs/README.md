@@ -1,5 +1,8 @@
 # Feature specs
 
+- [093 — Cell table bottom scrollbar](093-cell-table-bottom-scrollbar.md).
+  **Complete; browser and preflight passed.** Reachable scrollbar with a faded overlap.
+
 - [092 — Cell library usability](092-cell-library-polish.md).
   **Complete; preflight passed.** Cell details, Permissive defaults,
   faster resizing, data refresh timestamps and About dialog.

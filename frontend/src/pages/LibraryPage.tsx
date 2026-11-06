@@ -1,3 +1,4 @@
+import { StickyTableScrollArea } from "../components/StickyTableScrollArea";
 import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
 import {
   ActionIcon,
@@ -1579,7 +1580,7 @@ export function LibraryPage() {
           </Alert>
         )}
         <Paper withBorder>
-          <ScrollArea type="auto" offsetScrollbars="x">
+          <StickyTableScrollArea>
             <Table highlightOnHover style={{ tableLayout: "fixed", width: Object.values(cellWidths).reduce((a, b) => a + b, 0) }}>
               <colgroup>
                 <col style={{ width: cellWidths.select }} />
@@ -1915,7 +1916,7 @@ export function LibraryPage() {
                 </Table.Tr>
               </Table.Tfoot>
             </Table>
-          </ScrollArea>
+          </StickyTableScrollArea>
         </Paper>
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Text size="sm" c="dimmed">

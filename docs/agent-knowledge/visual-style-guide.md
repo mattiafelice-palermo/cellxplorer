@@ -172,6 +172,12 @@ to `ColumnResizeHandle`; its offset decorative border otherwise creates a second
 parallel line. Keep the eight-pixel hit area, separator accessibility, keyboard
 resizing and pointer capture even when the decorative line is omitted.
 
+For tall horizontally overflowing Cell tables, `StickyTableScrollArea` keeps a
+keyboard-accessible synchronized horizontal scrollbar at the visible bottom.
+Its theme-colored fade softens overlapping rows. Reserve space at the natural
+table end so totals remain readable; do not move the scientific rows into a
+second independently scrolling vertical viewport.
+
 ## Buttons and icons
 
 ### Button sizing matrix

@@ -1,0 +1,30 @@
+.viewport {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.viewport::-webkit-scrollbar { display: none; }
+.content { width: max-content; min-width: 100%; }
+.dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  margin-top: -32px;
+  height: 32px;
+  pointer-events: none;
+}
+.fade {
+  height: 16px;
+  background: linear-gradient(to bottom, transparent, var(--mantine-color-body));
+}
+.scrollbar {
+  height: 16px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  pointer-events: auto;
+  background: var(--mantine-color-body);
+  scrollbar-width: thin;
+  scrollbar-color: var(--mantine-primary-color-4) var(--mantine-color-body);
+}
+.scrollbar::-webkit-scrollbar { height: 12px; }
+.scrollbar::-webkit-scrollbar-track { background: var(--mantine-color-body); }
+.scrollbar::-webkit-scrollbar-thumb { background: var(--mantine-primary-color-4); border-radius: 6px; }
