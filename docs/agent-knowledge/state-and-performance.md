@@ -1632,3 +1632,11 @@ after 0.28.0-alpha.2. Startup waits for compatible backend, completed channel bo
 dialogs. Manual replay in development does not consume the future announcement. Bundle tutorial
 media in frontend/public/whats-new; no runtime encoder is needed. Verify next-release startup and
 H.264 playback in a rebuilt WebView separately from development browser acceptance.
+
+### Cell data update clock
+
+`Cell.last_data_update_at` records import/source membership changes and successful
+source data refreshes through model lifecycle hooks, in the writing transaction.
+Historical dates remain unknown until an update. Source location checks and Cell
+metadata edits do not advance it. Library reads use the stored scalar; no source
+filesystem access is needed.

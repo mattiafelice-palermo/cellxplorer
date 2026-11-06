@@ -10,7 +10,8 @@ const modes = { "c:\\data\\a.mpr": "permissive" as const, "c:\\data\\b.ndax": "p
 test("mode is per source, path-alias stable, and MPR only", () => {
   assert.equal(mprReadModeForPath("C:/DATA/a.MPR", modes), "permissive");
   assert.equal(mprReadModeForPath("C:/data/b.ndax", modes), "safe");
-  assert.equal(mprReadModeForPath("C:/data/c.mpr", modes), "safe");
+  assert.equal(mprReadModeForPath("C:/data/c.mpr", modes), "permissive");
+  assert.equal(mprReadModeForPath("C:/data/c.mpr", { "c:\\data\\c.mpr": "safe" }), "safe");
   const file = { path: "C:/data/a.mpr", name: "a.mpr", kind: "file" as const, size: 1, modified_at: null };
   assert.equal(withMprReadMode(file, modes).read_mode, "permissive");
   assert.equal(file.read_mode, undefined);
@@ -23,9 +24,9 @@ test("mixed selection inspects explicit modes and preserves the original order",
     calls.push([group, mode]);
     return { files: group.map((path) => ({ source_path: path, read_mode: mode }) as ImportPreview), failures: [] };
   });
-  assert.deepEqual(calls, [[[paths[1], paths[2]], "safe"], [[paths[0]], "permissive"]]);
+  assert.deepEqual(calls, [[[paths[2]], "safe"], [[paths[0], paths[1]], "permissive"]]);
   assert.deepEqual(result.files.map((file) => file.source_path), paths);
-  assert.deepEqual(result.files.map((file) => file.read_mode), ["permissive", "safe", "safe"]);
+  assert.deepEqual(result.files.map((file) => file.read_mode), ["permissive", "permissive", "safe"]);
 });
 
 test("capacity preview cache and fingerprint request retain selected mode", () => {

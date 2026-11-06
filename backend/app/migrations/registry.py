@@ -9,6 +9,7 @@ from .versions import (
     v0003_import_submissions,
     v0004_cell_folder_watch,
     v0005_folder_watch_multi_format,
+    v0006_cell_data_update,
 )
 
 
@@ -45,6 +46,7 @@ REVISIONS = (
         down_revision=v0005_folder_watch_multi_format.down_revision,
         module=v0005_folder_watch_multi_format,
     ),
+    MigrationRevision(revision=v0006_cell_data_update.revision, down_revision=v0006_cell_data_update.down_revision, module=v0006_cell_data_update),
 )
 
 CURRENT_SCHEMA_REVISION = REVISIONS[-1].revision

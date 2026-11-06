@@ -574,15 +574,14 @@ export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationCha
     <Stack gap="xs">
     {cell.sources.filter((source) => source.exploratory).map((source) =>
       <MprReadStatus key={source.id} source={source} sourceName={source.filename} />)}
+    <Text size="xs" c="dimmed">Last update: {cell.last_data_update_at ? new Date(cell.last_data_update_at + (/Z$|[+-]\d\d:\d\d$/.test(cell.last_data_update_at) ? "" : "Z")).toLocaleString() : "—"}</Text>
     <Tabs defaultValue="overview" keepMounted={false}>
       <Tabs.List>
         <Tabs.Tab value="overview" leftSection={<IconActivity size={14} />}>Overview</Tabs.Tab>
-        <Tabs.Tab value="protocol" leftSection={<IconListDetails size={14} />}>Protocol</Tabs.Tab>
         <Tabs.Tab value="metadata" leftSection={<IconInfoCircle size={14} />}>Metadata</Tabs.Tab>
         <Tabs.Tab value="files" leftSection={<IconFile size={14} />}>Files</Tabs.Tab>
       </Tabs.List>
       <Tabs.Panel value="overview" pt="sm"><Paper withBorder p="sm"><CellQuickPlot cellId={cell.id} cellName={cell.name} /></Paper></Tabs.Panel>
-      <Tabs.Panel value="protocol" pt="sm"><ProtocolPanel cellId={cell.id} /></Tabs.Panel>
       <Tabs.Panel value="metadata" pt="sm"><MetadataPanel cell={cell} /></Tabs.Panel>
       <Tabs.Panel value="files" pt="sm"><FilesPanel cell={cell} onUpdateFile={onUpdateFile} updating={updating} onContinuationChanged={onContinuationChanged} /></Tabs.Panel>
     </Tabs>

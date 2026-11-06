@@ -95,6 +95,7 @@ class Cell(Base):
     archived: Mapped[bool] = mapped_column(default=False)  # soft delete only
     cycling_status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_data_update_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     tests: Mapped[list[Test]] = relationship(back_populates="cell", order_by="Test.id")
     metadata_entries: Mapped[list[CellMetadata]] = relationship(
@@ -507,3 +508,29 @@ class AppSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow
     )
+
+
+# Source lifecycle writes own the data-refresh clock; location checks and Cell
+# metadata edits deliberately do not advance it.
+from sqlalchemy import event as _event, inspect as _inspect, select as _select, update as _update
+
+
+def _stamp_source_cells(connection, file_id):
+    cell_ids = _select(Test.cell_id).join(TestFile, TestFile.test_id == Test.id).where(TestFile.file_id == file_id)
+    connection.execute(_update(Cell).where(Cell.id.in_(cell_ids)).values(last_data_update_at=utcnow()))
+
+
+@_event.listens_for(SourceFile, "after_update")
+def _source_data_refreshed(mapper, connection, source):
+    state = _inspect(source)
+    fields = ("hash", "parser_version", "row_count", "cycle_count", "parse_status")
+    if source.parse_status in {"parsed", "metadata_only"} and any(state.attrs[key].history.has_changes() for key in fields):
+        _stamp_source_cells(connection, source.id)
+
+
+@_event.listens_for(TestFile, "after_insert")
+@_event.listens_for(TestFile, "after_update")
+@_event.listens_for(TestFile, "after_delete")
+def _cell_sources_changed(mapper, connection, link):
+    cell_id = _select(Test.cell_id).where(Test.id == link.test_id).scalar_subquery()
+    connection.execute(_update(Cell).where(Cell.id == cell_id).values(last_data_update_at=utcnow()))

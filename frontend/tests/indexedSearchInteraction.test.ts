@@ -74,7 +74,7 @@ test("checkbox inclusion and result refresh never activate Preview; row and Ente
 
 
 test("blocked MPR offers an isolated permissive retry without selecting or activating the row", () => {
-  const app = harness({ path: "C:/source.mpr", name: "source.mpr", readability_error: "Unsupported execution" });
+  const app = harness({ path: "C:/source.mpr", name: "source.mpr", readability_error: "Unsupported execution" }, { "c:\\source.mpr": "safe" });
   const tree = app.render();
   const retry = app.find(tree, (node) => node.props?.["aria-label"] === "Try Permissive reading for source.mpr");
   assert.ok(retry);

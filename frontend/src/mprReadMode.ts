@@ -10,7 +10,7 @@ export function canTryPermissiveMpr(entry: ImportBrowseEntry, blocked: boolean):
 }
 
 export function mprReadModeForPath(path: string, modes: MprReadModes = {}): MprReadMode {
-  return /\.mpr$/i.test(path) && modes[importSourcePathKey(path)] === "permissive" ? "permissive" : "safe";
+  return /\.mpr$/i.test(path) ? (modes[importSourcePathKey(path)] ?? "permissive") : "safe";
 }
 
 export function withMprReadMode<T extends ImportBrowseEntry>(entry: T, modes: MprReadModes): T {

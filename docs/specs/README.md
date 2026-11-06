@@ -1,5 +1,9 @@
 # Feature specs
 
+- [092 — Cell library usability](092-cell-library-polish.md).
+  **Complete; preflight passed.** Cell details, Permissive defaults,
+  faster resizing, data refresh timestamps and About dialog.
+
 - [091 — Single continuous project-table header dividers](091-single-table-header-dividers.md).
   **Complete; browser, Astra Medium review and preflight passed.** Keep one
   grid divider while retaining column resizing.

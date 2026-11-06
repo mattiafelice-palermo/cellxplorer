@@ -1,5 +1,7 @@
 import {
+  Anchor,
   Box,
+  Modal,
   Button,
   Divider,
   Group,
@@ -16,6 +18,7 @@ import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconBug,
+  IconInfoCircle,
   IconChevronDown,
   IconDownload,
   IconPower,
@@ -24,7 +27,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
-import { get, post, type AutomationPauseState } from "../api";
+import { get, post, type DatabaseStatus, type AutomationPauseState } from "../api";
 import { APP_BRANDING } from "../appChannel";
 import { hasDirtyAnalysisWorkspaceEditors } from "../features/analyses/workspace/analysisWorkspace";
 import {
@@ -78,6 +81,12 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
   const tauri = isTauriApp();
   const appUpdate = useOptionalAppUpdate();
   const brandColor = APP_BRANDING.primaryColor;
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const aboutStatus = useQuery({
+    queryKey: ["database-status"],
+    queryFn: () => get<DatabaseStatus>("/api/database/status"),
+    enabled: aboutOpen,
+  });
   const [menuOpen, setMenuOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -153,6 +162,20 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
   };
 
   return (
+    <>
+    <Modal opened={aboutOpen} onClose={() => setAboutOpen(false)} title="About CellXplorer" centered>
+      <Stack gap="sm">
+        <Text fw={700}>{APP_BRANDING.productName}</Text>
+        <Text size="sm">A local-first application for battery scientists to organize cycling data, inspect cells, and build scientific analyses.</Text>
+        <Text size="sm">Version: {aboutStatus.data?.app_version ?? (aboutStatus.isError ? "Unavailable" : "Loading…")}</Text>
+        <Text size="sm" c="dimmed">Supports Neware NDA, NDAX and structured Excel data, and BioLogic MPR sources. Source files stay on your computer.</Text>
+        <Group gap="md">
+          <Anchor size="sm" href="https://github.com/mattiafelice-palermo/cellxplorer" target="_blank" rel="noopener noreferrer">GitHub repository</Anchor>
+          <Anchor size="sm" href="https://github.com/mattiafelice-palermo/cellxplorer/releases" target="_blank" rel="noopener noreferrer">Releases</Anchor>
+        </Group>
+        <Button variant="default" onClick={() => setAboutOpen(false)}>Close</Button>
+      </Stack>
+    </Modal>
     <Menu
       shadow="md"
       width={320}
@@ -195,6 +218,7 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
         </Indicator>
       </Menu.Target>
       <Menu.Dropdown>
+        <Menu.Item leftSection={<IconInfoCircle size={14} />} onClick={() => { setMenuOpen(false); setAboutOpen(true); }}>About CellXplorer</Menu.Item>
         <Menu.Item leftSection={<IconSparkles size={14} />} onClick={onOpenWhatsNew}>What’s new</Menu.Item>
         <Menu.Item leftSection={<IconRefresh size={14} />} onClick={reloadInterface}>
           Reload interface
@@ -318,6 +342,7 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
         ) : null}
       </Menu.Dropdown>
     </Menu>
+    </>
   );
 }
 

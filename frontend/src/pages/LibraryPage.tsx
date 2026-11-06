@@ -430,6 +430,7 @@ const LIBRARY_CELL_TABLE_COL_WIDTHS = {
   discharge: 120,
   status: 188,
   created: 96,
+  updated: 160,
   actions: 132,
 } as const;
 
@@ -1590,6 +1591,7 @@ export function LibraryPage() {
                 <col style={{ width: cellWidths.discharge }} />
                 <col style={{ width: cellWidths.status }} />
                 <col style={{ width: cellWidths.created }} />
+                <col style={{ width: cellWidths.updated }} />
                 <col style={{ width: cellWidths.actions }} />
               </colgroup>
               <Table.Thead>
@@ -1711,13 +1713,14 @@ export function LibraryPage() {
                       replicateFiltersFailed={replicateFiltersFailed}
                     />
                   <ColumnResizeHandle label="Created" width={cellWidths.created} onResize={value => resizeCellColumn("created", value)} /></Table.Th>
+                  <Table.Th pos="relative">Last update<ColumnResizeHandle label="Last update" width={cellWidths.updated} onResize={value => resizeCellColumn("updated", value)} /></Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {pageCells.length === 0 ? (
                   <Table.Tr>
-                    <Table.Td colSpan={10}>
+                    <Table.Td colSpan={11}>
                       <Text size="sm" c="dimmed" ta="center" py="md">
                         No cells match the current filters.
                       </Text>
@@ -1842,6 +1845,7 @@ export function LibraryPage() {
                         {formatDate(cell.created_at)}
                       </Text>
                     </Table.Td>
+                    <Table.Td><Text size="xs" c="dimmed">{cell.last_data_update_at ? new Date(cell.last_data_update_at + (/Z$|[+-]\d\d:\d\d$/.test(cell.last_data_update_at) ? "" : "Z")).toLocaleString() : "—"}</Text></Table.Td>
                     <Table.Td>
                       <Group
                         gap="xs"
@@ -1890,7 +1894,7 @@ export function LibraryPage() {
               </Table.Tbody>
               <Table.Tfoot>
                 <Table.Tr>
-                  <Table.Td colSpan={10}>
+                  <Table.Td colSpan={11}>
                     <Group gap="xs" justify="space-between">
                       <Text size="xs" c="dimmed">
                         {totals.cells} cell{totals.cells === 1 ? "" : "s"} - {totals.active} active -{" "}

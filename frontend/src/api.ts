@@ -607,6 +607,7 @@ export interface CellSummary {
   has_summary_pending: boolean;
   has_summary_error: boolean;
   created_at: string;
+  last_data_update_at?: string | null;
   /** Filesystem modification time of the Cell's ordered tail source file. */
   last_modified_at?: string | null;
   /** Compact source metadata used by the analysis sample picker facets. */

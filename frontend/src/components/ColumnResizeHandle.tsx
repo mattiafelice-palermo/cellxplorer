@@ -21,7 +21,7 @@ export function useColumnWidths<T extends Record<string, number>>(key: string, d
 export function ColumnResizeHandle({ label, width, onResize, showDivider = true }: {
   label: string; width: number; onResize: (width: number) => void; showDivider?: boolean;
 }) {
-  const start = useRef<{ x: number; width: number; scale: number } | null>(null);
+  const start = useRef<{ x: number; width: number; scale: number; preview: number; table: HTMLTableElement | null; column: HTMLElement | null; tableWidth: number } | null>(null);
   return <span role="separator" aria-label={`Resize ${label} column`}
     aria-orientation="vertical" aria-valuenow={Math.round(width)} aria-valuemin={48} aria-valuemax={1600}
     tabIndex={0}
@@ -36,15 +36,25 @@ export function ColumnResizeHandle({ label, width, onResize, showDivider = true 
       event.preventDefault(); event.stopPropagation();
       const parent = event.currentTarget.parentElement!;
       const scale = parent.getBoundingClientRect().width / parent.offsetWidth || 1;
-      start.current = { x: event.clientX, width: parent.offsetWidth, scale };
+      const table = parent.closest("table");
+      const index = (parent as HTMLTableCellElement).cellIndex;
+      const column = table?.querySelectorAll("col")[index] ?? null;
+      start.current = { x: event.clientX, width: parent.offsetWidth, scale,
+        preview: parent.offsetWidth, table, column, tableWidth: table?.offsetWidth ?? 0 };
       event.currentTarget.setPointerCapture(event.pointerId);
     }}
     onPointerMove={event => {
-      if (start.current) onResize(start.current.width + (event.clientX - start.current.x) / start.current.scale);
+      const drag = start.current;
+      if (!drag) return;
+      drag.preview = Math.max(48, Math.min(1600, Math.round(drag.width + (event.clientX - drag.x) / drag.scale)));
+      if (drag.column && drag.table) {
+        drag.column.style.width = `${drag.preview}px`;
+        drag.table.style.width = `${drag.tableWidth + drag.preview - drag.width}px`;
+      } else onResize(drag.preview);
     }}
-    onPointerUp={() => { start.current = null; }}
-    onPointerCancel={() => { start.current = null; }}
-    onLostPointerCapture={() => { start.current = null; }}
+    onPointerUp={() => { if (start.current) onResize(start.current.preview); start.current = null; }}
+    onPointerCancel={() => { if (start.current) onResize(start.current.preview); start.current = null; }}
+    onLostPointerCapture={() => { if (start.current) onResize(start.current.preview); start.current = null; }}
     style={{ position: "absolute", right: -4, top: 0, width: 8, height: "100%",
       cursor: "col-resize", touchAction: "none", zIndex: 3,
       borderRight: showDivider ? "1px solid var(--mantine-color-default-border)" : undefined }} />;

@@ -1281,6 +1281,7 @@ def cell_dict(
         "has_summary_pending": has_summary_pending,
         "has_summary_error": has_summary_error,
         "created_at": cell.created_at.isoformat(),
+        "last_data_update_at": cell.last_data_update_at.isoformat() if cell.last_data_update_at else None,
     }
     if include_metadata:
         result["metadata"] = meta
@@ -1368,6 +1369,7 @@ def list_cells(
                 **public_summary,
                 "max_specific_discharge_capacity_mah_g": max_specific,
                 "created_at": cell.created_at.isoformat(),
+                "last_data_update_at": cell.last_data_update_at.isoformat() if cell.last_data_update_at else None,
                 **(
                     {
                         "last_modified_at": picker_sources["last_modified_at"],
