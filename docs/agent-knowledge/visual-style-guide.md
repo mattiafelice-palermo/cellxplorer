@@ -164,6 +164,14 @@ phrases such as “Add series”, “Export image”, or “Save plot”.
 - Avoid stacking several bordered cards with large padding when a divider or compact group would
   communicate the same hierarchy.
 
+### Resizable table dividers
+
+Use one visible divider per column boundary, aligned between header and body.
+When a table/grid already draws its column border, pass `showDivider={false}`
+to `ColumnResizeHandle`; its offset decorative border otherwise creates a second
+parallel line. Keep the eight-pixel hit area, separator accessibility, keyboard
+resizing and pointer capture even when the decorative line is omitted.
+
 ## Buttons and icons
 
 ### Button sizing matrix

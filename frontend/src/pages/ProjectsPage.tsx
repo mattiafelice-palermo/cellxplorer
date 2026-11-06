@@ -288,19 +288,19 @@ function ProjectTreeColumnHeader({ widths, resize }: { widths: typeof PROJECT_CO
     >
       <Text size="xs" fw={700} c="dimmed" lh={1.4} component="div" pos="relative" className="project-tree-header-name">
         Name
-        <ColumnResizeHandle label="Project Name" width={widths.name} onResize={value => resize("name", value)} />
+        <ColumnResizeHandle showDivider={false} label="Project Name" width={widths.name} onResize={value => resize("name", value)} />
       </Text>
       <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" pos="relative" className="project-tree-header-metric">
         Cycles
-        <ColumnResizeHandle label="Project Cycles" width={widths.cycles} onResize={value => resize("cycles", value)} />
+        <ColumnResizeHandle showDivider={false} label="Project Cycles" width={widths.cycles} onResize={value => resize("cycles", value)} />
       </Text>
       <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" pos="relative" className="project-tree-header-metric">
         mAh/g
-        <ColumnResizeHandle label="Project mAh/g" width={widths.capacity} onResize={value => resize("capacity", value)} />
+        <ColumnResizeHandle showDivider={false} label="Project mAh/g" width={widths.capacity} onResize={value => resize("capacity", value)} />
       </Text>
       <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" pos="relative" className="project-tree-header-metric">
         Plots
-        <ColumnResizeHandle label="Project Plots" width={widths.plots} onResize={value => resize("plots", value)} />
+        <ColumnResizeHandle showDivider={false} label="Project Plots" width={widths.plots} onResize={value => resize("plots", value)} />
       </Text>
       <div aria-hidden />
     </div>

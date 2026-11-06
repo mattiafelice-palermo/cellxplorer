@@ -18,8 +18,8 @@ export function useColumnWidths<T extends Record<string, number>>(key: string, d
 }
 
 /** Pointer capture avoids leaking window listeners when a table unmounts mid-drag. */
-export function ColumnResizeHandle({ label, width, onResize }: {
-  label: string; width: number; onResize: (width: number) => void;
+export function ColumnResizeHandle({ label, width, onResize, showDivider = true }: {
+  label: string; width: number; onResize: (width: number) => void; showDivider?: boolean;
 }) {
   const start = useRef<{ x: number; width: number; scale: number } | null>(null);
   return <span role="separator" aria-label={`Resize ${label} column`}
@@ -47,5 +47,5 @@ export function ColumnResizeHandle({ label, width, onResize }: {
     onLostPointerCapture={() => { start.current = null; }}
     style={{ position: "absolute", right: -4, top: 0, width: 8, height: "100%",
       cursor: "col-resize", touchAction: "none", zIndex: 3,
-      borderRight: "1px solid var(--mantine-color-default-border)" }} />;
+      borderRight: showDivider ? "1px solid var(--mantine-color-default-border)" : undefined }} />;
 }

@@ -1,5 +1,9 @@
 # Feature specs
 
+- [091 — Single continuous project-table header dividers](091-single-table-header-dividers.md).
+  **Complete; browser, Astra Medium review and preflight passed.** Keep one
+  grid divider while retaining column resizing.
+
 - [090 — Scoped scientific cache compatibility](090-scoped-scientific-cache-compatibility.md).
   **Complete; Astra Medium review and preflight passed.** Reuse proven-compatible
   Neware scientific artifacts in place.
