@@ -1,5 +1,9 @@
 # Feature specs
 
+- [090 — Scoped scientific cache compatibility](090-scoped-scientific-cache-compatibility.md).
+  **Complete; Astra Medium review and preflight passed.** Reuse proven-compatible
+  Neware scientific artifacts in place.
+
 - [089 — Accessible MPR plotting recovery](089-mpr-plot-recovery.md).
   **Complete; browser, Astra Medium review and preflight passed.** Direct
   per-source Permissive retries in folder and indexed results.

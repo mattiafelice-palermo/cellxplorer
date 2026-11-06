@@ -31,7 +31,9 @@ APP_VERSION = "0.28.0-alpha.21"
 INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").strip() or None
 
 # Version of our derived per-cycle calculation code. Bump when the
-# calculation in services/calc.py changes meaning.
+# shared calculation in services/calc.py changes meaning for every format.
+# Format-specific scientific changes belong in that source adapter's parser
+# identity, so a BioLogic update cannot invalidate unchanged Neware caches.
 # 1.1.0: vectorized per_cycle; mean charge/discharge voltages can differ
 #        from 1.0.0 in the 7th decimal (float32 summation order).
 # 1.2.0: added cycle_duration_h, charge_time_h, discharge_time_h.
@@ -58,7 +60,8 @@ INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").stri
 #        and resolves the prior condition-free signature as a compatibility alias.
 # 1.6.4: adjacent opposite-polarity BioLogic CP half-sources complete one Cell cycle.
 # 1.6.5: acquisition-proven repeated GCPL executions pair charge to following discharge;
-#        invalidate derived Cell results alongside the gcpl15 source adapter identity.
+#        historically also invalidated unrelated Neware results. Versions 1.6.4
+#        and 1.6.5 are explicitly equivalent for Neware source caches (Spec 090).
 CALC_VERSION = "1.6.5"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

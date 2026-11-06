@@ -33,6 +33,7 @@ import pandas as pd
 
 from ..config import CACHE_DIR, CALC_VERSION
 from . import calc, canonical_cycling, parsing, time_capacity_derived
+from .scientific_cache_compatibility import compatible_calculation_versions
 
 logger = logging.getLogger(__name__)
 
@@ -370,9 +371,9 @@ def schedule_build(file_hash: str, source_path: str | Path, *, read_mode: str = 
         # error for the caller.
         parser_identity = parsing.PARSER_VERSION
     key = (file_hash, parser_identity, CALC_VERSION)
-    if raw_path(file_hash, parser_identity).is_file() and cycles_path(
+    if raw_path(file_hash, parser_identity).is_file() and has_cycles(
         file_hash, parser_identity, CALC_VERSION
-    ).is_file():
+    ):
         return {"status": "ready", "error": None}
 
     now = time.monotonic()
@@ -693,7 +694,18 @@ def cycles_path(
 
 
 def has_cycles(file_hash: str, parser_version: str, calc_version: str) -> bool:
-    return cycles_path(file_hash, parser_version, calc_version).exists()
+    return existing_cycles_path(file_hash, parser_version, calc_version) is not None
+
+
+def existing_cycles_path(
+    file_hash: str, parser_version: str, calc_version: str,
+) -> Path | None:
+    """Find exact or explicitly equivalent science without promoting any bytes."""
+    for version in compatible_calculation_versions(parser_version, calc_version):
+        path = cycles_path(file_hash, parser_version, version)
+        if path.is_file():
+            return path
+    return None
 
 
 def _raw_shape_fingerprint(
@@ -1704,6 +1716,8 @@ def _validate_time_capacity_derived_index(
     parquet_path: Path,
     parser_version: str,
     raw_index: dict[str, Any],
+    *,
+    calc_version: str = CALC_VERSION,
 ) -> dict[str, Any]:
     """Validate prepared bytes against the active raw layout and identity."""
 
@@ -1715,7 +1729,7 @@ def _validate_time_capacity_derived_index(
         raise RawLayoutError("prepared derived cache version is not current")
     if index.get("parser_version") != parser_version:
         raise RawLayoutError("prepared derived parser identity does not match")
-    if index.get("calc_version") != CALC_VERSION:
+    if index.get("calc_version") != calc_version:
         raise RawLayoutError("prepared derived calculation version does not match")
     if index.get("canonical_raw_version") != canonical_cycling.CANONICAL_RAW_VERSION:
         raise RawLayoutError("prepared derived canonical version does not match")
@@ -1809,21 +1823,23 @@ def _load_time_capacity_derived_index_unlocked(
     calc_version: str = CALC_VERSION,
 ) -> dict[str, Any]:
     raw_index = _load_raw_layout_index_unlocked(file_hash, parser_version)
-    parquet_path = time_capacity_derived_path(file_hash, parser_version, calc_version)
-    index_path = time_capacity_derived_index_path(file_hash, parser_version, calc_version)
-    if not parquet_path.is_file() or not index_path.is_file():
-        raise RawLayoutError("prepared derived cache is missing")
-    try:
-        with index_path.open("r", encoding="utf-8") as handle:
-            value = json.load(handle)
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise RawLayoutError("prepared derived index is not readable JSON") from exc
-    return _validate_time_capacity_derived_index(
-        value,
-        parquet_path,
-        parser_version,
-        raw_index,
-    )
+    failure = RawLayoutError("prepared derived cache is missing")
+    for version in compatible_calculation_versions(parser_version, calc_version):
+        parquet_path = time_capacity_derived_path(file_hash, parser_version, version)
+        index_path = time_capacity_derived_index_path(file_hash, parser_version, version)
+        if not parquet_path.is_file() or not index_path.is_file():
+            continue
+        try:
+            with index_path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle)
+            return _validate_time_capacity_derived_index(
+                value, parquet_path, parser_version, raw_index, calc_version=version,
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            failure = exc if isinstance(exc, RawLayoutError) else RawLayoutError(
+                "prepared derived index is not readable JSON"
+            )
+    raise failure
 
 
 def time_capacity_derived_status(
@@ -2100,7 +2116,7 @@ def load_time_capacity_derived(
             import pyarrow.parquet as pq
 
             loaded = pq.ParquetFile(
-                time_capacity_derived_path(file_hash, parser_version)
+                time_capacity_derived_path(file_hash, parser_version, derived_index["calc_version"])
             ).read_row_groups(row_groups, columns=read_columns).to_pandas()
         except Exception:
             logger.warning(
@@ -2114,8 +2130,8 @@ def load_time_capacity_derived(
 
         numeric_cycles = pd.to_numeric(loaded["cycle"], errors="coerce")
         result = loaded.loc[numeric_cycles.isin(requested_cycles), read_columns].reset_index(drop=True)
-        _touch(time_capacity_derived_path(file_hash, parser_version))
-        _touch(time_capacity_derived_index_path(file_hash, parser_version))
+        _touch(time_capacity_derived_path(file_hash, parser_version, derived_index["calc_version"]))
+        _touch(time_capacity_derived_index_path(file_hash, parser_version, derived_index["calc_version"]))
         if diagnostics is not None:
             diagnostics.rows_returned = len(result)
         return result
@@ -2659,16 +2675,17 @@ def build(
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     rp, cp = raw_path(file_hash, parser_identity), cycles_path(file_hash, parser_identity)
     reparse_for_biologic_provenance = False
-    if not force and rp.exists() and cp.exists():
+    cached_cycles = existing_cycles_path(file_hash, parser_identity, CALC_VERSION) if not force else None
+    if not force and rp.exists() and cached_cycles is not None:
         _require_source_fingerprint(source_path, expected_source_fingerprint)
         import pyarrow.parquet as pq
 
         cycle_columns = [
             column
             for column in ("charge_capacity_mah", "discharge_capacity_mah")
-            if column in pq.read_schema(cp).names
+            if column in pq.read_schema(cached_cycles).names
         ]
-        totals = capacity_totals(pd.read_parquet(cp, columns=cycle_columns))
+        totals = capacity_totals(pd.read_parquet(cached_cycles, columns=cycle_columns))
         if prepare_time_capacity:
             try:
                 prepare_time_capacity_derived(file_hash, parser_identity)
@@ -2690,7 +2707,7 @@ def build(
         if not reparse_for_biologic_provenance:
             return {
                 "rows": pq.read_metadata(rp).num_rows,
-                "cycles": pq.read_metadata(cp).num_rows,
+                "cycles": pq.read_metadata(cached_cycles).num_rows,
                 "parser_version": parser_identity,
                 "calc_version": CALC_VERSION,
                 "cached": True,
@@ -2782,9 +2799,9 @@ def build_write_behind(
     _require_source_fingerprint(source_path, expected_source_fingerprint)
     parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
     _require_source_fingerprint(source_path, expected_source_fingerprint)
-    if raw_path(file_hash, parser_identity).exists() and cycles_path(
-        file_hash, parser_identity
-    ).exists():
+    if raw_path(file_hash, parser_identity).exists() and has_cycles(
+        file_hash, parser_identity, CALC_VERSION
+    ):
         _require_source_fingerprint(source_path, expected_source_fingerprint)
         try:
             prepare_time_capacity_derived(file_hash, parser_identity)
@@ -2847,19 +2864,19 @@ def build_write_behind(
 def load_cycles(
     file_hash: str, parser_version: str, calc_version: str
 ) -> pd.DataFrame | None:
-    """Load per-cycle cache at EXACT versions (reproducibility). If the
+    """Load exact or explicitly proven-equivalent per-cycle science. If the
     cycles file is missing but a raw cache at that parser version exists and
     calc_version is current, derive and store it."""
     _wait_for_pending(file_hash)
-    p = cycles_path(file_hash, parser_version, calc_version)
-    if p.exists():
+    p = existing_cycles_path(file_hash, parser_version, calc_version)
+    if p is not None:
         value = pd.read_parquet(p)
         _touch(p)
         return value
     rp = raw_path(file_hash, parser_version)
     if rp.exists() and calc_version == CALC_VERSION:
         cycles = calc.per_cycle(pd.read_parquet(rp))
-        _write_atomic(cycles, p)
+        _write_atomic(cycles, cycles_path(file_hash, parser_version, calc_version))
         return cycles
     return None
 

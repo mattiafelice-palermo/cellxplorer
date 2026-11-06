@@ -507,6 +507,23 @@ class PortableAnalysisTests(unittest.TestCase):
         result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
         self.assertEqual(result["cell_series"][0]["x"], [1])
 
+    def test_linked_import_reuses_compatible_neware_cache_without_rebuilding(self):
+        destination, source_hash = self.create_export(include_original_files=False)
+        identity = parsing.current_parser_identity_for_extension("ndax")
+        current = cache.cycles_path(source_hash, identity, "1.6.5")
+        compatible = cache.cycles_path(source_hash, identity, "1.6.4")
+        current.replace(compatible)
+        before = compatible.read_bytes()
+        imported_db = self.make_session()
+        with patch.object(cache, "build", side_effect=AssertionError("compatible source rebuilt")):
+            imported, warnings = portable_analysis.import_analysis_html(imported_db, destination)
+        self.assertEqual(imported.title, "Portable study")
+        self.assertFalse(any("relink" in warning.lower() or "rebuild" in warning.lower() for warning in warnings))
+        self.assertEqual(compatible.read_bytes(), before)
+        self.assertFalse(current.exists())
+        result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
+        self.assertEqual(result["cell_series"][0]["x"], [1])
+
     def _rewrite_as_metadata_only_mpr(self, source_html: Path, destination: Path) -> str:
         report = self.read_report(source_html)
         source = report["sources"][0]

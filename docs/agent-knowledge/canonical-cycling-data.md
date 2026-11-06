@@ -547,8 +547,11 @@ provenance. Stitching, Cycles, continued-import previews and analysis share the
 same pairing. Indexed Time/Capacity deliberately falls back to exact full stitch
 for eligible cohorts; ordinary sources retain their selective paths. Preview
 execution boundaries survive sampling as `display_break_before` indices and
-become null separators in both plot coordinates. `CALC_VERSION 1.6.5` conservatively
-invalidates derived Cell results for this acquisition-based cycle interpretation.
+become null separators in both plot coordinates. The historical `CALC_VERSION 1.6.5` bump invalidated derived Cell results for
+this acquisition-based interpretation. Spec 090 reuses Neware 1.6.4/1.6.5 source
+artifacts through explicit proven equivalence; BioLogic receives no such alias.
+Future BioLogic-only scientific changes belong in its per-source adapter identity,
+so unchanged Neware caches and result fingerprints remain stable.
 
 ## Where validation runs
 

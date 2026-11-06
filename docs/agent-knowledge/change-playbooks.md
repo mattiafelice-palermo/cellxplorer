@@ -42,7 +42,11 @@ four preflight workers; neither seed compilation nor a cache hit proves acceptan
 ## Scientific calculation change
 
 1. Keep deterministic calculations in backend services.
-2. Decide whether the meaning of cached output changed; if so, bump `CALC_VERSION`.
+2. Decide which scientific meaning changed. Bump `CALC_VERSION` for shared
+   calculations; a format-specific change belongs in that adapter's parser
+   revision. BioLogic-only changes must not invalidate Neware caches. Preserve
+   existing compatible artifacts only through explicit, scientifically proven
+   equivalence, never numeric version ordering or file renaming.
 3. Preserve raw/source metadata and provenance.
 4. Add numerical tests covering units, missing metadata, and boundary cycles.
 5. Check that UI explainers and exported labels describe the implemented formula.

@@ -2744,7 +2744,7 @@ def import_analysis_html(
             )
             has_current_cache = (
                 cache.raw_path(effective_hash, expected_identity).exists()
-                and cache.cycles_path(effective_hash, expected_identity).exists()
+                and cache.has_cycles(effective_hash, expected_identity, CALC_VERSION)
             )
             if available_path is not None and not has_current_cache:
                 existing.parse_status = "parsing"

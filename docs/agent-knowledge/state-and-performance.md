@@ -91,6 +91,30 @@ content hash even when metadata eligibility fails: the preview callback uses it
 to bind the error to the focused source before removing selection. Verify this
 through an actual preview/import-picker interaction, not policy tests alone.
 
+## Scoped scientific cache compatibility (Spec 090)
+
+BioLogic-only interpretation changes use the BioLogic adapter identity, preserving
+Neware parser identities and the shared calculation version. Reserve global
+CALC_VERSION changes for shared scientific meaning changes.
+
+`scientific_cache_compatibility.py` declares one reviewed equivalence: calculation
+versions 1.6.4 and 1.6.5 for valid `nb:...:r...` and numeric `nx:...:r...` Neware
+identities. The 1.6.5 change only affected BioLogic cohort stitching; it changed
+neither shared per-source cycle calculations nor prepared phase/capacity transforms.
+Cycle reads/readiness and prepared reads/preparation try exact artifacts first,
+then the equivalent calculation version at the same content hash and parser
+identity. Keep files in place; only ordinary LRU access stamps change on reads.
+Prepared payloads validate their actual calculation version and exact raw layout,
+shape and schema before reuse. Never broaden this to BioLogic, unknown identities,
+other calculation versions or different parser/raw generations without proof.
+
+Fresh writes still use current identities. Startup and portable-import currentness
+must use `cache.has_cycles`, not a direct current-version filename existence test.
+`cycles_path` remains an exact write destination; `existing_cycles_path` is the
+read resolver. Analysis response keys and saved provenance are unchanged. Tests
+exercise actual startup selection, builds, selective prepared reads, portable
+round trips, immutable cache bytes and format-isolated result fingerprints.
+
 ## MPR mode and cache ownership (Spec 084)
 
 Source metadata persists requested MPR mode and actual interpretation separately.
