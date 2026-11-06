@@ -1,3 +1,4 @@
+import cellTableClasses from "./LibraryPage.module.css";
 import { StickyTableScrollArea } from "../components/StickyTableScrollArea";
 import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
 import {
@@ -1715,7 +1716,7 @@ export function LibraryPage() {
                     />
                   <ColumnResizeHandle label="Created" width={cellWidths.created} onResize={value => resizeCellColumn("created", value)} /></Table.Th>
                   <Table.Th pos="relative">Last update<ColumnResizeHandle label="Last update" width={cellWidths.updated} onResize={value => resizeCellColumn("updated", value)} /></Table.Th>
-                  <Table.Th>Actions</Table.Th>
+                  <Table.Th className={cellTableClasses.actionsHeader}>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -1733,6 +1734,7 @@ export function LibraryPage() {
                   return (
                   <Table.Tr
                     key={cell.id}
+                    className={cellTableClasses.row}
                     data-cell-row-id={cell.id}
                     tabIndex={0}
                     bg={
@@ -1847,7 +1849,8 @@ export function LibraryPage() {
                       </Text>
                     </Table.Td>
                     <Table.Td><Text size="xs" c="dimmed">{cell.last_data_update_at ? new Date(cell.last_data_update_at + (/Z$|[+-]\d\d:\d\d$/.test(cell.last_data_update_at) ? "" : "Z")).toLocaleString() : "—"}</Text></Table.Td>
-                    <Table.Td>
+                    <Table.Td className={cellTableClasses.actions} style={{ backgroundColor: selectedCellIds.has(cell.id)
+                      ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined }}>
                       <Group
                         gap="xs"
                         justify="end"

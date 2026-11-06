@@ -176,7 +176,9 @@ For tall horizontally overflowing Cell tables, `StickyTableScrollArea` keeps a
 keyboard-accessible synchronized horizontal scrollbar at the visible bottom.
 Its theme-colored fade softens overlapping rows. Reserve space at the natural
 table end so totals remain readable; do not move the scientific rows into a
-second independently scrolling vertical viewport.
+second independently scrolling vertical viewport. Pin the Cell Actions header
+and cells to the right of that horizontal viewport with opaque theme-aware
+backgrounds; preserve selected and hovered row colors behind the buttons.
 
 ## Buttons and icons
 

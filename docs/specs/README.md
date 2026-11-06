@@ -1,5 +1,8 @@
 # Feature specs
 
+- [094 — Pinned Cell actions](094-pinned-cell-actions.md).
+  **Complete; browser and preflight passed.** Keep row actions visible while scrolling.
+
 - [093 — Cell table bottom scrollbar](093-cell-table-bottom-scrollbar.md).
   **Complete; browser and preflight passed.** Reachable scrollbar with a faded overlap.
 

@@ -1,0 +1,12 @@
+.actions,
+.actionsHeader {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--mantine-color-body);
+  box-shadow: -1px 0 0 var(--mantine-color-default-border);
+}
+.actionsHeader { z-index: 3; }
+.row:hover .actions {
+  background: var(--table-highlight-on-hover-color, light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5)));
+}
