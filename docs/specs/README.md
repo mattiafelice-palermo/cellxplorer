@@ -1,6 +1,10 @@
 # Feature specs
 
-- [096 — Indexer spool access and clear progress](096-indexer-spool-progress.md). Implemented; real-folder and browser checks pass. Full preflight has Windows cleanup/known-folder failures; not merged.
+- [097 — Bounded parallel index header readers](097-bounded-parallel-index-headers.md).
+  Implemented and verified; 3.33× median full-scan gain, exact real-folder metadata/progress/rescan parity,
+  clean [Astra medium review](reviews/097-bounded-parallel-index-headers-review.md), 225-module/four-stage preflight passed.
+
+- [096 — Indexer spool access and clear progress](096-indexer-spool-progress.md). Complete; merged into main. Real-folder checks and full local/GitHub Windows preflight passed.
 
 - [095 — Cumulative Alpha.22 release review](095-alpha22-release-review.md).
   **Complete; published in Alpha 0.28.0-alpha.22.** Cumulative 084–094 changes

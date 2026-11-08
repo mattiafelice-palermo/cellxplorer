@@ -166,3 +166,21 @@ left behind. Optional checkout-local Python/Node tools are discovered automatica
 The development launcher defaults to `data\development` inside this checkout.
 An explicit `CELLXPLORER_DATA` environment override is preserved. This keeps browser
 testing separate from installed Stable/Beta/Alpha libraries.
+
+### Compare full-scan header readers
+
+`python scripts/benchmark_index_headers.py --root "O:\your-folder" --output data\header-benchmark`
+reads original files without changing them, uses fresh isolated catalogs, and compares
+the legacy serial implementation with two and four readers in both orders. It checks
+exact metadata/classification/source-identity parity, fixed-total monotonic progress,
+and unchanged rescans. Logs and manifests contain private paths; keep them local.
+OS/NAS caches are not flushed, so compare repeats rather than claiming cold-disk timing.
+Use `--resume` to reuse completed runs in that output directory. If an interrupted run
+left a `run-N-X` directory without `result.json`, move that partial directory aside
+before resuming; the script refuses to overwrite its diagnostic artifacts.
+
+Full scans use at most four individually stoppable header readers, with one file per
+reader and independent 45-second deadlines. They exit after enrichment; cached
+unchanged ready/unsupported entries do not start a reader. Watcher deltas retain their
+existing serial processing. A slow Windows process exit retains its reader slot and
+spool until reaped; healthy readers continue without exceeding the global four-reader cap.

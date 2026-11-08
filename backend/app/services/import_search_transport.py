@@ -58,8 +58,14 @@ class BatchSpool:
         self.sequence = 0
         self.pending_ack = None
 
-    def put(self, message: dict):
-        while len(list(self.directory.glob("*.json"))) >= 8:
+    def _frames(self):
+        # pathlib.glob suppresses directory-enumeration errors on Python 3.14.
+        # Access denial must remain distinct from an actually empty spool.
+        return sorted(path for path in self.directory.iterdir() if path.suffix == ".json")
+
+    def put(self, message: dict, *, retry_seconds=PUBLISH_RETRY_SECONDS):
+        publish_deadline = time.monotonic() + retry_seconds
+        while len(_retry_access(self._frames, publish_deadline)) >= 8:
             time.sleep(0.02)
         temporary = self.directory / f"{self.sequence:012d}.tmp"
         destination = temporary.with_suffix(".json")
@@ -69,14 +75,14 @@ class BatchSpool:
         # complete frame, never rewrite it or advance sequence on failure. This
         # local retry does not renew the coordinator's existing worker watchdog.
         _retry_access(lambda: os.replace(temporary, destination),
-                      time.monotonic() + PUBLISH_RETRY_SECONDS)
+                      publish_deadline)
         trace_message("worker_message", message, self.directory)
         self.sequence += 1
 
     def get(self, timeout: float):
         end = time.monotonic() + timeout
         while True:
-            paths = [self.pending_ack[0]] if self.pending_ack else sorted(self.directory.glob("*.json"))
+            paths = [self.pending_ack[0]] if self.pending_ack else _retry_access(self._frames, end)
             if paths:
                 # Only complete, atomically renamed files are visible. A killed
                 # producer can leave a .tmp, never a partially readable message.

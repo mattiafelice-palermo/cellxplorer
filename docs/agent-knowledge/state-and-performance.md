@@ -152,11 +152,36 @@ cache descriptors cannot cross Safe/Permissive namespaces in either direction.
 Spec 060 owns a disposable local `search-index/catalog.sqlite` separate from the scientific
 database. Preferences use `AppSetting.import_search`; catalog corruption/schema mismatch can
 quarantine and rebuild this catalog without modifying Cells, SourceFiles, or scientific caches.
-`import_search_index.py` owns one cancellable spawned discovery/header worker. Discovery publishes
+`import_search_index.py` owns one cancellable spawned discovery worker. Discovery publishes
 all filename batches before headers, and atomic spool files allow bounded cancellation even when
 an SMB read or IPC batch stalls. Partial/offline traversal must retain unseen entries and previous
 mapped-drive/UNC identity. Header enrichment validates size/mtime again; failed identity checks
 clear unvalidated metadata and leave a retry state.
+
+Spec 097 splits full-scan header enrichment into at most four persistent spawned
+readers (`import_search_headers.py`). The parent streams a fixed local SQLite read
+snapshot and is the only catalog writer. Each lane has one outstanding fact, an
+explicit reader-start acknowledgement, and its own 45-second deadline starting at
+dispatch, including startup and spool access. Sibling results never renew it.
+Results may publish out of order; completion counts advance once per applied fact,
+against the fixed snapshot total. A stalled/crashed active reader clears only its
+identified fact's metadata, while other lanes continue. Exit before acknowledging
+a source gets one replacement within the original deadline; repeated startup
+failure interrupts visibly rather than blaming an unread source. Final results
+are drained after exit, including temporary access-lock retries under that deadline.
+Cancellation closes all lanes before their disposable spools are removed; no nested
+process pool or shared parser state is used. Incremental watcher deltas retain the
+existing serial worker and recovery rules. `header_readers=0` is the unchanged legacy
+full-scan path for benchmark comparisons, not a persisted user setting.
+
+Windows termination may outlive a short join. Keep a delayed process, its spool and
+its global reader-capacity slot owned by a reaper until exit is confirmed, without
+abandoning sibling cleanup. Healthy lanes take pending work before new facts so
+delayed cleanup cannot starve a queued source. New source deadlines start only on
+dispatch; a retry of an already-dispatched source retains its original deadline.
+Spool enumeration must propagate access errors (`Path.iterdir`, not Python 3.14's
+error-suppressing glob). Producer enumeration and atomic rename share one bounded
+publish retry budget; coordinator request publication yields immediately on locks.
 
 The atomic spool publish boundary does not guarantee immediate read/delete access
 on Windows. `BatchSpool.get()` retries only PermissionError within one monotonic

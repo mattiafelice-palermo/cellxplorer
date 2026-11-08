@@ -171,6 +171,9 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
             import time
             while not acknowledgement.exists():
                 time.sleep(0.02)
+        if config.get("_discovery_only"):
+            messages.put({"kind": "done", "warnings": 0})
+            return
         statement = ("""SELECT e.* FROM entries e JOIN memberships m ON m.canonical=e.canonical
             WHERE m.root_id=? AND m.generation=? AND e.canonical>? AND e.recognition!='unsupported'
             AND (e.recognition='pending' OR (? AND (e.metadata_state!='ready' OR e.metadata_version!=?)))

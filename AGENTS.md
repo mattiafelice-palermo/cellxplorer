@@ -226,6 +226,7 @@ Cellxplorer/
 │           ├── import_search_catalog.py Disposable SQLite filename/metadata catalog (Spec 060)
 │           ├── import_search_filters.py Whole-catalog filters, current library snapshot and bounded regex (Spec 064)
 │           ├── import_search_index.py Search preferences and cancellable scan coordination
+│           ├── import_search_headers.py Bounded, independently killable header readers (Spec 097)
 │           ├── import_search_live.py Bounded live roots, recovery and fallback scheduling (Spec 063)
 │           ├── import_search_watch.py Stoppable recursive Windows change subscriptions (Spec 063)
 │           ├── import_search_worker.py Spawned source discovery and header enrichment
@@ -339,6 +340,7 @@ Cellxplorer/
 │   ├── test_filesystem_cleanup.py Readonly, transient and persistent cleanup cases
 │   ├── test_start_webapp.py Native occupied-port and decline behavior
 │   ├── test_import_search_diagnostics.py Local trace isolation and metadata omission
+│   ├── test_import_search_headers.py Bounded reader deadlines, crash isolation and cancellation
 │   ├── test_import_search_live.py   Native changes, safe deltas, fallback and interval gates (Spec 063)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
@@ -409,6 +411,7 @@ Cellxplorer/
 │   ├── summarize_native_timings.py Read worker-measured native matrix phase markers
 │   ├── profile_time_capacity_refinement.py Focused adaptive-refinement S25 measurement (Spec 050.15)
 │   ├── profile_import_search.py     Disposable indexed-search catalog benchmark (Spec 060)
+│   ├── benchmark_index_headers.py   Read-only real-folder serial/parallel parity and rescan benchmark
 │   ├── profile_import_search_filters.py Disposable whole-catalog filter/relationship benchmark (Spec 064)
 │   ├── smoke_import_search.py       Frozen-backend indexing/recovery smoke in disposable data
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)

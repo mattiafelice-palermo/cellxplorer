@@ -37,6 +37,38 @@ class BatchSpoolAccessTests(unittest.TestCase):
         self.addCleanup(monotonic.stop)
         self.addCleanup(sleep.stop)
 
+    def test_directory_enumeration_denial_is_not_an_empty_spool(self):
+        self.spool.put({"kind": "final"})
+        original = Path.iterdir
+        calls = []
+        def enumerate_directory(path):
+            calls.append(path)
+            if len(calls) == 1:
+                raise PermissionError("directory enumeration temporarily denied")
+            return original(path)
+        with patch.object(Path, "iterdir", enumerate_directory):
+            self.assertEqual(self.spool.get(0.1), {"kind": "final"})
+        self.assertEqual(len(calls), 2)
+        self.spool.put({"kind": "next"})
+        with patch.object(Path, "iterdir", side_effect=PermissionError("directory denied")):
+            with self.assertRaises(PermissionError):
+                self.spool.get(0.05)
+        self.assertEqual(self.spool.get(0), {"kind": "next"})
+
+    def test_producer_retries_directory_enumeration_within_publish_budget(self):
+        original = Path.iterdir
+        attempts = []
+        def enumerate_directory(path):
+            attempts.append(path)
+            if len(attempts) == 1:
+                raise PermissionError("temporary directory denial")
+            return original(path)
+        with patch.object(Path, "iterdir", enumerate_directory):
+            self.spool.put({"kind": "complete"})
+        self.assertEqual(attempts, [self.directory, self.directory])
+        self.assertEqual(self.spool.sequence, 1)
+        self.assertEqual(self.spool.get(0), {"kind": "complete"})
+
     def test_transient_read_lock_preserves_fifo_and_delivers_once(self):
         self.spool.put({'kind': 'first'})
         self.spool.put({'kind': 'second'})

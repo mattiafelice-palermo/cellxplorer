@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from ..db import SessionLocal
 from ..models import AppSetting
 from . import automation, background_jobs
-from .import_search_catalog import Catalog, FORMATS, now, path_key, recover_catalog
+from .import_search_catalog import Catalog, FORMATS, METADATA_VERSION, now, path_key, recover_catalog
+from .import_search_headers import MAX_HEADER_READERS, read_headers
 from .import_search_worker import scan_root
 from .import_search_worker import scan_changes
 from .import_search_live import LiveRoots, refresh_deadline
@@ -78,10 +79,14 @@ def save_config(db, value: dict) -> dict:
 
 
 class SearchIndexer:
-    def __init__(self, catalog: Catalog, *, timeout=45.0, worker=scan_root, pause_provider=None, monitoring=True):
+    def __init__(self, catalog: Catalog, *, timeout=45.0, worker=scan_root, pause_provider=None, monitoring=True,
+                 header_readers=4):
         self.catalog = catalog
         self.timeout = timeout
         self.worker = worker
+        if not 0 <= header_readers <= MAX_HEADER_READERS:
+            raise ValueError("Use zero (legacy serial) through four header readers")
+        self.header_readers = header_readers
         self.pause_provider = pause_provider
         self.lock = threading.RLock()
         self.config = dict(DEFAULT_CONFIG)
@@ -367,11 +372,67 @@ class SearchIndexer:
             elif epoch == self.epoch and self.live:
                 self.live.items.get(root["id"], {}).update(recovery_failures=0)
 
+    def _enrich_headers(self, root, config, epoch, job, progress):
+        def cancelled():
+            if self._background_paused():
+                with self.lock:
+                    if epoch == self.epoch:
+                        self.epoch += 1
+                        if root["id"] not in self.pending:
+                            self.pending.insert(0, root["id"])
+                        self.catalog.root_state(root["id"], status="paused",
+                            message="Background automation is paused. Resume it from the power menu.")
+            return self.stop_event.is_set() or epoch != self.epoch
+
+        statement = """SELECT e.* FROM entries e JOIN memberships m ON m.canonical=e.canonical
+            WHERE m.root_id=? AND m.generation=? AND e.recognition!='unsupported'
+            AND (e.recognition='pending' OR (? AND (e.metadata_state!='ready' OR e.metadata_version!=?)))
+            ORDER BY e.canonical"""
+        parameters = (root["id"], root["generation"], config["metadata_enabled"], METADATA_VERSION)
+        warnings = 0
+        # A read snapshot fixes the candidate set while the single writer publishes.
+        with self.catalog.connect() as db:
+            db.execute("BEGIN")
+            total = db.execute("SELECT count(*) FROM (" + statement + ")", parameters).fetchone()[0]
+            rows = db.execute(statement, parameters)
+
+            def facts():
+                for row in rows:
+                    fact = dict(row)
+                    fact["metadata"] = json.loads(fact.pop("metadata_json"))
+                    yield fact
+
+            with self.lock:
+                if cancelled():
+                    return False, 0
+                progress.update(scan_phase="metadata", headers_completed=0, headers_total=total)
+                background_jobs.update_job(job, total=total, completed=0, phase="metadata",
+                    phase_detail=f"Checking source headers ({total} remaining)")
+            trace("parallel_enrichment", root_id=root["id"], total=total, readers=self.header_readers)
+            results = read_headers(facts(), readers=self.header_readers, metadata_enabled=config["metadata_enabled"],
+                timeout=self.timeout, cancelled=cancelled)
+            try:
+                for fact in results:
+                    with self.lock:
+                        if cancelled():
+                            return False, warnings
+                        self.catalog.apply_batch(root["id"], root["generation"], [fact])
+                        self.revision += 1
+                        warnings += fact["metadata_state"] == "unavailable" and fact["recognition"] != "unsupported"
+                        progress["headers_completed"] += 1
+                        background_jobs.update_job(job, completed=progress["headers_completed"],
+                            phase_detail=f"Checked {progress['headers_completed']} / {total} source headers")
+            finally:
+                results.close()
+        return not cancelled(), warnings
+
     def _scan(self, root: dict, config: dict, epoch: int):
         context = multiprocessing.get_context("spawn")
         generation = str(uuid.uuid4())
         trace("scan_start", root=root, generation=generation, epoch=epoch)
         root = {**root, "generation": generation}
+        parallel = self.worker is scan_root and self.header_readers > 0
+        worker_config = dict(config, _discovery_only=True) if parallel else config
         job = background_jobs.create_job(kind="source_search_index", title="Indexing search location", description=root["path"], total=0)
         complete = False
         finished = False
@@ -391,7 +452,7 @@ class SearchIndexer:
                 restart = False
                 with scan_spool("scan-") as directory:
                     messages = BatchSpool(directory)
-                    process = context.Process(target=self.worker, args=(root, config, str(self.catalog.path), directory), daemon=True)
+                    process = context.Process(target=self.worker, args=(root, worker_config, str(self.catalog.path), directory), daemon=True)
                     with self.lock:
                         if epoch != self.epoch or self.stop_event.is_set():
                             break
@@ -506,6 +567,10 @@ class SearchIndexer:
                 trace("worker_exit", root_id=root["id"], generation=generation, exitcode=process.exitcode, restart=restart, resume_after=root.get("resume_after"), finished=finished)
                 if not restart:
                     break
+            if parallel and finished and epoch == self.epoch and not self.stop_event.is_set():
+                finished = False
+                finished, header_warnings = self._enrich_headers(root, config, epoch, job, progress)
+                warnings += header_warnings
         finally:
             with self.lock:
                 current = epoch == self.epoch and not self.stop_event.is_set()
