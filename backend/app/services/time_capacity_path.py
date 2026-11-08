@@ -36,6 +36,7 @@ TIME_CAPACITY_OPTIONAL_COLUMNS: tuple[str, ...] = (
     "counter_potential_v",
     "mpr_elapsed_time_s",
     "mpr_acquisition_segment",
+    "biologic_mb_time_s",
 )
 
 
@@ -278,6 +279,7 @@ def time_capacity_request_columns(
         "current_ma",
         "mpr_elapsed_time_s",
         "mpr_acquisition_segment",
+        "biologic_mb_time_s",
     ]
     if protocol_active:
         requested.append("step_index" if "step_index" in available else "Step_Index")

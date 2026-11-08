@@ -193,7 +193,7 @@ SUPPORTED_DIRECT_SOURCE_EXTENSIONS = SUPPORTED_SOURCE_EXTENSIONS
 
 SUPPORTED_SOURCE_DESCRIPTION = (
     "Cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic (.mpr; GCPL "
-    "canonical cycling, verified CP/OCV metadata-only layouts)"
+    "canonical cycling, CP/OCV curves, MB cycling with EIS excluded)"
 )
 SUPPORTED_SOURCE_GLOB = source_glob()
 
@@ -411,6 +411,11 @@ def metadata_for_read_mode(path: str | Path, metadata: dict, read_mode: str = "s
     result = deepcopy(metadata)
     # Validate the binary container/layout even when settings semantics failed.
     with biologic_mpr.read_mpr_header(path) as document:
+        if biologic_mpr.mpr_technique_id(document) == biologic_mpr.MPR_MB_TECHNIQUE_ID:
+            result = _metadata_only_biologic_header(document, technique_id=biologic_mpr.MPR_MB_TECHNIQUE_ID)
+            result["raw"]["mpr_read_mode"] = "permissive"
+            result["read_mode"] = "permissive"
+            return result
         from .biologic_mpr_exploratory import validate_metadata_envelopes
         validate_metadata_envelopes(document)
         fields = document.vmp_data.field_offsets
@@ -1501,10 +1506,16 @@ def _parse_source_timeseries(path: str | Path, *, read_mode: str = "safe") -> pd
         return _parse_neware_binary_timeseries(source_path)
     if format_id == FORMAT_BIOLOGIC_MPR:
         with biologic_mpr.read_mpr(source_path) as document:
-            if read_mode == "permissive":
+            if read_mode == "permissive" and biologic_mpr.mpr_technique_id(document) != biologic_mpr.MPR_MB_TECHNIQUE_ID:
                 from .biologic_mpr_exploratory import validate_metadata_envelopes
                 validate_metadata_envelopes(document)
             technique_id = biologic_mpr.mpr_technique_id(document)
+            if technique_id == biologic_mpr.MPR_MB_TECHNIQUE_ID:
+                from .biologic_mb import map_mb_to_canonical
+                frame = map_mb_to_canonical(document)
+                if read_mode == "permissive":
+                    frame["mpr_read_mode"] = "permissive"
+                return frame
             if technique_id in {
                 biologic_mpr.MPR_CP_TECHNIQUE_ID,
                 biologic_mpr.MPR_OCV_TECHNIQUE_ID,
@@ -1674,14 +1685,17 @@ def _metadata_only_biologic_header(
     technique = {
         biologic_mpr.MPR_CP_TECHNIQUE_ID: "CP",
         biologic_mpr.MPR_OCV_TECHNIQUE_ID: "OCV",
+        biologic_mpr.MPR_MB_TECHNIQUE_ID: "MB",
     }[technique_id]
     layout = next(
         profile.name
         for profile in biologic_mpr.MPR_TECHNIQUE_LAYOUT_PROFILES
         if technique_id in profile.technique_ids
     )
-    log = biologic_gcpl.decode_gcpl_log(document.vmp_log)
-    warning = (
+    is_mb = technique == "MB"
+    log = ({"absolute_timestamps": False} if is_mb else biologic_gcpl.decode_gcpl_log(document.vmp_log))
+    from .biologic_mb import NOTICE as mb_notice
+    warning = mb_notice if is_mb else (
         "BioLogic OCV provides a voltage-time curve and is not counted as a cycling test."
         if technique == "OCV"
         else "BioLogic CP provides voltage/current data; complete cycles are inferred only "
@@ -1718,9 +1732,9 @@ def _metadata_only_biologic_header(
         "canonical_cycling_pending": False,
         "canonical_cycling_verified": True,
         "metadata_only": False,
-        "cycle_identity_source": "curve_only" if technique == "OCV" else "current_sign_alternation",
+        "cycle_identity_source": "mb_half_cycle_pairs" if is_mb else "curve_only" if technique == "OCV" else "current_sign_alternation",
         "absolute_timestamps": bool(log.get("absolute_timestamps")),
-        "measurement_voltage_available": 174 in data.resolved_base_id_set,
+        "measurement_voltage_available": (6 if is_mb else 174) in data.resolved_base_id_set,
         "curve_data": True,
         "complete_cycles_inferred": technique == "CP",
     }
@@ -1803,6 +1817,7 @@ def read_header_metadata(
                 if technique_id in {
                     biologic_mpr.MPR_CP_TECHNIQUE_ID,
                     biologic_mpr.MPR_OCV_TECHNIQUE_ID,
+                    biologic_mpr.MPR_MB_TECHNIQUE_ID,
                 }:
                     return _metadata_only_biologic_header(
                         document,

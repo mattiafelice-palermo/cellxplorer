@@ -109,6 +109,31 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(state["metadata_ready"], 0)
         self.assertEqual(state["metadata_unavailable"], 0)
 
+    def test_mb_upgrade_retries_only_negative_mpr_catalog_facts_once(self):
+        items = [fact("C:\\cycling\\old-mb.mpr"), fact("C:\\cycling\\known.mpr"),
+                 fact("C:\\cycling\\known.ndax"), fact("C:\\cycling\\unsupported.xlsx")]
+        for i in (0, 3):
+            items[i].update(recognition="unsupported", metadata_state="unavailable", metadata_version=2)
+        self.catalog.apply_batch("root", "one", items)
+        with self.catalog.connect() as db:
+            before = {row["name"]: dict(row) for row in db.execute("SELECT * FROM entries")}
+            db.execute("PRAGMA user_version=2")
+        upgraded = Catalog(self.catalog.path)
+        with upgraded.connect() as db:
+            after = {row["name"]: dict(row) for row in db.execute("SELECT * FROM entries")}
+        for name in ("known.mpr", "known.ndax", "unsupported.xlsx"):
+            self.assertEqual(before[name], after[name])
+        retried = after["old-mb.mpr"]
+        self.assertEqual(retried["recognition"], "pending")
+        self.assertEqual(retried["metadata_version"], 0)
+        # An MB that is still unsupported under the new reader is not retried
+        # again on every catalog open.
+        with upgraded.connect() as db:
+            db.execute("UPDATE entries SET recognition='unsupported', metadata_version=2 WHERE name='old-mb.mpr'")
+        reopened = Catalog(self.catalog.path)
+        with reopened.connect() as db:
+            self.assertEqual(db.execute("SELECT recognition FROM entries WHERE name='old-mb.mpr'").fetchone()[0], "unsupported")
+
     def test_literal_unicode_metadata_and_filters(self):
         self.catalog.apply_batch("root", "one", [fact(), fact("C:\\cycling\\ÄCCENT%.mpr")])
         for query in ("cell_2370", "2370", "äccent", "%", "a", "bc", '"', "never_matches"):

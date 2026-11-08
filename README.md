@@ -3,12 +3,13 @@
 Single-user, local web app for organizing, analyzing, comparing and
 revisiting battery-cycling data. Built per [SPEC.md](spec.md) around the
 open-source **NewareNDA** parser for Neware sources and an independently
-authored BioLogic GCPL-family `.mpr` reader. CellXplorer imports Neware
+authored BioLogic `.mpr` reader. CellXplorer imports Neware
 `.nda`, `.ndax`, and structured Neware Excel `.xlsx` exports plus supported
-BioLogic GCPL-family `.mpr` sources through the same Cell/source workflow.
-The currently verified MPR layout is header-readable and metadata-only: it
-does not publish canonical cycling rows, caches, or capacity previews until an
-independently verified full-cycle identity is available. Arbitrary Excel
+BioLogic GCPL, CP, OCV and MB `.mpr` sources through the same Cell/source workflow.
+Verified GCPL runs provide cycling data; CP and OCV provide voltage curves.
+Supported MB layouts provide voltage/time and voltage/capacity with EIS operations
+excluded and visible gaps across omissions. MB capacity omits boundary intervals
+that cannot be assigned to an ordinary operation. Arbitrary Excel
 workbooks, `.mpt` files, and unsupported MPR techniques are not supported.
 
 ## Run on Windows

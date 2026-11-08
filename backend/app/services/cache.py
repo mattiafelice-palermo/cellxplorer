@@ -75,6 +75,7 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
         "verified_repeated_executions",
         "exploratory_unverified",
         "verified_cp_ocv_curve",
+        "mb_half_cycle_pairs",
     }
 )
 
@@ -536,6 +537,7 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "biologic_replayed_records_skipped",
                 "biologic_permissive_reading",
                 "biologic_instrument_errors",
+                "biologic_mb_eis_exclusion",
                 "biologic_clock_regressions",
             }
             and isinstance(item.get("message"), str)
@@ -550,7 +552,7 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "count": count,
                 "message": item["message"][:500],
             }
-            if item["code"] == "biologic_replayed_records_skipped":
+            if item["code"] in {"biologic_replayed_records_skipped", "biologic_mb_eis_exclusion"}:
                 warning["severity"] = "info"
             raw_examples = item.get("examples")
             if isinstance(raw_examples, list):
@@ -595,6 +597,7 @@ def _write_parser_diagnostics(
                 "biologic_replayed_records_skipped",
                 "biologic_permissive_reading",
                 "biologic_instrument_errors",
+                "biologic_mb_eis_exclusion",
                 "biologic_clock_regressions",
             }
             or not isinstance(item.get("message"), str)
@@ -610,7 +613,7 @@ def _write_parser_diagnostics(
             "count": count,
             "message": str(item["message"])[:500],
         }
-        if item["code"] == "biologic_replayed_records_skipped":
+        if item["code"] in {"biologic_replayed_records_skipped", "biologic_mb_eis_exclusion"}:
             diagnostic["severity"] = "info"
         examples: list[dict[str, object]] = []
         for example in item.get("examples", [])[:3] if isinstance(item.get("examples"), list) else []:

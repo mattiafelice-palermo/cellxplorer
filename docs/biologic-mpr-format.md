@@ -4,6 +4,47 @@ This is CellXplorer's independent format notebook for the verified BioLogic EC-L
 supported by the application. It records only facts established from direct byte observations and
 project-authored tests. It is not copied from a third-party parser.
 
+## MB cycling profiles (Spec 099)
+
+The independently supplied MB recordings use technique discriminator `0x7f`:
+
+| Profile | Module header | Set/data/LOG versions | Column IDs | Record offset |
+| --- | ---: | --- | --- | ---: |
+| RDO / VMP3 | 65 bytes | 10 / 11 / 10 | big-endian uint16 | 1007 |
+| ISL / BT-Lab | 57 bytes | 0 / 3 / 0 | little-endian uint16 | 406 |
+
+The classic header has payload length at 41, version at 45 and an eight-byte
+date at 49, with no max-size/old-version words. Exact declared module ends,
+one settings/data module, version checks and registry-derived record widths
+still apply. Mixed classic/extended modules are unsupported. Classic decoding
+is enabled only for MB, and neither MB settings nor classic LOG fields are
+interpreted using GCPL metadata offsets.
+
+`biologic_mb.py` requires time, measured Ewe, measured current, incremental mAh,
+charge counters, Ns, packed flags and half-cycle identity. Column 32 is named
+`raw_frequency_hz` only for the MB profile; it remains ignored by older adapters,
+including their replay-recovery gates. Unknown opaque MB columns are rejected.
+Without frequency, only the observed RDO ordinary base-column set is accepted:
+`131,39,4,20,6,8,7,13,211,212`, plus the six packed flag declarations.
+
+A positive frequency excludes its entire contiguous Ns execution, including
+zero-frequency boundary rows. Instrument error flags in those omitted operations
+do not invalidate ordinary cycling. Original record numbers survive omissions.
+Native elapsed time is finite, non-negative and non-decreasing. Active interior
+increments must agree in sign with measured current and in magnitude with the
+recorded counter difference. Neutral and zero-duration interior intervals cannot
+carry significant charge. Counter resets or transfers at an operation boundary
+are unassigned: capacity starts at zero there and accumulates subsequent measured
+increments. No capacity or derivative difference bridges EIS. Thus MB capacity
+describes retained ordinary operation intervals, with unassignable boundary
+intervals omitted; it is not the instrument's total charge including EIS.
+
+Adjacent even/odd source half-cycle labels with opposite measured directions
+provide inferred cycle pairs; unmatched half-cycles retain voltage/capacity
+curves without a complete-cycle summary. The first supplied ISL file yields
+31,469 ordinary records, 1,200 excluded EIS records across 24 executions and
+50 pairs; RDO yields 1,538 records, no EIS exclusions and 11 pairs.
+
 ## Evidence file
 
 The reference file was used locally from:

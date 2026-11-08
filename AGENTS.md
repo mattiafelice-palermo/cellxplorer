@@ -13,6 +13,10 @@ reconstruction path, and storage-local cycle labels for deterministic non-repeat
 including a header-proven neutral setup/control preamble. Ambiguous restarts, branching, unresolved
 controls, contradictory directions, and unsupported layouts remain metadata-only until their cycle
 identity is independently verified.
+Verified BioLogic MB layouts provide voltage/time and voltage/capacity, excluding entire
+frequency-identified EIS executions and preserving acquisition gaps. MB capacity uses measured
+increments inside ordinary operations; unassignable boundary intervals are omitted. Classic MB
+LOG/settings offsets are not GCPL metadata. See Spec 099 and `biologic_mb.py`.
 BioLogic `.mpt` files remain validation artifacts rather than user-imported sources. MPR/MPT parity
 is deferred future validation, not a Parent 041 merge blocker under the user's 2026-08-16
 amendment.

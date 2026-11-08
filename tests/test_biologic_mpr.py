@@ -283,7 +283,7 @@ class BiologicMprReaderTests(unittest.TestCase):
 
     def test_unknown_technique_is_rejected_before_gcpl_layout_inference(self) -> None:
         with TemporaryDirectory() as temp:
-            path = _write_fixture(Path(temp), settings_payload=b"\x7funknown")
+            path = _write_fixture(Path(temp), settings_payload=b"\xfeunknown")
             with self.assertRaisesRegex(UnsupportedMprError, "unsupported BioLogic technique"):
                 read_mpr(path)
 

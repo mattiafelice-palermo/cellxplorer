@@ -193,8 +193,9 @@ shared extension -> format_id decision table that admission, inspection, `parse_
 shared NewareNDA boundary, structured Neware `.xlsx` files use
 `backend/app/services/neware_excel.py`, and `.mpr` uses the independently authored
 `biologic_mpr.py` reader plus `biologic_gcpl.py` canonical adapter. Verified GCPL-family MPRs are
-canonical cycling sources; recognized CP and OCV layouts are accepted as metadata-only sources
-because their cycle identity is not established by the GCPL adapter. Unknown or unsupported MPR
+canonical cycling sources; recognized CP/OCV layouts provide voltage curves with CP
+current-polarity pairing. MB uses `biologic_mb.py`: measured current/dQ, source half-cycle
+pairs, whole frequency-identified Ns execution exclusion and acquisition breaks. Unknown or unsupported MPR
 layouts remain rejected. `.mpt` remains validation ground truth, not an admitted source format.
 `parsing.recognize_source(path)` is the content-aware recognition function (Excel additionally
 requires `neware_excel.is_supported_workbook`'s bounded header check, so a generic `.xlsx` is never
@@ -216,6 +217,21 @@ compatibility fallback for a source that predates 040.3 and has no stored `parse
 static registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
 hierarchy. Excel sources are normalized into the same canonical raw, protocol and versioned raw/cycle
 cache contracts, so scientific services remain format-neutral.
+
+MB is additive under the existing MPR parser identity: no previously supported
+reader output changed, so neither parser identities nor `CALC_VERSION` advances.
+`biologic_mb_time_s` preserves MB native time without the exploratory-only
+`mpr_elapsed_time_s` phase semantics. `mpr_acquisition_segment` carries EIS gaps
+through full/selective projections, source previews, downsampling and derivative
+calculation/rendering. Reusable navigation arrays cannot represent those gaps,
+so their admission gate bypasses these sources. Keep the MB cycle provenance in
+the raw-index whitelist to avoid reparsing every valid cache hit. Positive EIS
+exclusion counts persist as informational parser diagnostics.
+
+Disposable search catalog version 3 retries only pre-upgrade unsupported MPR
+header facts once. It preserves recognized metadata, memberships and all
+scientific artifacts. New reader support must not leave old negative discovery
+facts permanently hiding newly supported sources.
 
 The normal source lifecycle carries one server-issued immutable `SourceFingerprint` (hash, size,
 and `mtime_ns`) from inspection through registration, cache preparation, scanner work, and

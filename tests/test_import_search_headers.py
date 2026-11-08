@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import multiprocessing
 import os
 from pathlib import Path
@@ -49,60 +50,70 @@ def one_shot_reader(incoming, outgoing, metadata_enabled):
     os._exit(0)
 
 
+@contextmanager
+def virtual_header_readers(completion_delay=.05):
+    # Exercise scheduler fairness with virtual time. OS spawn/import latency
+    # must not consume this fixture's deliberately short two-second budget.
+    class Clock:
+        now = 0.0
+        def monotonic(self):
+            return self.now
+        def sleep(self, delay):
+            self.now += delay
+    clock = Clock()
+    clock.dispatches = {}
+    channels = {}
+    class Process:
+        pid = 42
+        alive = False
+        exitcode = None
+        def start(self):
+            self.alive = True
+        def is_alive(self):
+            return self.alive
+        def terminate(self):
+            self.alive = False
+        kill = terminate
+        def join(self, timeout):
+            pass
+        def close(self):
+            pass
+    class Requests:
+        def __init__(self, channel):
+            self.channel = channel
+        def put(self, message, **kwargs):
+            clock.dispatches.setdefault(message['fact']['canonical'], clock.now)
+            self.channel.update(fact=message['fact'], announced=False, due=clock.now + completion_delay)
+    class Results:
+        def __init__(self, channel):
+            self.channel = channel
+        def get(self, timeout):
+            fact = self.channel.get('fact')
+            if fact is None:
+                raise queue.Empty
+            if not self.channel['announced']:
+                self.channel['announced'] = True
+                return dict(kind='started', canonical=fact['canonical'])
+            if fact['canonical'] == 'stall' or clock.now < self.channel['due']:
+                raise queue.Empty
+            self.channel.pop('fact')
+            return dict(kind='result', fact=dict(fact, metadata_state='ready', metadata={}))
+    def spool(directory):
+        channel = channels.setdefault(str(Path(directory).parent), {})
+        return Requests(channel) if Path(directory).name == 'in' else Results(channel)
+    context = Mock()
+    context.Process.side_effect = lambda **kwargs: Process()
+    with patch.object(headers, "time", clock), \
+         patch.object(headers.multiprocessing, "get_context", return_value=context), \
+         patch.object(headers, "BatchSpool", side_effect=spool):
+        yield clock
+
+
 class ParallelHeaderTests(unittest.TestCase):
     def test_healthy_lane_takes_pending_fact_when_retired_slot_is_unavailable(self):
         capacity = threading.BoundedSemaphore(2)
         original_stop = headers._stop_lane
         held = []
-        # Exercise scheduler fairness with virtual time. OS spawn/import latency
-        # must not consume this fixture's deliberately short two-second budget.
-        class Clock:
-            now = 0.0
-            def monotonic(self):
-                return self.now
-            def sleep(self, delay):
-                self.now += delay
-        clock = Clock()
-        channels = {}
-        class Process:
-            pid = 42
-            alive = False
-            exitcode = None
-            def start(self):
-                self.alive = True
-            def is_alive(self):
-                return self.alive
-            def terminate(self):
-                self.alive = False
-            kill = terminate
-            def join(self, timeout):
-                pass
-            def close(self):
-                pass
-        class Requests:
-            def __init__(self, channel):
-                self.channel = channel
-            def put(self, message, **kwargs):
-                self.channel.update(fact=message['fact'], announced=False, due=clock.now + .05)
-        class Results:
-            def __init__(self, channel):
-                self.channel = channel
-            def get(self, timeout):
-                fact = self.channel.get('fact')
-                if fact is None:
-                    raise queue.Empty
-                if not self.channel['announced']:
-                    self.channel['announced'] = True
-                    return dict(kind='started', canonical=fact['canonical'])
-                if fact['canonical'] == 'stall' or clock.now < self.channel['due']:
-                    raise queue.Empty
-                self.channel.pop('fact')
-                return dict(kind='result', fact=dict(fact, metadata_state='ready', metadata={}))
-        def spool(directory):
-            channel = channels.setdefault(str(Path(directory).parent), {})
-            return Requests(channel) if Path(directory).name == 'in' else Results(channel)
-        context = Mock()
-        context.Process.side_effect = lambda **kwargs: Process()
         def stop(lane):
             original_stop(lane)
             if lane["fact"]["canonical"] == "stall" and not held:
@@ -110,9 +121,7 @@ class ParallelHeaderTests(unittest.TestCase):
                 held.append(True)  # Simulate capacity retained by delayed OS exit.
         try:
             with patch.object(headers, "_slots", capacity), patch.object(headers, "_stop_lane", stop), \
-                 patch.object(headers, 'time', clock), \
-                 patch.object(headers.multiprocessing, 'get_context', return_value=context), \
-                 patch.object(headers, 'BatchSpool', side_effect=spool):
+                 virtual_header_readers():
                 results = list(self.outcomes(["stall", *map(str, range(180))], timeout=2))
         finally:
             if held:
@@ -228,11 +237,23 @@ class ParallelHeaderTests(unittest.TestCase):
         self.assertEqual(failed["metadata_version"], 0)
 
     def test_sibling_completions_do_not_renew_stalled_lane_deadline(self):
-        began = time.monotonic()
-        results = list(self.outcomes(["stall", *map(str, range(35))], timeout=2))
-        elapsed = time.monotonic() - began
-        self.assertEqual(len(results), 36)
-        self.assertEqual(sum(r["metadata_state"] == "unavailable" for r in results), 1)
+        # Measure the scheduler's deadline, independently of child import time.
+        # Healthy siblings must finish on both sides of the stalled deadline.
+        names = ["stall", *map(str, range(35))]
+        with virtual_header_readers(completion_delay=.10) as clock:
+            results, yielded = [], {}
+            for result in self.outcomes(names, timeout=2):
+                results.append(result)
+                yielded[result["canonical"]] = clock.now
+            elapsed = clock.now
+            stalled_duration = yielded["stall"] - clock.dispatches["stall"]
+        self.assertEqual(sorted(result["canonical"] for result in results), sorted(names))
+        self.assertEqual([r["canonical"] for r in results if r["metadata_state"] == "unavailable"], ["stall"])
+        self.assertGreaterEqual(stalled_duration, 2)
+        self.assertLessEqual(stalled_duration, 2.02)
+        healthy_times = [when for name, when in yielded.items() if name != "stall"]
+        self.assertTrue(any(when < yielded["stall"] for when in healthy_times))
+        self.assertTrue(any(when > yielded["stall"] for when in healthy_times))
         self.assertLess(elapsed, 4.5)
 
     def test_cancellation_kills_all_owned_readers_and_limits_prefetch(self):

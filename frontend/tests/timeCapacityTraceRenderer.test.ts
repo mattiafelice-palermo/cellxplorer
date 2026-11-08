@@ -326,6 +326,16 @@ test("derivative views retain cycle/phase splits, legend, metadata and nulls", a
   }
 });
 
+test("derivative traces split at omitted MB EIS intervals in interactive and exported plots", async () => {
+  const result = makeResult();
+  result.cell_traces[0].display_break_before = [1];
+  const { interactive } = await assertParity(result, makeSpec({ view: "dqdv" }));
+  assert.equal(interactive.length, 5);
+  assert.equal(interactive[0].x.length, 1);
+  assert.equal(interactive[1].x.length, 1);
+  assert.equal(interactive.filter(trace => trace.showlegend).length, 1);
+});
+
 test("series/channel and analysis-sample visibility do not depend on export metadata", async () => {
   const result = makeResult();
   const hidden = makeSpec();

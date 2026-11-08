@@ -1857,6 +1857,13 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     which offsets x per half-cycle — a CV hold re-drew from x=0 as a flat
     line at the cutoff voltage. Each drop adds the pre-drop value as a
     running offset, turning per-step time into cumulative elapsed time."""
+    if "biologic_mb_time_s" in frame.columns:
+        ordinary = _continuous_time(frame.drop(columns="biologic_mb_time_s"))
+        native = pd.to_numeric(frame["biologic_mb_time_s"], errors="coerce").to_numpy(dtype=float)
+        values = ordinary["time_s"].to_numpy(dtype=float).copy()
+        present = np.isfinite(native)
+        values[present] = native[present]
+        return frame.assign(time_s=values)
     if "mpr_elapsed_time_s" in frame.columns:
         from . import exploratory_plotting
         # Preserve native clocks only for exploratory rows. Ordinary sources in
@@ -1900,6 +1907,9 @@ def _restore_time_capacity_cycle_times(
         native = exploratory_plotting.native_time(frame)
         present = np.isfinite(native)
         restored[present] = native[present]
+    if "biologic_mb_time_s" in frame.columns:
+        native = pd.to_numeric(frame["biologic_mb_time_s"], errors="coerce").to_numpy(dtype=float)
+        restored[np.isfinite(native)] = native[np.isfinite(native)]
     return frame.assign(time_s=restored)
 
 
@@ -1970,6 +1980,9 @@ def _time_capacity_display_x(
     if not capacity_axis and "mpr_elapsed_time_s" in raw.columns:
         from . import exploratory_plotting
         native = exploratory_plotting.native_time(raw) / factor
+    if not capacity_axis and settings["display_mode"] == "consecutive" and "biologic_mb_time_s" in raw.columns:
+        mb_native = pd.to_numeric(raw["biologic_mb_time_s"], errors="coerce").to_numpy(dtype=float) / factor
+        native = mb_native if native is None else np.where(np.isfinite(mb_native), mb_native, native)
     def preserve_native(output: np.ndarray) -> np.ndarray:
         if native is not None:
             present = np.isfinite(native)
@@ -2171,6 +2184,10 @@ def _derivative_curve(
                 | (segments[1:] != segments[:-1])
                 | (phase_arr[1:] != phase_arr[:-1])
             )
+            if "mpr_acquisition_segment" in frame.columns:
+                from . import exploratory_plotting
+                breaks = exploratory_plotting.break_before(frame)
+                changed[np.asarray(breaks, dtype=int) - 1] = True
             starts = np.concatenate((np.array([0], dtype=int), np.flatnonzero(changed) + 1))
             ends = np.concatenate((starts[1:], np.array([n], dtype=int)))
         else:

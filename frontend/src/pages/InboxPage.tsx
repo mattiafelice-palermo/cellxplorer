@@ -3131,7 +3131,7 @@ export function InboxPage() {
         <div>
           <Title order={3}>Import</Title>
           <Text size="sm" c="dimmed">
-            Load Neware (.nda, .ndax, structured .xlsx) or BioLogic GCPL, CP, and OCV (.mpr) data, then choose separate or continued-cell import. CP/OCV voltage curves can be plotted even when a complete charge/discharge cycle is not present.
+            Load Neware (.nda, .ndax, structured .xlsx) or BioLogic GCPL, CP, OCV, and MB (.mpr) data, then choose separate or continued-cell import. CP/OCV voltage curves can be plotted even when a complete charge/discharge cycle is not present. MB impedance operations are excluded.
           </Text>
         </div>
         <Button

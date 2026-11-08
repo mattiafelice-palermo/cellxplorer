@@ -716,12 +716,13 @@ export function timeCapacityTracesForResult(
       const baseName = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
       const descriptor = timeCapacitySeriesDescriptor(trace);
       const resolvedByPhase = new Map<string | null, ReturnType<typeof resolveTrace>>();
+      const displayBreaks = new Set(trace.display_break_before ?? []);
       let start = 0;
       while (start < trace.derivative_x.length) {
         const cycle = trace.cycle[start];
         const phase = trace.phase[start];
         let end = start + 1;
-        while (end < trace.derivative_x.length && trace.cycle[end] === cycle && trace.phase[end] === phase) end += 1;
+        while (end < trace.derivative_x.length && trace.cycle[end] === cycle && trace.phase[end] === phase && !displayBreaks.has(end)) end += 1;
         const x = trace.derivative_x.slice(start, end);
         const y = trace.derivative_y.slice(start, end);
         if (hasFinitePoint(x) && hasFinitePoint(y)) {

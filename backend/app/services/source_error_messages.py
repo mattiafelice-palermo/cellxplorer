@@ -44,7 +44,7 @@ def source_error_message(path: str | Path, error: SourceFormatError) -> str:
     technique = re.search(r"unsupported BioLogic technique discriminator (0x[0-9a-fA-F]+)", reason)
     if technique:
         return (f"Unsupported BioLogic .mpr: this recording uses a technique that CellXplorer does not "
-                f"read yet (technique code {technique[1]}). Supported techniques are GCPL, CP and OCV.")
+                f"read yet (technique code {technique[1]}). Supported techniques are GCPL, CP, OCV and MB.")
     if any(text in reason for text in ("empty VMP data block", "contains no records", "contains no MPR modules")):
         return "Cannot read BioLogic .mpr: no usable measurement records were found in the file."
     if any(text in reason for text in ("invalid MPR module marker", "trailing bytes after an MPR module",

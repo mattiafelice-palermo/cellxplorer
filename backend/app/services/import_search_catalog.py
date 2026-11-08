@@ -13,7 +13,7 @@ from pathlib import Path
 from ..config import APP_DATA_DIR
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 METADATA_VERSION = 2
 FORMATS = (".ndax", ".mpr", ".xlsx")
 METADATA_FIELDS = ("barcode", "remarks", "part_number", "start_time", "technique",
@@ -75,7 +75,7 @@ class Catalog:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise ValueError("Search catalog version changed; rebuild the search index.")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS roots (
@@ -124,6 +124,13 @@ class Catalog:
                     db.execute("INSERT INTO search_fts(search_fts) VALUES('rebuild')")
             except sqlite3.OperationalError:
                 self.fts = False
+            if version < 3:
+                # The old reader rejected MB. Retry only negative MPR header
+                # facts once; retain all recognized metadata and scientific
+                # caches. This database is a disposable discovery catalog.
+                db.execute("""UPDATE entries SET recognition='pending', metadata_state='pending',
+                              metadata_version=0, metadata_json='{}', technique=NULL
+                              WHERE extension='.mpr' AND recognition='unsupported'""")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

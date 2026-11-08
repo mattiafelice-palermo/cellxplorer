@@ -108,7 +108,7 @@ def prepare_segmented_raw(
         time_column = next(
             (
                 column
-                for column in ("mpr_elapsed_time_s", "total_time_s", "time_s", "record_index")
+                for column in ("mpr_elapsed_time_s", "biologic_mb_time_s", "total_time_s", "time_s", "record_index")
                 if column in frame.columns
             ),
             None,
@@ -136,7 +136,7 @@ def prepare_segmented_raw(
                     else float(valid_time.iloc[0])
                 )
                 frame["preview_time_s"] = (
-                    local_time if time_column == "mpr_elapsed_time_s"
+                    local_time if time_column in {"mpr_elapsed_time_s", "biologic_mb_time_s"}
                     else local_time - first_time + time_offset
                 )
         valid_preview_time = pd.to_numeric(frame["preview_time_s"], errors="coerce").dropna()

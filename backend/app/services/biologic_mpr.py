@@ -441,7 +441,12 @@ _REQUIRED_BASE_ID_SET = frozenset(REQUIRED_GCPL_BASE_IDS)
 MPR_GCPL_TECHNIQUE_IDS = frozenset({0x04, 0x77})
 MPR_CP_TECHNIQUE_ID = 0x19
 MPR_OCV_TECHNIQUE_ID = 0x0B
+MPR_MB_TECHNIQUE_ID = 0x7F
 MPR_TECHNIQUE_LAYOUT_PROFILES = (
+    MprTechniqueLayoutProfile(
+        "MB", frozenset({MPR_MB_TECHNIQUE_ID}), _REQUIRED_FLAG_IDS,
+        frozenset({131, 4, 6, 8, 7, 13, 211, 212}),
+    ),
     MprTechniqueLayoutProfile(
         "GCPL",
         MPR_GCPL_TECHNIQUE_IDS,
@@ -565,15 +570,18 @@ def _resolve_column_layout(
                 f"VMP encoded column ID {encoded_id} resolves to duplicate base ID {base_id}"
             )
         seen_bases.add(base_id)
-        if storage.field_name is None:
+        # Frequency has scientific meaning only in the MB profile. Preserve
+        # every pre-existing adapter's dtype and ignored-field recovery gates.
+        field_name = "raw_frequency_hz" if base_id == 32 and layout_name == "MB" else storage.field_name
+        if field_name is None:
             ignored_known_column_ids.append(encoded_id)
         else:
-            if storage.field_name in field_offsets:
+            if field_name in field_offsets:
                 raise UnsupportedMprColumn(
-                    f"VMP base ID {base_id} would overlap field {storage.field_name!r}"
+                    f"VMP base ID {base_id} would overlap field {field_name!r}"
                 )
-            field_offsets[storage.field_name] = cursor
-            field_formats[storage.field_name] = storage.dtype
+            field_offsets[field_name] = cursor
+            field_formats[field_name] = storage.dtype
         cursor += storage.byte_width
 
     missing_flags = sorted(required_flag_ids - seen_flags)
@@ -864,7 +872,7 @@ def _decode_ascii(raw: bytes, field_name: str, path: Path) -> str:
 
 
 def _parse_module(mapping: mmap.mmap, offset: int, file_size: int, path: Path) -> MprModule:
-    if file_size - offset < MPR_MODULE_HEADER_SIZE:
+    if file_size - offset < 57:
         raise InvalidMprError(f"{_source_label(path)} ends inside an MPR module header")
     if mapping[offset : offset + len(MPR_MODULE_MARKER)] != MPR_MODULE_MARKER:
         raise InvalidMprError(f"{_source_label(path)} has an invalid MPR module marker")
@@ -874,10 +882,25 @@ def _parse_module(mapping: mmap.mmap, offset: int, file_size: int, path: Path) -
         raise InvalidMprError(f"{_source_label(path)} has an invalid MPR module marker")
     short_name = _decode_ascii(header[6:16], "short-name", path)
     long_name = _decode_ascii(header[16:41], "long-name", path)
-    max_size, length, old_version, version = struct.unpack_from("<IIII", header, 41)
-    date_text = _decode_ascii(header[57:65], "date", path)
+    first_word = struct.unpack_from("<I", header, 41)[0]
+    classic_date = header[49:57]
+    is_classic = (first_word != 0xFFFFFFFF and len(classic_date) == 8 and
+                  classic_date[2:3] == b"/" and classic_date[5:6] == b"/" and
+                  classic_date.replace(b"/", b"").isdigit())
+    if not is_classic:
+        if len(header) < MPR_MODULE_HEADER_SIZE:
+            raise InvalidMprError(f"{_source_label(path)} ends inside an extended MPR module header")
+        max_size, length, old_version, version = struct.unpack_from("<IIII", header, 41)
+        header_size = MPR_MODULE_HEADER_SIZE
+        date_text = _decode_ascii(header[57:65], "date", path)
+    else:
+        # Independently observed classic MB header: length/version/date, with
+        # no max-size or old-version words. No marker scanning or offset guess.
+        length, version = struct.unpack_from("<II", header, 41)
+        max_size, old_version, header_size = 0xFFFFFFFF, 0, 57
+        date_text = _decode_ascii(header[49:57], "date", path)
 
-    payload_offset = offset + MPR_MODULE_HEADER_SIZE
+    payload_offset = offset + header_size
     payload_end = payload_offset + length
     if max_size != 0xFFFFFFFF and length > max_size:
         raise InvalidMprError(
@@ -936,6 +959,8 @@ def _decode_vmp_data(
 ) -> MprDataBlock:
     payload = module.payload
     try:
+        classic = module.payload_offset - module.offset == 57
+        record_offset = 406 if classic else VMP_DATA_RECORD_OFFSET
         if len(payload) < VMP_DATA_HEADER_SIZE:
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP data header")
 
@@ -948,17 +973,18 @@ def _decode_vmp_data(
                 f"{_source_label(path)} declares {n_columns} VMP columns above the safety bound"
             )
         column_header_end = 5 + (n_columns * 2)
-        if column_header_end > len(payload) or column_header_end > VMP_DATA_RECORD_OFFSET:
+        if column_header_end > len(payload) or column_header_end > record_offset:
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP column header")
 
-        column_ids = tuple(struct.unpack_from(f">{n_columns}H", payload, 5))
+        endian = "<" if classic else ">"
+        column_ids = tuple(struct.unpack_from(f"{endian}{n_columns}H", payload, 5))
         if len(set(column_ids)) != len(column_ids):
             raise UnsupportedMprColumn(f"{_source_label(path)} repeats a VMP column ID")
 
-        if len(payload) < VMP_DATA_RECORD_OFFSET:
+        if len(payload) < record_offset:
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP data prefix")
 
-        data_bytes = len(payload) - VMP_DATA_RECORD_OFFSET
+        data_bytes = len(payload) - record_offset
         if data_bytes % n_datapoints != 0:
             raise InvalidMprError(
                 f"{_source_label(path)} VMP record area of {data_bytes} bytes is not divisible "
@@ -977,6 +1003,16 @@ def _decode_vmp_data(
             layout_name=layout_name,
         )
         record_dtype = layout.record_dtype
+        if layout_name == "MB":
+            if layout.opaque_trailing_column_ids:
+                raise UnsupportedMprColumn("MB cannot exclude EIS with unknown opaque columns")
+            if 32 not in layout.resolved_base_ids:
+                # Only the independently observed non-EIS RDO signature is
+                # verified without a frequency discriminator. Other impedance
+                # families must not silently become ordinary cycling rows.
+                rdo_bases = {131, 39, 4, 20, 6, 8, 7, 13, 211, 212}
+                if set(layout.resolved_base_ids) - {None} != rdo_bases:
+                    raise UnsupportedMprColumn("MB without frequency requires the verified non-EIS RDO layout")
 
         records: np.ndarray | None = None
         flags: dict[str, np.ndarray] = {}
@@ -987,7 +1023,7 @@ def _decode_vmp_data(
                     payload,
                     dtype=record_dtype,
                     count=n_datapoints,
-                    offset=VMP_DATA_RECORD_OFFSET,
+                    offset=record_offset,
                 )
                 records = record_view.copy()
             finally:
@@ -999,7 +1035,7 @@ def _decode_vmp_data(
             n_datapoints=n_datapoints,
             n_columns=n_columns,
             column_ids=column_ids,
-            record_offset=VMP_DATA_RECORD_OFFSET,
+            record_offset=record_offset,
             record_stride=record_stride,
             resolved_base_ids=layout.resolved_base_ids,
             field_offsets=layout.field_offsets,
@@ -1074,15 +1110,19 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
                 f"{_source_label(source_path)} must contain exactly one supported VMP data module"
             )
         data_module = data_modules[0]
+        classic = data_module.payload_offset - data_module.offset == 57
+        if any((module.payload_offset - module.offset == 57) != classic for module in modules):
+            raise UnsupportedMprError("Mixed classic/extended MPR module headers are unsupported")
+        data_version, set_version, log_version = (3, 0, 0) if classic else (11, 10, 10)
         if data_module.old_version != 0:
             raise UnsupportedMprModuleVersion(
                 f"{_source_label(source_path)} uses unsupported VMP data old version "
                 f"{data_module.old_version}; expected 0"
             )
-        if data_module.version != VMP_DATA_VERSION:
+        if data_module.version != data_version:
             raise UnsupportedMprModuleVersion(
                 f"{_source_label(source_path)} uses unsupported VMP data version "
-                f"{data_module.version}; expected {VMP_DATA_VERSION}"
+                f"{data_module.version}; expected {data_version}"
             )
 
         set_modules = [module for module in modules if module.is_vmp_set]
@@ -1096,12 +1136,14 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
                 f"{_source_label(source_path)} uses unsupported VMP Set old version "
                 f"{set_module.old_version}; expected 0"
             )
-        if set_module.version != VMP_SET_VERSION:
+        if set_module.version != set_version:
             raise UnsupportedMprModuleVersion(
                 f"{_source_label(source_path)} uses unsupported VMP Set version "
-                f"{set_module.version}; expected {VMP_SET_VERSION}"
+                f"{set_module.version}; expected {set_version}"
             )
         layout_profile = _layout_profile_for_settings(set_module, source_path)
+        if classic and layout_profile.name != "MB":
+            raise UnsupportedMprError("Classic MPR modules are verified only for MB")
 
         log_modules = [module for module in modules if module.is_vmp_log]
         if len(log_modules) > 1:
@@ -1113,10 +1155,10 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
                     f"{_source_label(source_path)} uses unsupported VMP LOG old version "
                     f"{log_module.old_version}; expected 0"
                 )
-            if log_module.version != VMP_LOG_VERSION:
+            if log_module.version != log_version:
                 raise UnsupportedMprModuleVersion(
                     f"{_source_label(source_path)} uses unsupported VMP LOG version "
-                    f"{log_module.version}; expected {VMP_LOG_VERSION}"
+                    f"{log_module.version}; expected {log_version}"
                 )
 
         data_block = _decode_vmp_data(

@@ -1,5 +1,8 @@
 # Feature specs
 
+- [099 — BioLogic MB cycling measurements](099-biologic-mb-cycling.md).
+  **Implementation.** Dedicated MB interpretation, classic container support and EIS exclusion.
+
 - [098 — Faster Windows MPR header I/O and Alpha release](098-faster-header-io.md).
   **Complete; published in Alpha 0.28.0-alpha.25.** Fresh completion/Activity/filter
   browser acceptance, both private corpora, clean-Windows branch/exact-main
@@ -161,9 +164,9 @@ with independent GPT-6 Astra Medium review after each of these five specs:
 - [070 — User-scope updates](070-user-scope-updates.md). Implemented; Astra Medium review, focused policy/compile checks and preflight passed. Signed native UAC/update matrix remains deferred.
 
 Li||Li voltage scaling awaits source evidence; no speculative parser correction.
-BioLogic MB cycling support awaits reference MPR/protocol/export files; EIS is
-out of scope. Axis breaks were declined. These are not implementable specs in
-this batch.
+BioLogic MB cycling measurements are implemented separately in Spec 099 using
+the subsequently supplied reference files; impedance analysis remains out of
+scope. Axis breaks were declined in this batch.
 
 - [065-search-introduction-redesign.md](065-search-introduction-redesign.md) redesigns the search announcement around a minimal folder-to-search example and full guide. **Implemented; Astra high review clean, full preflight and browser acceptance passed.**
 
