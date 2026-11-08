@@ -53,5 +53,5 @@ test("chip sorting toggles one global sort independently of filter bounds", () =
   assert.equal(filterChips(removeSearchFilter(descending, "range:cycle_count")).some((chip) => chip.key === "sort"), true);
   assert.equal(normalizedSearchSort("modified"), "modified_at_desc");
   assert.equal(normalizedSearchSort("name"), "filename_asc");
-  assert.equal(filterChips({ sort: "cycle_count_desc" })[0].label, "Sort: Recorded source cycles: highest first");
+  assert.equal(filterChips({ sort: "cycle_count_desc" })[0].label, "Sort: Known source cycles: highest first");
 });

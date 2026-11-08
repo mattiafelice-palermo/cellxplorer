@@ -33,7 +33,7 @@ export const FILTER_CATEGORIES = [
 ];
 export const RANGE_FIELDS = [
   { key: "size", label: "File size", unit: "MB", scale: 1048576, category: "file" },
-  { key: "cycle_count", label: "Recorded source cycles", unit: "cycles", scale: 1, category: "cycling" },
+  { key: "cycle_count", label: "Known source cycles", unit: "cycles", scale: 1, category: "cycling" },
   { key: "active_mass_mg", label: "Active material mass", unit: "mg", scale: 1, category: "cycling" },
   { key: "nominal_capacity_mah", label: "Nominal capacity", unit: "mAh", scale: 1, category: "cycling" },
   { key: "duration_s", label: "Recorded test duration", unit: "hours", scale: 3600, category: "cycling" },

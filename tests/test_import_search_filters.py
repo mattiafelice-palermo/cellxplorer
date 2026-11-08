@@ -100,6 +100,21 @@ class FilterTests(unittest.TestCase):
             self.assertEqual(self.search(q="project/phase", library=library)["total"], 1)
             self.assertEqual(self.search(q="project\\phase", library=library)["total"], 1)
 
+    def test_mpr_cycle_filter_uses_only_imported_matching_source_counts(self):
+        key=path_key("C:\\cycling\\z_unknown.mpr")
+        item=fact("C:\\cycling\\z_unknown.mpr")
+        item.update(size=3145728,metadata={"cycle_count":"999"})
+        self.catalog.apply_batch("root","one",[item])
+        filters={"extension":".mpr","ranges":{"cycle_count":{"min":10}}}
+        with patch("os.stat",side_effect=AssertionError("Filter must not inspect source records")):
+            self.assertEqual(self.search(filters)["total"],0)
+            library={key:dict(size=3145728,mtime=1,cycle_count=20)}
+            self.assertEqual(self.search(filters,library=library)["total"],1)
+            library[key]["cycle_count"]=5
+            self.assertEqual(self.search(filters,library=library)["total"],0)
+            library[key].update(cycle_count=20,mtime=2)
+            self.assertEqual(self.search(filters,library=library)["total"],0)
+
     def test_validation_and_regex_worker(self):
         for bad in ({"ranges": {"bogus": {}}}, {"ranges": {"size": {"min": 3, "max": 1}}}, {"registered": "maybe"},
                     {"conditions": [{"field": "filename", "operator": "regex", "value": "["}]}):

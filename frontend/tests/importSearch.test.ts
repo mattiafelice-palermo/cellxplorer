@@ -27,4 +27,6 @@ test("index progress distinguishes discovery from known header work", () => {
   assert.equal(searchIndexProgressLabel("discovering", 300, 0, 0), "Finding files · 300 candidates found");
   assert.equal(searchIndexProgressLabel("metadata", 300, 57, 181), "Checking source headers · 57 / 181");
   assert.equal(searchIndexProgressLabel("metadata", 300, 0, 0), "Finishing scan · no headers need checking");
+  assert.equal(searchIndexProgressLabel("complete", 2659, 2659, 2659), "Scan complete · 2659 / 2659 headers checked");
+  assert.equal(searchIndexProgressLabel("complete", 300, 0, 0), "Scan complete · no headers needed checking");
 });

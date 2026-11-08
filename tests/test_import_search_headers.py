@@ -54,13 +54,65 @@ class ParallelHeaderTests(unittest.TestCase):
         capacity = threading.BoundedSemaphore(2)
         original_stop = headers._stop_lane
         held = []
+        # Exercise scheduler fairness with virtual time. OS spawn/import latency
+        # must not consume this fixture's deliberately short two-second budget.
+        class Clock:
+            now = 0.0
+            def monotonic(self):
+                return self.now
+            def sleep(self, delay):
+                self.now += delay
+        clock = Clock()
+        channels = {}
+        class Process:
+            pid = 42
+            alive = False
+            exitcode = None
+            def start(self):
+                self.alive = True
+            def is_alive(self):
+                return self.alive
+            def terminate(self):
+                self.alive = False
+            kill = terminate
+            def join(self, timeout):
+                pass
+            def close(self):
+                pass
+        class Requests:
+            def __init__(self, channel):
+                self.channel = channel
+            def put(self, message, **kwargs):
+                self.channel.update(fact=message['fact'], announced=False, due=clock.now + .05)
+        class Results:
+            def __init__(self, channel):
+                self.channel = channel
+            def get(self, timeout):
+                fact = self.channel.get('fact')
+                if fact is None:
+                    raise queue.Empty
+                if not self.channel['announced']:
+                    self.channel['announced'] = True
+                    return dict(kind='started', canonical=fact['canonical'])
+                if fact['canonical'] == 'stall' or clock.now < self.channel['due']:
+                    raise queue.Empty
+                self.channel.pop('fact')
+                return dict(kind='result', fact=dict(fact, metadata_state='ready', metadata={}))
+        def spool(directory):
+            channel = channels.setdefault(str(Path(directory).parent), {})
+            return Requests(channel) if Path(directory).name == 'in' else Results(channel)
+        context = Mock()
+        context.Process.side_effect = lambda **kwargs: Process()
         def stop(lane):
             original_stop(lane)
             if lane["fact"]["canonical"] == "stall" and not held:
                 self.assertTrue(capacity.acquire(blocking=False))
                 held.append(True)  # Simulate capacity retained by delayed OS exit.
         try:
-            with patch.object(headers, "_slots", capacity), patch.object(headers, "_stop_lane", stop):
+            with patch.object(headers, "_slots", capacity), patch.object(headers, "_stop_lane", stop), \
+                 patch.object(headers, 'time', clock), \
+                 patch.object(headers.multiprocessing, 'get_context', return_value=context), \
+                 patch.object(headers, 'BatchSpool', side_effect=spool):
                 results = list(self.outcomes(["stall", *map(str, range(180))], timeout=2))
         finally:
             if held:

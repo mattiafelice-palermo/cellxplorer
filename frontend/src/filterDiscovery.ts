@@ -58,7 +58,7 @@ export const DISCOVERY_FIELDS: DiscoveryField[] = [
   { key: "first_indexed_at", category: "dates", label: "First indexed", aliases: ["index date", "discovery date", "catalogued date"] },
   { key: "technique", category: "header", label: "Technique", aliases: ["protocol", "method"] },
   { key: "header_condition", category: "header", label: "Add a header condition", aliases: ["source metadata"], options: ["Header barcode", "Header remarks", "Header part number", "Header device", "Header channel"] },
-  { key: "cycle_count", category: "cycling", label: "Recorded source cycles", aliases: ["cycle count", "number of cycles", "total cycles", "cycling"] },
+  { key: "cycle_count", category: "cycling", label: "Known source cycles", aliases: ["recorded source cycles", "cycle count", "number of cycles", "total cycles", "cycling"] },
   { key: "active_mass_mg", category: "cycling", label: "Active material mass", aliases: ["weight", "mass mg", "loading"] },
   { key: "nominal_capacity_mah", category: "cycling", label: "Nominal capacity", aliases: ["rated capacity", "capacity mah"] },
   { key: "duration_s", category: "cycling", label: "Recorded test duration", aliases: ["elapsed time", "hours", "cycling duration", "test length"] },

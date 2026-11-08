@@ -60,7 +60,8 @@ class SourceErrorMessagesTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "temporarily-locked.mpr"
             path.write_bytes(biologic_mpr.MPR_MAGIC + b"partial")
-            with patch.object(Path, "open", side_effect=PermissionError("sharing or access denied")):
+            with patch.object(Path, "open", side_effect=PermissionError("sharing or access denied")), \
+                 patch.object(biologic_mpr.header_io, "open_header", side_effect=PermissionError("sharing or access denied")):
                 self.assertIsNotNone(source_readability.file_identity(path))
                 with self.assertRaises(biologic_mpr.MprError):
                     parsing.parse_timeseries(path)

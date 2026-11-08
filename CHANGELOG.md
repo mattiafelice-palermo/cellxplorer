@@ -4,8 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
-Alpha.18–21 below are development checkpoints, not published installers.
+Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
+
+## 0.28.0-alpha.25 - 2026-11-08
+
+- Speed up Windows MPR header inspection with lightweight buffered opening and narrow file-information queries, preserving source-change checks and portable fallbacks.
+- Combine four bounded header readers with faster I/O for full search indexing, with separate discovery/header progress and clear ready, excluded and unavailable counts.
+- Recover from temporary local spool sharing locks without unnecessary rescans; reuse unchanged supported and unsupported metadata classifications.
+- Improve development startup with cleanup of occupied frontend/backend ports, isolated development data, and reliable Windows temporary-workspace cleanup.
+- Keep an explicit scan-complete summary visible and clarify that MPR cycle filters use counts from imported, parsed versions of the exact source file.
 
 ## 0.28.0-alpha.24 - 2026-11-08
 

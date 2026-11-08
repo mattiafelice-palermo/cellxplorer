@@ -209,7 +209,12 @@ def _query(catalog_path, config, q, filters, offset, limit, library):
     numbers = {"size": "e.size", "folder_count": "fc.count"}
     for field in NUMBER_FIELDS[1:-1]:
         stored = f"CASE WHEN {lib('size')}=e.size AND {lib('mtime')}=e.mtime_ns THEN {lib(field)} END"
-        numbers[field] = f"search_number(coalesce({meta(field)}, {stored}))"
+        value = f"coalesce({meta(field)}, {stored})"
+        if field == "cycle_count":
+            # MPR counts come only from a parsed, identity-matching imported
+            # source; a protocol loop declaration is not an executed cycle count.
+            value = f"CASE WHEN e.extension='.mpr' THEN {stored} ELSE {value} END"
+        numbers[field] = f"search_number({value})"
     numbers.update({"modified_at": "search_date(e.modified_at)", "file_created_at": "search_date(e.file_created_at)",
                     "first_indexed_at": "search_date(e.first_indexed_at)", "start_time": f"search_date({meta('start_time')})"})
     clauses = ["e.recognition!='unsupported'", "e.extension IN (" + ",".join(parameter(v) for v in config["formats"]) + ")",

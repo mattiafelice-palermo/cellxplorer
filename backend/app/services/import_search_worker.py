@@ -70,7 +70,11 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
                 fact["metadata_version"] = METADATA_VERSION
         elif fact["recognition"] != "unsupported":
             fact["metadata_state"] = "disabled"
-        after = os.stat(fact["path"])
+        if fact["extension"] == ".mpr":
+            from .header_io import path_fingerprint
+            after = path_fingerprint(fact["path"])
+        else:
+            after = os.stat(fact["path"])
         if (after.st_size, after.st_mtime_ns) != (fact["size"], fact["mtime_ns"]):
             # Live source changes must end in a visible retry state, not pending.
             fact.update(recognition="pending" if fact["extension"] == ".xlsx" else "recognized",

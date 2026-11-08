@@ -227,6 +227,7 @@ Cellxplorer/
 │           ├── import_search_filters.py Whole-catalog filters, current library snapshot and bounded regex (Spec 064)
 │           ├── import_search_index.py Search preferences and cancellable scan coordination
 │           ├── import_search_headers.py Bounded, independently killable header readers (Spec 097)
+│           ├── header_io.py Header-only Windows fingerprint queries and buffered opening with portable fallbacks (Spec 098)
 │           ├── import_search_live.py Bounded live roots, recovery and fallback scheduling (Spec 063)
 │           ├── import_search_watch.py Stoppable recursive Windows change subscriptions (Spec 063)
 │           ├── import_search_worker.py Spawned source discovery and header enrichment
@@ -341,6 +342,7 @@ Cellxplorer/
 │   ├── test_start_webapp.py Native occupied-port and decline behavior
 │   ├── test_import_search_diagnostics.py Local trace isolation and metadata omission
 │   ├── test_import_search_headers.py Bounded reader deadlines, crash isolation and cancellation
+│   ├── test_header_io.py Header I/O fallbacks, source-change guards and resource ownership
 │   ├── test_import_search_live.py   Native changes, safe deltas, fallback and interval gates (Spec 063)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)

@@ -22,6 +22,7 @@ import struct
 from typing import BinaryIO
 
 import numpy as np
+from . import header_io
 
 from .source_format_errors import (
     InvalidSourceFormatError,
@@ -1027,14 +1028,15 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
 
     source_path = Path(path)
     try:
-        file_handle = source_path.open("rb")
+        file_handle = header_io.open_header(source_path) if not decode_records else source_path.open("rb")
     except OSError as exc:
         raise MprError(f"Cannot open MPR source {_source_label(source_path)}") from exc
 
     mapping: mmap.mmap | None = None
     data_block: MprDataBlock | None = None
     try:
-        initial_stat = os.fstat(file_handle.fileno())
+        query = header_io.handle_fingerprint if not decode_records else os.fstat
+        initial_stat = query(file_handle.fileno())
         file_size = initial_stat.st_size
         initial_fingerprint = _stat_fingerprint(initial_stat)
         if file_size > MPR_MAX_FILE_SIZE:
@@ -1057,7 +1059,7 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
             raise InvalidMprError(
                 f"{_source_label(source_path)} changed size between stat and memory mapping"
             )
-        mapped_stat = os.fstat(file_handle.fileno())
+        mapped_stat = query(file_handle.fileno())
         if _stat_fingerprint(mapped_stat) != initial_fingerprint:
             raise InvalidMprError(
                 f"{_source_label(source_path)} changed between stat and memory mapping"
@@ -1125,7 +1127,7 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
             required_base_ids=layout_profile.required_base_ids,
             layout_name=layout_profile.name,
         )
-        final_stat = os.fstat(file_handle.fileno())
+        final_stat = query(file_handle.fileno())
         if _stat_fingerprint(final_stat) != initial_fingerprint or len(mapping) != file_size:
             raise InvalidMprError(
                 f"{_source_label(source_path)} changed while it was being read"

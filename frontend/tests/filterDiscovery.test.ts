@@ -35,7 +35,7 @@ test("conservative typo fallback includes transpositions and shows a suggestion"
   assert.equal(typo.matches.length, 1);
   assert.equal(typo.matches[0].field.key, "cycle_count");
   assert.equal(typo.matches[0].kind, "fuzzy");
-  assert.equal(typo.suggestion, "Recorded source cycles");
+  assert.equal(typo.suggestion, "Known source cycles");
   assert.equal(search("size").suggestion, null);
   assert.equal(search("xyz").matches.length, 0);
   assert.equal(search("unrelatedword").matches.length, 0);

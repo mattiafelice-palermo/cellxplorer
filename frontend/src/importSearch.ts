@@ -89,6 +89,7 @@ export function mergeIndexedSelection(current: ReadonlyMap<string, ImportBrowseE
 }
 
 export function searchIndexProgressLabel(phase: string | undefined, discovered: number, completed: number, total: number) {
+  if (phase === "complete") return total > 0 ? `Scan complete · ${completed} / ${total} headers checked` : "Scan complete · no headers needed checking";
   if (phase === "discovering" || !phase) return `Finding files · ${discovered} candidates found`;
   return total > 0 ? `Checking source headers · ${completed} / ${total}` : "Finishing scan · no headers need checking";
 }

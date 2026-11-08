@@ -174,6 +174,16 @@ process pool or shared parser state is used. Incremental watcher deltas retain t
 existing serial worker and recovery rules. `header_readers=0` is the unchanged legacy
 full-scan path for benchmark comparisons, not a persisted user setting.
 
+Header-only MPR reads use `header_io.py` on Windows: a buffered raw descriptor
+avoids FileIO's implicit full-stat query, and FileBasicInfo/FileStandardInfo supply
+the size/mtime fingerprint. All three MPR checkpoints remain; full scientific record
+reads retain their original I/O. The indexer still checks the path after metadata
+extraction using narrow path attributes, rejecting reparse points and directories.
+Unsupported native queries and non-Windows platforms use standard-library fallbacks.
+Never reuse a discovery snapshot as a later change check. Native-query performance
+depends on filesystem/client caching: validate concurrent writer freshness as well
+as static parity. Independent-process SMB validation is not a different-machine test.
+
 Windows termination may outlive a short join. Keep a delayed process, its spool and
 its global reader-capacity slot owned by a reaper until exit is confirmed, without
 abandoning sibling cleanup. Healthy lanes take pending work before new facts so
@@ -418,6 +428,11 @@ selection. The hint endpoint remains header-only: supplier, format, and extensio
 without reading cycling rows, while protocol and cycle-count fields appear only when the format
 declares them in readable metadata. Do not turn this into a full parse on the modal's critical path.
 Exact cycle counts that are not declared in the header require an explicitly asynchronous scan.
+The user chose imported-only MPR cycle counts for indexed filtering: do not add a
+record-counting scan. MPR range/sort values come from parsed, online SourceFile
+facts only when size/observed mtime match the indexed version. Unimported counts
+remain unknown, never zero or a protocol loop count; known-only bounds exclude
+them. The UI calls this Known source cycles and explains the import requirement.
 
 Structured Neware Excel parsing uses a reader ladder in `backend/app/services/neware_excel.py`:
 `fastexcel` performs the primary full-width columnar read, pandas' `calamine` engine is the
