@@ -1,6 +1,6 @@
 # 099 — BioLogic MB cycling measurements
 
-Status: Implementation.
+Status: Complete; Astra review and clean-Windows canonical preflight passed.
 Branch: `codex/mb-cycling-support`.
 Review document: [099 review](reviews/099-biologic-mb-cycling-review.md).
 
@@ -69,3 +69,10 @@ which fails the new assertion. The complete native header module passes after
 the correction. Production watchdogs, launcher behavior and test deadlines are
 unchanged. A clean-Windows branch preflight is required before merging; local
 listener failure is not relabeled a pass.
+
+Clean-Windows branch run [42534318242](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42534318242)
+at implementation commit `c5a5f54b` passed all four stages and all 227 committed
+test files/modules, including native launcher tests. Canonical preflight took
+176.24 seconds with four workers. This supplies full verification unavailable
+on the local host. No application/calculation/parser version changed, no release
+was created, and no real user profile was modified.

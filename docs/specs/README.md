@@ -1,7 +1,10 @@
 # Feature specs
 
 - [099 — BioLogic MB cycling measurements](099-biologic-mb-cycling.md).
-  **Implementation.** Dedicated MB interpretation, classic container support and EIS exclusion.
+  **Complete; Astra review and clean-Windows preflight passed (227 files/modules).**
+  Both original MB layouts are importable and plottable with EIS operations excluded;
+  existing readers/cache identities are preserved. Local native listener verification
+  remains bounded by the previously documented host limitation.
 
 - [098 — Faster Windows MPR header I/O and Alpha release](098-faster-header-io.md).
   **Complete; published in Alpha 0.28.0-alpha.25.** Fresh completion/Activity/filter
