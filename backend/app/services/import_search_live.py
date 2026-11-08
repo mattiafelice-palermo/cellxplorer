@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from .import_search_watch import watch_root
+from .import_search_diagnostics import trace
 
 MAX_WATCHERS = 8
 MAX_EVENTS = 4096
@@ -86,6 +87,7 @@ class LiveRoots:
                             heartbeat=time.monotonic(), state="connecting", recovery=True)
 
     def _recover(self, key, item):
+        trace("monitor_recovery", root_id=key, state=item.get("state"), active_root=self.owner.active_root, pending=list(self.owner.pending))
         item["events"].clear()
         item["recovery"] = True
         if key not in self.owner.pending:
@@ -119,6 +121,7 @@ class LiveRoots:
                     break
                 item["heartbeat"] = time.monotonic()
                 kind = message["kind"]
+                trace("monitor_message", root_id=key, message=message)
                 if kind == "connected":
                     item.update(state="connected", failures=0, message=None)
                     if item["recovery"]:

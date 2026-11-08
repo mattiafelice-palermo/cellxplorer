@@ -1,3 +1,4 @@
+import { SearchIndexProgress } from "./SearchIndexProgress";
 import {
   Accordion, ActionIcon, Alert, Badge, Box, Button, Divider, Group, Modal,
   Paper, Progress, ScrollArea, Stack, Tabs, Text, Tooltip,
@@ -185,17 +186,17 @@ function ProcessingJobs({ jobs, loading, failed }: { jobs: BackgroundJob[]; load
                         <Text size="sm" c="dimmed" mt={2}>{job.description}</Text>
                       </div>
                       <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
-                        {count.current} / {count.total}
+                        {job.kind === "source_search_index" ? (job.status === "running" ? (job.phase === "discovering" || !job.phase ? `${job.discovered_files ?? 0} candidates found` : `${job.completed} / ${job.total} headers`) : `${job.completed} headers checked`) : `${count.current} / ${count.total}`}
                       </Text>
                     </Group>
                   </Accordion.Control>
                   <Accordion.Panel>
                     <Stack gap="sm">
-                      <Progress
+                      {job.kind === "source_search_index" && job.status === "running" ? <SearchIndexProgress phase={job.phase} discovered={job.discovered_files} completed={job.completed} total={job.total} /> : <Progress
                         value={progress}
                         animated={job.status === "running"}
                         color={jobColor}
-                      />
+                      />}
                       <Group gap="xl">
                         <Text size="xs" c="dimmed">
                           Started {new Date(job.started_at).toLocaleString()}

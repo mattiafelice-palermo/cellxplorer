@@ -104,6 +104,9 @@ class CatalogTests(unittest.TestCase):
         state = self.catalog.roots()[0]
         self.assertEqual(state["count"], 1)
         self.assertEqual(state["pending"], 1)
+        self.assertEqual(state["excluded"], 1)
+        self.assertEqual(state["metadata_ready"], 0)
+        self.assertEqual(state["metadata_unavailable"], 0)
 
     def test_literal_unicode_metadata_and_filters(self):
         self.catalog.apply_batch("root", "one", [fact(), fact("C:\\cycling\\ÄCCENT%.mpr")])
@@ -305,10 +308,16 @@ class CatalogTests(unittest.TestCase):
             state = wait_terminal()
             self.assertEqual(state["status"], "ready")
             self.assertEqual(self.catalog.search(settings)["total"], 1)
+            progress = indexer.root_snapshots()[0]
+            self.assertEqual(progress["scan_phase"], "complete")
+            self.assertEqual(progress["headers_completed"], progress["headers_total"])
+            self.assertEqual(progress["headers_total"], 2)
+            self.assertEqual(progress["excluded"], 1)
             old = self.catalog.search(settings)["items"][0]
             indexer.refresh()
             self.assertEqual(wait_terminal()["status"], "ready")
             self.assertEqual(self.catalog.search(settings)["items"][0]["metadata"], old["metadata"])
+            self.assertEqual(indexer.root_snapshots()[0]["headers_total"], 0)
             target.rename(root / "renamed.ndax")
             indexer.refresh()
             self.assertEqual(wait_terminal()["status"], "ready")
@@ -343,7 +352,13 @@ class CatalogTests(unittest.TestCase):
     def test_exited_delta_worker_without_done_still_requires_recovery(self):
         self.check_worker_exit_completion(delta=True, completion=False)
 
-    def check_worker_exit_completion(self, *, delta, completion=True):
+    def test_locked_final_frame_after_worker_exit_retries_without_rescan(self):
+        self.check_worker_exit_completion(delta=False, locked_final=True)
+
+    def test_locked_final_delta_frame_after_exit_retries_without_recovery(self):
+        self.check_worker_exit_completion(delta=True, locked_final=True)
+
+    def check_worker_exit_completion(self, *, delta, completion=True, locked_final=False):
         indexer = SearchIndexer(self.catalog, monitoring=False)
         indexer.config = self.config
         if delta:
@@ -355,6 +370,9 @@ class CatalogTests(unittest.TestCase):
             if not pending:
                 pending['spool'] = spool
                 raise queue.Empty
+            if locked_final and not pending.get("lock_seen"):
+                pending["lock_seen"] = True
+                raise PermissionError("final frame briefly locked")
             return original_get(spool, timeout)
 
         def observe_exit():

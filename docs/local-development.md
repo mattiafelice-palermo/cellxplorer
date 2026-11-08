@@ -139,3 +139,19 @@ To run it manually:
 5. Choose the intended branch.
 6. Start the workflow.
 7. Open the **Clean Windows preflight** job to inspect failures.
+
+## Diagnose source indexing
+
+Set `CELLXPLORER_INDEX_TRACE` to a local directory before starting the backend.
+Each process appends its own `index-<pid>.jsonl`; merge by UTC `time` to inspect
+worker messages, discovery counts, per-file header durations, metadata field names,
+parser errors, scan generations, worker restarts/timeouts, and monitoring recovery.
+Tracing is disabled by default and works despite worker standard-log suppression.
+These opt-in local logs contain source paths and error text, but omit metadata
+values and cycling records. Disable tracing after investigation; files are not
+rotated automatically. Normal backend stderr remains useful alongside the trace.
+
+Indexer IPC uses the process temporary directory rather than the data/catalog root.
+Short sharing locks retry within the existing worker-silence deadline. Discovery
+is indeterminate; header-check progress has a known total. Searchable counts can
+shrink as unsupported candidates are excluded, independently of scan completion.

@@ -180,14 +180,27 @@ catalog revision; later files remain discoverable and an explicit rescan retries
 the unavailable file. A worker exit before a header is identified still leaves
 the scan incomplete rather than guessing which source failed.
 
-The producer's atomic rename can also encounter a short Windows sharing lock on
-its just-closed `.tmp` file. Retry only that rename of the same complete frame,
-within a single 100-ms publication budget; do not rewrite or advance sequence
-until success. Permanent failure preserves the exception/frame and normal worker
-recovery. Neither consumer poll budgets nor the existing worker watchdog is
-renewed. A native deny-delete-handle regression must still pass the original
-create/rename/delete/pause/resume assertions and 12-second catalog waits without
-requiring a full reconciliation for healthy changes.
+The producer's atomic rename retries the same complete frame for at most five
+seconds, without rewriting or advancing sequence. This is independent of the
+coordinator's fixed 45-second silence watchdog. A consumer PermissionError at a
+100-ms poll boundary is retried across subsequent coordinator iterations,
+without skipping the first frame, treating the denial as a heartbeat, or renewing
+the silence budget. Cancellation and pause remain checked between polls. Final
+frames after producer exit obey the same access budget; no success is inferred
+from process exit alone. Persistent locks still fail visibly at the watchdog.
+
+Full/delta IPC directories use the process temporary directory, outside the
+possibly redirected/synced catalog root. Best-effort cleanup of this owned,
+disposable IPC directory cannot invalidate a published scan. Cleanup failures
+remain in opt-in local diagnostics, never a reason to re-enumerate network sources.
+
+Progress has separate meanings: discovery's candidate count has no known total;
+header completion advances against a fixed per-pass enrichment total, including
+unavailable/excluded outcomes. Cached, unchanged recognized and unsupported header
+classifications do not repeat header reads (the metadata version invalidates both).
+Root snapshots separately expose searchable count, pending subset, excluded count,
+metadata-ready count and unavailable count. Catalog totals can retain previous
+results during incomplete discovery; they are not an in-flight percentage.
 
 Spec 063 adds `import_search_watch.py` native recursive `ReadDirectoryChangesW` subscriptions,
 owned by `import_search_live.py`, capped at eight stoppable child processes. Buffers stay below

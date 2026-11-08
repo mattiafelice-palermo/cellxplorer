@@ -8,6 +8,8 @@ export interface FileSearchConfig {
 export interface SearchRootState {
   id: string; path: string; status: string; count: number; pending: number;
   last_success: string | null; message: string | null;
+  discovered?: number; excluded?: number; metadata_ready?: number; metadata_unavailable?: number;
+  scan_phase?: string; headers_completed?: number; headers_total?: number;
   monitor_state?: string; monitor_message?: string | null; next_refresh?: string | null;
 }
 export interface FileSearchSettings { config: FileSearchConfig; roots: SearchRootState[]; revision?: number }
@@ -84,4 +86,9 @@ export function mergeIndexedSelection(current: ReadonlyMap<string, ImportBrowseE
     result.set(entry.path, entry);
   }
   return result;
+}
+
+export function searchIndexProgressLabel(phase: string | undefined, discovered: number, completed: number, total: number) {
+  if (phase === "discovering" || !phase) return `Finding files · ${discovered} candidates found`;
+  return total > 0 ? `Checking source headers · ${completed} / ${total}` : "Finishing scan · no headers need checking";
 }

@@ -88,7 +88,7 @@ class BatchSpoolAccessTests(unittest.TestCase):
             with self.assertRaises(PermissionError) as caught:
                 self.spool.put({"kind": "retained"})
         self.assertIs(caught.exception, failure)
-        self.assertAlmostEqual(self.clock.now - start, 0.1)
+        self.assertAlmostEqual(self.clock.now - start, transport.PUBLISH_RETRY_SECONDS)
         self.assertEqual(self.spool.sequence, 0)
         self.assertFalse(self.first.exists())
         self.assertEqual(json.loads(self.first.with_suffix('.tmp').read_text()), {"kind": "retained"})
@@ -168,6 +168,68 @@ class BatchSpoolAccessTests(unittest.TestCase):
                 self.assertEqual(operation.call_count, 1)
         self.assertEqual(self.clock.sleeps, [])
         self.assertTrue(self.first.exists())
+
+    def test_access_lock_across_polls_does_not_reset_watchdog_or_skip_fifo(self):
+        self.spool.put({"kind": "first"})
+        self.spool.put({"kind": "second"})
+        original = Path.read_text
+        start = self.clock.now
+        def read(path, *args, **kwargs):
+            if self.clock.now - start < 0.25:
+                raise PermissionError("longer than one poll")
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", autospec=True, side_effect=read):
+            for _ in range(2):
+                with self.assertRaises(queue.Empty) as caught:
+                    transport.receive(self.spool, last_message=start, silence_timeout=1)
+                self.assertIsInstance(caught.exception.__cause__, PermissionError)
+            self.assertEqual(transport.receive(self.spool, last_message=start, silence_timeout=1), {"kind": "first"})
+        self.assertEqual(self.spool.get(0), {"kind": "second"})
+        self.assertLess(self.clock.now - start, 1)
+
+    def test_access_lock_exhausts_original_silence_budget(self):
+        self.spool.put({"kind": "first"})
+        start = self.clock.now
+        with patch.object(Path, "read_text", side_effect=PermissionError("locked")):
+            with self.assertRaises(queue.Empty):
+                transport.receive(self.spool, last_message=start, silence_timeout=0.15)
+            with self.assertRaises(PermissionError):
+                transport.receive(self.spool, last_message=start, silence_timeout=0.15)
+        self.assertTrue(self.first.exists())
+        self.assertLessEqual(self.clock.now - start, 0.21)
+
+    def test_publish_lock_longer_than_original_poll_budget(self):
+        start = self.clock.now
+        original = transport.os.replace
+        def replace(source, destination):
+            if self.clock.now - start < 0.3:
+                raise PermissionError("locked")
+            return original(source, destination)
+        with patch.object(transport.os, "replace", side_effect=replace):
+            self.spool.put({"kind": "done"})
+        self.assertEqual(self.spool.get(0), {"kind": "done"})
+
+    def test_cleanup_failure_does_not_invalidate_published_scan(self):
+        temporary = tempfile.TemporaryDirectory()
+        real_cleanup = temporary.cleanup
+        try:
+            with patch.object(transport.tempfile, "TemporaryDirectory", return_value=temporary), patch.object(temporary, "cleanup", side_effect=OSError("busy")):
+                with transport.scan_spool("test-") as directory:
+                    self.assertEqual(directory, temporary.name)
+        finally:
+            real_cleanup()
+
+    def test_unlink_lock_across_polls_does_not_reparse_or_deliver_twice(self):
+        self.spool.put({"kind": "done"})
+        original_read = Path.read_text
+        with patch.object(Path, "read_text", autospec=True, side_effect=original_read) as read:
+            with patch.object(Path, "unlink", side_effect=PermissionError("locked")):
+                with self.assertRaises(queue.Empty):
+                    transport.receive(self.spool, last_message=self.clock.now, silence_timeout=1)
+            self.assertEqual(self.spool.get(0), {"kind": "done"})
+            self.assertEqual(read.call_count, 1)
+        with self.assertRaises(queue.Empty):
+            self.spool.get(0)
 
     def test_corrupt_json_and_other_io_errors_are_not_retried(self):
         self.first.write_text('invalid JSON', encoding='utf-8')

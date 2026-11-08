@@ -9,11 +9,11 @@ import queue
 import threading
 import time
 import uuid
-import tempfile
 import traceback
 from pathlib import Path
 
-from .import_search_transport import BatchSpool
+from .import_search_transport import BatchSpool, receive, scan_spool
+from .import_search_diagnostics import trace
 from datetime import datetime, timezone
 
 from ..db import SessionLocal
@@ -99,10 +99,13 @@ class SearchIndexer:
         self.revision = 0
         self.last_delta_root = None
         self.last_failure = None
+        self.progress = {}
 
     def root_snapshots(self, *, counts=True):
         with self.lock:
             states = self.catalog.roots(counts=counts)
+            for state in states:
+                state.update(self.progress.get(state["id"], {}))
             return self.live.snapshots(states) if self.live else states
 
     def _monitor(self):
@@ -267,6 +270,7 @@ class SearchIndexer:
                     else:
                         self._scan(root, config, epoch)
                 except Exception as error:
+                    trace("coordinator_exception", root_id=root["id"], error=repr(error), traceback=traceback.format_exc())
                     with self.lock:
                         if epoch == self.epoch:
                             # Keep bounded, path-free diagnostics. Exception text
@@ -297,7 +301,7 @@ class SearchIndexer:
             self.catalog.root_state(root["id"], generation=generation)
         finished = False
         recovery = True
-        with tempfile.TemporaryDirectory(prefix="changes-", dir=self.catalog.path.parent) as directory:
+        with scan_spool("changes-") as directory:
             messages = BatchSpool(directory)
             process = multiprocessing.get_context("spawn").Process(target=scan_changes,
                 args=({**root, "generation": generation, "changes": changes}, config, str(self.catalog.path), directory), daemon=True)
@@ -317,15 +321,19 @@ class SearchIndexer:
                         if epoch != self.epoch or self.config["paused"] or self._background_paused():
                             break
                     try:
-                        message = messages.get(timeout=0.1)
-                    except queue.Empty:
+                        message = receive(messages, last_message=last_message, silence_timeout=self.timeout)
+                    except queue.Empty as empty:
+                        if isinstance(empty.__cause__, PermissionError):
+                            continue
                         if not process.is_alive():
                             # Exit can race the preceding empty directory poll.
                             # The exited producer can no longer publish, so drain
                             # any final atomic frame before declaring failure.
                             try:
-                                message = messages.get(timeout=0)
-                            except queue.Empty:
+                                message = receive(messages, last_message=last_message, silence_timeout=self.timeout, timeout=0)
+                            except queue.Empty as empty:
+                                if isinstance(empty.__cause__, PermissionError):
+                                    continue
                                 break
                         elif time.monotonic() - last_message > self.timeout:
                             break
@@ -362,6 +370,7 @@ class SearchIndexer:
     def _scan(self, root: dict, config: dict, epoch: int):
         context = multiprocessing.get_context("spawn")
         generation = str(uuid.uuid4())
+        trace("scan_start", root=root, generation=generation, epoch=epoch)
         root = {**root, "generation": generation}
         job = background_jobs.create_job(kind="source_search_index", title="Indexing search location", description=root["path"], total=0)
         complete = False
@@ -372,13 +381,15 @@ class SearchIndexer:
             if epoch != self.epoch or self.stop_event.is_set():
                 background_jobs.update_job(job, status="completed", description="Indexing superseded")
                 return
-            self.catalog.root_state(root["id"], generation=generation, status="scanning", last_attempt=now(), message=None)
+            progress = dict(scan_phase="discovering", headers_completed=0, headers_total=0)
+            self.progress[root["id"]] = progress
+            self.catalog.root_state(root["id"], generation=generation, status="scanning", last_attempt=now(), message=None, discovered=0)
         try:
             while not finished:
                 last_header = None
                 resolved_root = None
                 restart = False
-                with tempfile.TemporaryDirectory(prefix="scan-", dir=self.catalog.path.parent) as directory:
+                with scan_spool("scan-") as directory:
                     messages = BatchSpool(directory)
                     process = context.Process(target=self.worker, args=(root, config, str(self.catalog.path), directory), daemon=True)
                     with self.lock:
@@ -405,14 +416,18 @@ class SearchIndexer:
                                 if epoch != self.epoch:
                                     break
                             try:
-                                message = messages.get(timeout=0.1)
-                            except queue.Empty:
+                                message = receive(messages, last_message=last_message, silence_timeout=self.timeout)
+                            except queue.Empty as empty:
+                                if isinstance(empty.__cause__, PermissionError):
+                                    continue
                                 if not process.is_alive():
                                     # Observe death before the final nonwaiting
                                     # spool read, not after an earlier empty poll.
                                     try:
-                                        message = messages.get(timeout=0)
-                                    except queue.Empty:
+                                        message = receive(messages, last_message=last_message, silence_timeout=self.timeout, timeout=0)
+                                    except queue.Empty as empty:
+                                        if isinstance(empty.__cause__, PermissionError):
+                                            continue
                                         if last_header:
                                             # The worker may die while reading a single
                                             # header (for example on an inaccessible
@@ -425,9 +440,11 @@ class SearchIndexer:
                                                     self.revision += 1
                                             root["resume_after"] = last_header["canonical"]
                                             warnings += 1
+                                            progress["headers_completed"] += 1
                                             restart = True
                                         break
                                 elif time.monotonic() - last_message > self.timeout:
+                                    trace("worker_timeout", root_id=root["id"], generation=generation, idle_seconds=time.monotonic()-last_message, header_path=last_header.get("path") if last_header else None)
                                     if last_header and process.is_alive():
                                         # Skip a stalled header, not the rest of the root.
                                         last_header.update(metadata_state="unavailable", metadata={}, metadata_version=0)
@@ -437,6 +454,7 @@ class SearchIndexer:
                                                 self.revision += 1
                                         root["resume_after"] = last_header["canonical"]
                                         warnings += 1
+                                        progress["headers_completed"] += 1
                                         restart = True
                                     break
                                 else:
@@ -449,11 +467,19 @@ class SearchIndexer:
                                 if kind == "batch":
                                     self.catalog.apply_batch(root["id"], generation, message["facts"])
                                     self.revision += 1
+                                    if last_header is not None:
+                                        progress["headers_completed"] += 1
+                                        background_jobs.update_job(job, completed=progress["headers_completed"],
+                                            phase_detail=f"Checked {progress['headers_completed']} / {progress['headers_total']} source headers")
                                     last_header = None
+                                if kind == "enrichment":
+                                    progress.update(scan_phase="metadata", headers_total=progress["headers_completed"] + message["total"])
+                                    background_jobs.update_job(job, total=progress["headers_total"], completed=progress["headers_completed"], phase="metadata",
+                                        phase_detail=f"Checking source headers ({message['total']} remaining)")
                                 if "discovered" in message:
                                     count = message["discovered"]
                                     self.catalog.root_state(root["id"], discovered=count)
-                                    background_jobs.update_job(job, completed=0, total=0, phase_detail=f"Discovered {count} files; scanning folders")
+                                    background_jobs.update_job(job, completed=0, total=0, phase="discovering", discovered_files=count, phase_detail=f"Discovered {count} files; scanning folders")
                                 if kind == "root":
                                     resolved_root = message["canonical_root"]
                                 if kind == "header":
@@ -477,12 +503,14 @@ class SearchIndexer:
                         process.join(1)
                         with self.lock:
                             self.process = None
+                trace("worker_exit", root_id=root["id"], generation=generation, exitcode=process.exitcode, restart=restart, resume_after=root.get("resume_after"), finished=finished)
                 if not restart:
                     break
         finally:
             with self.lock:
                 current = epoch == self.epoch and not self.stop_event.is_set()
                 if current:
+                    progress["scan_phase"] = "complete" if complete and finished else "interrupted"
                     status = "ready" if complete and finished and not warnings else "needs_attention" if finished else "offline"
                     if root_error:
                         status = "offline"
@@ -492,6 +520,7 @@ class SearchIndexer:
                     values = dict(status=status, message=message)
                     if complete and finished:
                         values["last_success"] = now()
+                    trace("scan_end", root_id=root["id"], generation=generation, complete=complete, finished=finished, warnings=warnings, **values)
                     self.catalog.root_state(root["id"], **values)
                     if self.live:
                         if not complete or not finished:

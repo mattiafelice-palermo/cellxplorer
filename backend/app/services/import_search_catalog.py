@@ -163,11 +163,16 @@ class Catalog:
             # A covering state index avoids reading every large header JSON twice
             # for each status poll (and for each search API response).
             return [dict(row) for row in db.execute("""SELECT r.*,
-                coalesce(s.count,0) AS count, coalesce(s.pending,0) AS pending
+                coalesce(s.count,0) AS count, coalesce(s.pending,0) AS pending,
+                coalesce(s.excluded,0) AS excluded, coalesce(s.metadata_ready,0) AS metadata_ready,
+                coalesce(s.metadata_unavailable,0) AS metadata_unavailable
                 FROM roots r LEFT JOIN (
                   SELECT m.root_id,
                     sum(e.recognition!='unsupported') AS count,
-                    sum(e.recognition!='unsupported' AND (e.recognition='pending' OR e.metadata_state='pending')) AS pending
+                    sum(e.recognition!='unsupported' AND (e.recognition='pending' OR e.metadata_state='pending')) AS pending,
+                    sum(e.recognition='unsupported') AS excluded,
+                    sum(e.recognition!='unsupported' AND e.metadata_state='ready') AS metadata_ready,
+                    sum(e.recognition!='unsupported' AND e.metadata_state='unavailable') AS metadata_unavailable
                   FROM memberships m JOIN entries e INDEXED BY entry_search_state ON e.canonical=m.canonical
                   GROUP BY m.root_id
                 ) s ON s.root_id=r.id ORDER BY r.path""")]

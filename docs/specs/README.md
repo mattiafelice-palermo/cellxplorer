@@ -1,5 +1,7 @@
 # Feature specs
 
+- [096 — Indexer spool access and clear progress](096-indexer-spool-progress.md). Implemented; real-folder and browser checks pass. Full preflight has Windows cleanup/known-folder failures; not merged.
+
 - [095 — Cumulative Alpha.22 release review](095-alpha22-release-review.md).
   **Complete; published in Alpha 0.28.0-alpha.22.** Cumulative 084–094 changes
   since published Alpha.17, with both private corpora, native short-path test,

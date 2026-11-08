@@ -1,3 +1,4 @@
+import { SearchIndexProgressBar } from "./components/SearchIndexProgress";
 import {
   ActionIcon,
   Alert,
@@ -626,13 +627,13 @@ export default function App({
                 <Stack gap={2} className="background-activity-content">
                   <Group gap="xs" justify="space-between" wrap="nowrap">
                     <Text size="xs" fw={600} truncate maw={210}>
-                      {activeJob.description}
+                      {activeJob.kind === "source_search_index" ? activeJob.phase_detail ?? "Finding source files" : activeJob.description}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {activeJobCount.current}/{activeJobCount.total}
+                      {activeJob.kind === "source_search_index" && (!activeJob.phase || activeJob.phase === "discovering") ? `${activeJob.discovered_files ?? 0} found` : `${activeJobCount.current}/${activeJobCount.total}`}
                     </Text>
                   </Group>
-                  <Progress value={activityProgress} size={3} animated color={APP_BRANDING.primaryColor} />
+                  {activeJob.kind === "source_search_index" ? <SearchIndexProgressBar size={3} phase={activeJob.phase} discovered={activeJob.discovered_files} completed={activeJob.completed} total={activeJob.total} /> : <Progress value={activityProgress} size={3} animated color={APP_BRANDING.primaryColor} />}
                 </Stack>
               ) : (
                 "Activity"

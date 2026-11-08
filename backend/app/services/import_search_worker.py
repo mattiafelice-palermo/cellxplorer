@@ -11,6 +11,7 @@ import stat as stat_module
 import time
 
 from .import_search_transport import BatchSpool
+from .import_search_diagnostics import trace
 from .import_search_catalog import METADATA_FIELDS, METADATA_VERSION, path_key
 
 
@@ -34,6 +35,8 @@ def canonical_root(path: str) -> str:
 
 
 def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
+    started = time.monotonic()
+    trace("header_start", path=fact["path"])
     from . import neware_excel, parsing
     fact = dict(fact)
     fact["metadata"] = {}
@@ -49,6 +52,7 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
         if metadata_enabled and fact["recognition"] != "unsupported":
             header = parsing.read_header_metadata(fact["path"], fast_excel_hint=True)
             if header.get("error"):
+                trace("header_error", path=fact["path"], error=header.get("error"), error_kind=header.get("error_kind"))
                 if header.get("error_kind") == "unsupported":
                     fact["recognition"] = "unsupported"
                 fact["metadata_state"] = "unavailable"
@@ -71,10 +75,14 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
             # Live source changes must end in a visible retry state, not pending.
             fact.update(recognition="pending" if fact["extension"] == ".xlsx" else "recognized",
                         metadata_state="unavailable", metadata={}, metadata_version=0)
-    except Exception:
+    except Exception as exc:
+        trace("header_exception", path=fact["path"], error=repr(exc))
         # A transient I/O error must not label a workbook unsupported.
         fact.update(recognition="pending" if fact["extension"] == ".xlsx" else "recognized",
                     metadata_state="unavailable", metadata={}, metadata_version=0)
+    trace("header_end", path=fact["path"], elapsed=time.monotonic()-started, state=fact["metadata_state"], metadata_fields=sorted(fact["metadata"]))
+    if fact["recognition"] == "unsupported":
+        fact["metadata_version"] = METADATA_VERSION
     return fact
 
 
@@ -135,6 +143,7 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
                                         metadata_version=0, metadata={}, supplier="BioLogic" if extension == ".mpr" else "Neware")
                             old = previous.execute("SELECT * FROM entries WHERE canonical=?", (key,)).fetchone()
                             if old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns and old["recognition"] != "pending" and (
+                                old["recognition"] == "unsupported" and old["metadata_version"] == METADATA_VERSION or
                                 not config["metadata_enabled"] or old["metadata_version"] == METADATA_VERSION and old["metadata_state"] == "ready"
                             ):
                                 fact.update(recognition=old["recognition"], metadata_state=old["metadata_state"],
@@ -162,10 +171,14 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
             import time
             while not acknowledgement.exists():
                 time.sleep(0.02)
-        rows = previous.execute("""SELECT e.* FROM entries e JOIN memberships m ON m.canonical=e.canonical
+        statement = ("""SELECT e.* FROM entries e JOIN memberships m ON m.canonical=e.canonical
             WHERE m.root_id=? AND m.generation=? AND e.canonical>? AND e.recognition!='unsupported'
             AND (e.recognition='pending' OR (? AND (e.metadata_state!='ready' OR e.metadata_version!=?)))
-            ORDER BY e.canonical""", (root["id"], root["generation"], root.get("resume_after", ""), config["metadata_enabled"], METADATA_VERSION))
+            ORDER BY e.canonical""")
+        parameters = (root["id"], root["generation"], root.get("resume_after", ""), config["metadata_enabled"], METADATA_VERSION)
+        total = previous.execute("SELECT count(*) FROM (" + statement + ")", parameters).fetchone()[0]
+        messages.put({"kind": "enrichment", "total": total})
+        rows = previous.execute(statement, parameters)
         for row in rows:
             fact = dict(row)
             fact["metadata"] = json.loads(fact.pop("metadata_json"))

@@ -7,6 +7,10 @@ user-facing impact.
 Alpha.18–21 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.28.0-alpha.23 - 2026-11-08
+
+- Fix local indexer spool sharing failures and show separate discovery and header-check progress with a progress bar.
+
 ## 0.28.0-alpha.22 - 2026-11-06
 
 ### New features
