@@ -7,6 +7,8 @@ bottom remain compatibility wrappers for the Spec 022 contract.
 
 from __future__ import annotations
 
+from .filesystem_cleanup import remove_tree
+
 from uuid import uuid4
 import hashlib
 import json
@@ -917,7 +919,7 @@ def _reconcile_active_stage_token(data_root: Path | None = None) -> str | None:
 
 
 def _remove_stage_directory(stage_dir: Path) -> None:
-    shutil.rmtree(stage_dir, ignore_errors=False)
+    remove_tree(stage_dir)
 
 
 def _cleanup_stale_staging(

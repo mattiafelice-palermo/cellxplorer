@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import os
 import json
@@ -72,7 +73,7 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertEqual(observed, [False, True, False, False, True, False])
 
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.cache_root = Path(self.temp.name)
         self.cache_dir_patch = patch.object(cache, "CACHE_DIR", self.cache_root)
         self.cache_dir_patch.start()
@@ -577,7 +578,7 @@ class RawLayoutIndexMemoTests(unittest.TestCase):
     PARSER = "nx:test:r1"
 
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.cache_dir_patch = patch.object(cache, "CACHE_DIR", Path(self.temp.name))
         self.cache_dir_patch.start()
         self.row_group_patch = patch.object(cache, "RAW_CACHE_ROW_GROUP_SIZE", 4)

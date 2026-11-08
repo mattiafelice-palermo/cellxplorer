@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from pathlib import Path
 import tempfile
@@ -10,7 +11,7 @@ from backend.app.services import import_file_hints
 
 class ImportFileHintTests(unittest.TestCase):
     def test_header_hints_are_optional_and_keep_supplier_format_and_protocol(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "cell.mpr"
             path.write_bytes(b"mpr")
             with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={"technique": "OCV"}):
@@ -23,7 +24,7 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertIs(result["compatible"], True)
 
     def test_unsupported_biologic_technique_is_marked_incompatible(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "unsupported-geis.mpr"
             path.write_bytes(b"mpr")
             with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
@@ -36,7 +37,7 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertIn("does not support", result["error"])
 
     def test_header_cycle_count_is_used_only_when_explicitly_available(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "cell.ndax"
             path.write_bytes(b"neware")
             with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={"cycle_count": 42}):
@@ -45,7 +46,7 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertEqual(result["supplier"], "Neware")
 
     def test_header_failure_is_a_row_hint_not_an_import_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "cell.mpr"
             path.write_bytes(b"mpr")
             with patch.object(import_file_hints.parsing, "read_header_metadata", side_effect=ValueError("bad header")):
@@ -56,7 +57,7 @@ class ImportFileHintTests(unittest.TestCase):
     def test_excel_hint_reports_parser_compatibility_without_blocking_other_formats(self):
         from backend.app.services import neware_excel
 
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             workbook = Path(directory) / "neware.xlsx"
             workbook.write_bytes(b"workbook")
             with patch.object(neware_excel, "validate_supported_workbook") as validate, \
@@ -81,7 +82,7 @@ class ImportFileHintTests(unittest.TestCase):
         self.assertFalse(accepted["registered"])
 
     def test_normalized_header_error_is_not_reported_as_a_successful_scan(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "unsupported.mpr"
             path.write_bytes(b"mpr")
             with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={

@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import unittest
 from pathlib import Path
 import tempfile
@@ -21,7 +22,7 @@ class DependencyInstallerTests(unittest.TestCase):
         self.assertIn("path: dependency-installer-equivalence.json", equivalence)
 
     def test_failed_install_records_phase_and_propagates_failure(self):
-        with tempfile.TemporaryDirectory() as root:
+        with TemporaryDirectory() as root:
             output = Path(root) / "report.json"
             with (mock.patch.object(compare_ci_installers, "run", side_effect=RuntimeError("installation failed")),
                   mock.patch.object(compare_ci_installers.tempfile, "mkdtemp", return_value=str(Path(root) / "scratch"))):
@@ -45,7 +46,7 @@ class DependencyInstallerTests(unittest.TestCase):
             validate_inventories({"a": "2"}, {"a": "2", "uv": UV_VERSION}, {"a": "1"})
 
     def test_requirements_are_normalized_and_fail_closed(self):
-        with tempfile.TemporaryDirectory() as root:
+        with TemporaryDirectory() as root:
             path = Path(root) / "requirements.txt"
             path.write_text("A_b==1.0 # comment\n", encoding="utf-8")
             self.assertEqual(pinned_requirements([path]), {"a-b": "1.0"})

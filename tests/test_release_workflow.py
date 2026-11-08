@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import base64
 import importlib.util
 import re
@@ -1375,7 +1376,7 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             )
 
     def test_cli_accepts_fixture_files_offline(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest_path = root / "latest.json"
             notes_path = root / "notes.md"
@@ -1419,7 +1420,7 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             self.assertEqual(code, 0)
 
     def test_beta_cli_uses_inherited_base_public_key(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest_path = root / "latest.json"
             notes_path = root / "notes.md"
@@ -1487,7 +1488,7 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             self.assertEqual(verify_updater_manifest.main(arguments), 1)
 
     def test_load_release_assets_unwraps_powershell_nested_array(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
             path.write_text(
                 __import__("json").dumps([sample_assets()]),
@@ -1497,7 +1498,7 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             self.assertEqual(loaded, sample_assets())
 
     def test_load_release_assets_rejects_stringified_rows(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
             path.write_text('["@{name=latest.json}"]', encoding="utf-8")
             with self.assertRaises(verify_updater_manifest.ManifestVerificationError) as ctx:

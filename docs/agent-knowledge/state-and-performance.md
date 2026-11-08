@@ -1653,3 +1653,20 @@ source data refreshes through model lifecycle hooks, in the writing transaction.
 Historical dates remain unknown until an update. Source location checks and Cell
 metadata edits do not advance it. Library reads use the stored scalar; no source
 filesystem access is needed.
+
+## Disposable Windows workspace cleanup
+
+`filesystem_cleanup.py` owns bounded cleanup for explicitly owned temporary or
+staging trees. Windows read-only directory attributes can propagate through
+`copytree` from OneDrive-managed fixtures; directory/file deletion can also briefly
+report access denied, sharing violation or directory-not-empty while handles close.
+Clear only the readonly attribute inside the requested tree, never chmod reparse
+points, and retry only those Windows errors under one two-second deadline. Missing
+children during enumeration are already removed. Persistent failures still raise.
+The shared `TemporaryDirectory` subclass is adopted explicitly by affected tests
+and diagnostic workspaces; it does not monkeypatch Python or suppress assertions.
+Golden candidate path guards and bootstrap stage ownership checks remain mandatory.
+
+Windows `SHGetKnownFolderPath` returns a signed 32-bit HRESULT. Declare that ABI
+with `ctypes.c_int32`; `ctypes.wintypes.HRESULT` is absent on Python 3.12 and would
+silently disable every redirected-folder lookup through the fallback path.

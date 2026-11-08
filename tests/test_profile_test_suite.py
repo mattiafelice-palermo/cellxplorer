@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import importlib.util
 import io
 import sys
@@ -177,7 +178,7 @@ not ok 2 - beta
         )
 
     def test_discovery_helpers_use_sorted_complete_inputs(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "tests").mkdir()
             (root / "tests" / "__init__.py").write_text("", encoding="utf-8")

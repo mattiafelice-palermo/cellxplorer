@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
@@ -29,7 +30,7 @@ from tests import test_analysis_engine as fixture_support
 class ReusableTimeCapacityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.raw_root = tempfile.TemporaryDirectory()
+        cls.raw_root = TemporaryDirectory()
         cls.raw_patch = patch.object(cache, "CACHE_DIR", Path(cls.raw_root.name))
         cls.raw_patch.start()
         fixture_support.AnalysisEngineTests.setUpClass()
@@ -46,7 +47,7 @@ class ReusableTimeCapacityTests(unittest.TestCase):
         self.db = self.fixture.db
         self.addCleanup(self.db.get_bind().dispose)
         self.addCleanup(self.db.close)
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         for name, path in (("_ROOT", root), ("_RESULTS", root / "results"),

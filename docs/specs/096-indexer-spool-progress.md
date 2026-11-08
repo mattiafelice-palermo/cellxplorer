@@ -1,6 +1,6 @@
 # 096 — Indexer spool access and clear progress
 
-Status: Implemented; real-folder completion and browser progress verified. Full preflight is not green; do not merge.
+Status: Implemented; real-folder completion, browser progress and full preflight verified. Integration into main authorized.
 Branch: `bugfix/indexer-spool-progress`. Base: main `2daaf2a`, application-identical
 to published `v0.28.0-alpha.22`.
 
@@ -53,6 +53,26 @@ Private root paths, logs and verification artifacts are not committed.
   in File search and Activity/Processing, explicit count labels, and completed state.
   Indeterminate ARIA no longer announces a false 100 percent. Dark chrome and the
   current narrow viewport were inspected; no installed WebView acceptance claimed.
-- Application version is `0.28.0-alpha.23` for this branch only; no release/tag or main
-  merge is authorized by this implementation record. Full preflight still needs a
-  clean environment/result before integration.
+- Application version is `0.28.0-alpha.23`; no release/tag is included. The user's
+  subsequent follow-up authorizes main integration after all checks pass.
+
+## Authorized launcher and preflight follow-up
+
+User requested both-port process cleanup, repair of remaining preflight failures
+and merge only after all checks pass. Launcher now checks both selected ports,
+identifies their owners and prompts before stopping each exact process tree;
+`-StopExisting` explicitly opts out of prompts. Owned child trees are cleaned at
+shutdown. Local runtimes are discovered and development data defaults to this
+checkout's isolated library while preserving explicit overrides. Three native
+listener tests pass, including decline and self-protection.
+
+Correct the Python 3.12 Known Folder HRESULT ABI. Bounded, strict cleanup handles
+readonly copied directories and transient Windows deletion races in owned scratch
+trees. No global Python monkeypatch, scientific expectation refresh, relaxed
+assertion, or permission/security setting change is included. Seven focused cleanup
+regressions pass, including permanent-denial propagation and reparse protection.
+Final canonical verification: Python 3.12, `python scripts/preflight.py --no-cache`,
+four workers, isolated short Windows TEMP. All **224 backend/frontend test modules**,
+version consistency, frontend type checking and production bundle passed: **4/4 stages**,
+189.72 seconds wall time. Tests and safety assertions were not suppressed or relaxed.
+Local verification logs remain untracked. Main integration is authorized on this result.

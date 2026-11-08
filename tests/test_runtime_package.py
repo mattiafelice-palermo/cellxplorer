@@ -1,5 +1,6 @@
 """Packaging inventory and explicit scientific verification safety contracts."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import hashlib
 import json
@@ -47,7 +48,7 @@ class RuntimePackageTests(unittest.TestCase):
             path.write_bytes(b"test fixture")
 
     def test_inventory_is_complete_deterministic_and_runtime_libraries_are_kept(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             self._bundle(root)
             report = inventory(root)
@@ -60,7 +61,7 @@ class RuntimePackageTests(unittest.TestCase):
     def test_sdk_and_accidental_optional_dependencies_are_rejected(self):
         for unwanted in ["_internal/pyarrow/libarrow.lib", "_internal/pyarrow/include/arrow.h", "_internal/pyarrow/tests/data/sample.parquet", "_internal/scipy/native.pyd",
                          "_internal/setuptools/build.py", "_internal/distutils/compiler.py", "_internal/_distutils_hack/__init__.py"]:
-            with self.subTest(unwanted=unwanted), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(unwanted=unwanted), TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._bundle(root)
                 path = root / unwanted
@@ -70,7 +71,7 @@ class RuntimePackageTests(unittest.TestCase):
                     validate(inventory(root))
 
     def test_missing_picker_or_portable_asset_fails_closed(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             self._bundle(root)
             (root / "_internal/_tkinter.pyd").unlink()

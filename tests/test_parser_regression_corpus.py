@@ -1,4 +1,5 @@
 """Archive integrity and frozen-expectation controls, without private inputs."""
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 from pathlib import Path
 import json
 import stat
@@ -11,7 +12,7 @@ from scripts import parser_regression_corpus as corpus
 
 class CorpusTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory()
+        self.temp=TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)/'archive'
         self.source=Path(self.temp.name)/'original.mpr'

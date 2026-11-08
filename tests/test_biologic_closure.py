@@ -6,6 +6,7 @@ fail-closed lifecycle boundaries exercised as parser identities evolve.
 """
 
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import os
 from copy import deepcopy
@@ -295,7 +296,7 @@ def _observed_mixed_loop_settings() -> bytes:
 class BiologicClosureIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.tempdir = tempfile.TemporaryDirectory()
+        cls.tempdir = TemporaryDirectory()
         cls.root = Path(cls.tempdir.name)
         cls.mpr_path = write_gcpl_mpr(
             cls.root / "synthetic-gcpl.mpr",
@@ -990,7 +991,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
             "figure": {"data": [], "layout": {}},
             "summary": [],
         }
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             root = Path(folder)
             with patch.multiple(
                 analysis_cache,

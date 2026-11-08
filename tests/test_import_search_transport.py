@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import json
 import queue
 import tempfile
@@ -23,7 +24,7 @@ class Clock:
 
 class BatchSpoolAccessTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         self.spool = transport.BatchSpool(str(self.directory))
@@ -210,7 +211,7 @@ class BatchSpoolAccessTests(unittest.TestCase):
         self.assertEqual(self.spool.get(0), {"kind": "done"})
 
     def test_cleanup_failure_does_not_invalidate_published_scan(self):
-        temporary = tempfile.TemporaryDirectory()
+        temporary = TemporaryDirectory()
         real_cleanup = temporary.cleanup
         try:
             with patch.object(transport.tempfile, "TemporaryDirectory", return_value=temporary), patch.object(temporary, "cleanup", side_effect=OSError("busy")):

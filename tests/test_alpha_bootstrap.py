@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import json
 import os
 import sqlite3
@@ -70,7 +71,7 @@ def _create_database_from_template(root: Path, template: bytes) -> tuple[session
 class AlphaBootstrapTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._template_directory = tempfile.TemporaryDirectory(
+        cls._template_directory = TemporaryDirectory(
             prefix="cellxplorer-alpha-schema-template-"
         )
         cls.addClassCleanup(cls._template_directory.cleanup)
@@ -80,7 +81,7 @@ class AlphaBootstrapTests(unittest.TestCase):
         cls._template = (template_root / "cellxplorer.db").read_bytes()
 
     def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
+        self._tmpdir = TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
         self._engines = []
         self._sessions = []

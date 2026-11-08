@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import os
 import tempfile
@@ -18,7 +19,7 @@ from tests.test_import_search import config, fact
 
 class FilterTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.catalog = Catalog(Path(self.temp.name) / "catalog.sqlite")
         self.config = config()
         self.catalog.sync_roots(self.config["roots"])

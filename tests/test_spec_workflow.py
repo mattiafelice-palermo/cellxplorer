@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import argparse
 import importlib.util
 import json
@@ -26,7 +27,7 @@ workflow = load_spec_workflow()
 
 class SpecWorkflowTests(unittest.TestCase):
     def setUp(self):
-        self.tempdir = tempfile.TemporaryDirectory()
+        self.tempdir = TemporaryDirectory()
         self.repo = Path(self.tempdir.name)
         (self.repo / "docs" / "specs").mkdir(parents=True)
 

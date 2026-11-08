@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import importlib.util
 import json
 import os
@@ -34,7 +35,7 @@ class BenchmarkTestRunnerTests(unittest.TestCase):
             benchmark.parse_order("A,B,D")
 
     def test_architecture_a_uses_the_complete_existing_runner(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "scripts").mkdir()
             (root / "scripts" / "run_backend_tests.py").write_text("", encoding="utf-8")
@@ -59,7 +60,7 @@ class BenchmarkTestRunnerTests(unittest.TestCase):
             self.assertTrue(result["successful"])
 
     def test_architecture_b_can_request_a_reversed_module_order(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             result_path = root / "b.json"
             result_path.write_text(
@@ -95,7 +96,7 @@ class BenchmarkTestRunnerTests(unittest.TestCase):
             self.assertTrue(result["successful"])
 
     def test_persistent_worker_resets_environment_disposes_state_and_keeps_failure_attribution(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "app").mkdir()
             (root / "tests").mkdir()
@@ -175,7 +176,7 @@ class BenchmarkTestRunnerTests(unittest.TestCase):
             self.assertTrue(results[2]["successful"])
 
     def test_worker_protocol_returns_json_for_each_module(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "tests").mkdir()
             (root / "tests" / "__init__.py").write_text("", encoding="utf-8")

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import json
 import os
@@ -84,7 +85,7 @@ class CacheMaintenanceTests(unittest.TestCase):
         )
         db.commit()
 
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             cache_root = Path(folder)
             scientific = cache_root / source_hash[:2] / source_hash
             scientific.mkdir(parents=True)
@@ -107,7 +108,7 @@ class CacheMaintenanceTests(unittest.TestCase):
         db = self.make_session()
         online_hash = "1" * 64
         offline_hash = "2" * 64
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             root = Path(folder)
             online_source = root / "online.ndax"
             online_source.write_bytes(b"source")
@@ -152,7 +153,7 @@ class CacheMaintenanceTests(unittest.TestCase):
     def test_category_scientific_cleanup_preserves_active_builds(self):
         db = self.make_session()
         source_hash = "3" * 64
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             root = Path(folder)
             source_path = root / "online.ndax"
             source_path.write_bytes(b"source")
@@ -183,7 +184,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             self.assertTrue(scientific.exists())
 
     def test_thumbnail_cleanup_removes_images_and_indexes_together(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             root = Path(folder)
             thumbnails = root / "analysis" / "thumbnails" / "1"
             indexes = root / "analysis" / "thumbnail-index" / "1"
@@ -211,7 +212,7 @@ class CacheMaintenanceTests(unittest.TestCase):
 
     def test_obsolete_source_cache_is_removed_by_checksum(self):
         source_hash = "a" * 64
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             cache_root = Path(folder)
             scientific = cache_root / source_hash[:2] / source_hash
             scientific.mkdir(parents=True)
@@ -224,7 +225,7 @@ class CacheMaintenanceTests(unittest.TestCase):
 
     def test_cache_removal_waits_for_active_protected_build(self):
         source_hash = "c" * 64
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             cache_root = Path(folder)
             scientific = cache_root / source_hash[:2] / source_hash
             scientific.mkdir(parents=True)
@@ -257,7 +258,7 @@ class CacheMaintenanceTests(unittest.TestCase):
 
     def test_scientific_cleanup_paths_wait_for_live_protection(self):
         source_hash = "d" * 64
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             root = Path(folder)
             cache_root = root / "cache"
             fake_db = MagicMock()
@@ -326,7 +327,7 @@ class CacheMaintenanceTests(unittest.TestCase):
     def test_orphaned_source_cache_is_eligible_for_lru_cleanup(self):
         db = self.make_session()
         source_hash = "b" * 64
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             cache_root = Path(folder)
             scientific = cache_root / source_hash[:2] / source_hash
             scientific.mkdir(parents=True)
@@ -733,7 +734,7 @@ class CacheMaintenanceTests(unittest.TestCase):
     def test_analysis_budget_uses_running_total_and_survives_bulk_delete(self):
         from app.services import analysis_cache
 
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             root = Path(folder)
             overrides = {
                 "_ROOT": root,

@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import io
 import importlib.util
 import os
@@ -35,7 +36,7 @@ class RunBackendTestsTests(unittest.TestCase):
             (root / "frontend" / "tests" / name).write_text("", encoding="utf-8")
 
     def test_run_module_preserves_unique_cellxplorer_data(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "tests").mkdir()
             (root / "tests" / "test_alpha.py").write_text("", encoding="utf-8")
@@ -76,7 +77,7 @@ class RunBackendTestsTests(unittest.TestCase):
             self.assertLess(runner.ndax_worker_budget(8), runner.ndax_worker_budget(1))
 
     def test_runner_submits_deterministic_discovery_order(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.make_runner_repo(root)
             observed: list[str] = []
@@ -117,7 +118,7 @@ class RunBackendTestsTests(unittest.TestCase):
             self.assertEqual(runner.default_jobs(), 16)
 
     def test_backend_and_frontend_files_share_one_bounded_pool(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.make_runner_repo(root)
             observed: list[tuple[list[str], dict[str, str]]] = []
@@ -169,7 +170,7 @@ class RunBackendTestsTests(unittest.TestCase):
             self.assertIn("All 4 backend/frontend test files/modules passed.", output)
 
     def test_frontend_failure_names_exact_file(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.make_runner_repo(root)
 
@@ -197,7 +198,7 @@ class RunBackendTestsTests(unittest.TestCase):
             self.assertIn("frontend/tests/b.test.ts", stdout.getvalue())
 
     def test_skip_frontend_tests_keeps_backend_tasks_in_pool(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.make_runner_repo(root)
             observed: list[list[str]] = []

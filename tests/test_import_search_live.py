@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 
 import multiprocessing
 import os
@@ -134,7 +135,7 @@ class PolicyTests(unittest.TestCase):
 
 class DeltaTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = TemporaryDirectory()
         self.base = Path(self.temporary.name)
         self.root = self.base / "files"
         self.root.mkdir()
@@ -179,7 +180,7 @@ class DeltaTests(unittest.TestCase):
         self.catalog.sync_roots(roots)
         self.catalog.root_state("overlap", generation="other")
         self.catalog.apply_batch("overlap", "other", [fact(folder / "one.ndax")])
-        shutil.rmtree(folder)
+        remove_tree(folder)
         self.assertFalse(self.run_changes(["nested"]))
         self.assertEqual(self.catalog.search(self.config)["total"], 0)
         with self.catalog.connect() as db:

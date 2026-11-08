@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import os
 import sqlite3
 import sys
@@ -25,7 +26,7 @@ class DatabaseConfigurationTests(unittest.TestCase):
             connection.close()
 
     def test_wal_is_enabled_once_before_concurrent_connections(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cellxplorer.db"
             engine = create_engine(
                 f"sqlite:///{path.as_posix()}",

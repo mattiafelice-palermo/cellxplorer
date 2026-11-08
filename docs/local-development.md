@@ -34,8 +34,8 @@ Useful options:
 The script passes the selected backend port to both `run.py` and Vite, so the second command keeps
 API proxying working when the default ports are occupied.
 
-If the backend port is already occupied, the launcher lists the owning program, process ID, and
-executable when available. Confirm the prompt with `y` to stop that process and continue launching;
+If either selected backend or frontend port is already occupied, the launcher lists the owning program, process ID, and
+executable when available. Confirm the prompt with `y` to stop that exact process tree and continue launching;
 answering anything else leaves it running and exits without starting the app.
 
 ## Build the Windows installer
@@ -155,3 +155,14 @@ Indexer IPC uses the process temporary directory rather than the data/catalog ro
 Short sharing locks retry within the existing worker-silence deadline. Discovery
 is indeterminate; header-check progress has a known total. Searchable counts can
 shrink as unsupported candidates are excluded, independently of scan completion.
+
+The launcher checks both selected ports (default 8642 and 5173), including custom
+`-BackendPort` / `-FrontendPort` values. For an intentional unattended restart use
+`.\scripts\start-webapp.cmd -StopExisting`; it stops only the process trees
+owning those two ports. Normal startup prompts before stopping an existing owner.
+Shutdown also stops the launched child trees so Vite and backend workers are not
+left behind. Optional checkout-local Python/Node tools are discovered automatically.
+
+The development launcher defaults to `data\development` inside this checkout.
+An explicit `CELLXPLORER_DATA` environment override is preserved. This keeps browser
+testing separate from installed Stable/Beta/Alpha libraries.

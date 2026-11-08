@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import tempfile
 import time
 import unittest
@@ -158,7 +159,7 @@ class ImportInspectionTests(unittest.TestCase):
         self.assertIsNotNone(result[25].inspection)
 
     def test_inspection_establishes_one_digest_then_uses_stat_guard(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "one-digest.ndax"
             path.write_bytes(b"one digest source")
             original_hash = import_inspection.parsing.compute_hash
@@ -198,7 +199,7 @@ class ImportInspectionTests(unittest.TestCase):
                 import_inspection.inspect_files(paths)
 
     def test_moving_file_is_rejected_between_stat_snapshots(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.ndax"
             path.write_bytes(b"data")
             first = SimpleNamespace(st_mode=stat.S_IFREG, st_size=4, st_mtime_ns=1)
@@ -210,7 +211,7 @@ class ImportInspectionTests(unittest.TestCase):
                         import_inspection.inspect_file(str(path))
 
     def test_xlsx_inspection_rejects_a_source_that_changes_during_metadata_read(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.xlsx"
             path.write_bytes(b"data")
             first = SimpleNamespace(st_mode=stat.S_IFREG, st_size=4, st_mtime_ns=1)

@@ -1,5 +1,6 @@
 """Compatible Neware upgrades reuse bytes; BioLogic invalidation stays scoped."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from contextlib import ExitStack
 import hashlib
@@ -29,7 +30,7 @@ from tests.test_time_capacity_derived import derived_frame
 
 class ScientificCacheCompatibilityTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.sequence = 0

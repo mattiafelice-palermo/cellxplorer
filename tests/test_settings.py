@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import os
 import sys
 import tempfile
@@ -87,7 +88,7 @@ class SettingsTests(unittest.TestCase):
         db.close()
 
     def test_concurrent_inline_additions_do_not_replace_each_other(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             engine = create_engine(f"sqlite:///{Path(folder) / 'settings.db'}", connect_args={"timeout": 10})
             Base.metadata.create_all(engine)
             make_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -107,7 +108,7 @@ class SettingsTests(unittest.TestCase):
         db = self.make_session()
         self.assertEqual(settings.get_settings(db=db).download_mode, "ask")
 
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             saved = settings.update_settings(
                 settings.DownloadSettings(download_mode="folder", download_folder=folder),
                 db=db,
@@ -144,7 +145,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_download_uses_safe_unique_filename(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             settings.update_settings(
                 settings.DownloadSettings(download_mode="folder", download_folder=folder),
                 db=db,

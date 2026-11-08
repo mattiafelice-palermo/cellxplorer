@@ -1,6 +1,7 @@
 """Spec 041.2 GCPL -> canonical cycling mapping tests."""
 
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from pathlib import Path
 import tempfile
@@ -299,7 +300,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             ],
             technique_id=0x04,
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "technique-04-loop.mpr",
                 rows,
@@ -386,7 +387,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             ],
             technique_id=0x04,
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "technique-04-flags-and-rest.mpr",
                 rows,
@@ -424,7 +425,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(1.0, control=1.0, q_mAh=1.0, dq_mAh=1.0),
         ]
         settings = encode_gcpl_settings([{"set_i_c": 0, "current": 1.0}])
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             baseline = write_gcpl_mpr(
                 Path(temp) / "baseline.mpr",
                 rows,
@@ -477,7 +478,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 q_mAh=0.0,
             ),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "single-discharge.mpr",
                 rows,
@@ -539,7 +540,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 ns_changed=True,
             ),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "single-charge.mpr",
                 rows,
@@ -595,7 +596,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 q_mAh=0.0,
             ),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "single-discharge-with-control-preamble.mpr",
                 rows,
@@ -625,7 +626,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         canonical_cycling.validate_raw_timeseries(frame)
 
     def test_single_direction_fallback_rejects_declared_charge_with_discharge_rows(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "declared-charge-discharge-rows.mpr",
                 [
@@ -651,7 +652,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 parsing.parse_timeseries(path)
 
     def test_single_direction_fallback_rejects_declared_discharge_with_charge_rows(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "declared-discharge-charge-rows.mpr",
                 [
@@ -677,7 +678,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 parsing.parse_timeseries(path)
 
     def test_single_direction_fallback_rejects_active_execution_on_declared_rest_ns(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "declared-rest-active-rows.mpr",
                 [
@@ -703,7 +704,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 parsing.parse_timeseries(path)
 
     def test_single_direction_fallback_accepts_a_partial_source_starting_at_later_ns(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "partial-later-ns.mpr",
                 [
@@ -738,7 +739,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             ),
             _row(5.0, ns=2, half_cycle=0, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "fixture.mpr",
                 rows,
@@ -795,7 +796,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_full_mpr_mapping_rejects_observed_ns_outside_declared_settings(self) -> None:
         rows = [_row(0.0, ns=2, ns_changed=True)]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "undeclared-ns.mpr",
                 rows,
@@ -884,7 +885,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_declared_mixed_loop_reconstructs_three_cycles_without_full_cycle_field(self) -> None:
         rows = _repeating_loop_rows()
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "mixed-loop.mpr",
                 rows,
@@ -904,7 +905,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_declared_loop_starting_with_discharge_reconstructs_cycles(self) -> None:
         rows = _repeating_loop_rows(reverse=True)
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "reverse-loop.mpr",
                 rows,
@@ -919,7 +920,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_multiple_charge_steps_stay_in_one_reconstructed_cycle(self) -> None:
         rows = _repeating_loop_rows(multiple_charge_steps=True)
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "multi-charge-loop.mpr",
                 rows,
@@ -932,7 +933,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_interrupted_final_loop_iteration_is_accepted_as_a_partial_cycle(self) -> None:
         rows = _repeating_loop_rows(iterations=3, partial_final=True)
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "partial-loop.mpr",
                 rows,
@@ -944,7 +945,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertNotIn("CC_DChg", frame.loc[frame["cycle"] == 3, "status"].tolist())
 
     def test_observed_mixed_loop_reconstructs_without_declared_goto_fields(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "observed-loop.mpr",
                 _repeating_loop_rows(),
@@ -971,7 +972,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(5.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
             _row(6.0, ns=0, mode=MPR_MODE_REST, control=0.0, q_mAh=0.0, ns_changed=True),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "ambiguous-observed-loop.mpr",
                 rows,
@@ -988,7 +989,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(3.0, ns=2, control=1.0, q_mAh=1.0, dq_mAh=1.0),
             _row(4.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "single-direction-restart.mpr",
                 rows,
@@ -1006,7 +1007,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(4.0, ns=2, control=-1.0, q_mAh=-1.0, dq_mAh=-1.0),
             _row(5.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
         ]
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "wrong-loop-edge.mpr",
                 rows,
@@ -1019,7 +1020,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         rows = _repeating_loop_rows()
         rows[1]["control"] = -1.0
         rows[2]["control"] = -1.0
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "contradictory-loop.mpr",
                 rows,
@@ -1037,7 +1038,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 {"set_i_c": 0, "current": 1.0, "goto_step": 0, "repeat_count": 3},
             ]
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "single-direction-loop.mpr", rows, settings_payload=settings)
             capabilities = read_gcpl_header_metadata(path)["capabilities"]
             self.assertTrue(capabilities["metadata_only"])
@@ -1432,7 +1433,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             canonical_cycling.validate_raw_timeseries(malformed)
 
     def test_calc_per_cycle_consumes_reconstructed_multi_cycle_frame(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "calc-observed-loop.mpr",
                 _repeating_loop_rows(),

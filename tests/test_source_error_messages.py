@@ -1,4 +1,5 @@
 """Readable import explanations keep scientific and access failures distinct."""
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 from pathlib import Path
 import os
 import sys
@@ -45,7 +46,7 @@ class SourceErrorMessagesTests(unittest.TestCase):
         self.assertEqual(source_error_message("sample.xlsx", error), str(error))
 
     def test_header_retains_raw_diagnostic_and_emits_readable_reason(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "incomplete.mpr"
             path.write_bytes(biologic_mpr.MPR_MAGIC + b"partial")
             result = parsing.read_header_metadata(path)
@@ -56,7 +57,7 @@ class SourceErrorMessagesTests(unittest.TestCase):
                 parsing.ensure_supported_source_metadata(path, result)
 
     def test_stat_success_but_open_failure_remains_retryable_in_every_import_layer(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "temporarily-locked.mpr"
             path.write_bytes(biologic_mpr.MPR_MAGIC + b"partial")
             with patch.object(Path, "open", side_effect=PermissionError("sharing or access denied")):
@@ -76,7 +77,7 @@ class SourceErrorMessagesTests(unittest.TestCase):
                 self.assertNotIn("source_error_kind", hint)
 
     def test_remembered_rejection_preserves_diagnostic_but_presents_reason(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             path = Path(directory) / "source.mpr"
             path.write_bytes(b"bad")
             error = InvalidSourceFormatError("source.mpr declares a truncated MPR module")

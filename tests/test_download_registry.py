@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import os
 import sys
@@ -19,7 +20,7 @@ class DownloadRegistryTests(unittest.TestCase):
         return patch.object(download_registry, "_PATH", folder / "downloads-history.json")
 
     def test_record_and_list_reports_existence(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 present = folder / "plot.png"
@@ -36,7 +37,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertEqual(by_name["gone.csv"]["kind"], "data")
 
     def test_repeated_path_collapses_to_top(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 path = str(folder / "report.html")
@@ -48,7 +49,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertEqual(entries[0]["filename"], "report.html")
 
     def test_path_less_browser_downloads_each_keep_a_row(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 download_registry.record(filename="first.png", path="")
@@ -57,7 +58,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertEqual([e["filename"] for e in entries], ["second.png", "first.png"])
 
     def test_delete_entry_removes_file_when_requested(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 target = folder / "delete-me.pdf"
@@ -71,7 +72,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertEqual(download_registry.list_entries(), [])
 
     def test_delete_entry_keeps_file_when_not_requested(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 target = folder / "keep.pdf"
@@ -88,7 +89,7 @@ class DownloadRegistryTests(unittest.TestCase):
 
         from app.routers import settings as settings_router
 
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 target = folder / "plot.png"
@@ -112,7 +113,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertEqual(gone.exception.status_code, 404)
 
     def test_mark_seen_clears_the_badge_flag(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 entry = download_registry.record(filename="fresh.png", path=str(folder / "fresh.png"))
@@ -125,7 +126,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertFalse(download_registry.mark_seen("not-a-real-id"))
 
     def test_entries_written_before_seen_existed_do_not_count(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 download_registry._write(
@@ -135,7 +136,7 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertTrue(download_registry.list_entries()[0]["seen"])
 
     def test_missing_entry_reports_not_removed(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with self._isolate(folder):
                 result = download_registry.delete_entry("nope", delete_file=True)

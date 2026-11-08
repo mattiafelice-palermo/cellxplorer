@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from pathlib import Path
 import os
@@ -18,7 +19,7 @@ from app.services.source_format_errors import InvalidSourceFormatError, Unsuppor
 
 class SourceReadabilityTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="cellxplorer-source-readability-")
+        self.temp = TemporaryDirectory(prefix="cellxplorer-source-readability-")
         self.path = Path(self.temp.name) / "source.mpr"
         self.path.write_bytes(b"a source")
         source_readability.clear()

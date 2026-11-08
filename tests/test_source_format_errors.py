@@ -28,7 +28,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))

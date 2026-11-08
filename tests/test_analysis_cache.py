@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from copy import deepcopy
 import os
@@ -17,7 +18,7 @@ from app.services import analysis_cache, analysis_engine
 
 class AnalysisCacheTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = TemporaryDirectory()
         root = Path(self.temporary.name)
         self.patchers = [
             patch.object(analysis_cache, "_ROOT", root),

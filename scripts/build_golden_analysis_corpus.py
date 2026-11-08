@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
+from app.services.filesystem_cleanup import remove_tree
 sys.path.insert(0, str(ROOT / "tests"))
 
 from golden_analysis_support import (  # noqa: E402
@@ -584,7 +585,7 @@ def write_expected_outputs(manifest_path: Path, output_root: Path) -> None:
                 target.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                 print(f"Generated expected output for {case['id']}")
     finally:
-        shutil.rmtree(export_data, ignore_errors=True)
+        remove_tree(export_data, ignore_errors=True)
         restore_data_root_binding(saved_env)
 
 
@@ -642,7 +643,7 @@ def export_corpus(
     if output.exists():
         if not replace:
             raise SystemExit(f"Output directory already exists: {output}. Pass --replace to overwrite.")
-        shutil.rmtree(output)
+        remove_tree(output)
     output.mkdir(parents=True)
 
     db_path = snapshot_db(data_root / "cellxplorer.db")
@@ -821,19 +822,19 @@ def refresh_expected(
     if output.exists():
         if not replace:
             raise SystemExit(f"Output directory already exists: {output}. Pass --replace to overwrite.")
-        shutil.rmtree(output)
+        remove_tree(output)
     try:
         shutil.copytree(source, output, ignore=shutil.ignore_patterns("_data", "__pycache__"))
         # Drop stale expected files so regeneration is explicit.
         expected_dir = output / "expected"
         if expected_dir.exists():
-            shutil.rmtree(expected_dir)
+            remove_tree(expected_dir)
         expected_dir.mkdir(parents=True, exist_ok=True)
         write_expected_outputs(output / "manifest.json", output)
         committed = FIXTURE if source == FIXTURE.resolve() else source
         summarize_candidate_diff(committed, output, diff_report=diff_report)
     finally:
-        shutil.rmtree(output / "_data", ignore_errors=True)
+        remove_tree(output / "_data", ignore_errors=True)
     print(f"Refreshed expected outputs into candidate {output}")
     print("Review the DIFF lines and scientific path diffs, then copy approved files into the committed fixture tree.")
 

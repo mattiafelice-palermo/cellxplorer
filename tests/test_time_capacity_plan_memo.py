@@ -1,5 +1,6 @@
 """Source-only planning reuse retains live index guards and request ownership."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -24,7 +25,7 @@ from tests.test_time_capacity_path import raw_frame
 
 class SourcePlanMemoTests(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory()
+        temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.enterContext(patch.object(cache, "CACHE_DIR", self.root))

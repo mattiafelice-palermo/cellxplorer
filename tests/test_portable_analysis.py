@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 import os
 import shutil
 import sys
@@ -104,7 +105,7 @@ class PortableAnalysisTests(unittest.TestCase):
         return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.original_cache_dir = cache.CACHE_DIR
         self.original_import_dir = portable_analysis.IMPORT_DIR
@@ -219,7 +220,7 @@ class PortableAnalysisTests(unittest.TestCase):
     def rewrite_report(self, source_html: Path, report: dict, destination: Path) -> None:
         bounds = portable_analysis._index_script_bounds(source_html)
         manifest = portable_analysis.read_manifest(source_html, bounds)
-        with tempfile.TemporaryDirectory(prefix="portable-rewrite-") as temporary:
+        with TemporaryDirectory(prefix="portable-rewrite-") as temporary:
             temp_dir = Path(temporary)
             payload_paths: dict[str, Path] = {}
             payloads: list[dict] = []
@@ -488,7 +489,7 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertIn(b"function renderFrozenSvg(chart, rawSvg)", html)
         self.assertIn(b"Interactive Plotly controls are unavailable", html)
 
-        shutil.rmtree(cache.CACHE_DIR)
+        remove_tree(cache.CACHE_DIR)
         imported_db = self.make_session()
         with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
             imported, warnings = portable_analysis.import_analysis_html(
@@ -871,7 +872,7 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertIn(b"Download all as ZIP", html)
         self.assertIn(b"-sources.zip", html)
 
-        shutil.rmtree(cache.CACHE_DIR)
+        remove_tree(cache.CACHE_DIR)
         imported_db = self.make_session()
         with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
             imported, warnings = portable_analysis.import_analysis_html(
@@ -921,7 +922,7 @@ class PortableAnalysisTests(unittest.TestCase):
     def test_linked_import_marks_missing_source_offline(self):
         destination, source_hash = self.create_export(include_original_files=False)
         (self.root / "cell.ndax").unlink()
-        shutil.rmtree(cache.CACHE_DIR)
+        remove_tree(cache.CACHE_DIR)
 
         imported_db = self.make_session()
         _, warnings = portable_analysis.import_analysis_html(imported_db, destination)

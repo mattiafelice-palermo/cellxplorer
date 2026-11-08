@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import mmap
 import os
 import struct
@@ -273,7 +274,7 @@ class FastNdaxDecoderTests(unittest.TestCase):
 
     def test_compact_pages_match_original_and_preserve_decoded_contract(self):
         rows = _compact_ndc_rows()
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "compact.ndc"
             path.write_bytes(_ndc_bytes(rows))
             self.assertGreater(path.stat().st_size, _NDC_PAGE_SIZE * 2)
@@ -333,7 +334,7 @@ class FastNdaxDecoderTests(unittest.TestCase):
         )
 
     def test_partial_trailing_page_delegates_to_original(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "partial.ndc"
             path.write_bytes(_ndc_bytes(_compact_ndc_rows()[:3], trailing=b"partial"))
             expected = _read_ndc(path, fast_neware._ORIG_READ_5_1)
@@ -352,7 +353,7 @@ class FastNdaxDecoderTests(unittest.TestCase):
             with self.subTest(field=field):
                 row = dict(_compact_ndc_rows()[0])
                 row[field] = value
-                with tempfile.TemporaryDirectory() as temporary:
+                with TemporaryDirectory() as temporary:
                     path = Path(temporary) / f"unknown-{field}.ndc"
                     path.write_bytes(_ndc_bytes([row]))
                     with patch.object(
@@ -384,7 +385,7 @@ class FastNdaxReadTests(unittest.TestCase):
         self.assertTrue(orig.equals(fast), f"{path.name} mode={mode} soft={softcyc}")
 
     def test_compact_fixture_all_combinations_identical(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "compact.ndax"
             _write_compact_ndax(path)
             for mode in ("chg", "dchg", "auto"):
@@ -398,7 +399,7 @@ class FastNdaxReadTests(unittest.TestCase):
 
 class FastNdaxPreviewTests(unittest.TestCase):
     def test_split_v11_voltage_window_matches_authoritative_parser(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "split-v11.ndax"
             _write_split_v11_ndax(path)
             canonical = parsing.parse_timeseries(path)
@@ -491,7 +492,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
             self.assertEqual(expected.get("current_ma"), actual.get("current_ma"), x_axis)
 
     def test_compact_tail_matches_shared_time_and_capacity_previews(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "compact.ndax"
             _write_compact_ndax(path)
             full = parsing.parse_timeseries(path)
@@ -502,7 +503,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
         self.assert_preview_exact(full)
 
     def test_requested_cycle_window_matches_shared_preview(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "compact.ndax"
             _write_compact_ndax(path)
             full = parsing.parse_timeseries(path)
@@ -516,7 +517,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
         self.assert_preview_exact(full, cycle_start=2, cycle_end=4)
 
     def test_full_range_capacity_and_ce_match_canonical_cycle_summary(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "compact.ndax"
             _write_compact_ndax(path)
             full = parsing.parse_timeseries(path)
@@ -559,7 +560,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
             row["timestamp"] = base + timedelta(seconds=int(row["index"]))
         rows.insert(6, repeated)
 
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "repeated-step-index.ndax"
             with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr("data.ndc", _ndc_bytes(rows))
@@ -584,7 +585,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
         # Range 0 has a zero multiplier and can create signed-zero rounding
         # details, so this must stay on the exact per-row fallback.
         rows[2]["current_range"] = 0
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "zero-range.ndax"
             with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr("data.ndc", _ndc_bytes(rows))
@@ -605,7 +606,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
             )
 
     def test_simple_reader_bounds_declared_output_and_rejects_size_mismatch(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "bounded.ndax"
             _write_compact_ndax(path)
             self.assertIsNone(
@@ -630,7 +631,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
             self.assertIsNone(fast_neware.read_ndax_capacity_ce_for_preview(path))
 
     def test_full_range_capacity_bundle_includes_all_three_series(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "compact.ndax"
             _write_compact_ndax(path)
             canonical = calc.per_cycle(parsing.parse_timeseries(path))
@@ -662,7 +663,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
         )
 
     def test_large_capacity_bundle_keeps_full_extent_with_shared_sampling(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "large-compact.ndax"
             with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr("data.ndc", _ndc_bytes(_compact_ndc_rows(310)))
@@ -697,7 +698,7 @@ class FastNdaxPreviewTests(unittest.TestCase):
         self.assertEqual(segment["coulombic_efficiency_x"][-1], expected_ce["x"][-1])
 
     def test_auxiliary_ndc_layout_uses_fallback(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             path = Path(temporary) / "aux.ndax"
             with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr("data.ndc", _ndc_bytes(_compact_ndc_rows()))

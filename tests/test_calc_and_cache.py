@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 import os
 import shutil
 import sys
@@ -253,13 +254,13 @@ class CacheBuildIdempotencyTests(unittest.TestCase):
         parsing.parse_timeseries = self._counting_parse
         d = cache.raw_path(self.HASH).parent
         if d.exists():
-            shutil.rmtree(d)
+            remove_tree(d)
 
     def tearDown(self):
         parsing.parse_timeseries = self._orig
         d = cache.raw_path(self.HASH).parent
         if d.exists():
-            shutil.rmtree(d)
+            remove_tree(d)
 
     def _counting_parse(self, path):
         self.calls += 1
@@ -295,14 +296,14 @@ class WriteBehindTests(unittest.TestCase):
         parsing.parse_timeseries = self._counting_parse
         d = cache.raw_path(self.HASH, self.PARSER_IDENTITY).parent
         if d.exists():
-            shutil.rmtree(d)
+            remove_tree(d)
 
     def tearDown(self):
         cache.wait_for_pending(self.HASH)
         parsing.parse_timeseries = self._orig
         d = cache.raw_path(self.HASH, self.PARSER_IDENTITY).parent
         if d.exists():
-            shutil.rmtree(d)
+            remove_tree(d)
 
     def _counting_parse(self, path):
         self.calls += 1
@@ -351,7 +352,7 @@ class WriteBehindTests(unittest.TestCase):
 
 class CacheSourceSafetyTests(unittest.TestCase):
     def test_expected_hash_mismatch_is_rejected_before_parse(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             source = Path(temp) / "mismatch.ndax"
             source.write_bytes(b"stable")
             fingerprint = parsing.capture_source_fingerprint(source)
@@ -366,7 +367,7 @@ class CacheSourceSafetyTests(unittest.TestCase):
             parse.assert_not_called()
 
     def test_cache_build_hashes_once_then_uses_stat_only_guards(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             source = Path(temp) / "one-digest.ndax"
             source.write_bytes(b"cache source")
             fingerprint = parsing.capture_source_fingerprint(source)
@@ -390,9 +391,9 @@ class CacheSourceSafetyTests(unittest.TestCase):
         file_hash = "feedface" + "2" * 56
         cache_directory = cache.raw_path(file_hash).parent
         if cache_directory.exists():
-            shutil.rmtree(cache_directory)
+            remove_tree(cache_directory)
         try:
-            with tempfile.TemporaryDirectory() as temp:
+            with TemporaryDirectory() as temp:
                 source = Path(temp) / "moving.ndax"
                 source.write_bytes(b"stable")
 
@@ -407,10 +408,10 @@ class CacheSourceSafetyTests(unittest.TestCase):
             self.assertFalse(cache.cycles_path(file_hash).exists())
         finally:
             if cache_directory.exists():
-                shutil.rmtree(cache_directory)
+                remove_tree(cache_directory)
 
     def test_source_change_after_atomic_write_removes_new_outputs(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             source = Path(temp) / "after-write.ndax"
             source.write_bytes(b"stable")
             fingerprint = parsing.capture_source_fingerprint(source)
@@ -418,7 +419,7 @@ class CacheSourceSafetyTests(unittest.TestCase):
             parser_identity = parsing.parser_identity(source)
             cache_directory = cache.raw_path(file_hash, parser_identity).parent
             if cache_directory.exists():
-                shutil.rmtree(cache_directory)
+                remove_tree(cache_directory)
 
             original_write = cache._write_atomic
 
@@ -436,7 +437,7 @@ class CacheSourceSafetyTests(unittest.TestCase):
                 self.assertFalse(cache.cycles_path(file_hash, parser_identity).exists())
             finally:
                 if cache_directory.exists():
-                    shutil.rmtree(cache_directory)
+                    remove_tree(cache_directory)
 
 
 class CapacityTotalsTests(unittest.TestCase):

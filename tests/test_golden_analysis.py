@@ -1,5 +1,6 @@
 """Golden analysis regression corpus tests (Spec 015)."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 
 import copy
 import importlib.util
@@ -49,7 +50,7 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
                 data_root=_MODULE_DATA_ROOT,
             )
         except Exception:
-            shutil.rmtree(_MODULE_DATA_ROOT, ignore_errors=True)
+            remove_tree(_MODULE_DATA_ROOT, ignore_errors=True)
             golden_analysis_support.restore_data_root_binding(_PRIOR_DATA)
             raise
 
@@ -58,7 +59,7 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
         try:
             cls.env.close()
         finally:
-            shutil.rmtree(_MODULE_DATA_ROOT, ignore_errors=True)
+            remove_tree(_MODULE_DATA_ROOT, ignore_errors=True)
             golden_analysis_support.restore_data_root_binding(_PRIOR_DATA)
             if _MODULE_DATA_ROOT.exists():
                 raise AssertionError(f"module data root was not cleaned: {_MODULE_DATA_ROOT}")
@@ -357,7 +358,7 @@ class GoldenBuilderResolutionTests(unittest.TestCase):
     def test_rate_analysis_uses_its_own_cell_and_plot(self):
         builder = _load_builder()
 
-        with tempfile.TemporaryDirectory(prefix="golden-builder-") as tmp:
+        with TemporaryDirectory(prefix="golden-builder-") as tmp:
             db_path = Path(tmp) / "snapshot.db"
             conn = __import__("sqlite3").connect(db_path)
             conn.executescript(
@@ -501,7 +502,7 @@ class GoldenDataRootRestoreTests(unittest.TestCase):
             self.assertEqual(cache_mod.CACHE_DIR.parent.resolve(), expected)
             self.assertFalse(str(cache_mod.CACHE_DIR).startswith(str(temp)))
         finally:
-            shutil.rmtree(temp, ignore_errors=True)
+            remove_tree(temp, ignore_errors=True)
             golden_analysis_support.restore_data_root_binding(saved)
 
 
@@ -519,7 +520,7 @@ class GoldenBuilderSafetyTests(unittest.TestCase):
             self.builder.validate_candidate_output_path_or_exit(self.fixture / "nested-candidate")
 
     def test_rejects_output_inside_source_tree(self):
-        with tempfile.TemporaryDirectory(prefix="golden-builder-source-") as tmp:
+        with TemporaryDirectory(prefix="golden-builder-source-") as tmp:
             source = Path(tmp) / "source"
             shutil.copytree(self.fixture, source, ignore=shutil.ignore_patterns("_data", "__pycache__"))
             bad_output = source / "nested" / "candidate"
@@ -527,7 +528,7 @@ class GoldenBuilderSafetyTests(unittest.TestCase):
                 self.builder.refresh_expected(source, bad_output, replace=True)
 
     def test_refresh_expected_cleans_data_cache(self):
-        with tempfile.TemporaryDirectory(prefix="golden-builder-refresh-") as tmp:
+        with TemporaryDirectory(prefix="golden-builder-refresh-") as tmp:
             source = Path(tmp) / "source"
             output = Path(tmp) / "output"
             shutil.copytree(self.fixture, source, ignore=shutil.ignore_patterns("_data", "__pycache__"))

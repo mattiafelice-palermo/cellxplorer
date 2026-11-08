@@ -1,5 +1,6 @@
 """Focused contract tests for the Spec 050.17 diagnostic harness."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from pathlib import Path
 import sys
@@ -144,7 +145,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
                 "_budget_total",
             )
         }
-        with tempfile.TemporaryDirectory() as root:
+        with TemporaryDirectory() as root:
             with profiler._analysis_cache_root(Path(root)):
                 self.assertEqual(analysis_cache._ROOT, Path(root))
                 self.assertEqual(analysis_cache._RESULTS, Path(root) / "results")
@@ -205,7 +206,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
         with profiler.GoldenFixtureEnvironment.create() as env:
             for family in profiler.FAMILIES:
                 analysis_id, _cell_ids = profiler._family_workload(env, family, 1)
-                with tempfile.TemporaryDirectory() as root:
+                with TemporaryDirectory() as root:
                     payload, metrics = profiler._profile_route(
                         env,
                         analysis_id,
@@ -231,7 +232,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
         original_resolve_selection = analysis_engine.resolve_selection
         with profiler.GoldenFixtureEnvironment.create() as env:
             analysis_id, _cell_ids = profiler._family_workload(env, "cycles", 1)
-            with tempfile.TemporaryDirectory() as root:
+            with TemporaryDirectory() as root:
                 cache_root = Path(root)
                 warm_payload, _warm = profiler._profile_route_simple(
                     env,
@@ -258,7 +259,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
     def test_real_dcir_exact_hit_bypasses_compute_and_raw_reads(self) -> None:
         with profiler.GoldenFixtureEnvironment.create() as env:
             analysis_id, _cell_ids = profiler._family_workload(env, "dcir", 1)
-            with tempfile.TemporaryDirectory() as root:
+            with TemporaryDirectory() as root:
                 cache_root = Path(root)
                 warm_payload, _warm = profiler._profile_route_simple(
                     env,
@@ -316,7 +317,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
             env.db.add(analysis)
             env.db.commit()
             analysis_id = analysis.id
-            with tempfile.TemporaryDirectory() as root:
+            with TemporaryDirectory() as root:
                 _payload, metrics = profiler._profile_route(
                     env,
                     analysis_id,
@@ -331,7 +332,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
     def test_real_cycles_profile_closes_direct_compute_residual(self) -> None:
         with profiler.GoldenFixtureEnvironment.create() as env:
             analysis_id, _cell_ids = profiler._family_workload(env, "cycles", 1)
-            with tempfile.TemporaryDirectory() as root:
+            with TemporaryDirectory() as root:
                 _payload, metrics = profiler._profile_route(
                     env,
                     analysis_id,
@@ -395,7 +396,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
     def test_real_rate_deep_profile_contains_measured_children_and_reconciliation(self) -> None:
         with profiler.GoldenFixtureEnvironment.create() as env:
             analysis_id, _cell_ids = profiler._family_workload(env, "rate_capability", 1)
-            with tempfile.TemporaryDirectory() as root:
+            with TemporaryDirectory() as root:
                 _payload, metrics = profiler._profile_route(
                     env,
                     analysis_id,
@@ -425,7 +426,7 @@ class ProfileAnalysisFamiliesTests(unittest.TestCase):
     def test_real_dcir_deep_profile_contains_measured_children_and_reconciliation(self) -> None:
         with profiler.GoldenFixtureEnvironment.create() as env:
             analysis_id, _cell_ids = profiler._family_workload(env, "dcir", 1)
-            with tempfile.TemporaryDirectory() as root:
+            with TemporaryDirectory() as root:
                 _payload, metrics = profiler._profile_route(
                     env,
                     analysis_id,

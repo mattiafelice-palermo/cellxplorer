@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import remove_tree
 import importlib.util
 import io
 import json
@@ -279,7 +280,7 @@ class PreflightScriptTests(unittest.TestCase):
     def test_missing_node_modules_gives_installation_instruction(self):
         import shutil
 
-        shutil.rmtree(self.repo / "frontend" / "node_modules")
+        remove_tree(self.repo / "frontend" / "node_modules")
         _code, _stdout, stderr = self.run_preflight()
         self.assertEqual(_code, 1)
         self.assertIn("Frontend dependencies are not installed.", stderr)

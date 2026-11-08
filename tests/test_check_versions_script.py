@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import importlib.util
 import io
 import json
@@ -78,7 +79,7 @@ def write_repo(root: Path, version: str, *, frontend_version: str | None = None)
 
 class CheckVersionsScriptTests(unittest.TestCase):
     def setUp(self):
-        self.tempdir = tempfile.TemporaryDirectory()
+        self.tempdir = TemporaryDirectory()
         self.repo = Path(self.tempdir.name)
 
     def tearDown(self):

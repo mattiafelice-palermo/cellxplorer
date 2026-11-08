@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import csv
 import sys
 import tempfile
@@ -71,7 +72,7 @@ class TimeCapacityWorkerTests(unittest.TestCase):
 
     def test_native_csv_export_crops_the_full_resolution_rows(self):
         result, plan, settings = self._export_fixture()
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             destination = Path(temporary) / "range.csv"
             summary = workers.write_time_capacity_data_export(
                 result,
@@ -109,7 +110,7 @@ class TimeCapacityWorkerTests(unittest.TestCase):
             **plan,
             "traces": [*plan["traces"], {**plan["traces"][0]}],
         }
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             destination = Path(temporary) / "full.parquet"
             summary = workers.write_time_capacity_data_export(
                 result,

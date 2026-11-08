@@ -3,7 +3,8 @@ param(
     [ValidateRange(1, 65535)] [int]$BackendPort = 8642,
     [ValidateRange(1, 65535)] [int]$FrontendPort = 5173,
     [switch]$NoBrowser,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$StopExisting
 )
 
 $ErrorActionPreference = "Stop"
@@ -103,11 +104,20 @@ function Wait-ForLocalPortClosed {
         }
         Start-Sleep -Milliseconds 250
     }
-    throw "Backend port $Port is still in use after the selected process was stopped."
+    throw "Port $Port is still in use after the selected process was stopped."
 }
 
-function Ensure-BackendPortAvailable {
-    param([int]$Port)
+function Stop-WebappProcessTree {
+    param([int]$ProcessId)
+    if ($ProcessId -eq $PID) { throw "Refusing to stop the launcher itself (PID $PID)." }
+    & taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+        throw "Could not stop process tree $ProcessId. Check its permissions."
+    }
+}
+
+function Ensure-WebappPortAvailable {
+    param([int]$Port, [string]$Name, [string]$PortOption, [switch]$StopExisting)
 
     if (-not (Test-LocalPort $Port)) {
         return
@@ -115,10 +125,10 @@ function Ensure-BackendPortAvailable {
 
     $owners = @(Get-PortOwners $Port)
     if ($owners.Count -eq 0) {
-        throw "Backend port $Port is already in use, but its owning process could not be identified. Stop it manually or pass -BackendPort with another port."
+        throw "$Name port $Port is already in use, but its owning process could not be identified. Stop it manually or pass -$PortOption with another port."
     }
 
-    Write-Host "Backend port $Port is already in use by:" -ForegroundColor Yellow
+    Write-Host "$Name port $Port is already in use by:" -ForegroundColor Yellow
     foreach ($owner in $owners) {
         $details = @($owner.ProcessName, "PID $($owner.ProcessId)") -join ", "
         if ($owner.ExecutablePath) {
@@ -130,15 +140,15 @@ function Ensure-BackendPortAvailable {
         Write-Host "  $details"
     }
 
-    $answer = (Read-Host "Stop this process and continue launching CellXplorer? [y/N]").Trim()
+    $answer = if ($StopExisting) { "yes" } else { (Read-Host "Stop the process tree using $Name port $Port and continue? [y/N]").Trim() }
     if ($answer -notmatch '^(?i:y|yes)$') {
-        throw "Backend port $Port remains in use. Stop the existing server or pass -BackendPort with another port."
+        throw "$Name port $Port remains in use. Stop the existing server or pass -$PortOption with another port."
     }
 
     foreach ($owner in $owners) {
         Write-Host "Stopping $($owner.ProcessName) (PID $($owner.ProcessId)) ..." -ForegroundColor Yellow
         try {
-            Stop-Process -Id $owner.ProcessId -Force -ErrorAction Stop
+            Stop-WebappProcessTree $owner.ProcessId
         }
         catch {
             throw "Could not stop $($owner.ProcessName) (PID $($owner.ProcessId)): $($_.Exception.Message)"
@@ -146,7 +156,7 @@ function Ensure-BackendPortAvailable {
     }
 
     Wait-ForLocalPortClosed $Port
-    Write-Host "Backend port $Port is available. Continuing startup..." -ForegroundColor Green
+    Write-Host "$Name port $Port is available. Continuing startup..." -ForegroundColor Green
 }
 
 function Wait-ForLocalPort {
@@ -180,15 +190,33 @@ function Start-ChildCommand {
     $startInfo.Arguments = "/d /c `"$CommandLine`""
     $startInfo.WorkingDirectory = $WorkingDirectory
     $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $false
+    $startInfo.CreateNoWindow = $true
     return [System.Diagnostics.Process]::Start($startInfo)
 }
 
 try {
-    Ensure-BackendPortAvailable $BackendPort
-    if (Test-LocalPort $FrontendPort) {
-        throw "Frontend port $FrontendPort is already in use. Stop the existing Vite server or pass -FrontendPort with another port."
+    if ($BackendPort -eq $FrontendPort) { throw "Backend and frontend must use different ports." }
+    Ensure-WebappPortAvailable -Port $BackendPort -Name "Backend" -PortOption "BackendPort" -StopExisting:$StopExisting
+    Ensure-WebappPortAvailable -Port $FrontendPort -Name "Frontend" -PortOption "FrontendPort" -StopExisting:$StopExisting
+
+    # Use this checkout's optional portable tools when present; no global PATH changes.
+    foreach ($environment in @("venv312", "venv")) {
+        $pythonScripts = Join-Path $repoRoot ".codex\$environment\Scripts"
+        if (Test-Path (Join-Path $pythonScripts "python.exe")) {
+            $env:PATH = "$pythonScripts;$env:PATH"
+            break
+        }
     }
+    if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
+        $nodeRoot = Get-ChildItem (Join-Path $repoRoot ".codex\tools") -Directory -Filter "node-*-win-x64" -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "npm.cmd") } | Select-Object -First 1
+        if ($nodeRoot) { $env:PATH = "$($nodeRoot.FullName);$env:PATH" }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:CELLXPLORER_DATA)) {
+        $env:CELLXPLORER_DATA = Join-Path $repoRoot "data\development"
+    }
+    Write-Host "Development data: $env:CELLXPLORER_DATA"
 
     $rootModules = Join-Path $repoRoot "node_modules"
     $frontendModules = Join-Path $frontendRoot "node_modules"
@@ -235,7 +263,7 @@ try {
 finally {
     foreach ($process in $startedProcesses) {
         if ($process -and -not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            try { Stop-WebappProcessTree $process.Id } catch { Write-Warning $_.Exception.Message }
         }
     }
 

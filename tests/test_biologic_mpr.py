@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import os
 from pathlib import Path
@@ -216,7 +217,7 @@ def _write_fixture(
 
 class BiologicMprReaderTests(unittest.TestCase):
     def test_reads_declared_modules_and_owns_typed_records(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with read_mpr(path) as document:
                 self.assertEqual(len(document.modules), 3)
@@ -244,7 +245,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         cp_columns = (
             1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 settings_payload=b"\x19verified CP",
@@ -264,7 +265,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 )
 
     def test_reads_verified_ocv_record_layout_with_minimal_packed_flags(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 settings_payload=b"\x0bverified OCV",
@@ -281,13 +282,13 @@ class BiologicMprReaderTests(unittest.TestCase):
                 )
 
     def test_unknown_technique_is_rejected_before_gcpl_layout_inference(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), settings_payload=b"\x7funknown")
             with self.assertRaisesRegex(UnsupportedMprError, "unsupported BioLogic technique"):
                 read_mpr(path)
 
     def test_log_module_is_optional_at_low_level(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), include_log=False)
             with read_mpr(path) as document:
                 self.assertIsNone(document.vmp_log)
@@ -296,7 +297,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         column_ids = tuple(
             column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id not in {9, 39}
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             payload = _data_payload(
                 n_datapoints=1,
                 column_ids=column_ids,
@@ -312,14 +313,14 @@ class BiologicMprReaderTests(unittest.TestCase):
                 )
 
     def test_rejects_bad_magic(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = Path(temp) / "bad.mpr"
             path.write_bytes(b"not an MPR")
             with self.assertRaises(UnsupportedMprError):
                 read_mpr(path)
 
     def test_rejects_corrupt_full_magic_header(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
             contents[len(MPR_MAGIC_PREFIX) + 3] = ord("X")
@@ -328,28 +329,28 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_recognized_truncated_header_is_invalid(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = Path(temp) / "truncated-header.mpr"
             path.write_bytes(MPR_MAGIC_PREFIX + b" " * 5)
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
 
     def test_unrelated_short_file_is_unsupported(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = Path(temp) / "short-not-mpr.mpr"
             path.write_bytes(b"not an MPR")
             with self.assertRaises(UnsupportedMprError):
                 read_mpr(path)
 
     def test_truncated_module_header_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = Path(temp) / "truncated-module.mpr"
             path.write_bytes(_MAGIC_HEADER + b"MODULE")
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
 
     def test_rejects_declared_module_overrun(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
             struct.pack_into("<I", contents, 52 + 45, 0xFFFFFFFF)
@@ -358,7 +359,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_rejects_missing_boundary_marker(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
             first_end = 52 + MPR_MODULE_HEADER_SIZE + len(b"\x77settings")
@@ -368,13 +369,13 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_rejects_unknown_data_version(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), data_version=12)
             with self.assertRaises(UnsupportedMprModuleVersion):
                 read_mpr(path)
 
     def test_rejects_nonzero_old_version(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), data_old_version=1)
             with self.assertRaises(UnsupportedMprModuleVersion):
                 read_mpr(path)
@@ -480,7 +481,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         self.assertIn("MPR_RECORD_DTYPE", namespace)
 
     def test_rejects_unknown_column_id(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             ids = list(SUPPORTED_GCPL_COLUMN_IDS)
             ids[8] = 10
             path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=tuple(ids)))
@@ -488,14 +489,14 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_rejects_unverified_column_order(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             ids = (SUPPORTED_GCPL_COLUMN_IDS[1],) + SUPPORTED_GCPL_COLUMN_IDS[:1] + SUPPORTED_GCPL_COLUMN_IDS[2:]
             path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=ids))
             with self.assertRaises(UnsupportedMprColumn):
                 read_mpr(path)
 
     def test_rejects_required_column_omission(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             ids = tuple(
                 column_id
                 for column_id in SUPPORTED_GCPL_COLUMN_IDS
@@ -534,7 +535,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             for value in (100.0 + index, 200.0 + index, 300.0 + index, 400.0 + index, 500.0 + index):
                 extended_records.extend(struct.pack("<d", value))
 
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
@@ -567,7 +568,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         column_ids = (
             1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 379, 9, 124, 39, 211, 468, 125, 126, 182
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
@@ -603,7 +604,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             raw_q_charge_discharge_mAh=(8.0,),
             raw_half_cycle_index=(9,),
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
@@ -624,7 +625,7 @@ class BiologicMprReaderTests(unittest.TestCase):
 
     def test_future_high_byte_id_635_resolves_to_known_base_123(self) -> None:
         column_ids = tuple(635 if column_id == 379 else column_id for column_id in _EXTENDED_COLUMN_IDS)
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
@@ -642,7 +643,7 @@ class BiologicMprReaderTests(unittest.TestCase):
 
     def test_unknown_suffix_is_opaque_after_all_required_fields(self) -> None:
         column_ids = SUPPORTED_GCPL_COLUMN_IDS + (10, 522)
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
@@ -659,7 +660,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 self.assertEqual(data.opaque_trailing_base_ids, (10, 10))
 
     def test_duplicate_resolved_base_and_bad_extended_stride_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             duplicate_ids = SUPPORTED_GCPL_COLUMN_IDS + (724,)
             duplicate_path = _write_fixture(
                 Path(temp),
@@ -681,7 +682,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(bad_stride_path)
 
     def test_required_module_names_use_exact_identity(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
             contents[52 + 16 : 52 + 16 + 25] = b"settings extension".ljust(25, b" ")
@@ -690,7 +691,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_data_module_name_collision_is_not_accepted(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
             data_offset = 52 + MPR_MODULE_HEADER_SIZE + 8
@@ -700,13 +701,13 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_rejects_record_area_size_mismatch(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), data_payload=_data_payload()[:-1])
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
 
     def test_rejects_duplicate_data_modules(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             payload = _data_payload()
             path = Path(temp) / "duplicate.mpr"
             path.write_bytes(
@@ -719,26 +720,26 @@ class BiologicMprReaderTests(unittest.TestCase):
                 read_mpr(path)
 
     def test_skips_unknown_optional_module_by_declared_length(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), unknown_modules=1)
             with read_mpr(path) as document:
                 self.assertEqual(len(document.modules), 4)
                 self.assertEqual(document.modules[-1].module_type, "EXT")
 
     def test_missing_data_module_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), include_data=False)
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
 
     def test_module_count_bound_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp), unknown_modules=MPR_MAX_MODULE_COUNT)
             with self.assertRaises(UnsupportedMprError):
                 read_mpr(path)
 
     def test_file_size_bound_fails_before_mapping(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with patch(
                 "backend.app.services.biologic_mpr.os.fstat",
@@ -748,7 +749,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                     read_mpr(path)
 
     def test_growth_between_stat_and_mapping_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             real_mmap = biologic_mpr.mmap.mmap
 
@@ -767,7 +768,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_shrink_between_stat_and_mapping_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             original_size = path.stat().st_size
             real_mmap = biologic_mpr.mmap.mmap
@@ -787,7 +788,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_same_size_rewrite_between_stat_and_mapping_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             original_mtime = path.stat().st_mtime_ns
             real_mmap = biologic_mpr.mmap.mmap
@@ -818,7 +819,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             def close(self):
                 return None
 
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with patch(
                 "backend.app.services.biologic_mpr.mmap.mmap",
@@ -830,7 +831,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_growth_after_mapping_fails_before_return(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             real_fstat = biologic_mpr.os.fstat
             calls = 0
@@ -852,7 +853,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_same_size_rewrite_after_mapping_fails_before_return(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             original_mtime = path.stat().st_mtime_ns
             real_decode_flags = biologic_mpr._decode_flags
@@ -876,7 +877,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_column_count_bound_fails_before_layout_guessing(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             ids = tuple(range(MPR_MAX_COLUMNS + 1))
             path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=ids))
             with self.assertRaises(InvalidMprError):
@@ -910,7 +911,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             "raw_half_cycle_index": (0, 4),
         }
 
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
@@ -943,7 +944,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         records = bytearray(n_datapoints * MPR_RECORD_DTYPE.itemsize)
         for index in range(n_datapoints):
             struct.pack_into("<H", records, index * MPR_RECORD_DTYPE.itemsize + 1, index % 65536)
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 include_log=False,
@@ -961,7 +962,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             self.assertLess(time.perf_counter() - started, 10.0)
 
     def test_owned_records_survive_document_close(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with read_mpr(path) as document:
                 records = document.vmp_data.records
@@ -969,7 +970,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             self.assertEqual(int(records["raw_sample_index"][0]), 513)
 
     def test_retained_payload_requires_release_then_close_is_retryable(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             document = read_mpr(path)
             payload = document.vmp_set.payload
@@ -982,7 +983,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             self.assertTrue(document._closed)
 
     def test_body_exception_is_not_masked_by_retained_payload_cleanup(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             document = None
             payload = None
@@ -994,7 +995,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             document.close()
 
     def test_decode_flags_failure_preserves_original_error_and_closes_file(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with patch(
                 "backend.app.services.biologic_mpr._decode_flags",
@@ -1006,7 +1007,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_frombuffer_failure_preserves_original_error_and_closes_file(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with patch(
                 "backend.app.services.biologic_mpr.np.frombuffer",
@@ -1022,7 +1023,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             def copy(self):
                 raise RuntimeError("copy sentinel")
 
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with patch(
                 "backend.app.services.biologic_mpr.np.frombuffer",

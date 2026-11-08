@@ -1,4 +1,6 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import os
+import ctypes
 import sys
 import tempfile
 import unittest
@@ -63,6 +65,7 @@ class WindowsKnownFolderServiceTests(unittest.TestCase):
         self.assertEqual(result["desktop"], Path("C:/Users/Test/OneDrive/Desktop"))
         self.assertEqual(result["documents"], Path("C:/Users/Test/OneDrive/Documents"))
         self.assertEqual(result["downloads"], Path("C:/Users/Test/Downloads"))
+        self.assertEqual(ctypes.sizeof(shell32.SHGetKnownFolderPath.restype), 4)
         self.assertEqual(calls, [0, 1, 2])
         self.assertEqual(ole32.CoTaskMemFree.call_count, 3)
         self.assertEqual(shell32.SHGetKnownFolderPath.call_count, 3)
@@ -140,7 +143,7 @@ class QuickAccessKnownFolderTests(unittest.TestCase):
 
     def test_standard_duplicate_paths_are_not_repeated_and_pins_are_preserved(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             home = Path(tmp) / "Home"
             documents = home / "Documents"
             home.mkdir()
@@ -163,7 +166,7 @@ class QuickAccessKnownFolderTests(unittest.TestCase):
 
     def test_redirected_and_unavailable_standard_entries_keep_shape(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             home = Path(tmp) / "Home"
             redirected = Path(tmp) / "OneDrive" / "Documents"
             home.mkdir()

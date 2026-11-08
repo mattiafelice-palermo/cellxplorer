@@ -1,4 +1,5 @@
 """Deterministic controller/child lifetime coverage; no installed-app mutations."""
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 from contextlib import contextmanager
 import importlib.util
 from pathlib import Path
@@ -17,7 +18,7 @@ SPEC.loader.exec_module(fixture)
 
 class RelayControllerTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         (self.root / "tmp").mkdir()
@@ -150,7 +151,7 @@ class RelayControllerTests(unittest.TestCase):
 
 class RelayFixtureSourceTests(unittest.TestCase):
     def test_machine_fixture_runs_production_scope_and_full_relay_handshake(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
                  mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='', stderr='')) as compile_run:
@@ -183,7 +184,7 @@ class RelayFixtureSourceTests(unittest.TestCase):
             fixture.compile_fixture(Path('unused'), Path('client.exe'), channel='unknown')
 
     def test_successful_compiler_exit_cannot_hide_an_unresolved_variable(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
                  mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(
                      returncode=0, stdout='warning 6000: unknown variable/constant "CxExisting" detected', stderr='')):
@@ -205,7 +206,7 @@ class RelayFixtureSourceTests(unittest.TestCase):
         self.assertNotIn('w "$0"', layout)
 
     def test_quoted_relay_fixture_checks_both_values_in_the_real_child(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with mock.patch.object(fixture, 'nsis_compiler', return_value=Path('makensis.exe')), \
                  mock.patch.object(fixture.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='', stderr='')):
@@ -218,7 +219,7 @@ class RelayFixtureSourceTests(unittest.TestCase):
             self.assertIn('/CXTESTSECOND=$\\"second quoted value$\\"', source)
 
     def test_fixture_waits_on_owned_release_event_with_bounded_completion_budget(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             folder = Path(directory)
             with mock.patch.object(fixture, "nsis_compiler", return_value=Path("makensis.exe")), \
                  mock.patch.object(fixture.subprocess, "run", return_value=mock.Mock(returncode=0, stdout='', stderr='')):

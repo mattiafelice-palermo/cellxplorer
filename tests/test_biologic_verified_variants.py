@@ -1,5 +1,6 @@
 """Byte-backed evidence gates for GCPL signed settings and neutral boundaries."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from copy import deepcopy
 import os
@@ -28,7 +29,7 @@ def row(t, ns, mode, q=0., dq=0., control=0., q13=0.):
 
 class VerifiedVariantTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.counter = 0

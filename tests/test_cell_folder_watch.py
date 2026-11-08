@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import os
 import sys
 import tempfile
@@ -93,7 +94,7 @@ class CellFolderWatchTests(unittest.TestCase):
         return first, second
 
     def test_validation_and_ordering_are_deterministic(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             clean = cell_folder_watch.validate_watch_config(
                 {
                     "folder_path": directory,
@@ -120,7 +121,7 @@ class CellFolderWatchTests(unittest.TestCase):
         )
 
     def test_settings_preview_ignores_subfolders_and_filters_extensions(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "part-01.ndax").write_bytes(b"one")
             (root / "ignore.mpr").write_bytes(b"other")
@@ -141,7 +142,7 @@ class CellFolderWatchTests(unittest.TestCase):
             )
 
     def test_settings_preview_accepts_multiple_supported_extensions(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "part-01.ndax").write_bytes(b"one")
             (root / "part-02.mpr").write_bytes(b"two")
@@ -161,7 +162,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_stable_candidate_is_inspected_and_attached_through_existing_lifecycle(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 _cell, watch = self.add_watch(db, folder)
                 candidate_path = folder / "part-02.ndax"
@@ -192,7 +193,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_baseline_file_is_ignored_until_explicit_retry(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 cell, watch = self.add_watch(db, folder)
                 baseline_path = folder / "part-02.ndax"
@@ -256,7 +257,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_unstable_candidate_is_not_inspected_until_stability_window_elapses(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 _cell, _watch = self.add_watch(db, folder)
                 candidate_path = folder / "part-02.ndax"
@@ -309,7 +310,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_duplicate_content_in_this_chain_is_skipped_silently(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 _cell, _watch = self.add_watch(db, folder)
                 candidate_path = folder / "part-02.ndax"
@@ -329,7 +330,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_duplicate_content_in_another_cell_is_actionable(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 watch_folder = folder / "watch"
                 watch_folder.mkdir()
@@ -367,7 +368,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_blocking_candidate_attaches_only_the_valid_prefix(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 _cell, _watch = self.add_watch(db, folder)
                 first_path = folder / "part-02.ndax"
@@ -408,7 +409,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_confirmation_candidate_is_parked_without_acknowledgement_or_attach(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 _cell, _watch = self.add_watch(db, folder)
                 candidate_path = folder / "part-02.ndax"
@@ -438,7 +439,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_ambiguous_ordering_attaches_nothing(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 _cell, _watch = self.add_watch(db, folder)
                 first_path = folder / "one" / "same.ndax"
@@ -481,7 +482,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_missing_folder_does_not_disable_watch_and_scheduler_gates_are_fail_closed(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory) / "missing"
                 folder.mkdir()
                 _cell, watch = self.add_watch(db, folder)
@@ -534,7 +535,7 @@ class CellFolderWatchTests(unittest.TestCase):
     def test_ignored_candidate_remains_visible_until_retry(self):
         db, engine = self.make_session()
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with TemporaryDirectory() as directory:
                 folder = Path(directory)
                 cell, watch = self.add_watch(db, folder)
                 candidate = CellFolderWatchCandidate(

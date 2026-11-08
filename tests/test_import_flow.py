@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 import sys
 import tempfile
 import unittest
@@ -176,7 +177,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_biologic_mpr_inspection_is_header_only_and_preview_is_bounded(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "known.mpr"
             _write_importable_biologic_mpr(path)
             with patch.object(parsing, "parse_timeseries", side_effect=AssertionError("full parse")):
@@ -196,7 +197,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_complete_staged_preview_bounds_all_metadata_facts(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "large-header.mpr"
             path.write_bytes(b"header-only")
             huge = "header-value " * 20_000
@@ -253,7 +254,7 @@ class ImportFlowTests(unittest.TestCase):
         )
 
     def test_biologic_mpr_unsupported_and_corrupt_sources_have_distinct_rejections(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             unsupported_settings = bytearray(
                 encode_gcpl_settings([{"set_i_c": 0, "current": -1.0}])
@@ -278,7 +279,7 @@ class ImportFlowTests(unittest.TestCase):
                 import_inspection.inspect_file(str(wrong_container))
 
     def test_unexpected_biologic_adapter_failure_is_not_reclassified_as_bad_input(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "unexpected.mpr"
             _write_importable_biologic_mpr(path)
             with patch.object(
@@ -290,7 +291,7 @@ class ImportFlowTests(unittest.TestCase):
                     parsing.read_header_metadata(path)
 
     def test_biologic_preview_is_unavailable_for_metadata_only_mpr(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.mpr"
             _write_metadata_only_biologic_mpr(path)
             with patch.object(files.cache, "build_write_behind") as build:
@@ -308,7 +309,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_biologic_mpr_synthetic_preview_builds_without_mpt(self):
         """A verified single-direction MPR can build a preview without an MPT."""
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "preview-without-explicit-cycle-field.mpr"
             _write_importable_biologic_mpr(path)
@@ -335,7 +336,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_biologic_registration_persists_source_header_and_metadata_capability(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "register.mpr"
             _write_importable_biologic_mpr(path)
             inspected = import_inspection.inspect_file(str(path))
@@ -376,7 +377,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_biologic_registration_does_not_require_acknowledgement_for_single_direction(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "requires-ack.mpr"
             _write_importable_biologic_mpr(path)
             inspected = import_inspection.inspect_file(str(path))
@@ -395,7 +396,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_scanner_discovers_and_registers_biologic_source(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "scan.mpr"
             _write_importable_biologic_mpr(path)
             source_file = scanner.ingest_path(db, path)
@@ -406,7 +407,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertFalse(source_file.header_meta["capabilities"]["metadata_only"])
 
     def test_xlsx_inspection_requires_the_neware_record_contract(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             valid = root / "formation.xlsx"
             _write_importable_neware_workbook(valid)
@@ -428,7 +429,7 @@ class ImportFlowTests(unittest.TestCase):
                 import_inspection.inspect_file(str(unrelated))
 
     def test_folder_listing_is_recursive_and_filters_non_neware_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             nested = root / "batch" / "nested"
             nested.mkdir(parents=True)
@@ -449,7 +450,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(result["files"][0]["selection_root"]["path"], str(root.resolve()))
 
     def test_source_listing_combines_multiple_folders_and_loose_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = root / "first"
             second = root / "second"
@@ -476,7 +477,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_source_listing_job_reports_roots_without_inspection(self):
         background_jobs.clear_jobs()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp) / "batch"
             root.mkdir()
             loose = Path(tmp) / "loose.ndax"
@@ -608,7 +609,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_post_commit_registration_failure_cannot_unlock_duplicate_retry(self):
         background_jobs.clear_jobs()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             database_path = Path(tmp) / "committed-import.db"
             engine = create_engine(
                 f"sqlite:///{database_path.as_posix()}",
@@ -871,7 +872,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_real_registration_worker_commits_cells_before_cache_handoff(self):
         background_jobs.clear_jobs()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             database_path = root / "worker.db"
             engine = create_engine(
@@ -947,7 +948,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_registration_commits_all_cells_before_blocked_cache_worker(self):
         background_jobs.clear_jobs()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             database_path = root / "atomic-import.db"
             engine = create_engine(
@@ -1074,7 +1075,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_committed_import_rejects_same_source_on_retry(self):
         background_jobs.clear_jobs()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             database_path = root / "duplicate-import.db"
             engine = create_engine(
@@ -1121,7 +1122,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_registration_consumes_inspection_identity_and_server_header_cache_without_reopening_source(self):
         background_jobs.clear_jobs()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             database_path = root / "inspection-backed-import.db"
             engine = create_engine(
@@ -1194,7 +1195,7 @@ class ImportFlowTests(unittest.TestCase):
             )
 
     def test_final_import_fingerprint_pass_rejects_source_mutation(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "mutated.ndax"
             path.write_bytes(b"before-registration")
             fingerprint = parsing.capture_source_fingerprint(path)
@@ -1214,7 +1215,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_continuation_endpoint_rejects_source_mutated_in_commit_window(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             old_path = root / "old.ndax"
             old_path.write_bytes(b"old source")
@@ -1291,7 +1292,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_persisted_metadata_only_source_has_stable_no_parse_capability(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "metadata-only.mpr"
             path.write_bytes(b"metadata-only source")
             source = SourceFile(
@@ -1331,7 +1332,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_continuation_proposal_reuses_inspection_receipt_without_rehashing(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "receipt.ndax"
             path.write_bytes(b"continuation receipt")
             fingerprint = parsing.capture_source_fingerprint(path)
@@ -1359,7 +1360,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_metadata_only_continuation_requires_ack_and_queues_no_cache_job(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             old_path = root / "old.mpr"
             old_path.write_bytes(b"old metadata-only source")
@@ -1432,7 +1433,7 @@ class ImportFlowTests(unittest.TestCase):
         """A canonical single-direction MPR follows the normal cache path."""
         background_jobs.clear_jobs()
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             neware_path = root / "part-01.ndax"
             neware_path.write_bytes(b"neware-shaped continuation source")
@@ -1522,7 +1523,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_stale_import_cache_success_and_failure_do_not_mutate_new_source_identity(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             rows = []
             old_results = {}
             for index, ok in enumerate((True, False)):
@@ -1590,7 +1591,7 @@ class ImportFlowTests(unittest.TestCase):
         """~56 KB per file to the browser and back is ~58 MB each way at 1,000
         files. Inspection already stored the header server-side."""
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "inspect.ndax"
             path.write_bytes(b"inspection-payload-content")
             with patch.object(files.parsing, "compute_hash", return_value="c" * 64), \
@@ -1611,7 +1612,7 @@ class ImportFlowTests(unittest.TestCase):
     def test_registration_reads_the_header_from_the_inspection_cache(self):
         """With no header in the payload, registration must not reopen the file."""
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cached.ndax"
             path.write_bytes(b"cached-header-content")
             stat = path.stat()
@@ -1650,7 +1651,7 @@ class ImportFlowTests(unittest.TestCase):
         """A batch larger than the header cache arrives with its earliest
         entries gone. Registration must still succeed by reopening the file."""
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "evicted.ndax"
             path.write_bytes(b"evicted-header-content")
             stat = path.stat()
@@ -1683,7 +1684,7 @@ class ImportFlowTests(unittest.TestCase):
         background_jobs.clear_jobs()
 
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             outer = Path(tmp)
             first = outer / "one" / "batch"
             second = outer / "two" / "batch"
@@ -1699,7 +1700,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertNotEqual(roots[0]["path"], roots[1]["path"])
 
     def test_import_directory_browser_lists_folders_and_neware_files_only(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "nested").mkdir()
             (root / "cell.ndax").write_bytes(b"cell")
@@ -1723,7 +1724,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_quick_access_pins_and_recent_folders_are_persistent(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             folder = Path(tmp).resolve()
             files.remember_import_folder(db, folder)
             files.update_import_pinned_folders(
@@ -1737,7 +1738,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_browsing_nested_folders_and_refreshing_does_not_change_recents(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             inner = root / "outer" / "inner"
             inner.mkdir(parents=True)
@@ -1752,7 +1753,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_recent_import_folders_are_bounded_deduplicated_and_rollback_with_registration(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             paths = [Path(tmp) / str(i) for i in range(12)]
             files._remember_import_folders(db, [*paths, paths[-1]])
             db.commit()
@@ -1769,7 +1770,7 @@ class ImportFlowTests(unittest.TestCase):
             files.resolve_import_staged_path("../outside.ndax")
 
     def test_source_path_takes_precedence_over_staged_import_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             source = Path(tmp) / "example.ndax"
             source.write_bytes(b"example")
             resolved = files.resolve_import_source_path(
@@ -1816,7 +1817,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIn(92.0, preview["y"])
 
     def test_continuation_preview_stitches_ordered_segments_with_source_parser_identities(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = root / "part-a.ndax"
             second = root / "part-b.ndax"
@@ -1902,7 +1903,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual([segment["coulombic_efficiency_x"] for segment in filtered_response["segments"]], [[], [3, 4]])
 
     def test_continuation_preview_stitched_interpretation_infers_contiguous_file_fragments(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = root / "fragment-a.ndax"
             second = root / "fragment-b.ndax"
@@ -1988,7 +1989,7 @@ class ImportFlowTests(unittest.TestCase):
         over the merged chain and attributes the cycle to the segment
         holding its first row, so no segment reports a false 0.0.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = root / "boundary-a.ndax"
             second = root / "boundary-b.ndax"
@@ -2052,7 +2053,7 @@ class ImportFlowTests(unittest.TestCase):
             self.assertNotIn(0.0, segment["y"])
 
     def test_continuation_preview_supports_voltage_quantity_from_raw_cache(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = root / "voltage-a.ndax"
             second = root / "voltage-b.ndax"
@@ -2202,7 +2203,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(set(load_selected.call_args.args[2]), {14, 15})
 
     def test_stitched_voltage_cycle_extent_stays_full_for_a_bounded_window(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "stitched-voltage.ndax"
             path.write_bytes(b"stitched voltage source with three cycles")
             base_request = _continuation_preview_request([path])
@@ -2287,7 +2288,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["segments"][1]["x"], [10.0, 20.0])
 
     def test_voltage_preview_remains_available_for_metadata_only_raw_source(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "metadata-voltage.ndax"
             path.write_bytes(b"metadata-only raw voltage source")
             base_request = _continuation_preview_request([path])
@@ -2319,7 +2320,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["segments"][0]["y"], [4.2, 4.0])
 
     def test_continuation_preview_sampling_is_bounded_and_preserves_segment_boundaries(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = root / "large-a.ndax"
             second = root / "large-b.ndax"
@@ -2366,7 +2367,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["segments"][1]["x"][-1], 800)
 
     def test_continuation_preview_fails_closed_when_cache_is_not_ready(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cold.ndax"
             path.write_bytes(b"cold continuation source")
             request = _continuation_preview_request([path])
@@ -2384,7 +2385,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIn("inspect continuity again", raised.exception.detail["message"])
 
     def test_stitched_preview_construction_failure_returns_a_bounded_recovery_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview-failure.ndax"
             path.write_bytes(b"stitched preview failure source")
             base_request = _continuation_preview_request([path])
@@ -2407,7 +2408,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(len(raised.exception.detail["sources"]), 1)
 
     def test_continuation_preview_rejects_metadata_only_sources_without_science(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "metadata-only.ndax"
             path.write_bytes(b"metadata-only continuation source")
             request = _continuation_preview_request([path])
@@ -2427,7 +2428,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIn("Canonical cycling", raised.exception.detail["sources"][0]["reason"])
 
     def test_continuation_preview_classifies_production_biologic_downgrade_as_metadata_only(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "failed-single-direction.mpr"
             path.write_bytes(b"failed single-direction continuation source")
             request = _continuation_preview_request([path])
@@ -2450,7 +2451,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIn("logical-cycle reconstruction contract", raised.exception.detail["sources"][0]["reason"])
 
     def test_continuation_preview_requires_reinspection_after_source_change(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "changed.ndax"
             path.write_bytes(b"original continuation source")
             request = _continuation_preview_request([path])
@@ -2464,7 +2465,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIn("inspect it again", raised.exception.detail["message"])
 
     def test_xlsx_capacity_preview_and_raw_table_use_normal_cache_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             with patch.object(cache, "CACHE_DIR", Path(tmp) / "cache"):
                 path = Path(tmp) / "preview.xlsx"
                 _write_importable_neware_workbook(path)
@@ -2488,7 +2489,7 @@ class ImportFlowTests(unittest.TestCase):
                 finally:
                     cache.wait_for_pending(file_hash)
                     if cache_dir.exists():
-                        shutil.rmtree(cache_dir, ignore_errors=True)
+                        remove_tree(cache_dir, ignore_errors=True)
 
         self.assertEqual(raw["total_rows"], 8)
         self.assertTrue(
@@ -2513,7 +2514,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_xlsx_registration_preserves_one_full_source_header_and_curated_cell_metadata(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "registered.xlsx"
             _write_importable_neware_workbook(path)
             request = files.ImportCellsRequest(
@@ -2542,7 +2543,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_structured_xlsx_continuation_uses_the_normal_source_chain_path(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "continuation.xlsx"
             _write_importable_neware_workbook(path)
             with patch.object(
@@ -2566,7 +2567,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_mixed_binary_and_xlsx_continuation_persists_one_ordered_internal_test(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             binary_path = root / "part-01.ndax"
             excel_path = root / "part-02.xlsx"
@@ -2666,7 +2667,7 @@ class ImportFlowTests(unittest.TestCase):
             self.assertIn("duplicate_hash", {finding["code"] for finding in blocked["findings"]})
 
     def test_preview_matching_fingerprint_reuses_inspected_hash(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.ndax"
             path.write_bytes(b"preview")
             stat = path.stat()
@@ -2695,7 +2696,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(response["verified_hash"], "a" * 64)
 
     def test_preview_fingerprint_mismatch_rehashes_and_rejects_changed_source(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "changed.ndax"
             path.write_bytes(b"changed")
             stat = path.stat()
@@ -2716,7 +2717,7 @@ class ImportFlowTests(unittest.TestCase):
         compute_hash.assert_called_once_with(path.resolve())
 
     def test_preview_rehashed_matching_source_uses_fresh_verified_hash(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "touched.ndax"
             path.write_bytes(b"touched")
             stat = path.stat()
@@ -2748,7 +2749,7 @@ class ImportFlowTests(unittest.TestCase):
         cycles = pd.DataFrame(
             {"cycle": [1], "discharge_capacity_mah": [1.5]},
         )
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cached.ndax"
             path.write_bytes(b"cached")
             with patch.object(files.parsing, "compute_hash") as compute_hash, patch.object(
@@ -2782,7 +2783,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_cache_worker_failure_marks_registered_source_error(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "failing.ndax"
             path.write_bytes(b"registered source")
             fingerprint = parsing.capture_source_fingerprint(path)
@@ -2846,7 +2847,7 @@ class ImportFlowTests(unittest.TestCase):
         Base.metadata.create_all(engine)
         factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
         db = factory()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "replaced.ndax"
             path.write_bytes(b"original cache source")
             fingerprint = parsing.capture_source_fingerprint(path)
@@ -3242,7 +3243,7 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_create_imported_cells_starts_cache_jobs_after_committing_import(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "large.ndax"
             path.write_bytes(b"fake-import-test-content")
             # Windows TEMP may use an 8.3 alias. Registration resolves source
@@ -3418,7 +3419,7 @@ class ImportFlowTests(unittest.TestCase):
         """
         db = self.make_session()
         raw_header = {f"Step.Head_Info.Field_{n:04d}": f"value-{n}" for n in range(120)}
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "header.ndax"
             path.write_bytes(b"fake-import-test-content")
             original_start = files.start_import_cache_jobs

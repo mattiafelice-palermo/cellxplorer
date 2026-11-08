@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import os
 import sys
 import tempfile
@@ -72,7 +73,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_update_source_file_from_path_replaces_hash_metadata_and_cache_counts(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.ndax"
             path.write_bytes(b"new content")
             sf = SourceFile(
@@ -125,7 +126,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_scanner_ingests_structured_xlsx_through_shared_source_policy(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.xlsx"
             path.write_bytes(b"structured Neware workbook")
             metadata = {
@@ -142,7 +143,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_scanner_rejects_exact_hash_cross_family_relink_without_mutating_source(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             original_path = Path(tmp) / "source.ndax"
             renamed_path = Path(tmp) / "source.xlsx"
             original_path.write_bytes(b"binary-shaped Neware source")
@@ -177,7 +178,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_scanner_relinks_known_structured_xlsx_and_keeps_extension_coherent(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             original_path = Path(tmp) / "source.xlsx"
             renamed_path = Path(tmp) / "renamed.xlsx"
             workbook = Workbook()
@@ -244,7 +245,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_scanner_same_binary_family_relink_updates_extension(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             original_path = Path(tmp) / "source.nda"
             renamed_path = Path(tmp) / "renamed.ndax"
             original_path.write_bytes(b"binary-shaped Neware source")
@@ -273,7 +274,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_scanner_discovers_xlsx_without_opening_workbooks_during_enumeration(self):
         job_id = 902039
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             xlsx = root / "cell.xlsx"
             nda = root / "binary.nda"
@@ -303,7 +304,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_invalid_xlsx_scan_does_not_create_or_dirty_a_source(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "invalid.xlsx"
             path.write_bytes(b"not a Neware workbook")
             invalid_meta = {
@@ -319,7 +320,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_invalid_xlsx_replacement_preserves_existing_source_identity(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.xlsx"
             path.write_bytes(b"invalid replacement")
             source = SourceFile(
@@ -348,7 +349,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_invalid_xlsx_scan_replacement_marks_existing_source_changed_without_adopting(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.xlsx"
             path.write_bytes(b"invalid replacement")
             source = SourceFile(
@@ -390,7 +391,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_failed_source_update_preserves_previous_cache(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.ndax"
             path.write_bytes(b"new content")
             source = SourceFile(
@@ -753,7 +754,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_delete_cell_removes_online_source_and_cache_after_commit(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "a.ndax"
             source_path.write_bytes(b"original source")
             source_hash = "a" * 64
@@ -1102,7 +1103,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             cycle_count=4,
             capacity_summary_status="ready",
         )
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             tail_path = Path(tmp) / "tail.mpr"
             tail_path.write_bytes(b"source")
             tail_mtime_ns = 1_700_000_000_000_000_000
@@ -1172,7 +1173,7 @@ class SourceAndReplicateTests(unittest.TestCase):
         ])]
         db.add(cell)
         db.commit()
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             cache_dir = Path(temporary)
             (cache_dir / "split-cp-charge").touch()
             (cache_dir / "split-cp-discharge").touch()
@@ -1344,7 +1345,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_cell_source_check_skips_completed_cells_and_marks_changed_active_sources(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             active_path = Path(tmp) / "active.ndax"
             complete_path = Path(tmp) / "complete.ndax"
             active_path.write_bytes(b"active updated")
@@ -1679,7 +1680,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
     def test_combined_source_job_adopts_changed_file_and_marks_it_ready(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "active.ndax"
             path.write_bytes(b"new bytes")
             cell = Cell(name="Active", cycling_status="active")
@@ -1768,7 +1769,7 @@ class SourceAndReplicateTests(unittest.TestCase):
         def run_case(case):
             db = self.make_session()
             factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
-            with tempfile.TemporaryDirectory() as tmp:
+            with TemporaryDirectory() as tmp:
                 first_path = Path(tmp) / "first.ndax"
                 tail_path = Path(tmp) / "tail.ndax"
                 first_path.write_bytes(b"first")
@@ -2390,7 +2391,7 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
 
     def test_final_source_identity_read_rejects_changed_source_before_write(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "changing.ndax"
             path.write_bytes(b"source")
             first_hash = "1" * 64
@@ -2469,7 +2470,7 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
 
     def test_multi_source_import_normalizes_legacy_flat_draft(self):
         db = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             first = Path(tmp) / "a.ndax"
             second = Path(tmp) / "b.ndax"
             first.write_bytes(b"a")

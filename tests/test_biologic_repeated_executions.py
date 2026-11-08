@@ -1,5 +1,6 @@
 """Independent byte fixtures for repeated GCPL source/Cell scientific identity."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from copy import deepcopy
 import os
@@ -70,7 +71,7 @@ def write_repeated(path: Path, direction: int, *, rows=None, **log) -> Path:
 
 class RepeatedGcplTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="cellxplorer-gcpl-executions-")
+        self.temp = TemporaryDirectory(prefix="cellxplorer-gcpl-executions-")
         self.root = Path(self.temp.name)
         self.discharge = write_repeated(self.root / "discharge.mpr", -1)
         self.charge = write_repeated(self.root / "charge.mpr", 1)

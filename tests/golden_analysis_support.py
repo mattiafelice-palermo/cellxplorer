@@ -1,5 +1,6 @@
 """Shared helpers for the golden analysis regression corpus (Spec 015)."""
 from __future__ import annotations
+from app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 
 import hashlib
 import importlib
@@ -894,7 +895,7 @@ class GoldenFixtureEnvironment:
         temp: tempfile.TemporaryDirectory[str] | None
         owns_data_root = data_root is None
         if data_root is None:
-            temp = tempfile.TemporaryDirectory(prefix="cellxplorer-golden-")
+            temp = TemporaryDirectory(prefix="cellxplorer-golden-")
             data_root = Path(temp.name)
         else:
             temp = None
@@ -950,7 +951,7 @@ class GoldenFixtureEnvironment:
             self._temp_dir.cleanup()
             self._temp_dir = None
         elif self._owns_data_root and self.data_root.exists():
-            shutil.rmtree(self.data_root, ignore_errors=True)
+            remove_tree(self.data_root, ignore_errors=True)
 
     def __enter__(self) -> "GoldenFixtureEnvironment":
         return self

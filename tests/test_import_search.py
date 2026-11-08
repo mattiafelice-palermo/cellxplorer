@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import json
 import os
@@ -85,7 +86,7 @@ def completed_worker(root, settings, catalog, directory):
 
 class CatalogTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = TemporaryDirectory()
         self.catalog = Catalog(Path(self.temporary.name) / "catalog.sqlite")
         self.config = config()
         self.catalog.sync_roots(self.config["roots"])

@@ -5,6 +5,7 @@ Complements tests/test_stitch.py (stitching), tests/test_analysis_engine.py
 and tests/test_analysis_cache.py (per-source provenance/cache keys and the
 silent-recompute regression).
 """
+from backend.app.services.filesystem_cleanup import remove_tree
 import os
 import shutil
 import sys
@@ -133,12 +134,12 @@ class CacheBuildIdentityTests(unittest.TestCase):
         parsing.parse_timeseries = lambda path: _minimal_frame()
         for h in (self.HASH_BINARY, self.HASH_EXCEL):
             d = cache.raw_path(h, parsing.PARSER_VERSION).parent
-            shutil.rmtree(d, ignore_errors=True)
+            remove_tree(d, ignore_errors=True)
 
     def tearDown(self):
         parsing.parse_timeseries = self._orig
         for h in (self.HASH_BINARY, self.HASH_EXCEL):
-            shutil.rmtree(cache.raw_path(h, parsing.PARSER_VERSION).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(h, parsing.PARSER_VERSION).parent, ignore_errors=True)
 
     def test_build_writes_raw_and_cycles_under_the_sources_own_identity(self):
         binary_identity = parsing.parser_identity("source.ndax")

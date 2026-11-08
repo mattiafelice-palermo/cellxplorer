@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -66,7 +67,7 @@ _EXTENDED_COLUMN_IDS = (
 
 class BiologicMetadataTests(unittest.TestCase):
     def test_extended_data_header_persists_layout_diagnostics(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "extended.mpr",
                 _HEADER_ROWS,
@@ -85,7 +86,7 @@ class BiologicMetadataTests(unittest.TestCase):
         self.assertEqual(data["opaque_trailing_base_ids"], [])
 
     def test_modern_settings_log_and_protocol_are_normalized(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "known.mpr",
                 _HEADER_ROWS,
@@ -169,7 +170,7 @@ class BiologicMetadataTests(unittest.TestCase):
             technique_id=0x04,
             comments="alternate GCPL settings",
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "technique-04.mpr",
                 _HEADER_ROWS,
@@ -194,14 +195,14 @@ class BiologicMetadataTests(unittest.TestCase):
 
     def test_reference_placeholder_is_not_promoted_to_a_reference_identity(self) -> None:
         settings = _settings(reference_electrode="(unspecified)")
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "placeholder.mpr", _HEADER_ROWS, settings_payload=settings)
             metadata = read_gcpl_header_metadata(path)
         self.assertIsNone(metadata["reference_electrode"])
         self.assertEqual(metadata["raw"]["settings"]["reference_electrode_raw"], "(unspecified)")
 
     def test_missing_or_unreliable_log_leaves_absolute_time_unavailable(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             without_log = write_gcpl_mpr(
                 Path(temp) / "without-log.mpr", _HEADER_ROWS, settings_payload=_settings()
             )
@@ -223,17 +224,17 @@ class BiologicMetadataTests(unittest.TestCase):
     def test_unknown_settings_discriminator_fails_closed(self) -> None:
         payload = bytearray(_settings())
         payload[0] = 0x05
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "unknown.mpr", _HEADER_ROWS, settings_payload=bytes(payload))
             metadata = parsing.read_header_metadata(path)
         self.assertIn("technique discriminator", metadata["error"])
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "unknown-direct.mpr", _HEADER_ROWS, settings_payload=bytes(payload))
             with self.assertRaisesRegex(parsing.UnsupportedSourceFormatError, "technique discriminator"):
                 read_mpr_header(path)
 
     def test_header_reader_does_not_construct_record_array(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "header-only.mpr", _HEADER_ROWS, settings_payload=_settings())
             with patch("backend.app.services.biologic_mpr.np.frombuffer", side_effect=AssertionError("full decode")):
                 with read_mpr_header(path) as document:
@@ -253,7 +254,7 @@ class BiologicMetadataTests(unittest.TestCase):
                 }
             ]
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "rest.mpr", _HEADER_ROWS, settings_payload=settings)
             metadata = read_gcpl_header_metadata(path)
         step = metadata["protocol"]["steps"][0]
@@ -282,7 +283,7 @@ class BiologicMetadataTests(unittest.TestCase):
                 },
             ]
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "active-voltage-limits.mpr", _HEADER_ROWS, settings_payload=settings)
             with read_mpr_header(path) as document:
                 decoded = decode_gcpl_settings(document.vmp_set)
@@ -301,7 +302,7 @@ class BiologicMetadataTests(unittest.TestCase):
                 }
             ]
         )
-        with tempfile.TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
                 Path(temp) / "unresolved-rate.mpr",
                 _HEADER_ROWS,
@@ -332,7 +333,7 @@ class BiologicMetadataTests(unittest.TestCase):
                 struct.pack_into("<I", payload, offset, value)
             else:
                 payload[offset] = value
-            with tempfile.TemporaryDirectory() as temp:
+            with TemporaryDirectory() as temp:
                 path = write_gcpl_mpr(
                     Path(temp) / "unknown-code.mpr",
                     _HEADER_ROWS,
@@ -348,7 +349,7 @@ class BiologicMetadataTests(unittest.TestCase):
             (0x0B, (1, 3, 4, 174), 13, "OCV"),
         )
         for technique_id, columns, stride, technique in cases:
-            with self.subTest(technique=technique), tempfile.TemporaryDirectory() as temp:
+            with self.subTest(technique=technique), TemporaryDirectory() as temp:
                 path = write_raw_mpr_layout(
                     Path(temp) / f"{technique.lower()}.mpr",
                     technique_id=technique_id,

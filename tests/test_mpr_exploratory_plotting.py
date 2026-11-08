@@ -1,4 +1,5 @@
 """Exploratory plots retain clock regressions without inventing scientific phases."""
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import os
 from pathlib import Path
 import tempfile
@@ -22,7 +23,7 @@ from tests.biologic_mpr_fixture import encode_gcpl_settings, write_gcpl_mpr
 
 class ExploratoryPlottingTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.patch = patch.object(cache, "CACHE_DIR", self.root / "cache")

@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import base64
 import importlib.util
 import hashlib
@@ -104,7 +105,7 @@ class GitHubArtifactTests(unittest.TestCase):
             self.assertEqual(len(github.releases()), 101)
             self.assertEqual([call.args[0] for call in get.call_args_list],
                              ["/releases?per_page=100&page=1", "/releases?per_page=100&page=2"])
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             target = Path(temporary) / "candidate.exe"
             metadata = {"assets": [{"id": 412, "name": "expected.exe", "size": 4}]}
             with mock.patch.object(github, "get", return_value=b"real") as get:
@@ -128,7 +129,7 @@ class GitHubArtifactTests(unittest.TestCase):
         self.assertEqual(request.unredirected_hdrs["Authorization"], "Bearer dummy")
 
     def test_exact_local_hash_mismatch_fails(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             local, staged = Path(temporary) / "local", Path(temporary) / "staged"
             local.write_bytes(b"real setup")
             staged.write_bytes(b"real setup")
@@ -154,14 +155,14 @@ class GitHubArtifactTests(unittest.TestCase):
 
 class PreparationTests(unittest.TestCase):
     def test_draft_evidence_inside_native_root_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "dummy"}):
+        with TemporaryDirectory() as temporary, mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "dummy"}):
             root = Path(temporary)
             with self.assertRaisesRegex(ValueError, 'outside the native root'):
                 gate.prepare(root, 'alpha', '1.0.0-alpha.2', '123', root / 'forged-provenance.json')
 
     def test_complete_staged_and_manual_provenance_and_rejection(self):
         for mode in ("staged", "manual", "selected-machine-only", "selected-user-only", "other-user-only", "no-proven-scope", "corrupt-installer", "corrupt-signature", "corrupt-manifest", "not-draft", "wrong-tag", "missing-previous", "bad-crypto"):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(mode=mode), TemporaryDirectory() as temporary:
                 repo = Path(temporary) / "repo"
                 bundle = repo / "src-tauri/target/release/bundle/nsis"
                 bundle.mkdir(parents=True)
@@ -235,7 +236,7 @@ class PreparationTests(unittest.TestCase):
 class FinalAssetRecheckTests(unittest.TestCase):
     def test_identity_byte_tag_and_crypto_changes_invalidate_native_gate(self):
         for mode in ('same', 'installer-id', 'signature-id', 'manifest-id', 'installer-bytes', 'signature-bytes', 'manifest-bytes', 'not-draft', 'wrong-tag', 'wrong-release', 'wrong-target', 'crypto-failed'):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(mode=mode), TemporaryDirectory() as temporary:
                 controller = Path(temporary)
                 names = {'installer': 'CellXplorer.Alpha_1.0.0-alpha.2_x64-setup.exe', 'signature': 'CellXplorer.Alpha_1.0.0-alpha.2_x64-setup.exe.sig', 'manifest': 'latest.json'}
                 payloads = {'installer': b'original exe', 'signature': b'original sig', 'manifest': b'original manifest'}
@@ -306,7 +307,7 @@ Assert-True $failed 'Timing wrapper swallowed or replaced the failure'
         self.assertIn('Invoke-TimedNativeStep "$WorkerScope/worker-total"', SMOKE.read_text())
 
     def test_whole_file_hash_needs_no_cmdlet_module_and_missing_files_fail_closed(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             fixture = Path(temporary) / '[literal-file].bin'
             for shell in ('pwsh', 'powershell'):
                 if not shutil.which(shell):
@@ -322,7 +323,7 @@ Assert-True $failed 'Timing wrapper swallowed or replaced the failure'
 
     def test_machine_task_requires_dedicated_account_and_checks_exit_and_cleanup(self):
         for outcome in ('success', 'exit-failure', 'launch-failure', 'wrong-account', 'cleanup-query-failure', 'cleanup-stop-failure'):
-            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary:
+            with self.subTest(outcome=outcome), TemporaryDirectory() as temporary:
                 command = f"$Root = '{temporary}'\n$scenario = '{outcome}'\n" + r'''
 $env:RUNNER_TEMP = $Root
 function Assert-CI { }
@@ -360,7 +361,7 @@ Assert-True ($script:removed -eq $script:registered) 'Unique task not cleaned up
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_profile_probe_returns_before_loading_plan_or_running_installers(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'accounts.json').write_text(json.dumps({'user': 'disposable-fixture'}))
             command = f"$Root = '{root}'\n" + r'''
@@ -397,7 +398,7 @@ Assert-True (@($result.completed).Count -eq 1 -and $result.completed[0] -ceq 'pr
 
     @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell compilation required')
     def test_worker_temp_recovers_poisoned_controller_temp_before_native_helper_loading(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             parent = Path(temporary)
             root = parent / ('cx-upgrade-' + 'a' * 32)
             root.mkdir()
@@ -520,7 +521,7 @@ Initialize-WorkerShellFolders $block['USERPROFILE'] 'S-1-0-0' $false
     def run_functions(self, command, shell='pwsh'):
         # Load definitions ONLY; never execute the driver/worker/installers.
         definitions = SMOKE.read_text().split("\nAssert-CI\n", 1)[0]
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             script = Path(temporary) / 'functions-only.ps1'
             script.write_text(definitions + "\n" + command, encoding='utf-8')
             process = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)], text=True, capture_output=True)
@@ -548,7 +549,7 @@ function Get-Item { [pscustomobject]@{ Length = 123 } }
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_staged_hash_is_checked_under_deny_write_lock_before_launch(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             candidate = Path(temporary) / 'candidate.exe'
             candidate.write_bytes(b'harmless non-executable test data')
             setup = f"\n$Root = '{temporary}'\n$stage = '{candidate}'\n"
@@ -646,7 +647,7 @@ class RealSignatureVerifierTests(unittest.TestCase):
                      'RWQf6LRCGA9i59SLOFxz6NxvASXDJeRtuZykwQepbDEGt87ig1BNpWaVWuNrm73YiIiJbq71Wi+dP9eKL8OC351vwIasSSbXxwA=\n'
                      'trusted comment: timestamp:1555779966\tfile:test\n'
                      'QtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==\n')
-        with tempfile.TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary:
             fixture = Path(temporary)
             (fixture / 'installer.exe').write_bytes(b'test')
             (fixture / 'installer.sig').write_text(base64.b64encode(signature.encode()).decode())

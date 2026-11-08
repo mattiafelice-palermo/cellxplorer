@@ -10,6 +10,8 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 ## 0.28.0-alpha.23 - 2026-11-08
 
 - Fix local indexer spool sharing failures and show separate discovery and header-check progress with a progress bar.
+- Offer cleanup of both development server ports, stop launched process trees on exit, and discover checkout-local runtimes.
+- Fix redirected Windows folder discovery on Python 3.12 and strictly retry transient cleanup failures in disposable workspaces.
 
 ## 0.28.0-alpha.22 - 2026-11-06
 

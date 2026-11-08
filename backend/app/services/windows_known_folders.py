@@ -57,7 +57,7 @@ def _windows_api():
             wintypes.HANDLE,
             ctypes.POINTER(ctypes.c_wchar_p),
         ]
-        get_known_folder_path.restype = wintypes.HRESULT
+        get_known_folder_path.restype = ctypes.c_int32  # HRESULT is signed 32-bit; wintypes lacks it on Python 3.12.
         ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
         ole32.CoTaskMemFree.restype = None
     except (AttributeError, TypeError, ValueError):

@@ -1,5 +1,6 @@
 """Fail-closed tests for Spec 015's manual approval checkpoints."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import remove_tree
 
 import importlib.util
 import os
@@ -37,7 +38,7 @@ class GoldenApprovalCheckpointTests(unittest.TestCase):
             )
             cls.inputs = approval.load_checkpoint_inputs(cls.env)
         except Exception:
-            shutil.rmtree(MODULE_DATA_ROOT, ignore_errors=True)
+            remove_tree(MODULE_DATA_ROOT, ignore_errors=True)
             golden_analysis_support.restore_data_root_binding(PRIOR_DATA_ROOT)
             raise
 
@@ -46,7 +47,7 @@ class GoldenApprovalCheckpointTests(unittest.TestCase):
         try:
             cls.env.close()
         finally:
-            shutil.rmtree(MODULE_DATA_ROOT, ignore_errors=True)
+            remove_tree(MODULE_DATA_ROOT, ignore_errors=True)
             golden_analysis_support.restore_data_root_binding(PRIOR_DATA_ROOT)
 
     def test_all_seven_baseline_checkpoints_match(self) -> None:

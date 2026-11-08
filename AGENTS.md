@@ -229,6 +229,7 @@ Cellxplorer/
 │           ├── import_search_live.py Bounded live roots, recovery and fallback scheduling (Spec 063)
 │           ├── import_search_watch.py Stoppable recursive Windows change subscriptions (Spec 063)
 │           ├── import_search_worker.py Spawned source discovery and header enrichment
+│           ├── filesystem_cleanup.py Bounded strict cleanup for owned disposable trees
 │           ├── import_search_diagnostics.py Opt-in local JSONL scan tracing
 │           ├── import_search_transport.py Atomic local scan-batch spool
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
@@ -335,6 +336,8 @@ Cellxplorer/
 │   ├── test_import_file_hints.py    Optional header-only import-browser hint tests
 │   ├── test_import_search.py        Catalog, worker lifecycle, freshness and recovery tests (Spec 060)
 │   ├── test_import_search_filters.py Global filters, source facts, relationships, presets and regex limits (Spec 064)
+│   ├── test_filesystem_cleanup.py Readonly, transient and persistent cleanup cases
+│   ├── test_start_webapp.py Native occupied-port and decline behavior
 │   ├── test_import_search_diagnostics.py Local trace isolation and metadata omission
 │   ├── test_import_search_live.py   Native changes, safe deltas, fallback and interval gates (Spec 063)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)

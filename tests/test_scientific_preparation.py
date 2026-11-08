@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import hashlib
 import os
@@ -97,7 +98,7 @@ class ScientificPreparationTests(unittest.TestCase):
         db.close()
 
     def test_missing_cache_is_rebuilt_and_summary_becomes_ready(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "cell.ndax"
             source_path.write_bytes(b"stable source bytes")
             db = self.factory()
@@ -155,7 +156,7 @@ class ScientificPreparationTests(unittest.TestCase):
         — because that equality is exactly the relational signal Spec 042
         uses to distinguish this case from an upgrade-caused mismatch; a
         placeholder value would accidentally exercise the wrong branch."""
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "cell.ndax"
             source_path.write_bytes(b"source")
             current_identity = (
@@ -181,7 +182,7 @@ class ScientificPreparationTests(unittest.TestCase):
             self.assertFalse(scanner._capacity_backfill_running)
 
     def test_offline_legacy_raw_cache_gets_layout_prepared_without_source_mutation(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "offline.ndax"
             source_path.write_bytes(b"offline source bytes")
             db = self.factory()
@@ -256,7 +257,7 @@ class ScientificPreparationTests(unittest.TestCase):
             verify.close()
 
     def test_offline_current_raw_cache_gets_derived_prepared_without_source_io(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "offline-current.ndax"
             source_path.write_bytes(b"offline current source bytes")
             db = self.factory()
@@ -329,7 +330,7 @@ class ScientificPreparationTests(unittest.TestCase):
         copied-library marker) includes a parsed source whose stored
         `parser_version` is behind the current identity for its extension,
         as long as its file is reachable."""
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "stale.ndax"
             source_path.write_bytes(b"stale identity source")
             db = self.factory()
@@ -364,7 +365,7 @@ class ScientificPreparationTests(unittest.TestCase):
         missing is skipped, and skipped again on the next startup — the
         first failed attempt records `location_status="offline"`, which then
         excludes it from every later startup's candidate set."""
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "stale-and-gone.ndax"
             source_path.write_bytes(b"about to disappear like the real world's 12")
             db = self.factory()
@@ -404,7 +405,7 @@ class ScientificPreparationTests(unittest.TestCase):
         """Spec 042 test 9: an interrupted preparation pass resumes rather
         than restarting from zero. Only the source actually rebuilt drops
         out of the next startup's candidate set; the untouched one remains."""
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             done_path = Path(folder) / "done.ndax"
             done_path.write_bytes(b"already migrated by the interrupted pass")
             remaining_path = Path(folder) / "remaining.ndax"
@@ -443,7 +444,7 @@ class ScientificPreparationTests(unittest.TestCase):
             self.assertNotIn(str(done.id), item_ids)
 
     def test_pending_copy_includes_ready_sources_with_missing_cache(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "cell.ndax"
             source_path.write_bytes(b"source")
             db = self.factory()
@@ -472,7 +473,7 @@ class ScientificPreparationTests(unittest.TestCase):
             state_db.close()
 
     def test_manual_prepare_missing_stays_serial_background_work(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_path = Path(folder) / "manual.ndax"
             source_path.write_bytes(b"manual source")
             db = self.factory()
@@ -511,7 +512,7 @@ class ScientificPreparationTests(unittest.TestCase):
         )
 
     def test_single_source_worker_is_process_safe_and_does_not_touch_sqlite(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             source_job = {
                 "id": 1,
                 "hash": "f" * 64,
@@ -567,7 +568,7 @@ class ScientificPreparationTests(unittest.TestCase):
         self.assertFalse(scanner._capacity_backfill_background_requested.is_set())
 
     def test_adaptive_scheduler_drains_then_runs_remaining_sources_serially(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             db = self.factory()
             sources = []
             for index in range(4):
@@ -629,7 +630,7 @@ class ScientificPreparationTests(unittest.TestCase):
             db.close()
 
     def test_foreground_pool_failure_falls_back_to_serial(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             db = self.factory()
             sources = []
             for index in range(2):
@@ -675,7 +676,7 @@ class ScientificPreparationTests(unittest.TestCase):
             db.close()
 
     def test_stale_scientific_worker_result_is_discarded_for_success_or_failure(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with TemporaryDirectory() as folder:
             path = Path(folder) / "stale-worker.ndax"
             path.write_bytes(b"source-before-worker")
             db = self.factory()

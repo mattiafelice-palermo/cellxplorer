@@ -1,5 +1,6 @@
 """Independent byte fixtures for narrowly proven GCPL replay omission."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 from copy import deepcopy
 import os
@@ -48,7 +49,7 @@ def rows():
 
 class ReplayTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 

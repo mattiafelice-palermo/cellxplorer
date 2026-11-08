@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import json
 import os
 import sqlite3
@@ -29,7 +30,7 @@ class DatabaseMigrationTests(unittest.TestCase):
         return path, engine
 
     def test_fresh_database_is_created_and_versioned(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
 
@@ -60,7 +61,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
         from app.migrations.versions import v0002_max_discharge_summary
 
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             with engine.begin() as connection:
@@ -115,7 +116,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             v0005_folder_watch_multi_format,
         )
 
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             _path, engine = self.make_database(root)
             with engine.begin() as connection:
@@ -170,7 +171,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             v0005_folder_watch_multi_format,
         )
 
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             with engine.begin() as connection:
@@ -212,7 +213,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertEqual(json.loads(source_formats), ["biologic_mpr"])
 
     def test_unversioned_cellxplorer_database_is_backed_up_and_stamped(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             Base.metadata.create_all(engine)
@@ -247,7 +248,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             engine.dispose()
 
     def test_baseline_adds_columns_from_the_old_runtime_schema(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             Base.metadata.create_all(engine)
@@ -271,7 +272,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             engine.dispose()
 
     def test_current_database_opens_without_another_backup(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             first = migrate_database(
@@ -292,7 +293,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             engine.dispose()
 
     def test_future_database_revision_is_refused_without_changes(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             with closing(sqlite3.connect(path)) as connection:
@@ -319,7 +320,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             engine.dispose()
 
     def test_unknown_nonempty_database_is_refused(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             with closing(sqlite3.connect(path)) as connection:
@@ -338,7 +339,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             engine.dispose()
 
     def test_corrupt_database_is_refused(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory:
             root = Path(directory)
             path, engine = self.make_database(root)
             path.write_bytes(b"this is not sqlite")

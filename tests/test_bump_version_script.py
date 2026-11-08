@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import importlib.util
 import json
 import sys
@@ -73,7 +74,7 @@ def write_min_repo(root: Path, version: str) -> None:
 
 class BumpVersionScriptTests(unittest.TestCase):
     def test_patch_bump_updates_every_declaration_and_changelog(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "0.1.0")
             code = bump_version.main(
@@ -99,7 +100,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             self.assertLess(changelog.index("## 0.1.1 -"), changelog.index("## 0.1.0 -"))
 
     def test_explicit_version_is_accepted(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "1.2.3")
             code = bump_version.main(
@@ -118,7 +119,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             )
 
     def test_explicit_beta_version_is_accepted(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "0.16.1")
             code = bump_version.main(
@@ -137,7 +138,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             self.assertIn("## 0.16.2-beta.1 -", changelog)
 
     def test_explicit_alpha_version_is_accepted(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "0.27.0-beta.12")
             code = bump_version.main(
@@ -173,7 +174,7 @@ class BumpVersionScriptTests(unittest.TestCase):
         )
 
     def test_rejects_duplicate_changelog_section(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "0.1.0")
             self.assertEqual(
@@ -190,7 +191,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             )
 
     def test_sectioned_changelog_omits_empty_sections(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "0.1.0")
             code = bump_version.main(
@@ -209,7 +210,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             self.assertNotIn("### New features", changelog)
 
     def test_notes_file_supports_section_headings(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_min_repo(root, "0.1.0")
             notes_file = root / "notes.txt"

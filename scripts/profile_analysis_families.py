@@ -30,6 +30,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
+from app.services.filesystem_cleanup import TemporaryDirectory
 sys.path.insert(0, str(ROOT / "tests"))
 
 from golden_analysis_support import GoldenFixtureEnvironment, load_case_spec  # noqa: E402
@@ -1763,7 +1764,7 @@ def _run_workload(
     hit_controls: list[dict[str, Any]] = []
 
     for repetition in range(repetitions):
-        with tempfile.TemporaryDirectory(prefix=f"cellxplorer-05017-{family}-miss-") as root:
+        with TemporaryDirectory(prefix=f"cellxplorer-05017-{family}-miss-") as root:
             payload, metrics = _profile_route(
                 env,
                 analysis_id,
@@ -1775,7 +1776,7 @@ def _run_workload(
             metrics["repetition"] = repetition + 1
             misses.append(metrics)
         if measure_overhead:
-            with tempfile.TemporaryDirectory(prefix=f"cellxplorer-05017-{family}-control-") as root:
+            with TemporaryDirectory(prefix=f"cellxplorer-05017-{family}-control-") as root:
                 _control_payload, control = _profile_route_simple(
                     env,
                     analysis_id,
@@ -1797,7 +1798,7 @@ def _run_workload(
                 "order_parity": metrics["series_order"] == control["series_order"],
             })
 
-        with tempfile.TemporaryDirectory(prefix=f"cellxplorer-05017-{family}-hit-") as root:
+        with TemporaryDirectory(prefix=f"cellxplorer-05017-{family}-hit-") as root:
             cache_root = Path(root)
             warm_payload, warm = _profile_route_simple(
                 env,
@@ -1831,7 +1832,7 @@ def _run_workload(
 
     specialist = None
     if family == "time_capacity" and time_specialist:
-        with tempfile.TemporaryDirectory(prefix="cellxplorer-05017-time-specialist-") as root:
+        with TemporaryDirectory(prefix="cellxplorer-05017-time-specialist-") as root:
             specialist = _time_specialist_profile(env, analysis_id, Path(root))
 
     miss_summary = _summarize_samples(misses, family)

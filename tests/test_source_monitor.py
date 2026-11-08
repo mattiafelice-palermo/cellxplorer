@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import json
 import os
 import sys
@@ -134,7 +135,7 @@ class SourceMonitorTests(unittest.TestCase):
 
     def test_metadata_scan_hashes_only_candidates_after_one_shared_wait(self):
         db, factory = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             unchanged_path = Path(tmp) / "unchanged.ndax"
             changed_path = Path(tmp) / "changed.ndax"
             unchanged_path.write_bytes(b"same")
@@ -217,7 +218,7 @@ class SourceMonitorTests(unittest.TestCase):
 
     def test_stable_update_rejects_a_file_that_changes_during_hashing(self):
         db, _ = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "growing.ndax"
             path.write_bytes(b"first")
             stat = path.stat()
@@ -255,7 +256,7 @@ class SourceMonitorTests(unittest.TestCase):
 
     def test_metadata_monitor_keeps_unchanged_xlsx_online_without_hashing(self):
         db, factory = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "unchanged.xlsx"
             _write_structured_xlsx(path)
             cell, source = self.add_xlsx_cell_source(db, path)
@@ -288,7 +289,7 @@ class SourceMonitorTests(unittest.TestCase):
 
     def test_metadata_monitor_marks_missing_xlsx_offline(self):
         db, factory = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "missing.xlsx"
             _write_structured_xlsx(path)
             cell, source = self.add_xlsx_cell_source(db, path)
@@ -318,7 +319,7 @@ class SourceMonitorTests(unittest.TestCase):
 
     def test_metadata_monitor_adopts_a_stable_changed_xlsx(self):
         db, factory = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "changed.xlsx"
             _write_structured_xlsx(path)
             cell, source = self.add_xlsx_cell_source(db, path)
@@ -376,7 +377,7 @@ class SourceMonitorTests(unittest.TestCase):
 
     def test_metadata_monitor_defers_a_growing_xlsx_without_mutating_identity(self):
         db, factory = self.make_session()
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             path = Path(tmp) / "growing.xlsx"
             _write_structured_xlsx(path)
             cell, source = self.add_xlsx_cell_source(db, path)

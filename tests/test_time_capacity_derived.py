@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import json
 import os
@@ -50,7 +51,7 @@ class TimeCapacityDerivedCacheTests(unittest.TestCase):
     PARSER = "nx:test:r1"
 
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.cache_root = Path(self.temp.name)
         self.cache_patch = patch.object(cache, "CACHE_DIR", self.cache_root)
         self.cache_patch.start()

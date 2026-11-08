@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 import hashlib
 import json
 import os
@@ -139,7 +140,7 @@ class AnalysisEngineTests(unittest.TestCase):
         for h in cls.HASHES.values():
             d = cache.raw_path(h).parent
             if d.exists():
-                shutil.rmtree(d)
+                remove_tree(d)
             # ".ndax" gives `cache.build` a recognizable extension for
             # per-source parser identity (Spec 040.3); `fake_parse` still
             # resolves by stem, which strips exactly that one extension.
@@ -149,7 +150,7 @@ class AnalysisEngineTests(unittest.TestCase):
     def tearDownClass(cls):
         parsing.parse_timeseries = cls._orig_parse
         for h in cls.HASHES.values():
-            shutil.rmtree(cache.raw_path(h).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(h).parent, ignore_errors=True)
 
     def setUp(self):
         eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -249,7 +250,7 @@ class AnalysisEngineTests(unittest.TestCase):
 
     def _add_cached_cell(self, name: str, source_hash: str, frame: pd.DataFrame) -> Cell:
         self.FRAMES[source_hash] = frame
-        shutil.rmtree(cache.raw_path(source_hash).parent, ignore_errors=True)
+        remove_tree(cache.raw_path(source_hash).parent, ignore_errors=True)
         cache.build(source_hash, f"{source_hash}.ndax")
         cell = Cell(name=name)
         self.db.add(cell)
@@ -552,7 +553,7 @@ class AnalysisEngineTests(unittest.TestCase):
                 "badges": [],
             }
 
-        with tempfile.TemporaryDirectory(prefix="cellxplorer-analysis-hit-") as temp:
+        with TemporaryDirectory(prefix="cellxplorer-analysis-hit-") as temp:
             cache_root = Path(temp)
             with (
                 patch.object(analysis_cache, "_RESULTS", cache_root / "results"),
@@ -661,7 +662,7 @@ class AnalysisEngineTests(unittest.TestCase):
             source.header_meta = dcir_protocol_header()
             self.db.flush()
             cache_dir = cache.raw_path(self.HASHES["c1"]).parent
-            shutil.rmtree(cache_dir, ignore_errors=True)
+            remove_tree(cache_dir, ignore_errors=True)
             cache.build(self.HASHES["c1"], f"{self.HASHES['c1']}.ndax")
             signature = protocol.reconstruct_protocol(
                 dcir_protocol_header(), nominal_capacity_mah=2.0
@@ -739,7 +740,7 @@ class AnalysisEngineTests(unittest.TestCase):
             source.header_meta = original_header
             self.db.flush()
             cache_dir = cache.raw_path(self.HASHES["c1"]).parent
-            shutil.rmtree(cache_dir, ignore_errors=True)
+            remove_tree(cache_dir, ignore_errors=True)
             cache.build(self.HASHES["c1"], f"{self.HASHES['c1']}.ndax")
 
     def test_time_protocol_filters_emit_null_gaps_without_dropping_rows(self):
@@ -2658,8 +2659,8 @@ class AnalysisEngineTests(unittest.TestCase):
         finally:
             self.FRAMES.pop(short_hash, None)
             self.FRAMES.pop(sparse_hash, None)
-            shutil.rmtree(cache.raw_path(short_hash).parent, ignore_errors=True)
-            shutil.rmtree(cache.raw_path(sparse_hash).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(short_hash).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(sparse_hash).parent, ignore_errors=True)
 
     def test_capacity_refinement_fallback_reads_only_requested_cycles(self):
         overview_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
@@ -3417,7 +3418,7 @@ class AnalysisEngineTests(unittest.TestCase):
             kinds = {b["kind"] for b in result["badges"]}
             self.assertIn("newer_parser", kinds)
         finally:
-            shutil.rmtree(cache.raw_path(file_hash, old_identity).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(file_hash, old_identity).parent, ignore_errors=True)
 
     def test_missing_legacy_cache_is_not_relabeled_as_current(self):
         """Case 17: when the pinned identity's cache does not exist, the
@@ -3468,7 +3469,7 @@ class AnalysisEngineTests(unittest.TestCase):
             self.assertEqual(file_entry["parser_version"], parsing.parser_identity(f"{file_hash}.ndax"))
             self.assertNotEqual(file_entry["parser_version"], "nb:vOLD.00.00:r1")
         finally:
-            shutil.rmtree(cache.raw_path(file_hash, parsing.parser_identity(f"{file_hash}.ndax")).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(file_hash, parsing.parser_identity(f"{file_hash}.ndax")).parent, ignore_errors=True)
 
     def test_startup_preparation_rebuild_does_not_disturb_pinned_analysis(self):
         """Spec 042, tests 4-6 — the highest-risk property in that spec: a
@@ -3558,7 +3559,7 @@ class AnalysisEngineTests(unittest.TestCase):
             self.assertEqual(fresh_result["cell_series"][0]["x"], [1, 2, 3, 4, 5])
         finally:
             del self.FRAMES[file_hash]
-            shutil.rmtree(cache.raw_path(file_hash, old_identity).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(file_hash, old_identity).parent, ignore_errors=True)
 
     def test_result_key_changes_when_pinned_source_identity_changes(self):
         """Case 13: a cache key must vary when a contributing source's
@@ -3631,7 +3632,7 @@ class AnalysisEngineTests(unittest.TestCase):
             if cache.raw_path(h).parent.exists():
                 import shutil
 
-                shutil.rmtree(cache.raw_path(h).parent)
+                remove_tree(cache.raw_path(h).parent)
             cache.build(h, f"{h}.ndax")
 
         cell = Cell(name="multi")
@@ -4055,14 +4056,14 @@ class MultiVoltageTimeCapacityTests(unittest.TestCase):
         for h in cls.HASHES.values():
             d = cache.raw_path(h).parent
             if d.exists():
-                shutil.rmtree(d)
+                remove_tree(d)
             cache.build(h, f"{h}.ndax")
 
     @classmethod
     def tearDownClass(cls):
         parsing.parse_timeseries = cls._orig_parse
         for h in cls.HASHES.values():
-            shutil.rmtree(cache.raw_path(h).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(h).parent, ignore_errors=True)
 
     def setUp(self):
         eng = create_engine("sqlite://", connect_args={"check_same_thread": False},

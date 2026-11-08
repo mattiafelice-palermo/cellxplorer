@@ -13,7 +13,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 
 import pandas as pd
 
@@ -436,14 +436,14 @@ class CacheBuildBoundaryWiringTests(unittest.TestCase):
         self._orig = parsing.parse_timeseries
         directory = cache.raw_path(self.HASH).parent
         if directory.exists():
-            shutil.rmtree(directory)
+            remove_tree(directory)
 
     def tearDown(self):
         cache.wait_for_pending(self.HASH)
         parsing.parse_timeseries = self._orig
         directory = cache.raw_path(self.HASH).parent
         if directory.exists():
-            shutil.rmtree(directory)
+            remove_tree(directory)
 
     def test_build_rejects_a_frame_that_violates_the_canonical_contract(self):
         parsing.parse_timeseries = lambda path: _minimal_frame(record_index=[0, 0, 2, 3])
@@ -490,7 +490,7 @@ class MultiVoltagePathCacheTests(unittest.TestCase):
         for file_hash in (self.HASH, self.TWO_ELECTRODE_HASH):
             directory = cache.raw_path(file_hash).parent
             if directory.exists():
-                shutil.rmtree(directory)
+                remove_tree(directory)
 
     def tearDown(self):
         parsing.parse_timeseries = self._orig
@@ -498,7 +498,7 @@ class MultiVoltagePathCacheTests(unittest.TestCase):
             cache.wait_for_pending(file_hash)
             directory = cache.raw_path(file_hash).parent
             if directory.exists():
-                shutil.rmtree(directory)
+                remove_tree(directory)
 
     def test_three_electrode_frame_passes_validation(self):
         validate_raw_timeseries(_three_electrode_frame())  # must not raise

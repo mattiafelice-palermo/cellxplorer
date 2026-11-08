@@ -1,5 +1,6 @@
 """Explicit exploratory admission preserves evidence without claiming science."""
 from __future__ import annotations
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 
 import os
 import struct
@@ -38,7 +39,7 @@ def rows():
 
 class PermissiveMprTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = write_gcpl_mpr(Path(self.temp.name) / "source.mpr", rows(),
                                   settings_payload=encode_gcpl_settings([{"current": 1.}, {"current": -1.}]))

@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import importlib.util
 import json
 import re
@@ -42,7 +43,7 @@ build_frontend_channel = load_build_frontend_channel()
 
 class FrontendChannelStampTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.dist = self.root / "frontend" / "dist"
         self.dist.mkdir(parents=True)

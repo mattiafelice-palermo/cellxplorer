@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import importlib.util
 import sys
 import tempfile
@@ -71,7 +72,7 @@ class ReleaseNotesScriptTests(unittest.TestCase):
         )
 
     def test_cli_writes_output_without_modifying_changelog(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp:
             changelog = Path(tmp) / "CHANGELOG.md"
             changelog.write_text(SAMPLE_CHANGELOG, encoding="utf-8")
             output = Path(tmp) / "notes.md"

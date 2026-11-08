@@ -1,3 +1,4 @@
+from backend.app.services.filesystem_cleanup import TemporaryDirectory
 import json
 import os
 import sqlite3
@@ -61,7 +62,7 @@ class BetaBootstrapTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls._schema_template_directory = tempfile.TemporaryDirectory(
+        cls._schema_template_directory = TemporaryDirectory(
             prefix="cellxplorer-beta-schema-template-"
         )
         cls.addClassCleanup(cls._schema_template_directory.cleanup)
@@ -73,7 +74,7 @@ class BetaBootstrapTests(unittest.TestCase):
         cls._current_schema_template = (template_root / "cellxplorer.db").read_bytes()
 
     def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
+        self._tmpdir = TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
         self._engines = []
         self.beta_root = Path(self._tmpdir.name) / "beta"

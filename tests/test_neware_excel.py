@@ -10,7 +10,7 @@ import unittest
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from backend.app.services.filesystem_cleanup import TemporaryDirectory, remove_tree
 from unittest import mock
 
 import numpy as np
@@ -2074,7 +2074,7 @@ class NewareExcelParserTests(unittest.TestCase):
             finally:
                 if cache_directory.exists():
                     import shutil
-                    shutil.rmtree(cache_directory)
+                    remove_tree(cache_directory)
 
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "write-behind.xlsx"
@@ -2092,7 +2092,7 @@ class NewareExcelParserTests(unittest.TestCase):
             finally:
                 if cache_directory.exists():
                     import shutil
-                    shutil.rmtree(cache_directory)
+                    remove_tree(cache_directory)
 
     def test_cache_persists_excel_energy_warnings_for_later_preview(self):
         with TemporaryDirectory() as temporary:
@@ -2131,7 +2131,7 @@ class NewareExcelParserTests(unittest.TestCase):
             finally:
                 if cache_directory.exists():
                     import shutil
-                    shutil.rmtree(cache_directory)
+                    remove_tree(cache_directory)
 
 
 class NewareExcelAnalysisIntegrationTests(unittest.TestCase):
@@ -2150,7 +2150,7 @@ class NewareExcelAnalysisIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         for file_hash in self.cache_hashes:
-            shutil.rmtree(cache.raw_path(file_hash).parent, ignore_errors=True)
+            remove_tree(cache.raw_path(file_hash).parent, ignore_errors=True)
 
     def _register(self, path: Path) -> tuple[Cell, SourceFile, dict, pd.DataFrame]:
         metadata = parsing.read_header_metadata(path)
