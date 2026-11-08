@@ -1,7 +1,7 @@
 # 098 — Faster Windows MPR header I/O and Alpha release
 
-Status: Implemented and verified; 2026-11-08 release authorization received;
-final browser acceptance and fresh release verification in progress.
+Status: Complete; browser acceptance verified and Alpha 0.28.0-alpha.25 published
+on 2026-11-08. Local listener-discovery verification boundary recorded below.
 Implementation branch `feature/faster-index-io`, from main `3be12835`.
 Release branch: `codex/release-alpha-25`, from confirmed main `6eaa785c`.
 
@@ -112,3 +112,28 @@ as safe to terminate, and no test is skipped or weakened. The original checkpoin
 has a successful clean Windows canonical run `42515480515`; complete unchanged
 preflight will also be run on this release branch before merging. This is a local
 verification boundary, not a claimed passing local run or a proven launcher fix.
+
+## Verified Alpha.25 publication
+
+- Complete unchanged clean-Windows branch preflight `42521890857` passed all
+  four stages and all 226 committed test files/modules in 202.15 seconds,
+  including the native launcher module. This supplies the fresh full-suite
+  validation unavailable on the local host; local failure is not relabeled a pass.
+- The acceptance/changelog branch was pushed and fast-forwarded to main.
+  Release tag `v0.28.0-alpha.25` identifies `d280ba4a`, which retains every
+  application implementation file from the confirmed `6eaa785c` checkpoint.
+- Exact-main canonical run `42522300811` also passed all four stages and all
+  226 files/modules in 230.17 seconds, including launcher tests. No test,
+  scientific expectation, production watchdog or process-ownership guard was relaxed.
+- Signed release workflow `42522304760` succeeded, including registry/NSIS
+  policy, mandatory native upgrade/reinstall matrix, final asset recheck,
+  publication and public channel-pointer verification.
+- Independently downloaded public installer SHA256:
+  `905abe3bcb422cd52e1bf0b75d95d6b7b37bf0eaaae9a96890f2860245d2c96f`.
+  Its updater signature verifies against the committed public key. Public
+  manifest validation passes exact version, release notes, asset identity and
+  signature; the raw Alpha feed serves Alpha.25.
+- Stable, Beta and channel README blob SHAs are unchanged. Earlier published
+  tags/installers are unchanged. No local installation, real-profile mutation,
+  private-source upload or fresh NAS benchmark was performed. Owned acceptance
+  servers were stopped; browser screenshots and fixtures remain untracked.

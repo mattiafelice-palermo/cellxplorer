@@ -1,10 +1,12 @@
 # Feature specs
 
 - [098 — Faster Windows MPR header I/O and Alpha release](098-faster-header-io.md).
-  Implemented; recorded real-folder parity, SMB writer checks and preflight passed.
-  User authorized release from confirmed Alpha.25 checkpoint; fresh completion,
-  Activity and imported-only cycle-filter browser acceptance passed in disposable
-  data. Fresh release verification/publication pending.
+  **Complete; published in Alpha 0.28.0-alpha.25.** Fresh completion/Activity/filter
+  browser acceptance, both private corpora, clean-Windows branch/exact-main
+  preflight (226 files/modules), signed native release gates and independent
+  public installer/signature/notes/feed verification pass. Local listener-reporting
+  limitation is documented; no test was skipped. Includes unreleased 096–098;
+  Stable and Beta remain unchanged.
 
 - [097 — Bounded parallel index header readers](097-bounded-parallel-index-headers.md).
   Implemented and verified; 3.33× median full-scan gain, exact real-folder metadata/progress/rescan parity,
