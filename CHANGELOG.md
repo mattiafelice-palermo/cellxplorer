@@ -9,11 +9,18 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 
 ## 0.28.0-alpha.25 - 2026-11-08
 
-- Speed up Windows MPR header inspection with lightweight buffered opening and narrow file-information queries, preserving source-change checks and portable fallbacks.
-- Combine four bounded header readers with faster I/O for full search indexing, with separate discovery/header progress and clear ready, excluded and unavailable counts.
-- Recover from temporary local spool sharing locks without unnecessary rescans; reuse unchanged supported and unsupported metadata classifications.
-- Improve development startup with cleanup of occupied frontend/backend ports, isolated development data, and reliable Windows temporary-workspace cleanup.
-- Keep an explicit scan-complete summary visible and clarify that MPR cycle filters use counts from imported, parsed versions of the exact source file.
+### New features
+
+- Speed up full search indexing with four bounded independent header readers and faster Windows MPR header access. Preserve source-change validation; scientific record reading is unchanged.
+- Show separate file-discovery and header-check progress in Settings and Activity, explicit pending/excluded/available/unavailable metadata counts, and a persistent scan-complete summary.
+
+### Bug fixes
+
+- Keep scanner communication files outside redirected or synced data folders and retry temporary Windows sharing locks without resetting the existing 45-second silence watchdog. Isolate blocked or crashed header readers and replace them for later work.
+- Reuse unchanged supported and unsupported metadata classifications so rescans retry unavailable headers without rereading every unchanged source.
+- Make Known source cycles use imported, parsed, online MPR sources only when size and modification time still match. Unimported or changed MPR counts remain unknown; protocol loop counts are not treated as executed cycles.
+- Identify processes occupying either development server port and prompt before stopping them; clean up owned process trees on exit. Default development data to an isolated checkout library while preserving explicit overrides.
+- Repair Python 3.12 Windows Known Folder handling and bounded cleanup of disposable temporary workspaces, while retaining permanent-error and reparse-point protections.
 
 ## 0.28.0-alpha.24 - 2026-11-08
 

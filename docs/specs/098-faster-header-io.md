@@ -1,7 +1,9 @@
 # 098 — Faster Windows MPR header I/O and Alpha release
 
-Status: Implemented and verified; release publication paused by the user pending indexing/filter
-acceptance. Branch `feature/faster-index-io`, from main `3be12835`.
+Status: Implemented and verified; 2026-11-08 release authorization received;
+final browser acceptance and fresh release verification in progress.
+Implementation branch `feature/faster-index-io`, from main `3be12835`.
+Release branch: `codex/release-alpha-25`, from confirmed main `6eaa785c`.
 
 ## User-directed acceptance follow-up
 
@@ -67,3 +69,46 @@ The persistent completion message and imported-only MPR cycle-filter contract pa
 policy, SQL, type and build checks. Browser visual acceptance is not claimed:
 computer use could not verify the browser URL. No main merge, release tag or
 installer publication is included in this checkpoint; await user acceptance.
+
+## Authorized release acceptance — 2026-11-08
+
+The user confirmed the five incoming commits and requested the usual release if
+the checkout matched. Live `origin/main` was exactly `6eaa785c`, five commits ahead
+of local main, with synchronized Alpha.25 declarations and no Alpha.23–25 release
+tags. Local main was fast-forwarded; unrelated untracked work was preserved.
+This authorization supersedes the earlier publication pause after final checks.
+
+Fresh browser acceptance used an isolated synthetic library and the current
+Alpha-styled frontend through the supported Vite proxy. The actual indexer found
+six fixtures: four searchable, two excluded, three metadata-ready and one empty
+MPR header unavailable, with zero pending. Settings retained `Scan complete` and
+the last header-check total after the active bar disappeared. A Rescan visibly
+showed unknown-total discovery; Activity/Processing retained completed header
+results. Dark-mode layout and the completed counts were inspected.
+
+The indexed picker displayed `Known source cycles` and its MPR explanation.
+Seeded persisted source facts covered a parsed matching source with 20 cycles,
+a stale-size/mtime source and an unimported source. A minimum of 10 with known
+values only returned exactly the matching source. Including unknown values
+restored all four searchable entries and displayed Unknown for stale/unimported
+sources; restoring known-only again returned one. The harness suppressed unrelated
+scientific backfills/source polling to keep seeded facts stable; this is UI/filter
+acceptance, not a new scientific parsing or NAS benchmark. No installed WebView,
+remote-machine writer, or fresh reproduction of the recorded NAS timing is claimed.
+
+The release notes are cumulative from published Alpha.22 and use the established
+New features/Bug fixes headings. No application implementation was changed during
+release preparation. Final fresh preflight, corpus and signed publication results
+will be recorded below.
+
+Fresh scientific verification passes both frozen private corpora without changing
+expectations (six sources/three chains and thirteen sources/twelve chains).
+Local no-cache preflight passed versions, type check, bundle and every test module
+except the native launcher module: its disposable listeners cannot be discovered
+as listening on this host. Focused reproduction also fails. An independent native
+.NET TcpListener is omitted by GetActiveTcpListeners and reported by CIM with
+unknown State, despite accepting connections. No unknown-state process is treated
+as safe to terminate, and no test is skipped or weakened. The original checkpoint
+has a successful clean Windows canonical run `42515480515`; complete unchanged
+preflight will also be run on this release branch before merging. This is a local
+verification boundary, not a claimed passing local run or a proven launcher fix.
