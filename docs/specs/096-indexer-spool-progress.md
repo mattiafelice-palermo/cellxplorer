@@ -43,9 +43,12 @@ Private root paths, logs and verification artifacts are not committed.
   admission was not broadened. Representative GCPL/OCV whitelist metadata exactly
   matches fresh production header reads.
 - Explicit rescans reuse the 119 ready and 170 versioned unsupported classifications,
-  checking only the 11 unavailable headers. Final-runtime traces show one startup
-  reconciliation and one explicit manual rescan, no worker restarts/spool access
-  retries, and stable connected monitoring afterward. Paths/logs remain local.
+  checking only the 11 unavailable headers. Extended final-runtime traces show one
+  startup reconciliation, one explicit manual rescan and one later NAS-recovery
+  scan. The watcher reported Windows error 64, failed a reconnect, then connected;
+  its recovery scan completed normally. No spool access retries or worker restarts
+  occurred. Real notification gaps still require reconciliation for correctness.
+  Paths/logs remain local.
 - Browser checks verified animated unknown-total discovery, determinate header progress
   in File search and Activity/Processing, explicit count labels, and completed state.
   Indeterminate ARIA no longer announces a false 100 percent. Dark chrome and the
