@@ -54,9 +54,16 @@ function Test-LocalPort {
 function Get-ListeningPortOwnerIds {
     param([int]$Port)
 
-    $connections = @(
-        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    )
+    $connections = @()
+    try {
+        $connections = @(
+            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
+        )
+    }
+    catch {
+        # CIM may be unavailable even though TCP itself works. The independent
+        # netstat lookup below must still run in that case.
+    }
     $ownerIds = @(
         $connections |
             Where-Object { $_.OwningProcess -gt 0 } |
@@ -71,10 +78,32 @@ function Get-ListeningPortOwnerIds {
     # PowerShell installation.
     $netstatLines = @(netstat.exe -ano -p tcp 2>$null)
     foreach ($line in $netstatLines) {
-        if ($line -match '^\s*TCP\s+\S+:([0-9]+)\s+\S+\s+LISTENING\s+(\d+)\s*$' -and [int]$matches[1] -eq $Port) {
+        if ($line -match '^\s*TCP\s+\S+:([0-9]+)\s+\S+\s+LISTENING\s+(\d+)\s*$' -and [int]$matches[1] -eq $Port -and [int]$matches[2] -gt 0) {
             [int]$matches[2]
         }
     }
+}
+
+function Find-AvailableWebappPort {
+    param([int]$PreferredPort, [int[]]$ReservedPorts = @())
+
+    for ($offset = 1; $offset -le 100; $offset++) {
+        $candidatePort = (($PreferredPort - 1 + $offset) % 65535) + 1
+        if ($ReservedPorts -contains $candidatePort) { continue }
+        $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $candidatePort)
+        try {
+            $listener.ExclusiveAddressUse = $true
+            $listener.Start()
+            return $candidatePort
+        }
+        catch {
+            # Try the next port; do not alter its existing owner.
+        }
+        finally {
+            $listener.Stop()
+        }
+    }
+    throw "No available local port found near $PreferredPort. Pass an explicit alternative port."
 }
 
 function Get-PortOwners {
@@ -117,15 +146,25 @@ function Stop-WebappProcessTree {
 }
 
 function Ensure-WebappPortAvailable {
-    param([int]$Port, [string]$Name, [string]$PortOption, [switch]$StopExisting)
+    param([int]$Port, [string]$Name, [string]$PortOption, [switch]$StopExisting, [int[]]$ReservedPorts = @())
 
     if (-not (Test-LocalPort $Port)) {
-        return
+        return $Port
     }
 
     $owners = @(Get-PortOwners $Port)
     if ($owners.Count -eq 0) {
-        throw "$Name port $Port is already in use, but its owning process could not be identified. Stop it manually or pass -$PortOption with another port."
+        $alternativePort = Find-AvailableWebappPort -PreferredPort $Port -ReservedPorts $ReservedPorts
+        Write-Host "$Name port $Port is already in use, but Windows could not identify its owner. The existing process will remain running." -ForegroundColor Yellow
+        if ($StopExisting) {
+            throw "Cannot safely stop an unidentified owner of $Name port $Port. Pass -$PortOption $alternativePort to use an available port."
+        }
+        $answer = (Read-Host "Use available $Name port $alternativePort instead? [y/N]").Trim()
+        if ($answer -notmatch '^(?i:y|yes)$') {
+            throw "$Name port $Port remains in use. Pass -$PortOption $alternativePort to use an available port."
+        }
+        Write-Host "Using $Name port $alternativePort. Continuing startup..." -ForegroundColor Green
+        return $alternativePort
     }
 
     Write-Host "$Name port $Port is already in use by:" -ForegroundColor Yellow
@@ -157,6 +196,7 @@ function Ensure-WebappPortAvailable {
 
     Wait-ForLocalPortClosed $Port
     Write-Host "$Name port $Port is available. Continuing startup..." -ForegroundColor Green
+    return $Port
 }
 
 function Wait-ForLocalPort {
@@ -196,8 +236,8 @@ function Start-ChildCommand {
 
 try {
     if ($BackendPort -eq $FrontendPort) { throw "Backend and frontend must use different ports." }
-    Ensure-WebappPortAvailable -Port $BackendPort -Name "Backend" -PortOption "BackendPort" -StopExisting:$StopExisting
-    Ensure-WebappPortAvailable -Port $FrontendPort -Name "Frontend" -PortOption "FrontendPort" -StopExisting:$StopExisting
+    $BackendPort = Ensure-WebappPortAvailable -Port $BackendPort -Name "Backend" -PortOption "BackendPort" -StopExisting:$StopExisting -ReservedPorts @($FrontendPort)
+    $FrontendPort = Ensure-WebappPortAvailable -Port $FrontendPort -Name "Frontend" -PortOption "FrontendPort" -StopExisting:$StopExisting -ReservedPorts @($BackendPort)
 
     # Use this checkout's optional portable tools when present; no global PATH changes.
     foreach ($environment in @("venv312", "venv")) {

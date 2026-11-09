@@ -61,3 +61,60 @@ $ast.FindAll({{ param($node) $node -is [System.Management.Automation.Language.Fu
         result = self.run_functions("Stop-WebappProcessTree $PID")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Refusing to stop the launcher itself", result.stderr)
+
+    def test_unidentified_listener_can_use_another_port_without_stopping_it(self):
+        process, port = self.listener()
+        reserved, reserved_port = self.listener()
+        result = self.run_functions(
+            "function Get-PortOwners { @() }; function Read-Host { 'y' }; "
+            "function Stop-WebappProcessTree { throw 'must not stop anything' }; "
+            f"$chosen = Ensure-WebappPortAvailable -Port {port} -Name Backend -PortOption BackendPort -ReservedPorts @({reserved_port}); "
+            f"if ($chosen -eq {port} -or $chosen -eq {reserved_port}) {{ throw 'conflicting port selected' }}; "
+            "$probe = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $chosen); "
+            "try { $probe.ExclusiveAddressUse=$true; $probe.Start() } finally { $probe.Stop() }; "
+            "Write-Host 'Alternative verified'"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Alternative verified", result.stdout)
+        self.assertIsNone(process.poll())
+        self.assertIsNone(reserved.poll())
+
+    def test_unidentified_listener_decline_preserves_process(self):
+        process, port = self.listener()
+        result = self.run_functions(
+            "function Get-PortOwners { @() }; function Read-Host { 'n' }; "
+            f"Ensure-WebappPortAvailable -Port {port} -Name Backend -PortOption BackendPort"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"Backend port {port} remains in use", result.stderr)
+        self.assertIsNone(process.poll())
+
+    def test_stop_existing_cannot_stop_an_unidentified_listener(self):
+        process, port = self.listener()
+        result = self.run_functions(
+            "function Get-PortOwners { @() }; function Read-Host { throw 'must not prompt' }; "
+            "function Stop-WebappProcessTree { throw 'must not stop anything' }; "
+            f"Ensure-WebappPortAvailable -Port {port} -Name Backend -PortOption BackendPort -StopExisting"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot safely stop an unidentified owner", result.stderr)
+        self.assertIsNone(process.poll())
+
+    def test_cim_failure_still_uses_netstat_and_rejects_pid_zero(self):
+        result = self.run_functions(
+            "function Get-NetTCPConnection { throw 'CIM unavailable' }; "
+            "function netstat.exe { ' TCP 127.0.0.1:8642 0.0.0.0:0 LISTENING 123'; "
+            "' TCP 127.0.0.1:8642 0.0.0.0:0 LISTENING 0'; ' TCP 127.0.0.1:8643 0.0.0.0:0 LISTENING 456' }; "
+            "$owners = @(Get-ListeningPortOwnerIds 8642); "
+            "if ($owners.Count -ne 1 -or $owners[0] -ne 123) { throw 'incorrect owner selection' }"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_port_search_skips_a_reserved_available_port(self):
+        _process, port = self.listener()
+        result = self.run_functions(
+            f"$first = Find-AvailableWebappPort {port}; "
+            f"$second = Find-AvailableWebappPort {port} -ReservedPorts @($first); "
+            "if ($first -eq $second) { throw 'reserved port reused' }"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

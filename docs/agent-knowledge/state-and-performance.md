@@ -1696,6 +1696,16 @@ filesystem access is needed.
 
 ## Disposable Windows workspace cleanup
 
+Windows TCP ownership enumeration can fail independently of actual connectivity.
+On the current development host, a disposable socket proved to be listening while
+`GetExtendedTcpTable` returned state 0, so both `Get-NetTCPConnection -State Listen`
+and netstat's LISTENING filter missed its owner. Never reinterpret that invalid
+state or a zero PID as proof for process termination. The development launcher
+offers a confirmed alternate port, preserving the existing process and forwarding
+the new backend port to Vite. CIM lookup failure must still reach the independent
+netstat fallback. Native owner-based termination tests remain meaningful on hosts
+with valid TCP state reporting; alternate-port tests cover the safe recovery path.
+
 `filesystem_cleanup.py` owns bounded cleanup for explicitly owned temporary or
 staging trees. Windows read-only directory attributes can propagate through
 `copytree` from OneDrive-managed fixtures; directory/file deletion can also briefly
