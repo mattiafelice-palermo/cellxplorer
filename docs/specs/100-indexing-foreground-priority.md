@@ -1,6 +1,6 @@
 # 100 — Foreground-first startup indexing
 
-Status: Implemented; verification in progress.
+Status: Implemented and pushed; clean-Windows preflight required before main merge.
 
 ## Report and confirmed code paths
 
@@ -43,3 +43,12 @@ pre-existing native launcher listener owner-reporting failures on this host.
 No test or deadline was suppressed. Clean-Windows verification is pending. NAS/affected
 three-location responsiveness acceptance must be repeated on the affected host;
 local deterministic tests alone are not that acceptance.
+
+Final isolated rerun on the pushed code: 54 admission/header/watcher/application
+lifespan tests passed (76.77 s), including all ten new admission regressions.
+Local full preflight failed only the unchanged launcher test module because
+listener owner information is unavailable on this host; type/build/version passed.
+The GitHub connector has no workflow-dispatch tool, no GitHub CLI is available,
+and the in-app browser is signed out. User action is needed to dispatch the
+existing preflight workflow for `codex/indexing-foreground-priority` or provide
+a signed-in browser. No main merge or installer publication was performed.

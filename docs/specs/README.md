@@ -1,7 +1,7 @@
 # Feature specs
 
 - [100 — Foreground-first startup indexing](100-indexing-foreground-priority.md).
-  **Implemented; verification in progress.** Defer indexing through setup and foreground requests.
+  **Implemented; 54 focused tests passed, clean-Windows preflight pending.** Defer indexing through setup and foreground requests.
 
 - [099 — BioLogic MB cycling measurements](099-biologic-mb-cycling.md).
   **Complete; Astra review and clean-Windows preflight passed (227 files/modules).**
