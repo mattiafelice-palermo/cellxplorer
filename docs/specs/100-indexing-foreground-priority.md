@@ -1,6 +1,6 @@
 # 100 — Foreground-first startup indexing
 
-Status: Implemented and pushed; clean-Windows preflight required before main merge.
+Status: Implemented; user authorized main integration with exact-main preflight delegated to the release agent.
 
 ## Report and confirmed code paths
 
@@ -49,6 +49,8 @@ lifespan tests passed (76.77 s), including all ten new admission regressions.
 Local full preflight failed only the unchanged launcher test module because
 listener owner information is unavailable on this host; type/build/version passed.
 The GitHub connector has no workflow-dispatch tool, no GitHub CLI is available,
-and the in-app browser is signed out. User action is needed to dispatch the
-existing preflight workflow for `codex/indexing-foreground-priority` or provide
-a signed-in browser. No main merge or installer publication was performed.
+and the in-app browser was signed out at the verification checkpoint. The user
+subsequently authorized merging and pushing to main so the release agent can
+run preflight directly on the exact main commit. Clean-Windows preflight and
+affected-host responsiveness acceptance remain pending. No installer publication
+is included in this change.
