@@ -1594,3 +1594,19 @@ def clear_alpha_stage_lock(token: str, data_root: Path | None = None) -> None:
         lock_path = root / LOCK_NAME
         if lock_path.is_file() and lock_path.read_text(encoding="utf-8").strip() == token:
             lock_path.unlink(missing_ok=True)
+
+
+def indexing_setup_ready() -> bool:
+    """Cheap destination marker check: never inspect source editions or libraries."""
+    from .app_channel import is_packaged_application, resolve_app_channel
+    if not is_packaged_application():
+        # Browser development has no native bootstrap chooser to acknowledge.
+        return True
+    channel = resolve_app_channel()
+    if channel not in {"alpha", "beta"}:
+        return True
+    destination = ALPHA_DESTINATION if channel == "alpha" else BETA_DESTINATION
+    try:
+        return _marker_acknowledges_for(destination, _read_marker_for(destination))
+    except (OSError, BetaBootstrapValidation):
+        return False

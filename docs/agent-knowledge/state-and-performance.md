@@ -1710,3 +1710,15 @@ Golden candidate path guards and bootstrap stage ownership checks remain mandato
 Windows `SHGetKnownFolderPath` returns a signed 32-bit HRESULT. Declare that ABI
 with `ctypes.c_int32`; `ctypes.wintypes.HRESULT` is absent on Python 3.12 and would
 silently disable every redirected-folder lookup through the fallback path.
+
+### Foreground-first index admission
+
+`index_admission` gates production scanner/watcher admission after backend startup
+and current-install Alpha/Beta setup acknowledgement. Foreground middleware only
+updates in-memory request counters; marker I/O belongs to the background gate.
+Cheap progress/health polling must remain exempt so it cannot starve indexing.
+Header admission waiting must not start a source deadline. Already dispatched
+headers retain their original watchdog; cancellation and epochs still win.
+Configuration applies pause/removal immediately with `start_watchers=False`; only
+the admitted monitor thread spawns watchers. Direct isolated SearchIndexer tests
+and benchmarks default to an always-open gate unless they supply admission.

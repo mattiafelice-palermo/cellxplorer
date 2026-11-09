@@ -92,6 +92,8 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
 
 def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> None:
     """Only this process can block on a network path. Parent can terminate it."""
+    from .process_priority import apply_background_process_priority
+    apply_background_process_priority()
     # Bulk failures must not flood logs with private paths. This process is isolated.
     logging.disable(logging.CRITICAL)
     messages = BatchSpool(spool_path)
@@ -204,6 +206,8 @@ def scan_changes(root: dict, config: dict, catalog_path: str, spool_path: str) -
     Notifications are hints: confirm current filesystem state, never assume an event
     proves deletion. All I/O remains inside the parent's bounded, stoppable worker.
     """
+    from .process_priority import apply_background_process_priority
+    apply_background_process_priority()
     logging.disable(logging.CRITICAL)
     messages = BatchSpool(spool_path)
     resolved = canonical_root(root["path"])

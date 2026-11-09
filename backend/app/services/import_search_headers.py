@@ -74,6 +74,8 @@ def _stop_lane(lane):
 
 def header_reader(incoming: str, outgoing: str, metadata_enabled: bool):
     """One request at a time; no catalog connection or nested children."""
+    from .process_priority import apply_background_process_priority
+    apply_background_process_priority()
     logging.disable(logging.CRITICAL)
     requests, results = BatchSpool(incoming), BatchSpool(outgoing)
     while True:
@@ -89,7 +91,7 @@ def unavailable(fact):
     return dict(fact, metadata_state="unavailable", metadata={}, metadata_version=0)
 
 
-def read_headers(facts, *, readers, metadata_enabled, timeout, cancelled, reader=header_reader):
+def read_headers(facts, *, readers, metadata_enabled, timeout, cancelled, reader=header_reader, admitted=lambda: True):
     """Yield one outcome per fact, with at most `readers` outstanding requests.
 
     Deadlines start at dispatch (including process startup). No heartbeat, sibling
@@ -124,7 +126,7 @@ def read_headers(facts, *, readers, metadata_enabled, timeout, cancelled, reader
         waiting_since = None
         while not cancelled():
             # Refill only empty slots: no unbounded executor queue or fact list.
-            while (pending or not exhausted) and len(lanes) < readers:
+            while admitted() and (pending or not exhausted) and len(lanes) < readers:
                 fact, started, retries = pending.popleft() if pending else (next(source, None), None, 0)
                 if fact is None:
                     exhausted = True
@@ -145,6 +147,10 @@ def read_headers(facts, *, readers, metadata_enabled, timeout, cancelled, reader
                 lane["sent"] = False
                 trace("header_dispatch", canonical=fact["canonical"], reader_pid=lane["process"].pid)
             if not lanes:
+                if not admitted():
+                    waiting_since = None
+                    time.sleep(0.05)
+                    continue
                 if exhausted and not pending:
                     return
                 waiting_since = time.monotonic() if waiting_since is None else waiting_since
@@ -219,6 +225,10 @@ def read_headers(facts, *, readers, metadata_enabled, timeout, cancelled, reader
                 yield result
                 progressed = True
                 if not process.is_alive():
+                    _stop_lane(lane)
+                    lanes.remove(lane)
+                    continue
+                if not admitted():
                     _stop_lane(lane)
                     lanes.remove(lane)
                     continue

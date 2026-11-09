@@ -50,7 +50,7 @@ class LiveRoots:
             self._close(item)
         self.items.clear()
 
-    def reconcile(self, paused: bool):
+    def reconcile(self, paused: bool, *, start_watchers=True):
         roots = {r["id"]: r for r in self.owner.config["roots"] if r["enabled"]}
         for key in list(self.items):
             item = self.items[key]
@@ -78,7 +78,7 @@ class LiveRoots:
                 item.update(state="connecting", retry=0, message=None)
             if item["state"] in ("paused",):
                 item.update(state="connecting", retry=0)
-            if not item.get("process") and item["state"] != "refresh_only" and time.monotonic() >= item["retry"]:
+            if start_watchers and not item.get("process") and item["state"] != "refresh_only" and time.monotonic() >= item["retry"]:
                 messages = self.context.Queue(maxsize=128)
                 stop, overflow = self.context.Event(), self.context.Event()
                 process = self.context.Process(target=self.worker, args=(root["path"], messages, stop, overflow), daemon=True)
@@ -104,9 +104,9 @@ class LiveRoots:
                     force_scan=True,
                     retry=time.monotonic() + min(3600, 30 * 2 ** min(attempts - 1, 7)), message=message)
 
-    def tick(self):
+    def tick(self, *, start_watchers=True):
         paused = self.owner.config["paused"] or self.owner._background_paused()
-        self.reconcile(paused)
+        self.reconcile(paused, start_watchers=start_watchers)
         if paused:
             return
         for key, item in self.items.items():

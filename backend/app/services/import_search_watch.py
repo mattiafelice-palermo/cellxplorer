@@ -37,6 +37,8 @@ ROOT_CHECK_SECONDS = 30
 
 def watch_root(path: str, messages, stop, overflow, root_check_seconds=ROOT_CHECK_SECONDS) -> None:
     """One recursive handle per chosen root, isolated from potentially hung SMB calls."""
+    from .process_priority import apply_background_process_priority
+    apply_background_process_priority()
     def emit(kind, **values):
         try:
             messages.put_nowait(dict(kind=kind, **values))

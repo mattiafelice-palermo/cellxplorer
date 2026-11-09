@@ -54,6 +54,8 @@ async def _lifespan(_app: FastAPI):
     daemon threads), which matches how Starlette invoked them before.
     """
     if DATABASE_STATUS.compatible:
+        from .services import index_admission
+        index_admission.start_runtime()
         sessions.start_runtime_session()
         _start_scientific_service_warmup()
         from .services import time_capacity_workers
@@ -80,6 +82,14 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="CellXplorer", version=APP_VERSION, lifespan=_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=4096, compresslevel=5)
+
+
+@app.middleware("http")
+async def _foreground_index_admission(request: Request, call_next):
+    from .services.index_admission import foreground_request_scope
+    with foreground_request_scope(request.url.path):
+        return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

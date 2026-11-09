@@ -80,7 +80,8 @@ def save_config(db, value: dict) -> dict:
 
 class SearchIndexer:
     def __init__(self, catalog: Catalog, *, timeout=45.0, worker=scan_root, pause_provider=None, monitoring=True,
-                 header_readers=4):
+                 header_readers=4, admission=None):
+        self.admission = admission or (lambda: True)
         self.catalog = catalog
         self.timeout = timeout
         self.worker = worker
@@ -114,12 +115,15 @@ class SearchIndexer:
             return self.live.snapshots(states) if self.live else states
 
     def _monitor(self):
+        from .process_priority import apply_background_thread_priority
+        apply_background_thread_priority()
         while not self.stop_event.wait(0.5):
             try:
+                can_start_watchers = self.admission()
                 with self.lock:
                     if self.stop_event.is_set():
                         return
-                    self.live.tick()
+                    self.live.tick(start_watchers=can_start_watchers)
             except Exception:
                 # Keep search usable if a native subscription cannot start.
                 # Recovery is retried on the next tick; no source data is touched.
@@ -154,8 +158,10 @@ class SearchIndexer:
                 if self.process:
                     self.process.terminate()
             self.config = config
+            # Preserve immediate pause/removal state without spawning children
+            # on the API thread. The admitted monitor starts new watchers.
             if self.live:
-                self.live.reconcile(config["paused"] or self._background_paused())
+                self.live.reconcile(config["paused"] or self._background_paused(), start_watchers=False)
             self.catalog.sync_roots(config["roots"])
             enabled = {r["id"] for r in config["roots"] if r["enabled"]}
             self.pending = [r for r in self.pending if r in enabled]
@@ -241,7 +247,12 @@ class SearchIndexer:
             self.monitor_thread.join(2)
 
     def _run(self):
+        from .process_priority import apply_background_thread_priority
+        apply_background_thread_priority()
         while not self.stop_event.is_set():
+            if not self.admission():
+                self.stop_event.wait(0.1)
+                continue
             if self._background_paused():
                 with self.lock:
                     for root_id in self.pending:
@@ -410,7 +421,7 @@ class SearchIndexer:
                     phase_detail=f"Checking source headers ({total} remaining)")
             trace("parallel_enrichment", root_id=root["id"], total=total, readers=self.header_readers)
             results = read_headers(facts(), readers=self.header_readers, metadata_enabled=config["metadata_enabled"],
-                timeout=self.timeout, cancelled=cancelled)
+                timeout=self.timeout, cancelled=cancelled, admitted=self.admission)
             try:
                 for fact in results:
                     with self.lock:
@@ -609,7 +620,8 @@ def get_indexer() -> SearchIndexer:
     global _indexer
     with _service_lock:
         if _indexer is None:
-            _indexer = SearchIndexer(recover_catalog(), pause_provider=_automation_pause)
+            from .index_admission import allowed
+            _indexer = SearchIndexer(recover_catalog(), pause_provider=_automation_pause, admission=allowed)
             with SessionLocal() as db:
                 _indexer.start(load_config(db))
         return _indexer
