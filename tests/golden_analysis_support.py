@@ -756,6 +756,8 @@ def project_result(
                             # by full-chain/FEC reference tests. Historical
                             # golden projections keep their locked quantities.
                             "fec_reference_mah",
+                            "energy_provenance",
+                            "energy_policy",
                         ):
                             trace.pop(key, None)
                         if traces_key == "cell_traces":
@@ -767,6 +769,11 @@ def project_result(
                                 "display_cycle_spans",
                             ):
                                 trace.pop(key, None)
+        # Additive GCPL derivation provenance has focused signed-energy and
+        # fixed-cohort tests. Keep every existing numeric golden value locked.
+        for aggregate in projected.get("aggregates") or []:
+            aggregate.pop("energy_provenance", None)
+            aggregate.pop("energy_quantity_provenance", None)
         if projection:
             projected = _apply_cycles_projection(projected, projection)
     return projected

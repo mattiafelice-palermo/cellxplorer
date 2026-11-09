@@ -1749,6 +1749,15 @@ export interface CellMetrics {
   mean_cv_charge_fraction_pct?: number | null;
 }
 
+export interface EnergyProvenanceEntry {
+  basis: "measured" | "calculated" | "mixed" | "unavailable";
+  reason: string | null;
+  cumulative_basis: "measured" | "calculated" | "mixed" | "unavailable";
+  cumulative_reason: string | null;
+}
+export type EnergyProvenance = Record<"charge" | "discharge", EnergyProvenanceEntry[]>;
+export type EnergyQuantityProvenance = Record<string, Pick<EnergyProvenanceEntry, "basis" | "reason">[]>;
+
 export interface CellSeries {
   cell_id: number;
   cell_name: string;
@@ -1763,6 +1772,8 @@ export interface CellSeries {
   metrics: CellMetrics;
   retention_reference_mah: number | null;
   fec_reference_mah?: number | null;
+  energy_provenance?: EnergyProvenance;
+  energy_policy?: string;
   active_mass_mg: number | null;
   segments: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
   source_descriptors?: SourceDescriptor[];
@@ -1773,6 +1784,8 @@ export interface CellSeries {
 }
 
 export interface AggregateSeries {
+  energy_provenance?: EnergyProvenance;
+  energy_quantity_provenance?: EnergyQuantityProvenance;
   group_id: number;
   group_name: string;
   x: number[];

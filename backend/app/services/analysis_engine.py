@@ -36,6 +36,7 @@ from . import (
     cache,
     calc,
     cycle_throughput,
+    cycle_energy,
     canonical_cycling,
     parsing,
     protocol,
@@ -2805,6 +2806,7 @@ def compute(
             "cycles_active_mass_resolution",
             active_mass_started,
         )
+        energy_provenance = {"charge": [], "discharge": []}
         if stitched.empty or not complete:
             cumulative_series.append({"x": [], "quantities": {c: [] for c in quantity_cols}})
             x: list[int] = []
@@ -2814,13 +2816,20 @@ def compute(
             source_values = {key: [] for key in ("source_cycle", "source_position", "source_filename", "source_hash")}
         else:
             protocol_mask_started = _cycles_profile_started(profiling)
+            resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve(
+                stitched, refs, cycle_throughput.proven_increments(stitched, refs), segments,
+            )
+            energy_by_cycle = {int(c): i for i, c in enumerate(stitched.cycle)}
             full_history = cycle_throughput.add_columns(
-                cycle_throughput.proven_increments(stitched, refs), fec_reference, active_mass_mg,
+                cumulative_inputs, fec_reference, active_mass_mg,
                 (computation.get("fec") or {}).get("convention", "combined_throughput"),
             )
-            cumulative_series.append({"x": [int(c) for c in full_history.cycle], "quantities": _jsonsafe_columns(full_history, list(cycle_throughput.STRICT_COLUMNS))})
-            # Primitive metrics retain their existing definitions and values.
+            cumulative_series.append({"x": [int(c) for c in full_history.cycle], "quantities": _jsonsafe_columns(full_history, list(cycle_throughput.STRICT_COLUMNS)), "energy_provenance": energy_provenance})
+            # Resolve only energy here; other primitive metrics retain their definitions.
             metric_frame = stitched.copy()
+            for column in ("charge_energy_mwh", "discharge_energy_mwh", "energy_efficiency_pct"):
+                if column in resolved_energy:
+                    metric_frame[column] = resolved_energy[column]
             for column in cycle_throughput.STRICT_COLUMNS:
                 metric_frame[column] = full_history[column]
             if protocol_context["only_active"]:
@@ -2853,6 +2862,7 @@ def compute(
             )
             series_projection_started = _cycles_profile_started(profiling)
             x = [int(v) for v in plot_filtered["cycle"]]
+            energy_provenance = {direction: [entries[energy_by_cycle[c]] for c in x] for direction, entries in energy_provenance.items()}
             quantities = _jsonsafe_columns(plot_filtered, quantity_cols)
             _cycles_profile_finished(
                 profiling,
@@ -2879,6 +2889,8 @@ def compute(
              "metrics": metrics, "retention_reference_mah": ref,
              "active_mass_mg": active_mass_mg,
              "fec_reference_mah": fec_reference,
+             "energy_provenance": energy_provenance,
+             "energy_policy": cycle_energy.POLICY,
              "segments": segments, "source_descriptors": descriptors,
              **source_values})
         sources.append(
@@ -2958,6 +2970,8 @@ def compute(
             continue
         full_members = [cumulative_series[index] for index, s in enumerate(cell_series) if s["group_id"] == gid and not s["excluded"]]
         agg = aggregate_series(members, quantity_cols, aggregation, full_members)
+        agg["energy_provenance"] = cycle_energy.aggregate_provenance(members, full_members, agg["x"])
+        agg["energy_quantity_provenance"] = cycle_energy.aggregate_quantity_provenance(members, full_members, agg)
         agg["group_id"] = gid
         agg["group_name"] = group_names[gid]
         aggregates.append(agg)

@@ -108,6 +108,7 @@ export type CyclePointSelectionRecord = {
   detailCellIds: number[];
   quantityKey: string;
   quantityLabel: string;
+  energyBasis?: string;
   axis: "y" | "y2";
   displayedX: number;
   displayedY: number;
@@ -136,6 +137,7 @@ export type CycleSelectableTraceMetadata = {
   detailCellIds?: number[][];
   quantityKey: string;
   quantityLabel: string;
+  energyBasis?: string[];
   axis: CyclePointSelectionRecord["axis"];
 };
 
@@ -345,6 +347,7 @@ export function cyclePointCandidatesForTraces(
         ],
         quantityKey: metadata.quantityKey,
         quantityLabel: metadata.quantityLabel,
+        energyBasis: metadata.energyBasis?.[index],
         axis: metadata.axis,
       } satisfies Omit<
         CyclePointSelectionRecord,

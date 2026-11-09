@@ -1,5 +1,6 @@
 import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { cycleAvailability } from "./cycleAvailability";
+import { cycleEnergyBasis, energyUnavailableReasons, takeEnergyProvenance, withCycleEnergyNotice } from "./cycleEnergyBasis";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   ActionIcon,
@@ -421,6 +422,8 @@ export function withoutDiagnosticCycles(
       const indices = keptIndices(agg.x);
       return {
         ...agg,
+        energy_provenance: takeEnergyProvenance(agg.energy_provenance, indices),
+        energy_quantity_provenance: agg.energy_quantity_provenance && Object.fromEntries(Object.entries(agg.energy_quantity_provenance).map(([key, entries]) => [key, take(entries, indices)])),
         x: remapX(take(agg.x, indices)),
         quantities: Object.fromEntries(
           Object.entries(agg.quantities).map(([key, q]) => [
@@ -440,6 +443,7 @@ export function withoutDiagnosticCycles(
       const indices = keptIndices(series.x);
       return {
         ...series,
+        energy_provenance: takeEnergyProvenance(series.energy_provenance, indices),
         x: remapX(take(series.x, indices)),
         quantities: Object.fromEntries(
           Object.entries(series.quantities).map(([key, values]) => [key, take(values, indices)]),
@@ -764,6 +768,7 @@ export function cycleTracesForResult(
       { header: "FEC", values: agg.quantities.fec?.mean ?? agg.x.map(() => null) },
       { header: "FEC convention", values: agg.x.map(() => spec.computation.fec?.convention ?? "combined_throughput") },
       { header: `Member FEC references (mAh): ${memberReferences}`, values: agg.x.map((_, i) => i === 0 ? memberReferences : null) },
+      ...(quantityInfo.key.includes("energy") ? [{ header: "Energy basis", values: agg.x.map((_, i) => cycleEnergyBasis(agg.energy_provenance, quantityInfo.key, i, agg.energy_quantity_provenance?.[column])) }] : []),
     ];
     const primaryDetailCellIds = aggregateContributorCellIds(
       original,
@@ -783,6 +788,7 @@ export function cycleTracesForResult(
         detailCellIds: primaryDetailCellIds,
         quantityKey: quantityInfo.key,
         quantityLabel: quantityInfo.label,
+        energyBasis: agg.x.map((_, i) => cycleEnergyBasis(agg.energy_provenance, quantityInfo.key, i, agg.energy_quantity_provenance?.[column])),
         axis: "y",
       },
     };
@@ -824,11 +830,11 @@ export function cycleTracesForResult(
         type: "scatter",
         mode: primaryAppearance.mode,
         ...(includePointSelectionMetadata ? { meta: primarySelectionMeta } : {}),
-        customdata: scientificCycles.map((cycle, index) => [cycle, q.n[index]]),
+        customdata: scientificCycles.map((cycle, index) => [cycle, q.n[index], ...(quantityInfo.key.includes("energy") ? [cycleEnergyBasis(agg.energy_provenance, quantityInfo.key, index, agg.energy_quantity_provenance?.[column])] : [])]),
         cellxplorer_export_columns: groupExportColumns,
         hovertemplate: compact
           ? undefined
-          : `<b>${compactHoverName(aggResolved.name)}</b><br>cycle %{customdata[0]}: %{y:.4f}<br>n=%{customdata[1]}${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
+          : `<b>${compactHoverName(aggResolved.name)}</b><br>cycle %{customdata[0]}: %{y:.4f}<br>n=%{customdata[1]}${quantityInfo.key.includes("energy") ? "<br>%{customdata[2]}" : ""}${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
       } as Plotly.Data);
       if (!compact) {
         const lowCountX: number[] = [];
@@ -953,6 +959,7 @@ export function cycleTracesForResult(
       { header: "FEC", values: s.quantities.fec ?? s.x.map(() => null) },
       { header: "FEC reference (mAh)", values: s.x.map(() => s.fec_reference_mah ?? null) },
       { header: "FEC convention", values: s.x.map(() => spec.computation.fec?.convention ?? "combined_throughput") },
+      ...(quantityInfo.key.includes("energy") ? [{ header: "Energy basis", values: s.x.map((_, i) => cycleEnergyBasis(s.energy_provenance, quantityInfo.key, i)) }] : []),
     );
     const values = s.quantities[column] ?? [];
     if (cellEmission.primary && resolved) {
@@ -962,6 +969,7 @@ export function cycleTracesForResult(
         sourceCycle[index] ?? "",
         sourcePosition[index] ?? "",
         shortSourceName(String(sourceFilename[index] ?? "")),
+        ...(quantityInfo.key.includes("energy") ? [cycleEnergyBasis(s.energy_provenance, quantityInfo.key, index)] : []),
       ]);
       const primarySelectionMeta: CycleSelectableTraceMeta = {
         cellxplorerCycleSelection: {
@@ -978,6 +986,7 @@ export function cycleTracesForResult(
           sourceFilenames: sourceFilename,
           quantityKey: quantityInfo.key,
           quantityLabel: quantityInfo.label,
+          energyBasis: s.x.map((_, i) => cycleEnergyBasis(s.energy_provenance, quantityInfo.key, i)),
           axis: "y",
         },
       };
@@ -1010,7 +1019,7 @@ export function cycleTracesForResult(
         cellxplorer_export_columns: sourceColumns,
         hovertemplate:
           `<b>${compactHoverName(resolved.name)}</b><br>` +
-          `cycle %{customdata[0]}: %{y:.4f}<br>local %{customdata[1]} · source %{customdata[2]}${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
+          `cycle %{customdata[0]}: %{y:.4f}<br>local %{customdata[1]} · source %{customdata[2]}${quantityInfo.key.includes("energy") ? "<br>%{customdata[4]}" : ""}${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
       } as Plotly.Data);
       const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
       if (boundaryIndices.length) {
@@ -1123,7 +1132,7 @@ export function cyclePlotLayout(
   const yRange = numericTraceExtent(traces, "y", ["y"]);
   const y2Range = numericTraceExtent(traces, "y", ["y2"]);
 
-  return withMprReadNotice(withReferenceLines({
+  return withCycleEnergyNotice(withMprReadNotice(withReferenceLines({
     height: 500,
     margin: {
       l: 66 + lm.l + leftGap,
@@ -1186,7 +1195,7 @@ export function cyclePlotLayout(
     referenceAxis("x", spec.presentation.cycles_x_axis === "fec" ? `cycles:fec:${spec.computation.fec?.convention ?? "combined_throughput"}` : "cycles:cycle", "", cycleXAxisLabel(spec)),
     referenceAxis("y", `cycles:${quantityInfo.key}:${quantityInfo.column}${quantityInfo.key === "fec" ? `:${spec.computation.fec?.convention ?? "combined_throughput"}` : ""}`, referenceUnits(quantityInfo.label), quantityInfo.label),
     ...(showCeOverlay ? [referenceAxis("y2", "cycles:ce", "%", "CE (%)")] : []),
-  ]), result?.badges, { cellIds: figureCellIds, cycleBased: true });
+  ]), result?.badges, { cellIds: figureCellIds, cycleBased: true }), traces, quantityInfo.key);
 }
 
 function isPolarizationQuantity(quantity: string): boolean {
@@ -1247,6 +1256,13 @@ export function CycleSettings({
               />
               {availability.fecReason && <Text size="xs" c="dimmed">{availability.fecReason}</Text>}
               {availability.energyReason && <Text size="xs" c="dimmed">{availability.energyReason}</Text>}
+              {quantity.includes("energy") && (result?.cell_series ?? []).some((s) => !s.excluded &&
+                [...(s.energy_provenance?.charge ?? []), ...(s.energy_provenance?.discharge ?? [])].some((e) => e.basis === "calculated" || e.basis === "mixed")) && (
+                <Text size="xs" c="dimmed">Calculated net energy integrates signed cell voltage against measured capacity increments. Negative intervals subtract; negative net directions are unavailable.</Text>
+              )}
+              {(result?.cell_series ?? []).filter((s) => !cycleSeriesIsHidden(s, spec)).flatMap((s) => energyUnavailableReasons(s.energy_provenance, quantity).map((reason) => (
+                <Text size="xs" c="dimmed" key={`${s.cell_id}:${s.group_id}:${reason}`}>{s.label} — {reason}.</Text>
+              )))}
               {(quantity === "fec" || spec.presentation.cycles_x_axis === "fec") && (
                 <>
                   <Select

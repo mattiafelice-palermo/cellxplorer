@@ -396,6 +396,40 @@ class AnalysisEngineTests(unittest.TestCase):
             cache.load_raw_columns = original
         self.assertEqual(result["cell_series"][0]["metrics"]["n_cycles"], 50)
 
+    def test_gcpl_energy_resolves_before_range_and_versions_voltage_only_changes(self):
+        from app.services import cycle_energy
+
+        source_hash = "e4" * 32
+        raw = synth_raw(3, 2., 0.).drop(columns=["charge_energy_mwh", "discharge_energy_mwh"])
+        raw["total_time_s"] = (raw.timestamp - raw.timestamp.iloc[0]).dt.total_seconds()
+        raw.loc[raw.cycle.eq(2) & raw.status.eq("CC_Chg"), "voltage_v"] = -1.
+        raw.attrs["biologic_gcpl"] = {"adapter_revision": "gcpl18", "scientific_interpretation": "verified"}
+        cell = self._add_cached_cell("Calculated GCPL", source_hash, raw)
+        source = cell.tests[0].file_links[0].file
+        identity = parsing.current_parser_identity_for_extension("mpr")
+        source.ext, source.filename, source.parser_version = "mpr", "calculated.mpr", identity
+        self.db.commit()
+        raw_path, cycles_path = cache.raw_path(source_hash, identity), cache.cycles_path(source_hash, identity)
+        cache._write_atomic(raw, raw_path)
+        cache._write_atomic(calc.per_cycle(raw), cycles_path)
+        self.addCleanup(remove_tree, raw_path.parent, ignore_errors=True)
+        primitive_digest = hashlib.sha256(cycles_path.read_bytes()).hexdigest()
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}], cycle_range={"start": 3, "end": 3})
+        series = engine.compute(self.db, spec, None)["cell_series"][0]
+        self.assertEqual(series["x"], [3])
+        self.assertAlmostEqual(series["quantities"]["charge_energy_mwh"][0], 3.5)
+        self.assertEqual(series["quantities"]["cumulative_charge_energy_mwh"], [None])
+        self.assertAlmostEqual(series["quantities"]["cumulative_discharge_energy_mwh"][0], 3 * .99 * 3.1)
+        self.assertEqual(series["energy_provenance"]["charge"][0]["basis"], "calculated")
+        self.assertEqual(series["energy_provenance"]["charge"][0]["cumulative_basis"], "unavailable")
+        with patch.object(cycle_energy, "_storage_identity", return_value=None):
+            before = analysis_cache.result_key(self.db, "cycles", spec, None, use_current_versions=False)
+            raw.loc[raw.cycle.eq(3), "voltage_v"] *= 2
+            cache._write_atomic(raw, raw_path)
+            after = analysis_cache.result_key(self.db, "cycles", spec, None, use_current_versions=False)
+        self.assertNotEqual(before, after)
+        self.assertEqual(hashlib.sha256(cycles_path.read_bytes()).hexdigest(), primitive_digest)
+
     def test_cell_protocol_payload_includes_source_hash_and_signature(self):
         result = get_cell_protocol(self.cells["c1"].id, self.db)
         source = result["tests"][0]["files"][0]

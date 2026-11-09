@@ -1297,7 +1297,17 @@ def _html_tail() -> str:
       (series.x || []).forEach((cycle, index) => rows.push({
         series: series.label,
         x: view.presentation?.cycles_x_axis === "fec" ? series.quantities?.fec?.[index] ?? null : cycle,
-        cycle, y: values[index], fec_reference_mah: series.fec_reference_mah ?? null
+        cycle, y: values[index], fec_reference_mah: series.fec_reference_mah ?? null,
+        ...(column.key.includes("energy") ? {
+          charge_energy_basis: series.energy_provenance?.charge?.[index]?.basis ?? "",
+          discharge_energy_basis: series.energy_provenance?.discharge?.[index]?.basis ?? "",
+          charge_energy_reason: series.energy_provenance?.charge?.[index]?.reason ?? "",
+          discharge_energy_reason: series.energy_provenance?.discharge?.[index]?.reason ?? "",
+          cumulative_charge_energy_basis: series.energy_provenance?.charge?.[index]?.cumulative_basis ?? "",
+          cumulative_discharge_energy_basis: series.energy_provenance?.discharge?.[index]?.cumulative_basis ?? "",
+          cumulative_charge_energy_reason: series.energy_provenance?.charge?.[index]?.cumulative_reason ?? "",
+          cumulative_discharge_energy_reason: series.energy_provenance?.discharge?.[index]?.cumulative_reason ?? ""
+        } : {})
       }));
     }
     return { rows, xLabel: view.presentation?.cycles_x_axis === "fec" ? "Equivalent full cycles (FEC)" : "Cycle", yLabel: column.label };

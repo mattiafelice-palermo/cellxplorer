@@ -950,6 +950,7 @@ export function CyclePointInspector({
                               {record.quantityLabel}
                             </Text>
                           )}
+                          {record.energyBasis && <Text size="xs" c="dimmed" lh={1.25} mt={2}>{record.energyBasis}</Text>}
                           </Box>
                         </Group>
                       </Tooltip>

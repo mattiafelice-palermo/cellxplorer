@@ -38,16 +38,17 @@ Review document: [103 verification and review](reviews/103-cell-identification-w
 Missing nominal capacity disables both FEC quantity and FEC axis choices, with a
 visible explanation. It does not disable energy. The investigated GCPL source's
 current raw/cycle caches contain capacity but no energy values and no nominal
-reference. Energy remains unavailable rather than being silently reconstructed
-from voltage and capacity. A separately specified integration quantity would
-need its own provenance and sign/boundary conventions. The requested 1–15 cycle
-display window does not reset prefix sums or supply missing input values.
+reference. Following the diagnosis the user explicitly requested the energy
+calculation; [103.4](103.4-calculated-gcpl-energy.md) defines the calculated net
+directional fallback, provenance and sign/boundary conventions. The requested
+1–15 cycle display window does not reset prefixes or supply missing inputs.
 
 ## Children
 
 - [103.1 — Imported Cell identification](103.1-imported-cell-identification.md)
 - [103.2 — Useful source limitations](103.2-useful-source-limitations.md)
 - [103.3 — Cumulative quantities and FEC](103.3-cumulative-quantities-and-fec.md)
+- [103.4 — Calculated GCPL net directional energy](103.4-calculated-gcpl-energy.md)
 
 ## Final gates
 
