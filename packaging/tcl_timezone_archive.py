@@ -92,7 +92,7 @@ def pack(bundle: Path) -> dict:
         entries.append(b'    ' + name.encode('ascii') + b' ' + encoded + b'\n')
     archive = b'# Unchanged Tcl timezone scripts, independently zlib compressed.\nset ::tcl::clock::CellXplorerZoneScripts {\n' + b''.join(entries) + b'}\n'
     destination = tcl / 'tzdata.tcl'
-    if destination.exists():
+    if destination.exists() or destination.is_symlink() or destination.is_junction():
         raise ValueError('Refusing to replace an existing Tcl archive')
     destination.write_bytes(archive)
     if destination.read_bytes() != archive:

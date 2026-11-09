@@ -113,6 +113,17 @@ class TclArchiveTests(unittest.TestCase):
         for name in ('arrow_flight.dll', 'arrow_python_flight.dll', 'arrow_substrait.dll', 'DIRECTORY_ENTRY_DELAY_IMPORT', 'DIRECTORY_ENTRY_IMPORT'):
             self.assertIn(name, hook)
 
+    def test_archive_destination_link_is_refused_even_when_target_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'bundle'
+            target = self.bundle(root)
+            for method in ('is_symlink', 'is_junction'):
+                with patch.object(Path, method, lambda path: path.name == 'tzdata.tcl'):
+                    with self.assertRaisesRegex(ValueError, 'existing Tcl archive'):
+                        archive.pack(root)
+                self.assertTrue((target / 'tzdata/UTC').is_file())
+                self.assertFalse((target / 'tzdata.tcl').exists())
+
     def test_retained_eager_or_delayed_dependency_on_removed_dll_blocks_build(self):
         # Preflight installs runtime requirements, not PyInstaller or pefile.
         hooks = SimpleNamespace(collect_submodules=lambda *a, **k: [], collect_data_files=lambda *a, **k: [], collect_dynamic_libs=lambda *a, **k: [])
