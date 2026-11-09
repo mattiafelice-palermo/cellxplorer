@@ -33,7 +33,7 @@ def validate(report: dict) -> None:
     if report["files"] == 0:
         raise ValueError("Empty backend payload")
     paths = {row["path"] for row in report["inventory"]}
-    for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd"]:
+    for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip"]:
         if required not in paths:
             raise ValueError(f"Required runtime payload missing: {required}")
     for package in ["pyarrow", "numpy", "pandas", "tzdata.zip"]:

@@ -1,7 +1,8 @@
 # Feature specs
 
 - [101 — Archive backed timezone data](101-archive-backed-timezone-data.md).
-  **In progress.** Pack unchanged timezone resources and verify the frozen app.
+  **Complete; frozen science, clean-Windows preflight and signed native installer tests passed.**
+  Direct ZIP loading removes 597 installed files net; Tcl and metadata audit retained.
 
 - [100 — Foreground-first startup indexing](100-indexing-foreground-priority.md).
   **Implemented; 54 focused tests passed, clean-Windows preflight pending.** Defer indexing through setup and foreground requests.

@@ -49,6 +49,12 @@ frozen acceptance. Tcl has a separate timezone collection and loader; the Python
 archive does not replace it. Re-inventory fresh outputs rather than diagnosing
 current releases from an old staging tree.
 
+Do not judge metadata ZIP compatibility by `version()` alone. Standard
+`Distribution.locate_file()` resolves relative to the metadata container; moving
+only `.dist-info` into a ZIP can redirect an otherwise valid loose native-module
+path into a nonexistent ZIP member. Preserve that API and licences before
+consolidating distribution metadata.
+
 ## Persistent schema change
 
 1. Add a forward-only revision under `backend/app/migrations/`.

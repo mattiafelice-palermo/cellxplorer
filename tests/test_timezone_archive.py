@@ -109,6 +109,10 @@ print(json.dumps([tzdata.__version__,importlib.resources.files('tzdata.zoneinfo'
         paths = ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip"]
         report = dict(files=len(paths), components={p: {} for p in ["pyarrow", "numpy", "pandas", "tzdata.zip"]}, inventory=[dict(path=p) for p in paths])
         validate(report)
+        report['inventory'] = [dict(path=p) for p in paths if p != "_internal/tzdata.zip"]
+        with self.assertRaisesRegex(ValueError, "Required runtime payload missing"):
+            validate(report)
+        report['inventory'] = [dict(path=p) for p in paths]
         report['inventory'].append(dict(path="_internal/tzdata/zoneinfo/UTC"))
         with self.assertRaisesRegex(ValueError, "Loose timezone"):
             validate(report)

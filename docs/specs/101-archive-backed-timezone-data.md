@@ -1,7 +1,8 @@
 # 101 — Archive backed timezone data
 
-Status: Implementation and packaged verification in progress.
+Status: Complete; frozen science, clean-Windows preflight and signed build-only native installer checks passed.
 Branch: `codex/packed-timezone-data`.
+Review document: [101 implementation self-review](reviews/101-archive-backed-timezone-data-review.md).
 
 ## Scope and contract
 
@@ -54,7 +55,7 @@ The fresh payload, not an older distribution folder, has these main groups:
 | --- | ---: | --- |
 | Tcl data | 832 | Retained. Includes a separate 609-file timezone database, 127 message catalogs and 82 encoding tables. The bundled Tcl 8.6.15 exposes no `zipfs` command; direct Python ZIP loading does not apply. Consolidation needs a Tcl-aware loader and clock, locale, encoding and native-dialog tests. |
 | Tk data | 89 | Retained. Native dialogs source these scripts; generic ZIP packing would break filesystem-based loading. |
-| Distribution metadata and licences | 54 | Retained. A shared metadata archive is a candidate for dedicated importlib.metadata/resource tests; deleting it is not equivalent to harmless cache cleanup. |
+| Distribution metadata and licences | 54 | Retained. A ZIP probe preserves version lookup but breaks `Distribution.locate_file()` resolution of a loose NumPy native module. This is not a drop-in archive conversion; deleting metadata/licences is not harmless cache cleanup. |
 | PyArrow runtime | 31 | Retained native modules/libraries. Existing hook already excludes SDK headers, Cython sources, fixtures and tests; those are not a new saving from this feature. |
 | Python modules and dateutil timezone data | Already archived | PYZ, base_library.zip and dateutil's archive already avoid many loose files. No extra extraction step should be introduced. |
 
@@ -62,3 +63,24 @@ Native DLL/PYD files remain loose for the Windows loader. A single certifi typin
 marker is development-only but negligible; no additional group is removed merely
 because a narrow import test happens to pass. No Tcl locale/encoding or scientific
 runtime coverage is reduced by this feature.
+
+## Packaged acceptance
+
+Implementation checkpoint `285d3d7b` passed clean-Windows preflight run
+[42668568897](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42668568897):
+all 229 committed backend/frontend test files/modules and all four stages passed
+in 238.96 seconds. Build-only branch run
+[42668616756](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42668616756)
+passed the actual frozen API/scientific checks, signed artifact construction,
+registry/NSIS/recovery policy checks and eight native install/reinstall cases in
+disposable profiles. Release creation, publication and channel-pointer steps were
+skipped on this non-tag run. No public release or installed local app was changed.
+
+The local Alpha executable and unsigned installer also built successfully. Local
+manual desktop inspection was not performed because an older Alpha test instance
+already held the single-instance identity; it was left untouched. Native CI
+installation acceptance is not interactive UAC or an old installed-updater test.
+The concurrent local full preflight had analysis/indexing timing and native
+launcher failures while Rust compiled; no deadline/test was suppressed. An
+isolated analysis-engine rerun passed all 134 tests in 58.17 seconds, and the
+clean-Windows full-suite result above supplies the integration gate.
