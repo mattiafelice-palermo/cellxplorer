@@ -13,7 +13,7 @@ BUILD_ONLY_ROOTS = {"setuptools", "distutils", "_distutils_hack"}
 
 
 def inventory(root: Path) -> dict:
-    components: dict[str, dict] = defaultdict(lambda: {"files": 0, "bytes": 0})
+    components: dict[str, dict] = defaultdict(lambda: {"files": 0, "bytes": 0, "small_files": 0})
     files = []
     for file in sorted(root.rglob("*")):
         if not file.is_file():
@@ -24,6 +24,7 @@ def inventory(root: Path) -> dict:
         files.append({"path": relative, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
         components[component]["files"] += 1
         components[component]["bytes"] += len(data)
+        components[component]["small_files"] += len(data) <= 16384
     return {"files": len(files), "bytes": sum(f["bytes"] for f in files),
             "components": dict(sorted(components.items())), "inventory": files}
 
@@ -35,10 +36,12 @@ def validate(report: dict) -> None:
     for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd"]:
         if required not in paths:
             raise ValueError(f"Required runtime payload missing: {required}")
-    for package in ["pyarrow", "numpy", "pandas", "tzdata"]:
+    for package in ["pyarrow", "numpy", "pandas", "tzdata.zip"]:
         if package not in report["components"]:
             raise ValueError(f"Required runtime component missing: {package}")
     for row in report["inventory"]:
+        if row["path"].startswith("_internal/tzdata/"):
+            raise ValueError("Loose timezone package duplicates archive-backed data")
         parts = Path(row["path"]).parts
         if len(parts) > 1 and parts[0] == "_internal" and parts[1] in UNUSED_OPTIONALS | BUILD_ONLY_ROOTS:
             raise ValueError(f"Unused optional dependency leaked into runtime: {row['path']}")

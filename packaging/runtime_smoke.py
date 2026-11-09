@@ -11,6 +11,50 @@ import tempfile
 from zoneinfo import ZoneInfo
 
 
+def timezone_signature() -> dict:
+    """Force packaged IANA resources, not an OS database or developer fallback."""
+    import importlib.resources
+    import tzdata
+    import zoneinfo
+    import zipfile
+
+    if getattr(sys, "frozen", False):
+        expected = Path(sys._MEIPASS) / "tzdata.zip"
+        if not str(tzdata.__file__).startswith(str(expected) + os.sep):
+            raise AssertionError("Frozen tzdata did not load from its archive")
+        if (Path(sys._MEIPASS) / "tzdata").exists():
+            raise AssertionError("Loose timezone resources remain in the frozen bundle")
+        if not isinstance(importlib.resources.files("tzdata.zoneinfo"), zipfile.Path):
+            raise AssertionError("Timezone resources are not archive backed")
+    previous = zoneinfo.TZPATH
+    zoneinfo.reset_tzpath(())
+    ZoneInfo.clear_cache()
+    try:
+        names = sorted(zoneinfo.available_timezones())
+        if len(names) < 500:
+            raise AssertionError("Incomplete IANA timezone collection")
+        values = []
+        for name in names:
+            zone = ZoneInfo(name)
+            offsets = []
+            for year, month in [(1900, 1), (1970, 1), (2010, 7), (2026, 1), (2026, 7)]:
+                date = datetime(year, month, 1, tzinfo=zone)
+                offsets.append([date.utcoffset().total_seconds(), date.dst().total_seconds(), date.tzname()])
+            values.append([name, offsets])
+        folds = [datetime(2026, 10, 25, 2, 30, tzinfo=ZoneInfo("Europe/Paris"), fold=fold).utcoffset().total_seconds() for fold in (0, 1)]
+        try:
+            ZoneInfo("CellXplorer/Invalid_Zone")
+        except zoneinfo.ZoneInfoNotFoundError:
+            pass
+        else:
+            raise AssertionError("Unknown timezone was not rejected")
+        return {"version": tzdata.__version__, "zones": len(names), "fold_offsets": folds,
+                "sha256": hashlib.sha256(json.dumps(values, ensure_ascii=True).encode()).hexdigest()}
+    finally:
+        ZoneInfo.clear_cache()
+        zoneinfo.reset_tzpath(previous)
+
+
 def validate_root() -> Path:
     root = Path(os.environ["CELLXPLORER_DATA"]).resolve()
     if (not root.name.startswith("cellxplorer-runtime-") or not root.is_dir()
@@ -85,5 +129,5 @@ def verify() -> None:
     if len(plotly) < 10000:
         raise AssertionError("Portable-report Plotly runtime missing")
     zones = {zone: datetime(2026, 7, 1, tzinfo=ZoneInfo(zone)).utcoffset().total_seconds() for zone in ["UTC", "Europe/Paris", "Atlantic/Canary", "Asia/Tokyo"]}
-    result = {"sources": sources, "tcl": tcl, "zones": zones, "plotly_sha256": hashlib.sha256(plotly).hexdigest()}
+    result = {"sources": sources, "tcl": tcl, "zones": zones, "timezone_signature": timezone_signature(), "plotly_sha256": hashlib.sha256(plotly).hexdigest()}
     (root / "runtime-verification.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")

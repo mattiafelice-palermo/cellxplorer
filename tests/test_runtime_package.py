@@ -31,18 +31,20 @@ class RuntimePackageTests(unittest.TestCase):
 
     def test_build_tool_exclusions_preserve_runtime_and_existing_build_flags(self):
         command = json.loads((ROOT / "package.json").read_text())["scripts"]["build:backend"]
-        argv = shlex.split(command)
+        argv = shlex.split(command.split(" && ")[0])
         excluded = {argv[i+1] for i,value in enumerate(argv) if value == "--exclude-module"}
         self.assertTrue({"setuptools","distutils","_distutils_hack"}.issubset(excluded))
         self.assertTrue(excluded.isdisjoint({"app","numpy","pandas","pyarrow","NewareNDA","alembic","sqlalchemy","tkinter","tzdata"}))
         self.assertIn("--onedir",argv)
         self.assertNotIn("--optimize",argv)
         self.assertEqual(argv[-1],"packaging/backend_entry.py")
+        self.assertIn("packaging/runtime_timezone.py", argv)
+        self.assertTrue(command.endswith("&& python packaging/timezone_archive.py dist/cellxplorer-backend"))
 
     def _bundle(self, root: Path) -> None:
         for name in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd",
                      "_internal/pyarrow/lib.pyd", "_internal/pyarrow/arrow.dll", "_internal/numpy/native.pyd",
-                     "_internal/pandas/native.pyd", "_internal/tzdata/zoneinfo/Atlantic/Canary"]:
+                     "_internal/pandas/native.pyd", "_internal/tzdata.zip"]:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"test fixture")

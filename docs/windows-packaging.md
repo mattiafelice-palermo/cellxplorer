@@ -397,6 +397,16 @@ handle to signal before starting the replacement; fixed-delay relaunches are not
 
 ## Desktop startup performance
 
+Timezone data is shipped as `_internal/tzdata.zip`, including the unchanged Python
+package modules. `packaging/hooks/hook-tzdata.py` keeps them outside PYZ;
+`packaging/runtime_timezone.py` enables direct ZIP resource loading. The backend
+build command runs `packaging/timezone_archive.py` after PyInstaller to verify
+and pack the generated package, retaining distribution metadata and licences.
+Never stage the intermediate loose package or unpack this ZIP at app startup.
+Run the bundle audit and frozen scientific verifier after packaging; both are
+mandatory in the release workflow. See Spec 101 for verification and the remaining
+small-file opportunities.
+
 The packaged backend is a windowless PyInstaller onedir resource. It loads its
 scientific runtime from the installed directory rather than extracting it on every
 launch. Database migration inspection itself is small

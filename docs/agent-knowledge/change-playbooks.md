@@ -31,6 +31,24 @@ The explicit workflow-dispatch cache seed prepares only the current ref's cache.
 The release workflow stays restore-only and executes every mandatory gate. Keep
 four preflight workers; neither seed compilation nor a cache hit proves acceptance.
 
+## Archive backed timezone packaging
+
+The frozen backend loads the unchanged `tzdata` package from `_internal/tzdata.zip`
+through standard zipimport/resource APIs. The custom hook uses collection mode
+`py` for the entire package; a PYZ copy would otherwise shadow the archive. The
+runtime hook adds the ZIP before application imports, also in spawned processes.
+Do not extract it on startup or patch timezone interpretation. The post-build
+packer verifies every resource byte before removing only the generated loose
+package. Distribution metadata and licences remain present.
+
+`audit_backend_bundle.py --validate` requires the archive and rejects loose
+duplicates. `verify_packaged_science.py` forces IANA resource lookup, verifies the
+archive origin, and compares every zone across historical/DST dates and folds
+alongside the existing lossless scientific checks. A source-only ZIP probe is not
+frozen acceptance. Tcl has a separate timezone collection and loader; the Python
+archive does not replace it. Re-inventory fresh outputs rather than diagnosing
+current releases from an old staging tree.
+
 ## Persistent schema change
 
 1. Add a forward-only revision under `backend/app/migrations/`.
