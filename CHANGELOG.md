@@ -7,6 +7,18 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.28.0-alpha.26 - 2026-11-09
+
+### New features
+
+- Import supported classic and extended BioLogic MB (.mpr) recordings and plot voltage against time or measured capacity.
+- Exclude entire frequency-identified EIS operations from MB curves and capacity, preserving acquisition gaps and native elapsed time. Capacity uses measured increments within ordinary operations; unassignable boundary intervals are omitted, and complete-cycle summaries require adjacent opposite-current half-cycle identities.
+
+### Bug fixes
+
+- Recheck previously unsupported indexed MPR files once so newly supported MB recordings become discoverable, without invalidating recognized metadata or existing scientific caches.
+- Preserve MB acquisition gaps through source previews, selected-cycle navigation, derivative calculations, and interactive/exported plots.
+
 ## 0.28.0-alpha.25 - 2026-11-08
 
 ### New features
