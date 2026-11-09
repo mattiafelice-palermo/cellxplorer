@@ -1,7 +1,9 @@
 # Feature specs
 
 - [102 — Tcl timezone archive and bounded PyArrow packaging](102-tcl-timezones-arrow-packaging.md).
-  **In progress.** Preserve Tcl behavior, audit optional Arrow components and repeat packaged/install profiling.
+  **Complete; frozen science, clean-Windows preflight and signed native installer gates passed.**
+  Preserve both Tcl resource layouts, omit audited Arrow optionals and reduce controlled local
+  extraction by 20.3%; whole-update and newer-runtime timing boundaries are documented.
 
 - [101 — Archive backed timezone data](101-archive-backed-timezone-data.md).
   **Complete; frozen science, clean-Windows preflight and signed native installer tests passed.**

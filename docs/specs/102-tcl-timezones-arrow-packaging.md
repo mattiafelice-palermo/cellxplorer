@@ -1,6 +1,6 @@
 # 102 — Tcl timezone archive and bounded PyArrow packaging
 
-Status: Implementation and packaged verification in progress.
+Status: Complete; frozen, clean-Windows and signed native installer verification passed.
 Branch: `codex/tcl-timezones-arrow-packaging`.
 
 ## Scope
@@ -58,6 +58,8 @@ unused Arrow DLL/PYD files (17,355,264 bytes), retaining every other native modu
 The audited backend has 575 files, versus 1,189 before this feature. All retained
 Tcl resource bytes are verified before generated loose scripts are removed.
 All 188 retained DLL/PYD files are byte-identical to the preserved local baseline.
+An independent scan of all 188 retained native modules found no eager or delayed
+imports of the omitted Flight/Substrait DLLs.
 The native-file difference is exactly the six audited optional Arrow components.
 This local profile holds Python/Tcl and the desktop/helper bytes fixed. It must
 not be presented as an A/B measurement of the newer CI runtime: that builder
@@ -81,7 +83,19 @@ embedded zipfs libraries and matches source across all 597 of its zones, with
 all six Arrow codecs available. This is not interactive UAC, an old installed
 updater, or end-to-end recovery acceptance. Release creation/publication and
 channel feed changes were skipped. A repeat gate on the final destination-link
-safety check is in progress.
+safety check also passed in
+[42685171789](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42685171789),
+including the unchanged canonical fallback preflight, actual frozen checks and
+all eight native installation cases. The profiler's compiler default is resolved
+from `LOCALAPPDATA`, not a developer-specific path; its CLI smoke check passes.
+
+The final local no-cache preflight used the same four-worker CPU budget as CI.
+Its version, frontend type/build and all other backend/frontend modules passed;
+`tests.test_start_webapp` alone failed two occupied-port assertions because this
+host could not identify the temporary listener's process. This is the unchanged
+local launcher limitation already recorded in Spec 101, not a suppressed gate
+or a packaging-source change. Clean-Windows preflight passes the same tests.
+The full local log is retained in `tmp/102-preflight-final.log`.
 
 ## Final extraction profile
 

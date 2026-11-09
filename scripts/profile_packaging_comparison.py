@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PureWindowsPath
 import statistics
 import subprocess
@@ -111,11 +112,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-manifest', type=Path, required=True)
     parser.add_argument('--candidate-backend', type=Path, default=ROOT / 'src-tauri/binaries/backend')
-    parser.add_argument('--makensis', type=Path, default=Path('C:/Users/matti/AppData/Local/tauri/NSIS/makensis.exe'))
+    local_app_data = os.environ.get('LOCALAPPDATA')
+    compiler = Path(local_app_data) / 'tauri/NSIS/makensis.exe' if local_app_data else None
+    parser.add_argument('--makensis', type=Path, default=compiler)
     parser.add_argument('--trials', type=int, default=5)
     args = parser.parse_args()
     if args.trials < 3:
         parser.error('At least three interleaved trials are required')
+    if args.makensis is None or not args.makensis.is_file():
+        parser.error('Pass --makensis with the existing NSIS compiler path')
     baseline = json.loads(args.baseline_manifest.read_text())
     validate_rows(baseline)
     candidate = [r for r in baseline if not r['path'].startswith('binaries/backend/')]
