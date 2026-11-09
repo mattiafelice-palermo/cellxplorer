@@ -33,7 +33,7 @@ def validate(report: dict) -> None:
     if report["files"] == 0:
         raise ValueError("Empty backend payload")
     paths = {row["path"] for row in report["inventory"]}
-    for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip"]:
+    for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip", "_internal/_tcl_data/tzdata.tcl"]:
         if required not in paths:
             raise ValueError(f"Required runtime payload missing: {required}")
     for package in ["pyarrow", "numpy", "pandas", "tzdata.zip"]:
@@ -42,11 +42,15 @@ def validate(report: dict) -> None:
     for row in report["inventory"]:
         if row["path"].startswith("_internal/tzdata/"):
             raise ValueError("Loose timezone package duplicates archive-backed data")
+        if row['path'].startswith('_internal/_tcl_data/tzdata/'):
+            raise ValueError('Loose Tcl timezone scripts duplicate archived resources')
         parts = Path(row["path"]).parts
         if len(parts) > 1 and parts[0] == "_internal" and parts[1] in UNUSED_OPTIONALS | BUILD_ONLY_ROOTS:
             raise ValueError(f"Unused optional dependency leaked into runtime: {row['path']}")
         if row["path"].startswith("_internal/pyarrow/"):
             arrow_path = Path(row["path"]).relative_to("_internal/pyarrow")
+            if arrow_path.name in {'arrow_flight.dll', 'arrow_python_flight.dll', 'arrow_substrait.dll'} or arrow_path.name.startswith(('_flight.', '_substrait.', '_pyarrow_cpp_tests.')):
+                raise ValueError(f'Unused Arrow component leaked into runtime: {arrow_path}')
             if arrow_path.suffix in SDK_SUFFIXES or any(part in {"include", "includes", "src", "tests"} for part in arrow_path.parts):
                 raise ValueError(f"Development-only Arrow data leaked into runtime: {row['path']}")
 

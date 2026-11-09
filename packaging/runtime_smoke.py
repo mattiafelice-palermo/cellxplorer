@@ -87,8 +87,14 @@ def verify() -> None:
     import pyarrow.compute as pc
     import pyarrow.csv as csv
     import pyarrow.parquet as pq
+    import pyarrow.dataset as ds
+    import pyarrow.orc as orc
+    import pyarrow.json as arrow_json
+    import pyarrow.fs as fs
+    import pyarrow.parquet.encryption
     import tkinter
     from tkinter import filedialog
+    from tcl_timezone_probe import signature as tcl_timezone_signature
     from app.services import calc, parsing
 
     # This mode is deliberately restricted to a script-created disposable root.
@@ -121,6 +127,33 @@ def verify() -> None:
         raise AssertionError("Arrow compute failed")
     if csv.read_csv(pa.BufferReader(b"x,y\n1,2\n")).num_rows != 1:
         raise AssertionError("Arrow CSV failed")
+    codec_support = {}
+    payload = b'CellXplorer lossless Arrow codec check\x00' * 128
+    for codec in ('snappy', 'gzip', 'brotli', 'zstd', 'lz4', 'bz2'):
+        codec_support[codec] = pa.Codec.is_available(codec)
+        if codec_support[codec]:
+            if codec == 'bz2':
+                output = pa.BufferOutputStream()
+                with pa.CompressedOutputStream(output, codec) as compressed:
+                    compressed.write(payload)
+                with pa.CompressedInputStream(pa.BufferReader(output.getvalue()), codec) as compressed:
+                    decoded = compressed.read()
+            else:
+                encoded = pa.compress(payload, codec=codec)
+                decoded = pa.decompress(encoded, decompressed_size=len(payload), codec=codec).to_pybytes()
+            if decoded != payload:
+                raise AssertionError(f'Arrow codec roundtrip failed: {codec}')
+    small = pa.table({'x': [1, 2, 3]})
+    if ds.dataset(small).to_table(filter=ds.field('x') > 1).column('x').to_pylist() != [2, 3]:
+        raise AssertionError('Arrow Dataset/Acero failed')
+    orc_path = root / 'roundtrip.orc'
+    orc.write_table(small, orc_path)
+    if not orc.ORCFile(orc_path).read().equals(small):
+        raise AssertionError('Arrow ORC failed')
+    if arrow_json.read_json(pa.BufferReader(b'{"x":1}\n')).num_rows != 1:
+        raise AssertionError('Arrow JSON failed')
+    if fs.LocalFileSystem().get_file_info(str(orc_path)).size <= 0:
+        raise AssertionError('Arrow local filesystem failed')
     tcl = tkinter.Tcl().eval("info patchlevel")
     if not callable(filedialog.askopenfilenames):
         raise AssertionError("Native file picker module missing")
@@ -129,5 +162,5 @@ def verify() -> None:
     if len(plotly) < 10000:
         raise AssertionError("Portable-report Plotly runtime missing")
     zones = {zone: datetime(2026, 7, 1, tzinfo=ZoneInfo(zone)).utcoffset().total_seconds() for zone in ["UTC", "Europe/Paris", "Atlantic/Canary", "Asia/Tokyo"]}
-    result = {"sources": sources, "tcl": tcl, "zones": zones, "timezone_signature": timezone_signature(), "plotly_sha256": hashlib.sha256(plotly).hexdigest()}
+    result = {"sources": sources, "arrow_codecs": codec_support, "tcl": tcl, "tcl_timezone_signature": tcl_timezone_signature(), "zones": zones, "timezone_signature": timezone_signature(), "plotly_sha256": hashlib.sha256(plotly).hexdigest()}
     (root / "runtime-verification.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")

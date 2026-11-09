@@ -49,6 +49,20 @@ frozen acceptance. Tcl has a separate timezone collection and loader; the Python
 archive does not replace it. Re-inventory fresh outputs rather than diagnosing
 current releases from an old staging tree.
 
+Tcl's separate `tzdata.tcl` container holds byte-verified, individually compressed
+scripts. `tcl_timezone_archive.py` accepts only the fingerprinted complete clock
+loader and replaces its resource call, preserving its security guard and errors.
+Aliases execute in the original loader scope; scripts are decoded in memory and
+never extracted. Tcl's messages, encoding tables and Tk resources remain loose.
+UTC is built into Tcl: use a named zone such as Paris to exercise its lazy loader.
+
+PyArrow's custom hook excludes only Flight, Substrait and upstream C++ tests.
+Filter both binary collection and data collection: Windows DLLs can enter through
+the latter and get reclassified as binaries. Retained PE modules must have no eager
+or delay-import dependency on omitted DLLs. The frozen probe retains lossless
+source/Parquet signatures and exercises codecs, Dataset/Acero, ORC, JSON, compute
+and local filesystem behavior; native libraries themselves still require disk files.
+
 Do not judge metadata ZIP compatibility by `version()` alone. Standard
 `Distribution.locate_file()` resolves relative to the metadata container; moving
 only `.dist-info` into a ZIP can redirect an otherwise valid loose native-module

@@ -44,7 +44,7 @@ class RuntimePackageTests(unittest.TestCase):
     def _bundle(self, root: Path) -> None:
         for name in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd",
                      "_internal/pyarrow/lib.pyd", "_internal/pyarrow/arrow.dll", "_internal/numpy/native.pyd",
-                     "_internal/pandas/native.pyd", "_internal/tzdata.zip"]:
+                     "_internal/pandas/native.pyd", "_internal/tzdata.zip", "_internal/_tcl_data/tzdata.tcl"]:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"test fixture")
@@ -56,13 +56,17 @@ class RuntimePackageTests(unittest.TestCase):
             report = inventory(root)
             validate(report)
             self.assertEqual(report, inventory(root))
-            self.assertEqual(report["files"], 8)
-            self.assertEqual(report["bytes"], 8 * len(b"test fixture"))
+            self.assertEqual(report["files"], 9)
+            self.assertEqual(report["bytes"], 9 * len(b"test fixture"))
             self.assertEqual(report["inventory"][0]["sha256"], hashlib.sha256(b"test fixture").hexdigest())
 
     def test_sdk_and_accidental_optional_dependencies_are_rejected(self):
         for unwanted in ["_internal/pyarrow/libarrow.lib", "_internal/pyarrow/include/arrow.h", "_internal/pyarrow/tests/data/sample.parquet", "_internal/scipy/native.pyd",
-                         "_internal/setuptools/build.py", "_internal/distutils/compiler.py", "_internal/_distutils_hack/__init__.py"]:
+                         "_internal/setuptools/build.py", "_internal/distutils/compiler.py", "_internal/_distutils_hack/__init__.py",
+                         "_internal/_tcl_data/tzdata/UTC", "_internal/pyarrow/arrow_flight.dll",
+                         "_internal/pyarrow/arrow_python_flight.dll", "_internal/pyarrow/arrow_substrait.dll",
+                         "_internal/pyarrow/_flight.cp314-win_amd64.pyd", "_internal/pyarrow/_substrait.cp314-win_amd64.pyd",
+                         "_internal/pyarrow/_pyarrow_cpp_tests.cp314-win_amd64.pyd"]:
             with self.subTest(unwanted=unwanted), TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._bundle(root)
@@ -120,7 +124,7 @@ class RuntimePackageTests(unittest.TestCase):
         self.assertNotEqual(module.frame_signature(one), module.frame_signature(tiny))
         self.assertNotEqual(module.frame_signature(pd.DataFrame({"x": [np.nan]})), module.frame_signature(pd.DataFrame({"x": [np.inf]})))
 
-    def test_pyarrow_hook_drops_only_development_data_and_keeps_all_dynamic_libraries(self):
+    def test_pyarrow_hook_keeps_collection_of_supported_runtime_libraries(self):
         source = (ROOT / "packaging/hooks/hook-pyarrow.py").read_text(encoding="utf-8")
         self.assertIn('binaries = collect_dynamic_libs("pyarrow")', source)
         self.assertIn('collect_submodules("pyarrow"', source)

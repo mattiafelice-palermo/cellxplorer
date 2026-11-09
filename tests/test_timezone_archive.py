@@ -106,7 +106,7 @@ print(json.dumps([tzdata.__version__,importlib.resources.files('tzdata.zoneinfo'
 
     def test_bundle_audit_rejects_loose_duplicate_or_missing_archive(self):
         from scripts.audit_backend_bundle import validate
-        paths = ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip"]
+        paths = ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip", "_internal/_tcl_data/tzdata.tcl"]
         report = dict(files=len(paths), components={p: {} for p in ["pyarrow", "numpy", "pandas", "tzdata.zip"]}, inventory=[dict(path=p) for p in paths])
         validate(report)
         report['inventory'] = [dict(path=p) for p in paths if p != "_internal/tzdata.zip"]
