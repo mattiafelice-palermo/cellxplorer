@@ -25,17 +25,32 @@ def inventory(root: Path) -> dict:
         components[component]["files"] += 1
         components[component]["bytes"] += len(data)
         components[component]["small_files"] += len(data) <= 16384
-    return {"files": len(files), "bytes": sum(f["bytes"] for f in files),
-            "components": dict(sorted(components.items())), "inventory": files}
+    report = {"files": len(files), "bytes": sum(f["bytes"] for f in files),
+              "components": dict(sorted(components.items())), "inventory": files}
+    manifest = root / '_internal/tcl-resources.json'
+    if manifest.is_file():
+        report['tcl_resources'] = json.loads(manifest.read_text(encoding='utf-8'))
+    return report
 
 
 def validate(report: dict) -> None:
     if report["files"] == 0:
         raise ValueError("Empty backend payload")
     paths = {row["path"] for row in report["inventory"]}
-    for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip", "_internal/_tcl_data/tzdata.tcl"]:
+    for required in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd", "_internal/tzdata.zip"]:
         if required not in paths:
             raise ValueError(f"Required runtime payload missing: {required}")
+    if '_internal/_tcl_data/tzdata.tcl' not in paths:
+        resources = report.get('tcl_resources', {})
+        libraries = resources.get('libraries', {})
+        if resources.get('mode') != 'embedded-zipfs' or len(libraries) != 2 or '_internal/tcl-resources.json' not in paths:
+            raise ValueError('Required archived Tcl timezone resources missing')
+        inventory_hashes = {row['path']: row.get('sha256') for row in report['inventory']}
+        for name, sha in libraries.items():
+            if Path(name).name != name or not name.lower().endswith('.dll') or inventory_hashes.get('_internal/' + name) != sha:
+                raise ValueError('Embedded Tcl/Tk library manifest does not match payload')
+        if any(p.startswith(('_internal/_tcl_data/', '_internal/_tk_data/')) for p in paths):
+            raise ValueError('Loose Tcl/Tk resources mixed with embedded archives')
     for package in ["pyarrow", "numpy", "pandas", "tzdata.zip"]:
         if package not in report["components"]:
             raise ValueError(f"Required runtime component missing: {package}")

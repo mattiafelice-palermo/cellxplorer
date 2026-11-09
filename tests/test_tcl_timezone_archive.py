@@ -1,10 +1,13 @@
 """Byte preservation, all-zone Tcl behavior and generated-tree guards."""
 import importlib.util
 import base64
+import hashlib
+import json
 from pathlib import Path
 import runpy
 import shutil
 from types import SimpleNamespace
+import sys
 import tempfile
 import tkinter
 import unittest
@@ -32,8 +35,22 @@ class TclArchiveTests(unittest.TestCase):
         original = Path(tkinter.Tcl().eval('info library'))
         target = root / '_internal/_tcl_data'
         target.mkdir(parents=True)
-        shutil.copy2(original / 'clock.tcl', target / 'clock.tcl')
-        shutil.copytree(original / 'tzdata', target / 'tzdata')
+        if str(original).replace('\\', '/').startswith('//zipfs:'):
+            # The active Tcl 9 runtime already embeds its resources. Exercise the
+            # custom packer's mechanics with an explicitly synthetic loader;
+            # real Tcl 8 all-zone parity runs on hosts that ship that layout.
+            fixture = b'proc ::tcl::clock::LoadTimeZoneFile { fileName } {\n    variable DataDir\n    variable TZData\n    source -encoding utf-8 [file join $DataDir $fileName]\n}\n'
+            (target / 'clock.tcl').write_bytes(fixture)
+            fingerprint = patch.object(archive, 'LOADER_SHA256', hashlib.sha256(fixture).hexdigest())
+            fingerprint.start()
+            self.addCleanup(fingerprint.stop)
+            for name, script in {'UTC': 'set TZData(:UTC) fixture', 'Europe/Paris': 'set TZData(:Europe/Paris) fixture', 'US/Eastern': 'LoadTimeZoneFile Europe/Paris; set TZData(:US/Eastern) $TZData(:Europe/Paris)'}.items():
+                path = target / 'tzdata' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(script, encoding='utf-8')
+        else:
+            shutil.copy2(original / 'clock.tcl', target / 'clock.tcl')
+            shutil.copytree(original / 'tzdata', target / 'tzdata')
         return target
 
     def test_deterministic_bytes_all_zone_alias_dst_errors_and_clock_operations(self):
@@ -44,6 +61,7 @@ class TclArchiveTests(unittest.TestCase):
             second = Path(directory) / 'two'
             target = self.bundle(first)
             self.bundle(second)
+            original_resources = {p.relative_to(target / 'tzdata').as_posix(): p.read_bytes() for p in (target / 'tzdata').rglob('*') if p.is_file()}
             result = archive.pack(first)
             self.assertEqual(result, archive.pack(second))
             self.assertFalse((target / 'tzdata').exists())
@@ -51,6 +69,13 @@ class TclArchiveTests(unittest.TestCase):
             tcl.call('clock', 'format', 0, '-timezone', ':UTC')
             tcl.call('source', str(target / 'clock.tcl'))
             tcl.call('set', '::tcl::clock::DataDir', str(target / 'tzdata'))
+            if tcl.eval('info library').startswith('//zipfs:/'):
+                tcl.call('::tcl::clock::LoadTimeZoneFile', 'US/Eastern')
+                self.assertEqual(tcl.eval('set ::tcl::clock::TZData(:US/Eastern)'), 'fixture')
+                for name, data in original_resources.items():
+                    encoded = tcl.call('dict', 'get', tcl.eval('set ::tcl::clock::CellXplorerZoneScripts'), name)
+                    self.assertEqual(zlib.decompress(base64.b64decode(encoded)), data)
+                return
             tcl.eval('array unset ::tcl::clock::TZData; ::tcl::clock::InitTZData')
             names = sorted(p.relative_to(Path(tkinter.Tcl().eval('info library')) / 'tzdata').as_posix() for p in (Path(tkinter.Tcl().eval('info library')) / 'tzdata').rglob('*') if p.is_file())
             self.assertEqual(expected, probe.signature(tcl, names))
@@ -89,11 +114,42 @@ class TclArchiveTests(unittest.TestCase):
             self.assertIn(name, hook)
 
     def test_retained_eager_or_delayed_dependency_on_removed_dll_blocks_build(self):
-        from PyInstaller.utils import hooks
-        import pefile
-        for directory in ('DIRECTORY_ENTRY_IMPORT', 'DIRECTORY_ENTRY_DELAY_IMPORT'):
-            binary = MagicMock()
-            binary.__enter__.return_value = SimpleNamespace(**{directory: [SimpleNamespace(dll=b'arrow_flight.dll')]})
-            with patch.object(hooks, 'collect_submodules', return_value=[]), patch.object(hooks, 'collect_data_files', return_value=[]), patch.object(hooks, 'collect_dynamic_libs', return_value=[]), patch.object(pefile, 'PE', return_value=binary):
-                with self.assertRaisesRegex(RuntimeError, 'needs'):
+        # Preflight installs runtime requirements, not PyInstaller or pefile.
+        hooks = SimpleNamespace(collect_submodules=lambda *a, **k: [], collect_data_files=lambda *a, **k: [], collect_dynamic_libs=lambda *a, **k: [])
+        with tempfile.TemporaryDirectory() as directory:
+            native = Path(directory) / 'retained.pyd'
+            native.write_bytes(b'synthetic PE stand-in')
+            for imports in ('DIRECTORY_ENTRY_IMPORT', 'DIRECTORY_ENTRY_DELAY_IMPORT'):
+                binary = MagicMock()
+                binary.__enter__.return_value = SimpleNamespace(**{imports: [SimpleNamespace(dll=b'arrow_flight.dll')]})
+                modules = {'PyInstaller.utils.hooks': hooks, 'pefile': SimpleNamespace(PE=lambda *a: binary), 'pyarrow': SimpleNamespace(__file__=str(Path(directory) / '__init__.py'))}
+                with patch.dict(sys.modules, modules), self.assertRaisesRegex(RuntimeError, 'needs'):
                     runpy.run_path(str(ROOT / 'packaging/hooks/hook-pyarrow.py'))
+
+    def test_embedded_layout_retains_identical_libraries_and_requires_proof(self):
+        from scripts.audit_backend_bundle import inventory, validate
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = root / 'bundle'
+            internal = bundle / '_internal'
+            internal.mkdir(parents=True)
+            (bundle / 'cellxplorer-backend.exe').write_bytes(b'fixture')
+            sources = []
+            for name in ('tcl90.dll', 'tcl9tk90.dll'):
+                source = root / name
+                source.write_bytes(b'embedded fixture ' + name.encode())
+                shutil.copy2(source, internal / name)
+                sources.append(source)
+            info = SimpleNamespace(available=True, tcl_data_dir='//zipfs:/lib/tcl', tk_data_dir='//zipfs:/lib/tk/tk_library', tcl_shared_library=str(sources[0]), tk_shared_library=str(sources[1]))
+            with patch.dict(sys.modules, {'PyInstaller.utils.hooks.tcl_tk': SimpleNamespace(tcltk_info=info)}):
+                result = archive.pack(bundle)
+                self.assertEqual(result['mode'], 'embedded-zipfs')
+                self.assertEqual(json.loads((internal / 'tcl-resources.json').read_text()), result)
+                for name in ('tzdata.zip', '_tkinter.pyd', 'pyarrow/lib.pyd', 'numpy/lib.pyd', 'pandas/lib.pyd', 'app/assets/plotly.min.js'):
+                    path = internal / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b'required fixture')
+                validate(inventory(bundle))
+                (internal / 'tcl90.dll').write_bytes(b'different')
+                with self.assertRaisesRegex(ValueError, 'does not match'):
+                    validate(inventory(bundle))

@@ -10,6 +10,11 @@ in-memory loading and no startup extraction. Preserve all original script bytes,
 aliases, historical transitions, errors and the original loader's name guard.
 Keep Tcl/Tk scripts, messages and encodings needed by native dialogs. Fail the
 build for an unrecognised clock loader rather than applying a speculative patch.
+When Tcl/Tk already embeds its resource archives in DLLs (the newer clean-Windows
+builder), preserve that native layout without patching it. Require PyInstaller's
+zipfs detection and byte-identical source/bundled DLLs, record their hashes and
+verify the frozen all-zone behavior. Never treat a missing loose directory alone
+as proof of embedded resources.
 
 Audit native import dependencies before omitting the unused PyArrow Flight,
 Substrait and C++ test components. Preserve Arrow core, compute, Parquet/codecs,

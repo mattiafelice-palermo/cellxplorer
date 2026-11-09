@@ -30,6 +30,34 @@ proc ::tcl::clock::LoadArchivedTimeZone {fileName} {
 '''
 
 
+def preserve_embedded(bundle: Path) -> dict:
+    """Accept only the builder's proven DLL-embedded Tcl/Tk resource layout."""
+    from PyInstaller.utils.hooks.tcl_tk import tcltk_info
+
+    if not tcltk_info.available or not str(tcltk_info.tcl_data_dir).startswith('//zipfs:/') or not str(tcltk_info.tk_data_dir).startswith('//zipfs:/'):
+        raise ValueError('Missing loose Tcl clock without proven DLL-embedded resources')
+    libraries = {}
+    for source_name in (tcltk_info.tcl_shared_library, tcltk_info.tk_shared_library):
+        if source_name is None:
+            raise ValueError('Embedded Tcl/Tk library could not be identified')
+        source = Path(source_name)
+        target = bundle / '_internal' / source.name
+        if source.suffix.lower() != '.dll' or not target.is_file() or target.is_symlink() or target.is_junction():
+            raise ValueError('Embedded Tcl/Tk DLL missing from the generated bundle')
+        data = source.read_bytes()
+        if target.read_bytes() != data:
+            raise ValueError('Embedded Tcl/Tk library differs from the builder runtime')
+        libraries[source.name] = hashlib.sha256(data).hexdigest()
+    if len(libraries) != 2 or (bundle / '_internal/_tcl_data').exists() or (bundle / '_internal/_tk_data').exists():
+        raise ValueError('Mixed or incomplete embedded Tcl/Tk layout')
+    result = dict(mode='embedded-zipfs', libraries=libraries)
+    manifest = bundle / '_internal/tcl-resources.json'
+    if manifest.exists() or manifest.is_symlink() or manifest.is_junction():
+        raise ValueError('Refusing to replace an existing Tcl resource manifest')
+    manifest.write_text(json.dumps(result, sort_keys=True) + '\n', encoding='utf-8')
+    return result
+
+
 def pack(bundle: Path) -> dict:
     bundle = bundle.resolve(strict=True)
     internal = bundle / '_internal'
@@ -38,6 +66,10 @@ def pack(bundle: Path) -> dict:
     clock = tcl / 'clock.tcl'
     if not (bundle / 'cellxplorer-backend.exe').is_file():
         raise ValueError('Expected an owned CellXplorer backend bundle')
+    if internal.is_symlink() or internal.is_junction() or not internal.resolve().is_relative_to(bundle):
+        raise ValueError('Tcl resources must be contained and free of links/junctions')
+    if not clock.exists():
+        return preserve_embedded(bundle)
     paths = [internal, tcl, clock, zones, *zones.rglob('*')]
     if any(p.is_symlink() or p.is_junction() or not p.resolve().is_relative_to(bundle) for p in paths):
         raise ValueError('Tcl resources must be contained and free of links/junctions')
