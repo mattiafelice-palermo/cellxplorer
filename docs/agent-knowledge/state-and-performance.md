@@ -662,6 +662,10 @@ Interactive plots may use WebGL for responsiveness, but saved thumbnails and por
 fallbacks are persisted artifacts. Updating a saved plot must invalidate and regenerate every
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails
 during every report export when the valid saved artifact already exists.
+`SAVED_PLOT_THUMBNAIL_RENDER_VERSION` participates in `savedPlotPreviewSignature`, which
+also keys the full saved figure reused by portable reports. Increment it when a renderer
+change makes old figure annotations or provenance stale, even if the scientific data signature
+is unchanged; otherwise the live plot can disagree with a retained report figure.
 
 Cycles member rendering, CE Appearance entries and visibility targets share
 `cycleDisplayPolicy.ts`. An individual belongs to the displayed set when its

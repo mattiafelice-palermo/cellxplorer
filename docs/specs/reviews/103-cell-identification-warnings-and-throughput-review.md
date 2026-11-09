@@ -81,3 +81,18 @@ Final clean verdict and exact revision are still required before merging.
   Screenshots were inspected; all artifacts remain private local test outputs.
 - Repeated independent GPT-6 Astra review is clean for the working implementation;
   exact pushed revision and clean-Windows evidence remain final merge gates.
+- User refinement replaces persistent FEC/energy prose and reference/reason lists
+  with short phrases and hover/focus info buttons. Figure energy qualification is
+  concise, with the signed integral convention in its hover explanation. Saved
+  figure/thumbnail renderer generation 9 regenerates older verbose artifacts.
+- Compact-info browser acceptance passes hover and keyboard access, light/dark,
+  save/reload and CSV/XLSX/PNG/portable parity, including regeneration of a figure
+  saved before the refinement. Updated screenshots were inspected.
+- Final canonical local verification ran all 124 backend modules and 114 frontend
+  files with the four-worker Windows budget. All checks pass except the same
+  host-native occupied-port owner test; no assertion was skipped or weakened.
+  Clean-Windows canonical acceptance remains required.
+- A fresh backend-only build passes bundle validation, frozen/source lossless
+  science, Arrow/codecs, 609 Tcl zones, archive-backed Python zones and API smoke.
+  Its actual frozen Cycles API also reproduces the isolated 1–15 GCPL energy and
+  negative-net gap results. No installer was built or published locally.

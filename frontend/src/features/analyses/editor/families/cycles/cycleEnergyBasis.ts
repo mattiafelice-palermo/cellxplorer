@@ -53,6 +53,6 @@ export function withCycleEnergyNotice(layout: Partial<Plotly.Layout>, traces: Pl
   if (!calculated) return layout;
   const shift = Math.max(12, ...(layout.annotations ?? []).filter((a) => a.yref === "paper" && a.y === 1).map((a) => (a.yshift ?? 0) + 17));
   return { ...layout, margin: { ...layout.margin, t: Math.max(layout.margin?.t ?? 0, shift + 24) },
-    annotations: [...(layout.annotations ?? []), { text: "Calculated net energy: ∫V dQ using signed cell voltage", xref: "paper", yref: "paper", x: 0, y: 1,
+    annotations: [...(layout.annotations ?? []), { text: "Calculated net energy ⓘ", hovertext: "Signed ∫V dQ: integrates signed cell voltage against measured capacity increments. Negative-voltage intervals subtract from the net energy.", captureevents: true, xref: "paper", yref: "paper", x: 0, y: 1,
       xanchor: "left", yanchor: "bottom", yshift: shift, showarrow: false, font: { size: 10 } }] };
 }

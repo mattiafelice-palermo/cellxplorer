@@ -1202,6 +1202,19 @@ function isPolarizationQuantity(quantity: string): boolean {
   return quantity === "polarization" || quantity === "polarization_pct";
 }
 
+function CycleInfoPhrase({ phrase, label, details }: { phrase: string; label: string; details: string[] }) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      <Text size="xs" c="dimmed">{phrase}</Text>
+      <Tooltip label={<Stack gap={5}>{details.map((detail, index) => <Text size="xs" key={index}>{detail}</Text>)}</Stack>} multiline maw={340} withArrow events={{ hover: true, focus: true, touch: true }}>
+        <ActionIcon size="xs" variant="subtle" color="gray" aria-label={label}>
+          <IconInfoCircle size={14} />
+        </ActionIcon>
+      </Tooltip>
+    </Group>
+  );
+}
+
 export function CycleSettings({
   spec,
   result,
@@ -1217,6 +1230,24 @@ export function CycleSettings({
   const polarizationSelected = isPolarizationQuantity(quantity);
   const canNormalizeByMass = isMassNormalizableCycleQuantity(quantity);
   const availability = cycleAvailability(result, spec);
+  const fecSelected = quantity === "fec" || spec.presentation.cycles_x_axis === "fec";
+  const fecDetails = [
+    ...(availability.fecReason ? [availability.fecReason] : []),
+    "All recorded cycles count, including hidden cycles. The fixed reference is the effective nominal capacity of each Cell.",
+    spec.computation.fec?.convention === "discharge"
+      ? "Discharge-based FEC = cumulative discharge capacity / reference capacity."
+      : "Combined-throughput FEC = cumulative (charge + discharge) capacity / (2 × reference capacity).",
+    ...(result?.cell_series ?? []).filter((s) => !s.excluded).map((s) => `${s.label}: ${s.fec_reference_mah ? `${s.fec_reference_mah} mAh` : "reference unavailable — set nominal capacity in Cell details"}`),
+  ];
+  const energyReasons = (result?.cell_series ?? []).filter((s) => !cycleSeriesIsHidden(s, spec))
+    .flatMap((s) => energyUnavailableReasons(s.energy_provenance, quantity).map((reason) => `${s.label} — ${reason}.`));
+  const calculatedEnergy = quantity.includes("energy") && (result?.cell_series ?? []).some((s) => !s.excluded &&
+    s.x.some((_, index) => cycleEnergyBasis(s.energy_provenance, quantity, index).includes("calculated net ∫V dQ")));
+  const energyDetails = [
+    ...(calculatedEnergy ? ["Calculated net energy integrates signed cell voltage against measured capacity increments. Negative intervals subtract; negative net directions are unavailable."] : []),
+    ...(availability.energyReason ? [availability.energyReason] : []),
+    ...energyReasons,
+  ];
   return (
     <Paper p="sm" withBorder>
       <Accordion
@@ -1254,16 +1285,9 @@ export function CycleSettings({
                   resetAxis(s, "x_axis");
                 })}
               />
-              {availability.fecReason && <Text size="xs" c="dimmed">{availability.fecReason}</Text>}
-              {availability.energyReason && <Text size="xs" c="dimmed">{availability.energyReason}</Text>}
-              {quantity.includes("energy") && (result?.cell_series ?? []).some((s) => !s.excluded &&
-                [...(s.energy_provenance?.charge ?? []), ...(s.energy_provenance?.discharge ?? [])].some((e) => e.basis === "calculated" || e.basis === "mixed")) && (
-                <Text size="xs" c="dimmed">Calculated net energy integrates signed cell voltage against measured capacity increments. Negative intervals subtract; negative net directions are unavailable.</Text>
-              )}
-              {(result?.cell_series ?? []).filter((s) => !cycleSeriesIsHidden(s, spec)).flatMap((s) => energyUnavailableReasons(s.energy_provenance, quantity).map((reason) => (
-                <Text size="xs" c="dimmed" key={`${s.cell_id}:${s.group_id}:${reason}`}>{s.label} — {reason}.</Text>
-              )))}
-              {(quantity === "fec" || spec.presentation.cycles_x_axis === "fec") && (
+              {(availability.fecReason || fecSelected) && <CycleInfoPhrase phrase={availability.fecReason ? "FEC needs nominal capacity" : "FEC uses all recorded cycles"} label="About FEC" details={fecDetails} />}
+              {energyDetails.length > 0 && <CycleInfoPhrase phrase={availability.energyReason ? "Energy unavailable" : calculatedEnergy ? "Calculated net energy" : "Some energy values unavailable"} label="About energy values" details={energyDetails} />}
+              {fecSelected && (
                 <>
                   <Select
                     label="FEC convention"
@@ -1274,10 +1298,6 @@ export function CycleSettings({
                       resetAxis(s, "x_axis"); resetAxis(s, "y_axis");
                     })}
                   />
-                  <Text size="xs" c="dimmed">All recorded cycles count, including hidden cycles. Reference: effective nominal capacity per Cell.</Text>
-                  {(result?.cell_series ?? []).filter((s) => !s.excluded).map((s) => (
-                    <Text size="xs" c="dimmed" key={`${s.cell_id}:${s.group_id}`}>{s.label}: {s.fec_reference_mah ? `${s.fec_reference_mah} mAh` : "FEC unavailable — set nominal capacity in Cell details"}</Text>
-                  ))}
                 </>
               )}
               {canNormalizeByMass && (

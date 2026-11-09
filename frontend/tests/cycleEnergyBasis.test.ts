@@ -28,7 +28,8 @@ test("diagnostic filtering keeps energy basis aligned with retained scientific c
 
 test("shared image and saved-plot layouts qualify only visible calculated energy", () => {
   const traces = [{ x: [1], y: [1], customdata: [["charge: calculated net ∫V dQ"]] }] as unknown as Plotly.Data[];
-  assert.match(withCycleEnergyNotice({}, traces, "charge_energy").annotations?.[0].text ?? "", /signed cell voltage/);
+  assert.equal(withCycleEnergyNotice({}, traces, "charge_energy").annotations?.[0].text, "Calculated net energy ⓘ");
+  assert.match(withCycleEnergyNotice({}, traces, "charge_energy").annotations?.[0].hovertext ?? "", /signed cell voltage/);
   assert.equal(withCycleEnergyNotice({}, traces, "fec").annotations, undefined);
   assert.equal(withCycleEnergyNotice({}, [{ ...traces[0], visible: "legendonly" }], "charge_energy").annotations, undefined);
   assert.equal(withCycleEnergyNotice({}, [{ ...traces[0], y: [null] }] as Plotly.Data[], "charge_energy").annotations, undefined);
