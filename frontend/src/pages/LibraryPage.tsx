@@ -450,7 +450,9 @@ export function LibraryPage() {
   const [cellSort, setCellSortState] = useState<CellLibrarySort>(DEFAULT_CELL_LIBRARY_SORT);
   const [cellFilters, setCellFilters] = useState<CellLibraryFilters>(EMPTY_CELL_LIBRARY_FILTERS);
   const [replicateSearch, setReplicateSearch] = useState("");
+  const [cellDetailsTab, setCellDetailsTab] = useState("overview");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  useEffect(() => { if (selectedId === null) setCellDetailsTab("overview"); }, [selectedId]);
   const [selectedCellIds, setSelectedCellIds] = useState<Set<number>>(new Set());
   const [lastSelectedCellId, setLastSelectedCellId] = useState<number | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -489,6 +491,7 @@ export function LibraryPage() {
       const id = Number(cellParam);
       if (Number.isFinite(id)) {
         setSelectedId(id);
+        setCellDetailsTab(searchParams.get("cellTab") === "files" ? "files" : "overview");
         setPreviewGroupId(null);
       }
     } else if (replicateParam) {
@@ -501,6 +504,7 @@ export function LibraryPage() {
     const next = new URLSearchParams(searchParams);
     next.delete("cell");
     next.delete("replicate");
+    next.delete("cellTab");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -2610,6 +2614,7 @@ export function LibraryPage() {
             )}
 
             <CellDetailTabs
+              initialTab={cellDetailsTab}
               cell={detail.data}
               onUpdateFile={(file) => updateSource.mutate(file)}
               updating={updateSource.isPending}

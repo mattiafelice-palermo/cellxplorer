@@ -2546,11 +2546,15 @@ def availability_badges(
             else cell_ordered_hashes(db, cell)[1]
         )
         for f in files:
-            if parsing.source_read_mode(f) == "permissive":
+            interpretation = parsing.source_interpretation(f) if parsing.source_read_mode(f) == "permissive" else "verified"
+            if interpretation in {"exploratory", "pending"}:
+                warnings = parsing.source_interpretation_warnings(f)
+                detail = ("Cycle identity is unverified. Capacity, energy, efficiency and FEC are unavailable for this source."
+                    if interpretation == "exploratory" else "Scientific interpretation is pending; cycle-based results are not yet available for this source.")
                 fresh.append({"kind": "exploratory_mpr", "cell_id": cell.id, "cell_name": cell.name,
-                              "file": f.filename, "exploratory": parsing.source_is_exploratory(f),
-                              "scientific_interpretation": parsing.source_interpretation(f),
-                              "detail": ("Permissive MPR source: unverified interpretation; unresolved scientific quantities are unavailable." if parsing.source_is_exploratory(f) else "Permissive MPR mode selected; the recording passed verified scientific interpretation." if parsing.source_interpretation(f) == "verified" else "Permissive MPR mode selected; scientific interpretation is pending.")})
+                    "source_id": f.id, "file": f.filename, "exploratory": interpretation == "exploratory",
+                    "scientific_interpretation": interpretation, "detail": detail,
+                    "limitations": warnings})
             if f.location_status == "offline":
                 fresh.append(
                     {"kind": "source_offline", "cell_id": cell.id, "cell_name": cell.name,

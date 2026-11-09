@@ -1708,6 +1708,10 @@ export interface SourceDescriptor extends MprReadPresentation {
 export interface Badge {
   kind: string;
   detail: string;
+  source_id?: number;
+  exploratory?: boolean;
+  scientific_interpretation?: MprReadPresentation["scientific_interpretation"];
+  limitations?: MprReadPresentation["interpretation_warnings"];
   cell_id?: number;
   cell_name?: string;
   file?: string;

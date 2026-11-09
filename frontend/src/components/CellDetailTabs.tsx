@@ -569,13 +569,13 @@ function FilesPanel({
   );
 }
 
-export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationChanged }: { cell: CellDetail; onUpdateFile?: (file: CellSource) => void; updating?: boolean; onContinuationChanged?: () => void }) {
+export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationChanged, initialTab = "overview" }: { cell: CellDetail; initialTab?: string; onUpdateFile?: (file: CellSource) => void; updating?: boolean; onContinuationChanged?: () => void }) {
   return (
     <Stack gap="xs">
     {cell.sources.filter((source) => source.exploratory).map((source) =>
       <MprReadStatus key={source.id} source={source} sourceName={source.filename} />)}
     <Text size="xs" c="dimmed">Last update: {cell.last_data_update_at ? new Date(cell.last_data_update_at + (/Z$|[+-]\d\d:\d\d$/.test(cell.last_data_update_at) ? "" : "Z")).toLocaleString() : "—"}</Text>
-    <Tabs defaultValue="overview" keepMounted={false}>
+    <Tabs key={`${cell.id}:${initialTab}`} defaultValue={initialTab} keepMounted={false}>
       <Tabs.List>
         <Tabs.Tab value="overview" leftSection={<IconActivity size={14} />}>Overview</Tabs.Tab>
         <Tabs.Tab value="metadata" leftSection={<IconInfoCircle size={14} />}>Metadata</Tabs.Tab>
