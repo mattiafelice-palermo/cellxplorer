@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildDelimitedText,
+  exportDecimalPlaces,
   exportFigure,
   parquetColumnData,
   resolveExportPlan,
@@ -14,6 +15,15 @@ import {
 import { DEFAULT_PLOT_STYLE } from "../src/features/analyses/editor/plotting/plotStyle.ts";
 import { plotViewSignature } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
 import type { AnalysisSpec } from "../src/api.ts";
+
+test("standard data precision preserves fractional equivalent full cycles", () => {
+  assert.equal(exportDecimalPlaces("Cell | Equivalent full cycles (FEC)"), 6);
+  assert.equal(exportDecimalPlaces("FEC"), 6);
+  assert.equal(exportDecimalPlaces("Global cycle"), 0);
+  const text = buildDelimitedText([{ header: "Equivalent full cycles (FEC)", values: [.1234567, 1.2345678] }], ",", "standard", "point");
+  assert.ok(text.includes("0.123457"));
+  assert.ok(text.includes("1.234568"));
+});
 
 test("all export aspects preserve authored fonts and styling relative to plot height", () => {
   const layout: Partial<Plotly.Layout> = {

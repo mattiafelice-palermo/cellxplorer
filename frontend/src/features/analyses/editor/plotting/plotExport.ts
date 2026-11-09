@@ -110,6 +110,7 @@ export function tracesToColumns(
 
 export function exportDecimalPlaces(header: string): number {
   const value = header.toLowerCase();
+  if (value.includes("fec") || value.includes("equivalent full")) return 6;
   if (value.includes("cycle")) return 0;
   if (value.includes("time")) return 3;
   if (value.includes("voltage") || value.includes("current")) return 5;

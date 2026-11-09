@@ -87,6 +87,7 @@ import {
   hiddenSeriesIdsAfterShowAll,
   hiddenSeriesIdsAfterShowOnly,
   isAnalysisSampleHidden,
+  isSeriesHidden,
   plotSeriesVisibilityItems,
 } from "../../policies/analysisVisibility";
 import {
@@ -152,6 +153,33 @@ const NORMALIZED_QUANTITY_MAP: Record<string, { column: string; label: string }>
     label: "CV charge capacity (mAh/g)",
   },
 };
+
+// Backend-owned full-history cumulative columns share the existing mass toggle.
+for (const [key, unit] of [
+  ["cumulative_charge_capacity", "mAh"], ["cumulative_discharge_capacity", "mAh"],
+  ["capacity_throughput", "mAh"], ["net_coulomb_imbalance", "mAh"],
+  ["cumulative_charge_energy", "mWh"], ["cumulative_discharge_energy", "mWh"],
+  ["energy_throughput", "mWh"], ["net_energy_imbalance", "mWh"],
+]) {
+  NORMALIZED_QUANTITY_MAP[key] = {
+    column: `${key}_${unit.toLowerCase()}_g`,
+    label: `${key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())} (${unit}/g)`,
+  };
+}
+
+export function cycleXAxisLabel(spec: AnalysisSpec): string {
+  return spec.presentation.cycles_x_axis === "fec" ? cycleFecLabel(spec) : "Cycle";
+}
+
+function cycleFecLabel(spec: AnalysisSpec): string {
+  return `Equivalent full cycles (FEC, ${spec.computation.fec?.convention === "discharge" ? "discharge" : "combined throughput"})`;
+}
+
+function cycleDisplayX(cycles: number[], fec: (number | null)[] | undefined, spec: AnalysisSpec): number[] {
+  return spec.presentation.cycles_x_axis === "fec"
+    ? cycles.map((_, index) => fec?.[index] ?? Number.NaN)
+    : cycles;
+}
 
 const LEGACY_NORMALIZED_QUANTITY_MAP: Record<string, string> = {
   discharge_capacity_specific: "discharge_capacity",
@@ -232,6 +260,7 @@ export function resolveCycleQuantity(
 ): ResolvedCycleQuantity {
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const baseInfo = result?.quantities.find((q) => q.key === quantity);
+  if (quantity === "fec") return { key: "fec", column: "fec", label: cycleFecLabel(spec) };
   if (spec.presentation.normalize_by_mass && isMassNormalizableCycleQuantity(quantity)) {
     const normalized = NORMALIZED_QUANTITY_MAP[quantity];
     return {
@@ -450,7 +479,7 @@ export function cycleSeriesVisibilityCandidates(
   const result = withoutDiagnosticCycles(
     original,
     diagnosticCyclesFor(original, spec),
-    spec.presentation.reindex_diagnostic_cycles ?? false,
+    spec.presentation.cycles_x_axis !== "fec" && (spec.presentation.reindex_diagnostic_cycles ?? false),
   );
   const { column } = resolveCycleQuantity(result, spec);
   const showCeOverlay =
@@ -574,7 +603,7 @@ export function cycleTracesForResult(
   const result = withoutDiagnosticCycles(
     original,
     hiddenDiagnosticCycles,
-    spec.presentation.reindex_diagnostic_cycles ?? false,
+    spec.presentation.cycles_x_axis !== "fec" && (spec.presentation.reindex_diagnostic_cycles ?? false),
   );
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const quantityInfo = resolveCycleQuantity(result, spec);
@@ -720,6 +749,15 @@ export function cycleTracesForResult(
     const scientificCycles = (original.aggregates[aggregateIndex]?.x ?? agg.x).filter(
       (cycle) => !hiddenDiagnosticCycles.has(cycle),
     );
+    const plotX = cycleDisplayX(agg.x, agg.quantities.fec?.mean, spec);
+    const memberReferences = original.cell_series.filter((s) => s.group_id === agg.group_id && !s.excluded)
+      .map((s) => `${s.label}: ${s.fec_reference_mah ?? "unavailable"}`).join("; ");
+    const groupExportColumns = compact ? [] : [
+      { header: "Global cycle", values: scientificCycles },
+      { header: "FEC", values: agg.quantities.fec?.mean ?? agg.x.map(() => null) },
+      { header: "FEC convention", values: agg.x.map(() => spec.computation.fec?.convention ?? "combined_throughput") },
+      { header: `Member FEC references (mAh): ${memberReferences}`, values: agg.x.map((_, i) => i === 0 ? memberReferences : null) },
+    ];
     const primaryDetailCellIds = aggregateContributorCellIds(
       original,
       agg.group_id,
@@ -745,7 +783,7 @@ export function cycleTracesForResult(
       if (!compact) {
         out.push(
           ...bandSegmentTraces(
-            agg.x,
+            plotX,
             q.band_low,
             q.band_high,
             aggResolved.color,
@@ -763,7 +801,7 @@ export function cycleTracesForResult(
         compact,
       );
       out.push({
-        x: agg.x,
+        x: plotX,
         y: q.mean,
         name: aggResolved.name,
         line: {
@@ -779,15 +817,17 @@ export function cycleTracesForResult(
         type: "scatter",
         mode: primaryAppearance.mode,
         ...(includePointSelectionMetadata ? { meta: primarySelectionMeta } : {}),
-        customdata: q.n,
+        customdata: scientificCycles.map((cycle, index) => [cycle, q.n[index]]),
+        cellxplorer_export_columns: groupExportColumns,
         hovertemplate: compact
           ? undefined
-          : `<b>${compactHoverName(aggResolved.name)}</b><br>cycle %{x}: %{y:.4f}<br>n=%{customdata}<extra></extra>`,
+          : `<b>${compactHoverName(aggResolved.name)}</b><br>cycle %{customdata[0]}: %{y:.4f}<br>n=%{customdata[1]}${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
       } as Plotly.Data);
       if (!compact) {
         const lowCountX: number[] = [];
         const lowCountY: number[] = [];
         const lowCountN: number[] = [];
+        const lowCountCycles: number[] = [];
         q.n.forEach((count, index) => {
           const value = q.mean[index];
           if (
@@ -796,9 +836,10 @@ export function cycleTracesForResult(
             value !== null &&
             Number.isFinite(value)
           ) {
-            lowCountX.push(agg.x[index]);
+            lowCountX.push(plotX[index]);
             lowCountY.push(value);
             lowCountN.push(count);
+            lowCountCycles.push(scientificCycles[index]);
           }
         });
         if (lowCountX.length > 0) {
@@ -814,10 +855,10 @@ export function cycleTracesForResult(
               symbol: style.low_n_marker_symbol,
               line: { color: style.paper_bgcolor, width: 0.8 },
             },
-            customdata: lowCountN,
+            customdata: lowCountCycles.map((cycle, i) => [cycle, lowCountN[i]]),
             showlegend: false,
             hovertemplate:
-              `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
+              `cycle %{customdata[0]}: %{y:.4f} (n=%{customdata[1]}, band requires ${spec.aggregation.min_n_for_band})${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}` +
               `<extra></extra>`,
           } as Plotly.Data);
         }
@@ -846,7 +887,7 @@ export function cycleTracesForResult(
         },
       };
       out.push({
-        x: agg.x,
+        x: plotX,
         y: agg.quantities["coulombic_efficiency_pct"]!.mean,
         name: ceResolved.name,
         yaxis: "y2",
@@ -862,7 +903,9 @@ export function cycleTracesForResult(
         showlegend: ceResolved.showInLegend,
         legendrank: legendRanks.get(ceKey),
         ...(includePointSelectionMetadata ? { meta: ceSelectionMeta } : {}),
-        hovertemplate: `<b>${compactHoverName(ceResolved.name)}</b><br>cycle %{x}<br>CE: %{y:.4f}%<extra></extra>`,
+        customdata: scientificCycles,
+        cellxplorer_export_columns: groupExportColumns,
+        hovertemplate: `<b>${compactHoverName(ceResolved.name)}</b><br>cycle %{customdata}<br>CE: %{y:.4f}%${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
       } as Plotly.Data);
     }
   }
@@ -883,6 +926,7 @@ export function cycleTracesForResult(
           !ceResolved.hidden,
       ),
     });
+    const plotX = cycleDisplayX(s.x, s.quantities.fec, spec);
     const sourceCycle = s.source_cycle ?? s.x.map(() => null);
     const sourcePosition = s.source_position ?? s.x.map(() => null);
     const sourceFilename = s.source_filename ?? s.x.map(() => null);
@@ -892,11 +936,16 @@ export function cycleTracesForResult(
     );
     const sourceColumns = sourceExportColumns(
       s.label,
-      s.x,
+      scientificCycles,
       sourceCycle,
       sourcePosition,
       sourceFilename,
       sourceHash,
+    );
+    sourceColumns.push(
+      { header: "FEC", values: s.quantities.fec ?? s.x.map(() => null) },
+      { header: "FEC reference (mAh)", values: s.x.map(() => s.fec_reference_mah ?? null) },
+      { header: "FEC convention", values: s.x.map(() => spec.computation.fec?.convention ?? "combined_throughput") },
     );
     const values = s.quantities[column] ?? [];
     if (cellEmission.primary && resolved) {
@@ -934,7 +983,7 @@ export function cycleTracesForResult(
         compact,
       );
       out.push({
-        x: s.x,
+        x: plotX,
         y: values,
         name: resolved.name,
         line: {
@@ -954,12 +1003,12 @@ export function cycleTracesForResult(
         cellxplorer_export_columns: sourceColumns,
         hovertemplate:
           `<b>${compactHoverName(resolved.name)}</b><br>` +
-          `cycle %{customdata[0]}: %{y:.4f}<br>local %{customdata[1]} · source %{customdata[2]}<extra></extra>`,
+          `cycle %{customdata[0]}: %{y:.4f}<br>local %{customdata[1]} · source %{customdata[2]}${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
       } as Plotly.Data);
       const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
       if (boundaryIndices.length) {
         out.push({
-          x: boundaryIndices.map((index) => s.x[index]),
+          x: boundaryIndices.map((index) => plotX[index]),
           y: boundaryIndices.map((index) => values[index]),
           name: "Source boundary",
           type: "scatter",
@@ -979,7 +1028,7 @@ export function cycleTracesForResult(
           ]),
           hovertemplate:
             "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
-            "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+            `%{customdata[3]} (source %{customdata[2]})${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
         } as Plotly.Data);
       }
     }
@@ -1003,9 +1052,11 @@ export function cycleTracesForResult(
         },
       };
       out.push({
-        x: s.x,
+        x: plotX,
         y: s.quantities["coulombic_efficiency_pct"],
-        hovertemplate: `<b>${compactHoverName(ceResolved.name)}</b><br>cycle %{x}<br>CE: %{y:.4f}%<extra></extra>`,
+        customdata: scientificCycles,
+        cellxplorer_export_columns: sourceColumns,
+        hovertemplate: `<b>${compactHoverName(ceResolved.name)}</b><br>cycle %{customdata}<br>CE: %{y:.4f}%${spec.presentation.cycles_x_axis === "fec" ? "<br>FEC %{x:.6f}" : ""}<extra></extra>`,
         name: ceResolved.name,
         yaxis: "y2",
         line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
@@ -1056,6 +1107,11 @@ export function cyclePlotLayout(
     ...tickLayout(style, axis),
   });
   const titleFont = { size: style.axis_title_size };
+  const visibleKeys = new Set(result ? cycleSeriesVisibilityCandidates(result, spec)
+    .filter((candidate) => !isSeriesHidden(spec, candidate.key)).map((candidate) => candidate.key) : []);
+  const sourceIsPlotted = (sourceKey: string) => visibleKeys.has(cycleVisibilityKey(sourceKey)) || visibleKeys.has(cycleCeVisibilityKey(sourceKey));
+  const figureCellIds = (result?.cell_series ?? []).filter((s) => !cycleSeriesIsHidden(s, spec) &&
+    (sourceIsPlotted(`c${s.cell_id}`) || (s.group_id !== null && sourceIsPlotted(`g${s.group_id}`)))).map((s) => s.cell_id);
   const xRange = numericTraceExtent(traces, "x", ["x"]);
   const yRange = numericTraceExtent(traces, "y", ["y"]);
   const y2Range = numericTraceExtent(traces, "y", ["y2"]);
@@ -1076,11 +1132,11 @@ export function cyclePlotLayout(
     // the data or the plotted quantity changes.
     uirevision: `${result?.computed_at ?? "no-data"}|${quantity}|${
       spec.presentation.normalize_by_mass ? "g" : "abs"
-    }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}`,
+    }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}|${spec.presentation.cycles_x_axis ?? "cycle"}`,
     xaxis: {
       ...axisBase(style.x_axis),
       title: {
-        text: style.x_title ?? "Cycle",
+        text: style.x_title ?? cycleXAxisLabel(spec),
         font: titleFont,
         standoff: style.x_axis.title_standoff,
       },
@@ -1120,10 +1176,10 @@ export function cyclePlotLayout(
     showlegend: spec.presentation.legend,
     legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
   }, style, [
-    referenceAxis("x", "cycles:cycle", "", "Cycle"),
-    referenceAxis("y", `cycles:${quantityInfo.key}:${quantityInfo.column}`, referenceUnits(quantityInfo.label), quantityInfo.label),
+    referenceAxis("x", spec.presentation.cycles_x_axis === "fec" ? `cycles:fec:${spec.computation.fec?.convention ?? "combined_throughput"}` : "cycles:cycle", "", cycleXAxisLabel(spec)),
+    referenceAxis("y", `cycles:${quantityInfo.key}:${quantityInfo.column}${quantityInfo.key === "fec" ? `:${spec.computation.fec?.convention ?? "combined_throughput"}` : ""}`, referenceUnits(quantityInfo.label), quantityInfo.label),
     ...(showCeOverlay ? [referenceAxis("y2", "cycles:ce", "%", "CE (%)")] : []),
-  ]), result?.badges);
+  ]), result?.badges, { cellIds: figureCellIds, cycleBased: true });
 }
 
 function isPolarizationQuantity(quantity: string): boolean {
@@ -1172,6 +1228,32 @@ export function CycleSettings({
                   })
                 }
               />
+              <Select
+                label="X axis"
+                value={spec.presentation.cycles_x_axis ?? "cycle"}
+                data={[{ value: "cycle", label: "Indexed cycle" }, { value: "fec", label: "Equivalent full cycles (FEC)" }]}
+                onChange={(value) => value && update((s) => {
+                  s.presentation.cycles_x_axis = value as "cycle" | "fec";
+                  resetAxis(s, "x_axis");
+                })}
+              />
+              {(quantity === "fec" || spec.presentation.cycles_x_axis === "fec") && (
+                <>
+                  <Select
+                    label="FEC convention"
+                    value={spec.computation.fec?.convention ?? "combined_throughput"}
+                    data={[{ value: "combined_throughput", label: "Combined throughput / (2 × reference)" }, { value: "discharge", label: "Discharge / reference" }]}
+                    onChange={(value) => value && update((s) => {
+                      s.computation.fec = { convention: value as "combined_throughput" | "discharge" };
+                      resetAxis(s, "x_axis"); resetAxis(s, "y_axis");
+                    })}
+                  />
+                  <Text size="xs" c="dimmed">All recorded cycles count, including hidden cycles. Reference: effective nominal capacity per Cell.</Text>
+                  {(result?.cell_series ?? []).filter((s) => !s.excluded).map((s) => (
+                    <Text size="xs" c="dimmed" key={`${s.cell_id}:${s.group_id}`}>{s.label}: {s.fec_reference_mah ? `${s.fec_reference_mah} mAh` : "FEC unavailable — set nominal capacity in Cell details"}</Text>
+                  ))}
+                </>
+              )}
               {canNormalizeByMass && (
                 <Switch
                   label="Normalize by g"
@@ -1238,7 +1320,7 @@ export function CycleSettings({
                   </ActionIcon>
                 </Tooltip>
               </Group>
-              {(spec.presentation.hide_diagnostic_cycles ?? false) && (
+              {(spec.presentation.hide_diagnostic_cycles ?? false) && spec.presentation.cycles_x_axis !== "fec" && (
                 <Tooltip
                   label={
                     "Close the gaps the hidden cycles leave: drop them from the x-axis and " +
@@ -1497,11 +1579,13 @@ export function CyclePlotCard({
       JSON.stringify({
         quantity: spec.presentation.quantity,
         normalize: spec.presentation.normalize_by_mass ?? false,
+        cyclesXAxis: spec.presentation.cycles_x_axis ?? "cycle",
+        fecConvention: spec.computation.fec?.convention ?? "combined_throughput",
         ce: spec.presentation.ce_overlay,
         individual: spec.presentation.show_individual_cells,
         legend: spec.presentation.legend,
         hideDiagnostics: spec.presentation.hide_diagnostic_cycles ?? false,
-        reindexDiagnostics: spec.presentation.reindex_diagnostic_cycles ?? false,
+        reindexDiagnostics: spec.presentation.cycles_x_axis !== "fec" && (spec.presentation.reindex_diagnostic_cycles ?? false),
         diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
         formationCycles: spec.computation.formation_cycles,
         retentionReference: spec.computation.retention_reference,
@@ -1535,9 +1619,11 @@ export function CyclePlotCard({
         },
         quantity: spec.presentation.quantity,
         normalize: spec.presentation.normalize_by_mass ?? false,
+        cyclesXAxis: spec.presentation.cycles_x_axis ?? "cycle",
+        fecConvention: spec.computation.fec?.convention ?? "combined_throughput",
         diagnostics: {
           hidden: spec.presentation.hide_diagnostic_cycles ?? false,
-          reindexed: spec.presentation.reindex_diagnostic_cycles ?? false,
+          reindexed: spec.presentation.cycles_x_axis !== "fec" && (spec.presentation.reindex_diagnostic_cycles ?? false),
           tolerance: spec.presentation.diagnostic_tolerance ?? null,
         },
         formationCycles: spec.computation.formation_cycles,
@@ -1575,7 +1661,7 @@ export function CyclePlotCard({
     (spec.presentation.hidden_protocol_segment_ids?.length ?? 0) > 0;
   const zoomSignature = `${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
     spec.presentation.normalize_by_mass ? "g" : "abs"
-  }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}`;
+  }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}|${spec.presentation.cycles_x_axis ?? "cycle"}`;
   const zoom = useZoomMemory(zoomSignature);
   const layout = useMemo(
     () => zoom.apply(cyclePlotLayout(result, spec, exportTraces)),
@@ -1617,6 +1703,7 @@ export function CyclePlotCard({
   const explainer = getCycleQuantityExplainer(
     spec.presentation.quantity ?? "discharge_capacity",
     Boolean(spec.presentation.normalize_by_mass),
+    spec.computation.fec?.convention,
   );
   const rememberPlotDiv = (graphDiv: unknown) => {
     const element = graphDiv as HTMLElement;
@@ -1775,7 +1862,7 @@ export function CyclePlotCard({
           plotName={plotName}
           subtitle={subtitle}
           quantityName={resolveCycleQuantity(result, spec).label}
-          xAxisName={style.x_title ?? "Cycle"}
+          xAxisName={style.x_title ?? cycleXAxisLabel(spec)}
           sampleSummary={`${spec.selection.entries.length} ${
             spec.selection.entries.length === 1 ? "sample" : "samples"
           }`}
@@ -1955,6 +2042,7 @@ export function CyclePlotCard({
         buildSeriesPreview={buildSeriesPreview}
         ceOverlayActive={ceOverlayActive}
         yTitlePlaceholder={yTitlePlaceholder}
+        xTitlePlaceholder={cycleXAxisLabel(spec)}
       />
     </Group>
   );

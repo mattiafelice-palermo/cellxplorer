@@ -2,15 +2,24 @@ import type { Badge } from "./api";
 export function sourceLimitations(badges: readonly Badge[] = []): Badge[] {
   const seen = new Set<string>();
   return badges.filter(badge => {
-    if (badge.kind !== "exploratory_mpr" || badge.scientific_interpretation === "verified") return false;
+    if (badge.kind !== "exploratory_mpr" || (badge.scientific_interpretation === "verified" && !badge.limitations?.length)) return false;
     const key = `${badge.cell_id ?? ""}:${badge.source_id ?? badge.file ?? badge.detail}`;
     if (seen.has(key)) return false;
     seen.add(key); return true;
   });
 }
-export function sourceLimitationFigureText(badges: readonly Badge[] = []): string | null {
-  const sources = sourceLimitations(badges);
+export type LimitationFigureContext = { cellIds: number[]; cycleBased: boolean };
+export function sourceLimitationFigureText(badges: readonly Badge[] = [], context?: LimitationFigureContext): string | null {
+  const sources = sourceLimitations(badges).filter((source) => !context || (source.cell_id != null && context.cellIds.includes(source.cell_id)));
   if (!sources.length) return null;
-  const pending = sources.every(source => source.scientific_interpretation === "pending");
-  return `${sources.length} source${sources.length === 1 ? "" : "s"}: ${pending ? "scientific interpretation pending" : "unverified cycle identity"}; cycle-based quantities unavailable`;
+  const qualifications = new Set<string>();
+  for (const source of sources) {
+    if (source.scientific_interpretation === "verified") {
+      for (const limitation of source.limitations ?? []) if (limitation.message) qualifications.add(limitation.message);
+    } else if (!context || context.cycleBased) {
+      qualifications.add(source.scientific_interpretation === "pending" ? "scientific interpretation pending; cycle-based quantities unavailable" : "unverified cycle identity; cycle-based quantities unavailable");
+    }
+  }
+  const count = sources.filter((source) => source.scientific_interpretation === "verified" ? source.limitations?.length : !context || context.cycleBased).length;
+  return qualifications.size ? `${count} source${count === 1 ? "" : "s"}: ${[...qualifications].join(" · ")}` : null;
 }

@@ -1722,3 +1722,17 @@ headers retain their original watchdog; cancellation and epochs still win.
 Configuration applies pause/removal immediately with `start_watchers=False`; only
 the admitted monitor thread spawns watchers. Direct isolated SearchIndexer tests
 and benchmarks default to an always-open gate unless they supply admission.
+
+## Full-history cumulative cycle quantities
+
+`cycle_throughput.py` derives cumulative capacity/energy and FEC before protocol,
+range and diagnostic projection. Keep complete member histories separately for
+fixed-cohort aggregation: a hidden member row is not an unknown increment. Raw
+counter availability matters because historical primitive summaries can sum an
+all-missing step as zero. The additive qualifier checks Parquet null statistics
+before materializing suspect counter columns; never reparse original sources.
+It inspects only active-direction rows and preserves paired-source cycle identity.
+Its bounded memo stores only each counter's first unknown cycle. Use raw file
+identity and size, not mtime: cache reads touch mtime for reclamation. Cycles
+result dependencies include that evidence identity so raw-cache arrival/removal
+cannot preserve an obsolete FEC result. Primitive cache identities remain unchanged.

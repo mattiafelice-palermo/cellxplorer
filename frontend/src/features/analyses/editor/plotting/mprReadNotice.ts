@@ -1,12 +1,13 @@
-import { sourceLimitationFigureText } from "../../../../sourceLimitations.ts";
+import { sourceLimitationFigureText, type LimitationFigureContext } from "../../../../sourceLimitations.ts";
 import type * as Plotly from "plotly.js";
 import type { Badge } from "../../../../api";
 
 /** The same layout reaches live, saved, image and portable figures. */
 export function withMprReadNotice(
   layout: Partial<Plotly.Layout>, badges: readonly Badge[] | undefined,
+  context?: LimitationFigureContext,
 ): Partial<Plotly.Layout> {
-  const notice = sourceLimitationFigureText(badges);
+  const notice = sourceLimitationFigureText(badges, context);
   if (!notice) return layout;
   return {
     ...layout,

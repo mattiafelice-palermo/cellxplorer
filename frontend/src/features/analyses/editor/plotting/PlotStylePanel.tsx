@@ -106,6 +106,7 @@ export function PlotStylePanel({
   timeCapacityStacked = false,
   xAxisNumeric = true,
   yTitlePlaceholder,
+  xTitlePlaceholder,
   seriesDescriptors: seriesDescriptorsProp,
   cycleShadingSupported = false,
   availableCycleMaximum = null,
@@ -133,6 +134,7 @@ export function PlotStylePanel({
   xAxisNumeric?: boolean;
   /** Placeholder shown in the Y-axis title input when it is empty. */
   yTitlePlaceholder?: string;
+  xTitlePlaceholder?: string;
   /**
    * Series descriptors for the per-series editor. When omitted, the panel
    * falls back to its own cycles/time-capacity computation below — tabs with
@@ -626,7 +628,7 @@ export function PlotStylePanel({
             <Stack gap="xs">
               <DebouncedTextInput
                 label="X title"
-                placeholder={axisScope === "time_capacity" ? "Time / capacity" : "Cycle"}
+                placeholder={xTitlePlaceholder ?? (axisScope === "time_capacity" ? "Time / capacity" : "Cycle")}
                 value={style.x_title ?? ""}
                 onCommit={(value) => setAxisTitle("x_title", value)}
               />

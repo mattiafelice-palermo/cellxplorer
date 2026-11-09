@@ -335,6 +335,52 @@ class AnalysisEngineTests(unittest.TestCase):
                 self.assertEqual(series["x"], cycles)
                 self.assertEqual(series["metrics"]["n_cycles"], metric_count)
 
+    def test_throughput_uses_full_history_before_every_protocol_and_range_mask(self):
+        full = engine.compute(self.db, self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}]), None)["cell_series"][0]
+        for mode in ("only", "excluded", "hidden"):
+            spec = self.spec_with_protocol_mode(mode)
+            spec["computation"]["cycle_range"] = {"start": 10, "end": 20}
+            spec["computation"]["exclude_check_cycles_every_n"] = 3
+            filtered = engine.compute(self.db, spec, None)["cell_series"][0]
+            self.assertTrue(filtered["x"])
+            for column in ("capacity_throughput_mah", "net_coulomb_imbalance_mah", "energy_throughput_mwh", "fec"):
+                expected = [full["quantities"][column][cycle - 1] for cycle in filtered["x"]]
+                np.testing.assert_allclose(filtered["quantities"][column], expected)
+            self.assertEqual(filtered["fec_reference_mah"], 2)
+
+    def test_group_fec_uses_known_history_when_one_members_protocol_cycle_is_hidden(self):
+        spec = self.spec_with([{"kind": "replicate_group", "ref_id": self.group.id}])
+        full = engine.compute(self.db, spec, None)["aggregates"][0]
+        hidden_sets = [
+            {"only": set(), "excluded": set(), "hidden": {2}},
+            {"only": set(), "excluded": set(), "hidden": set()},
+        ]
+        with patch.object(engine, "_protocol_cycle_sets", side_effect=hidden_sets):
+            actual = engine.compute(self.db, spec, None)["aggregates"][0]
+        self.assertEqual(actual["quantities"]["fec"], full["quantities"]["fec"])
+
+    def test_throughput_continues_across_sources_with_one_fixed_cell_reference(self):
+        first = self.cells["c1"]
+        second_source = self.cells["c2"].tests[0].file_links[0].file
+        second_source.nominal_capacity_mah = 99
+        second_link = self.cells["c2"].tests[0].file_links[0]
+        self.db.delete(second_link)
+        self.db.flush()
+        self.db.add(TestFile(test_id=first.tests[0].id, file_id=second_source.id, position=1))
+        self.db.add(CellMetadata(cell_id=first.id, key="override.nominal_capacity_mah", value="4"))
+        self.db.commit()
+        result = engine.compute(self.db, self.spec_with([{"kind": "cell", "ref_id": first.id}]), None)
+        series = result["cell_series"][0]
+        self.assertEqual(series["x"], list(range(1, 81)))
+        self.assertEqual(series["fec_reference_mah"], 4)
+        q = series["quantities"]
+        np.testing.assert_allclose(q["capacity_throughput_mah"], np.cumsum(np.array(q["charge_capacity_mah"]) + q["discharge_capacity_mah"]))
+        np.testing.assert_allclose(q["fec"], np.array(q["capacity_throughput_mah"]) / 8)
+        spec = self.spec_with([{"kind": "cell", "ref_id": first.id}])
+        spec["computation"]["fec"] = {"convention": "discharge"}
+        discharge = engine.compute(self.db, spec, None)["cell_series"][0]["quantities"]
+        np.testing.assert_allclose(discharge["fec"], np.cumsum(q["discharge_capacity_mah"]) / 4)
+
     def test_cycle_compute_does_not_load_raw_without_protocol_filter(self):
         original = cache.load_raw_columns
         cache.load_raw_columns = (

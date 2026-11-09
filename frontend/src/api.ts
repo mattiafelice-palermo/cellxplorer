@@ -1348,6 +1348,7 @@ export interface AnalysisSpec {
     exclude_check_cycles_every_n: number;
     retention_reference: { mode: "max_first_n" | "cycle"; n: number; cycle: number | null };
     formation_cycles: number;
+    fec?: { convention: "combined_throughput" | "discharge" };
     polarization: {
       method:
         | "mean"
@@ -1416,6 +1417,7 @@ export interface AnalysisSpec {
   presentation: {
     quantity: string;
     normalize_by_mass?: boolean;
+    cycles_x_axis?: "cycle" | "fec";
     ce_overlay: boolean;
     show_individual_cells: boolean;
     legend: boolean;
@@ -1760,6 +1762,7 @@ export interface CellSeries {
   quantities: Record<string, (number | null)[]>;
   metrics: CellMetrics;
   retention_reference_mah: number | null;
+  fec_reference_mah?: number | null;
   active_mass_mg: number | null;
   segments: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
   source_descriptors?: SourceDescriptor[];

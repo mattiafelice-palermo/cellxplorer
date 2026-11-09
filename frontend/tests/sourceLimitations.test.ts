@@ -16,3 +16,10 @@ test("figure notices preserve existing annotations and verified layouts unchange
   assert.equal(layout.annotations.length,1);
   assert.match(String(result.annotations?.[1].text),/cycle-based quantities unavailable/);
 });
+test("verified limitations survive while figure qualifications follow plotted sources and quantities",()=>{
+  const verified={...source,scientific_interpretation:"verified",limitations:[{code:"biologic_mb_eis_exclusion",message:"EIS executions excluded",count:12}]};
+  assert.equal(sourceLimitations([verified]).length,1);
+  assert.match(sourceLimitationFigureText([verified],{cellIds:[1],cycleBased:false})!,/EIS executions excluded/);
+  assert.equal(sourceLimitationFigureText([source],{cellIds:[2],cycleBased:true}),null);
+  assert.equal(sourceLimitationFigureText([source],{cellIds:[1],cycleBased:false}),null);
+});

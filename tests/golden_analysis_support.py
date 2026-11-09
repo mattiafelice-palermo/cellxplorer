@@ -681,6 +681,10 @@ def _apply_cycles_projection(projected: dict[str, Any], mode: str) -> dict[str, 
     else:
         return projected
 
+    # The original corpus locks the pre-103 catalogue and quantities. New
+    # full-history quantities have independent raw-to-summary/chain/gap tests.
+    projected["quantities"] = [q for q in projected.get("quantities", []) if q.get("column") in CYCLES_ABSOLUTE_QUANTITIES]
+
     for series in projected.get("cell_series") or []:
         quantities = series.get("quantities") or {}
         series["quantities"] = _filter_mapping(quantities, quantity_keys)
@@ -748,6 +752,10 @@ def project_result(
                             "source_filename",
                             "source_hash",
                             "source_boundary_indices",
+                            # Additive Spec 103 context, independently covered
+                            # by full-chain/FEC reference tests. Historical
+                            # golden projections keep their locked quantities.
+                            "fec_reference_mah",
                         ):
                             trace.pop(key, None)
                         if traces_key == "cell_traces":
