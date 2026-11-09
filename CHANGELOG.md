@@ -7,6 +7,14 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.28.0-alpha.27 - 2026-11-09
+
+### Bug fixes
+
+- Defer background source indexing for ten seconds after startup and until Alpha/Beta library setup is acknowledged, leaving existing indexed results available.
+- Give foreground requests priority over new scans, watcher startup and full-scan header refills; resume admission after one quiet second without resetting active header deadlines.
+- Run indexing workers at below-normal Windows priority and move watcher startup off configuration requests while preserving immediate pause and root-removal behavior.
+
 ## 0.28.0-alpha.26 - 2026-11-09
 
 ### New features
