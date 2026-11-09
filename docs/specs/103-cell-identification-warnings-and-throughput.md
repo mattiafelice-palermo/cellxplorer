@@ -3,6 +3,7 @@
 Status: In progress. Non-implementable parent; one shared branch `codex/spec-103-analysis-usability`.
 User-approved plan; preserve Specs 101–102 installation changes, add no dependencies,
 and do not publish an installer. Implement children sequentially with pushed checkpoints.
+Review document: [103 verification and review](reviews/103-cell-identification-warnings-and-throughput-review.md).
 
 ## Locked behavior
 
@@ -31,6 +32,16 @@ and do not publish an installer. Implement children sequentially with pushed che
    Persist convention/axis in plots and portable reports; old plots keep indexed-cycle X.
    Update hover, inspection, references, thumbnails, CSV/XLSX, images and portable rendering.
    Version Cycles responses/dependencies without changing primitive cache identities.
+
+## User clarification and source diagnosis
+
+Missing nominal capacity disables both FEC quantity and FEC axis choices, with a
+visible explanation. It does not disable energy. The investigated GCPL source's
+current raw/cycle caches contain capacity but no energy values and no nominal
+reference. Energy remains unavailable rather than being silently reconstructed
+from voltage and capacity. A separately specified integration quantity would
+need its own provenance and sign/boundary conventions. The requested 1–15 cycle
+display window does not reset prefix sums or supply missing input values.
 
 ## Children
 

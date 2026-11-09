@@ -1,4 +1,5 @@
 import { withMprReadNotice } from "../../plotting/mprReadNotice";
+import { cycleAvailability } from "./cycleAvailability";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   ActionIcon,
@@ -500,6 +501,12 @@ function aggregateContributorCellIds(
   quantityColumn: string,
   scientificCycles: number[],
 ): number[][] {
+  if (/^(cumulative_|capacity_throughput_|energy_throughput_|net_coulomb_imbalance_|net_energy_imbalance_)|^fec$/.test(quantityColumn)) {
+    const members = [...new Set(result.cell_series.filter((series) => series.group_id === groupId && !series.excluded).map((series) => series.cell_id))];
+    // A finite fixed-cohort point includes every member's complete history,
+    // including member cycles removed only from its display projection.
+    return scientificCycles.map(() => members);
+  }
   const eligibleCyclesByCell = result.cell_series
     .filter((series) => series.group_id === groupId && !series.excluded)
     .map((series) => {
@@ -1200,6 +1207,7 @@ export function CycleSettings({
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const polarizationSelected = isPolarizationQuantity(quantity);
   const canNormalizeByMass = isMassNormalizableCycleQuantity(quantity);
+  const availability = cycleAvailability(result, spec);
   return (
     <Paper p="sm" withBorder>
       <Accordion
@@ -1217,7 +1225,7 @@ export function CycleSettings({
             <Stack gap="xs">
               <Select
                 label="Quantity"
-                data={(result?.quantities ?? []).map((q) => ({ value: q.key, label: q.label }))}
+                data={(result?.quantities ?? []).map((q) => ({ value: q.key, label: q.label, disabled: q.key === "fec" && availability.fecDisabled }))}
                 value={quantity}
                 onChange={(v) =>
                   v &&
@@ -1231,12 +1239,14 @@ export function CycleSettings({
               <Select
                 label="X axis"
                 value={spec.presentation.cycles_x_axis ?? "cycle"}
-                data={[{ value: "cycle", label: "Indexed cycle" }, { value: "fec", label: "Equivalent full cycles (FEC)" }]}
+                data={[{ value: "cycle", label: "Indexed cycle" }, { value: "fec", label: "Equivalent full cycles (FEC)", disabled: availability.fecDisabled }]}
                 onChange={(value) => value && update((s) => {
                   s.presentation.cycles_x_axis = value as "cycle" | "fec";
                   resetAxis(s, "x_axis");
                 })}
               />
+              {availability.fecReason && <Text size="xs" c="dimmed">{availability.fecReason}</Text>}
+              {availability.energyReason && <Text size="xs" c="dimmed">{availability.energyReason}</Text>}
               {(quantity === "fec" || spec.presentation.cycles_x_axis === "fec") && (
                 <>
                   <Select

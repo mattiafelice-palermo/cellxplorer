@@ -118,11 +118,13 @@ export function ContinuationManagementPanel({
   onChanged,
   onUpdateFile,
   updating = false,
+  focusedSourceId,
 }: {
   cell: CellDetail;
   onChanged: () => void;
   onUpdateFile?: (file: CellSource) => void;
   updating?: boolean;
+  focusedSourceId?: number | null;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -426,6 +428,7 @@ export function ContinuationManagementPanel({
       {currentInspection.data && !currentInspection.data.inspection_complete && <Alert color="blue">Preparing source details from the current Cell caches…</Alert>}
       <ContinuationSourceList
         sources={mainSources}
+        focusedSourceId={focusedSourceId}
         findings={[]}
         onMove={(index, direction) => setOrder((current) => moveSource(current, index, direction))}
         onDragStart={setDraggedIndex}

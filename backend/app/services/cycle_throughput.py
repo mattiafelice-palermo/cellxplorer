@@ -28,6 +28,10 @@ INCREMENTS = ("charge_capacity_mah", "discharge_capacity_mah", "charge_energy_mw
 
 @lru_cache(maxsize=64)
 def _unknown_cycles(path: str, identity: tuple) -> tuple[tuple[str, int | None], ...]:
+    return _read_unknown_cycles(path)
+
+
+def _read_unknown_cycles(path: str) -> tuple[tuple[str, int | None], ...]:
     """Immutable evidence; footer-only fast path for ordinary all-finite counters.
 
     Primitive summaries historically sum missing steps as zero. Inspect the raw
@@ -77,11 +81,25 @@ def _unknown_cycles(path: str, identity: tuple) -> tuple[tuple[str, int | None],
     return tuple(unknown.items())
 
 
+def _cache_identity(stat) -> tuple | None:
+    return (stat.st_dev, stat.st_ino, stat.st_size) if stat.st_ino else None
+
+
+def _source_evidence(ref) -> tuple[tuple[str, int | None], ...]:
+    path = cache.raw_path(ref.file_hash, ref.parser_version)
+    # A usable file without a stable inode is uncacheable, not unavailable.
+    identity = _cache_identity(path.stat())
+    return _unknown_cycles(str(path), identity) if identity is not None else _read_unknown_cycles(str(path))
+
+
 def evidence_identity(ref) -> tuple | None:
     try:
-        stat = cache.raw_path(ref.file_hash, ref.parser_version).stat()
-        return (stat.st_dev, stat.st_ino, stat.st_size) if stat.st_ino else None
-    except OSError:
+        path = cache.raw_path(ref.file_hash, ref.parser_version)
+        identity = _cache_identity(path.stat())
+        # Without an inode, persist the actual evidence outcome in result keys.
+        # Regenerated readable evidence must invalidate previously unknown FEC.
+        return identity if identity is not None else ("uncached-counter-evidence-v1", _read_unknown_cycles(str(path)))
+    except (OSError, ValueError):
         return None
 
 
@@ -108,12 +126,8 @@ def proven_increments(frame: pd.DataFrame, refs: list) -> pd.DataFrame:
         return qualified
     for segment, ref in enumerate(refs):
         rows = frame["segment"] == segment
-        path = cache.raw_path(ref.file_hash, ref.parser_version)
         try:
-            identity = evidence_identity(ref)
-            if identity is None:
-                raise OSError("Raw evidence unavailable")
-            evidence = dict(_unknown_cycles(str(path), identity))
+            evidence = dict(_source_evidence(ref))
         except (OSError, ValueError):
             evidence = {column: None for column in INCREMENTS}
         for column, cycles in evidence.items():

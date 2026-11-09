@@ -1,4 +1,7 @@
 import type { Badge } from "./api";
+export function sourceDetailsHref(source: Pick<Badge, "cell_id" | "source_id">): string {
+  return `/?cell=${source.cell_id}&cellTab=files${source.source_id != null ? `&sourceId=${source.source_id}` : ""}`;
+}
 export function sourceLimitations(badges: readonly Badge[] = []): Badge[] {
   const seen = new Set<string>();
   return badges.filter(badge => {

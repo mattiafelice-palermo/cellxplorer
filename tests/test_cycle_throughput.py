@@ -103,6 +103,24 @@ class CycleThroughputTests(unittest.TestCase):
             self.assertEqual(engine._jsonsafe(actual.fec.to_numpy()), [1, None, None])
             self.assertEqual(actual.cumulative_discharge_capacity_mah.tolist(), [1, 2, 3])
 
+    def test_readable_raw_without_inode_bypasses_memo_and_versions_evidence_outcome(self):
+        raw = pd.DataFrame({"cycle": [1, 1], "step": [1, 1], "status": ["CC_Chg", "CC_Chg"], "charge_capacity_mah": [0., 1.]})
+        summary = pd.DataFrame({"cycle": [1], "source_cycle": [1], "segment": [0], "charge_capacity_mah": [1.]})
+        ref = SimpleNamespace(file_hash="source", parser_version="parser")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "raw.parquet"
+            raw.to_parquet(path)
+            with patch.object(throughput.cache, "raw_path", return_value=path), patch.object(throughput, "_cache_identity", return_value=None), patch.object(throughput, "_unknown_cycles", side_effect=AssertionError("uncacheable file was memoized")):
+                first = throughput.evidence_identity(ref)
+                self.assertEqual(throughput.proven_increments(summary, [ref]).charge_capacity_mah.tolist(), [1.])
+                raw.charge_capacity_mah = np.nan
+                raw.to_parquet(path)
+                self.assertNotEqual(throughput.evidence_identity(ref), first)
+                self.assertTrue(throughput.proven_increments(summary, [ref]).charge_capacity_mah.isna().all())
+                path.unlink()
+                self.assertIsNone(throughput.evidence_identity(ref))
+                self.assertTrue(throughput.proven_increments(summary, [ref]).charge_capacity_mah.isna().all())
+
 
 if __name__ == "__main__":
     unittest.main()

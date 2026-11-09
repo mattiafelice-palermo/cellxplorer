@@ -605,7 +605,7 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
         : `time (${cfg.time_unit})`;
     return `${voltageChannelSelectionLabel(cfg.voltage_channels)}${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
-  if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs cycle`;
+  if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs ${spec.presentation.cycles_x_axis === "fec" ? "FEC" : "cycle"}`;
   if (tab === "dcir") {
     const view = { ...DEFAULT_DCIR_VIEW, ...(spec.presentation.dcir_view ?? {}) };
     const quantity =

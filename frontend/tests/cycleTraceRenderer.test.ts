@@ -100,7 +100,7 @@ async function loadCycleTraceRenderer(): Promise<CycleTraceRenderer> {
         const module = await server.ssrLoadModule(
           "/src/features/analyses/editor/families/cycles/CyclePlotCard.tsx",
         );
-        return module.cycleTracesForResult as CycleTraceRenderer;
+        return Object.assign(module.cycleTracesForResult, { layout: module.cyclePlotLayout }) as CycleTraceRenderer;
       } finally {
         await server.close();
       }
@@ -432,4 +432,25 @@ test("Cycles traces expose point metadata only for the live interactive path", a
     ),
     true,
   );
+});
+
+test("fixed-cohort cumulative inspection includes members with hidden display cycles", async()=>{
+ const render=await loadCycleTraceRenderer();const result=aggregateResult();
+ result.quantities=[{key:"fec",column:"fec",label:"FEC"}];
+ result.aggregates[0].quantities.fec={mean:[1,2],band_low:[.9,1.9],band_high:[1.1,2.1],n:[2,2]};
+ result.cell_series=[{cell_id:1,group_id:7,excluded:false,x:[1],quantities:{fec:[1]}},{cell_id:2,group_id:7,excluded:false,x:[1,2],quantities:{fec:[1,2]}}] as any;
+ const spec=cycleSpec();spec.selection.entries=[{kind:"replicate_group",ref_id:7}];spec.presentation.quantity="fec";spec.presentation.show_individual_cells=false;
+ const primary=(render(result,spec,false,true) as any[]).find(t=>t.meta?.cellxplorerCycleSelection?.sampleKind==="replicate");
+ assert.deepEqual(primary.meta.cellxplorerCycleSelection.detailCellIds,[[1,2],[1,2]]);
+});
+
+test("figure limitations follow actual primary and CE series visibility",async()=>{
+ const render=await loadCycleTraceRenderer();const result=cellResult();
+ result.cell_series.push({...result.cell_series[0],cell_id:2,label:"Cell B"});
+ (result as any).badges=[{kind:"exploratory_mpr",cell_id:1,scientific_interpretation:"verified",detail:"EIS executions excluded",limitations:[{code:"biologic_mb_eis_exclusion",message:"EIS executions excluded"}]}];
+ const spec=cycleSpec();spec.selection.entries=[{kind:"cell",ref_id:1},{kind:"cell",ref_id:2}];
+ const layout=(render as any).layout;
+ assert.ok(layout(result,spec,render(result,spec)).annotations.some((a:any)=>a.text.includes("EIS executions excluded")));
+ spec.presentation.hidden_series_ids=["cycles:c1",cycleCeVisibilityKey("c1")];
+ assert.ok(!(layout(result,spec,render(result,spec)).annotations??[]).some((a:any)=>a.text.includes("EIS executions excluded")));
 });

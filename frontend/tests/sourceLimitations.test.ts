@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sourceLimitations, sourceLimitationFigureText } from "../src/sourceLimitations.ts";
+import { sourceLimitations, sourceLimitationFigureText, sourceDetailsHref } from "../src/sourceLimitations.ts";
 import { withMprReadNotice } from "../src/features/analyses/editor/plotting/mprReadNotice.ts";
 const source={kind:"exploratory_mpr",detail:"Cycle identity unverified",cell_id:1,source_id:3,file:"a.mpr"};
 test("verified mode alone disappears; true limitations deduplicate by source",()=>{
@@ -22,4 +22,9 @@ test("verified limitations survive while figure qualifications follow plotted so
   assert.match(sourceLimitationFigureText([verified],{cellIds:[1],cycleBased:false})!,/EIS executions excluded/);
   assert.equal(sourceLimitationFigureText([source],{cellIds:[2],cycleBased:true}),null);
   assert.equal(sourceLimitationFigureText([source],{cellIds:[1],cycleBased:false}),null);
+});
+
+test("source detail links retain source identity and support old badges",()=>{
+ assert.equal(sourceDetailsHref({cell_id:7,source_id:23}),"/?cell=7&cellTab=files&sourceId=23");
+ assert.equal(sourceDetailsHref({cell_id:7}),"/?cell=7&cellTab=files");
 });

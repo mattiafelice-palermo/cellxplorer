@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ActionIcon, Badge, Button, Group, Paper, Stack, Text, Tooltip, VisuallyHidden } from "@mantine/core";
 import {
   DndContext,
@@ -265,6 +266,7 @@ function SortableCompactSourceCard({
 
 export function ContinuationSourceList({
   sources,
+  focusedSourceId,
   findings,
   onMove,
   onDragStart,
@@ -283,6 +285,7 @@ export function ContinuationSourceList({
   onSelect,
 }: {
   sources: ContinuationInspectSource[];
+  focusedSourceId?: number | null;
   findings: ContinuationFinding[];
   onMove: (index: number, direction: -1 | 1) => void;
   onDragStart?: (index: number) => void;
@@ -304,6 +307,16 @@ export function ContinuationSourceList({
   selectedSourceKey?: string | null;
   onSelect?: (sourceKey: string) => void;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusedSourceId) return;
+    const frame = requestAnimationFrame(() => {
+      const target = listRef.current?.querySelector<HTMLElement>(`[data-source-file-id="${focusedSourceId}"]`);
+      target?.scrollIntoView({ block: "center", behavior: "auto" });
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusedSourceId, sources.map((source) => source.source_file_id).join(",")]);
   const compactSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -361,13 +374,16 @@ export function ContinuationSourceList({
   }
 
   return (
-    <Stack gap="xs">
+    <Stack gap="xs" ref={listRef}>
       {sources.map((source, index) => {
         const role = sourceRoleLabel(source, index, sources.length);
         const sourceFindings = findings.filter((finding) => finding.source_keys.includes(source.key));
         return (
           <Paper
             key={source.key}
+            data-source-file-id={source.source_file_id ?? undefined}
+            tabIndex={source.source_file_id === focusedSourceId ? -1 : undefined}
+            style={source.source_file_id === focusedSourceId ? { borderColor: "var(--mantine-primary-color-5)" } : undefined}
             withBorder
             p="xs"
             draggable={Boolean(onDragStart) && !disabled}

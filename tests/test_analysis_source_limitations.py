@@ -10,6 +10,16 @@ class AnalysisSourceLimitationsTests(unittest.TestCase):
         return SimpleNamespace(units=[{"cell":SimpleNamespace(id=7,name="Renamed Cell")}],files_by_cell={7:[source]})
     def test_verified_permissive_has_no_analysis_warning(self):
         self.assertEqual(availability_badges(None,{},request_context=self.context("verified")),[])
+
+    def test_pending_non_mpr_source_has_no_mpr_interpretation_notice(self):
+        context = self.context("pending")
+        source = context.files_by_cell[7][0]
+        source.ext = "ndax"
+        source.filename = "source.ndax"
+        source.parser_version = "nw:test"
+        source.parse_status = "pending"
+        source.header_meta = {}
+        self.assertEqual(availability_badges(None, {}, request_context=context), [])
     def test_exploratory_warning_explains_consequence_and_preserves_evidence(self):
         result=availability_badges(None,{},request_context=self.context("exploratory"))[0]
         self.assertEqual(result["source_id"],12)

@@ -1746,3 +1746,8 @@ Its bounded memo stores only each counter's first unknown cycle. Use raw file
 identity and size, not mtime: cache reads touch mtime for reclamation. Cycles
 result dependencies include that evidence identity so raw-cache arrival/removal
 cannot preserve an obsolete FEC result. Primitive cache identities remain unchanged.
+When a readable filesystem reports no stable inode, bypass the memo and put the
+actual counter-availability outcome in result dependencies. Missing identity is
+not missing evidence. FEC needs a positive effective nominal reference; energy
+does not. GCPL capacity/voltage availability alone does not supply a recorded
+energy summary, and a display range never restarts a cumulative quantity.
