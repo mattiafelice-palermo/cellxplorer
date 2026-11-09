@@ -105,3 +105,38 @@ class ImportFileHintTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImportedCellOwnershipTests(unittest.TestCase):
+    def test_current_names_continuations_hash_duplicates_and_detached_sources(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from backend.app.db import Base
+        from backend.app.models import Cell, Test, TestFile, SourceFile
+        from backend.app.routers.files import inspect_import_header_hints, ImportHeaderHintsRequest
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        with TemporaryDirectory() as directory, Session(engine) as db:
+            paths = [Path(directory) / name for name in ("original.ndax", "continued.ndax", "copy.ndax", "detached.ndax")]
+            for path in paths: path.write_bytes(b"source")
+            cell = Cell(name="Renamed Cell")
+            test = Test(cell=cell, name="internal")
+            first = SourceFile(hash="a" * 64, path=str(paths[0]), filename=paths[0].name, size=6, ext="ndax")
+            tail = SourceFile(hash="b" * 64, path=str(paths[1]), filename=paths[1].name, size=6, ext="ndax")
+            detached = SourceFile(hash="c" * 64, path=str(paths[3]), filename=paths[3].name, size=6, ext="ndax")
+            db.add_all([test, first, tail, detached]); db.flush()
+            db.add_all([TestFile(test_id=test.id, file_id=first.id, position=0), TestFile(test_id=test.id, file_id=tail.id, position=1)])
+            db.commit()
+            def hints(*args, **kwargs):
+                return [dict(path=str(path), _hash="a" * 64 if i==2 else None) for i,path in enumerate(paths)]
+            with patch.object(import_file_hints, "inspect_header_hints", side_effect=hints):
+                result = inspect_import_header_hints(ImportHeaderHintsRequest(paths=list(map(str, paths))), db)["files"]
+                for item in result[:3]:
+                    self.assertTrue(item["registered"])
+                    self.assertEqual(item["cells"], [dict(id=cell.id, name="Renamed Cell")])
+                    self.assertNotIn("_hash", item)
+                self.assertTrue(result[3]["registered"])
+                self.assertEqual(result[3]["cells"], [])
+                cell.name = "Renamed again"; db.commit()
+                self.assertEqual(inspect_import_header_hints(ImportHeaderHintsRequest(paths=list(map(str, paths))), db)["files"][0]["cells"][0]["name"], "Renamed again")
+        engine.dispose()

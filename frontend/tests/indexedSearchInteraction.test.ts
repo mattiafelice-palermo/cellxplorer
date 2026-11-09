@@ -1,3 +1,4 @@
+import * as importedIdentityPolicy from "../src/importedSourceIdentity.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
@@ -29,10 +30,11 @@ function harness(overrides: Record<string, any> = {}, readModes = {}) {
     "@mantine/core": new Proxy({}, { get: (_, key) => key }),
     "@tabler/icons-react": new Proxy({}, { get: (_, key) => key }),
     "@mantine/hooks": { useDebouncedValue: (value: any) => [value], useResizeObserver: () => [{ current: null }, { height: 600 }] },
-    "@tanstack/react-query": { useQuery: ({ queryKey }: any) => queryKey[0] === "file-search-settings" ? { data: { config: { roots: [{ id: "root", path: "C:\\", enabled: true }], formats: [".ndax"], metadata_enabled: true }, roots: [{ id: "root", path: "C:/", status: file.root_status }] } } : { data: { items: [{ ...file }], total: 1 }, refetch: () => {} } },
+    "@tanstack/react-query": { useQueryClient: () => ({}), useQuery: ({ queryKey }: any) => queryKey[0] === "file-search-settings" ? { data: { config: { roots: [{ id: "root", path: "C:\\", enabled: true }], formats: [".ndax"], metadata_enabled: true }, roots: [{ id: "root", path: "C:/", status: file.root_status }] } } : { data: { items: [{ ...file }], total: 1 }, refetch: () => {} } },
     "../api": {}, "react-router-dom": { Link: "Link" },
     "../importSourceReadability": readabilityPolicy,
     "../mprReadMode": readModePolicy,
+    "../importedSourceIdentity": importedIdentityPolicy,
     "./SavedSearchMenu": { SavedSearchMenu: "SavedSearchMenu" },
     "./IndexedSearchFilters": { IndexedSearchFilters: "IndexedSearchFilters" },
     "./FileSearchSettings": {}, "../importSearchFilters": filtersPolicy, "../importSearch": searchPolicy,
@@ -136,4 +138,11 @@ test("production picker mode changes preserve peer modes and genuine per-mode re
     assert.equal((selected.get(entry.path) as any).read_mode, mode);
     assert.ok(readabilityPolicy.importSourceRejection(selected.get(entry.path)!, rejected));
   }
+});
+
+test("registered source tooltip identifies the renamed Cell and remains unselectable", () => {
+  const app = harness({ registered: true, cells: [{id: 7, name: "Renamed Cell"}] });
+  const tree = app.render();
+  assert.ok(app.find(tree, node => node.type === "Tooltip" && node.props.label.includes("Already imported as ‘Renamed Cell’")));
+  assert.equal(app.find(tree, node => node.type === "Checkbox").props.disabled, true);
 });

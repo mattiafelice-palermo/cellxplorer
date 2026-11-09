@@ -4698,29 +4698,35 @@ def inspect_import_header_hints(
                 candidate_sizes.add(Path(value).expanduser().stat().st_size)
             except OSError:
                 continue
-        registered_rows = db.query(SourceFile.size, SourceFile.hash).filter(
-            SourceFile.size.in_(candidate_sizes)
-        ).all() if candidate_sizes else []
+        # Scalar bulk lookup: never materialize SourceFile.header_meta or walk a
+        # Cell graph. Hashes are supplied by the existing bounded hint inspection.
+        from ..services.import_search_catalog import path_key
+        requested = {path_key(str(Path(path).expanduser().resolve())) for path in req.paths}
+        from sqlalchemy import or_
+        rows = (db.query(SourceFile.size, SourceFile.hash, SourceFile.path, Cell.id, Cell.name)
+            .outerjoin(TestFile, TestFile.file_id == SourceFile.id)
+            .outerjoin(Test, Test.id == TestFile.test_id)
+            .outerjoin(Cell, Cell.id == Test.cell_id)
+            .filter(or_(SourceFile.size.in_(candidate_sizes), func.lower(SourceFile.path).in_(requested)))
+            .all()) if requested else []
         hashes_by_size: dict[int, set[str]] = {}
-        for size, file_hash in registered_rows:
+        by_path: dict[str, dict[int, str]] = {}
+        by_hash: dict[str, dict[int, str]] = {}
+        for size, file_hash, path, cell_id, cell_name in rows:
             hashes_by_size.setdefault(int(size), set()).add(str(file_hash).lower())
+            path_cells = by_path.setdefault(path_key(path), {})
+            hash_cells = by_hash.setdefault(str(file_hash).lower(), {})
+            if cell_id is not None:
+                path_cells[int(cell_id)] = cell_name
+                hash_cells[int(cell_id)] = cell_name
         files = import_file_hints.inspect_header_hints(req.paths, hash_sizes=set(hashes_by_size))
-        requested = {str(Path(path).expanduser().resolve()).casefold() for path in req.paths}
-        if requested:
-            registered_paths = {
-                str(Path(path).expanduser()).casefold()
-                for (path,) in db.query(SourceFile.path).filter(func.lower(SourceFile.path).in_(requested)).all()
-            }
-            for item in files:
-                item_hash = item.pop("_hash", None)
-                try:
-                    size = Path(str(item["path"])).expanduser().stat().st_size
-                except OSError:
-                    size = -1
-                item["registered"] = (
-                    str(Path(str(item["path"])).expanduser()).casefold() in registered_paths
-                    or (isinstance(item_hash, str) and item_hash.lower() in hashes_by_size.get(size, set()))
-                )
+        for item in files:
+            item_hash = item.pop("_hash", None)
+            key = path_key(str(item["path"]))
+            matching_hash = str(item_hash).lower() if item_hash else None
+            item["registered"] = key in by_path or matching_hash in by_hash
+            cells = {**by_path.get(key, {}), **by_hash.get(matching_hash, {})}
+            item["cells"] = [{"id": cell_id, "name": name} for cell_id, name in sorted(cells.items())]
         return {"files": files}
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
