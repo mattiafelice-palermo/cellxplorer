@@ -1,15 +1,15 @@
 {
-  "version": "0.28.0-alpha.26",
-  "notes": "### New features\n\n- Import supported classic and extended BioLogic MB (.mpr) recordings and plot voltage against time or measured capacity.\n- Exclude entire frequency-identified EIS operations from MB curves and capacity, preserving acquisition gaps and native elapsed time. Capacity uses measured increments within ordinary operations; unassignable boundary intervals are omitted, and complete-cycle summaries require adjacent opposite-current half-cycle identities.\n\n### Bug fixes\n\n- Recheck previously unsupported indexed MPR files once so newly supported MB recordings become discoverable, without invalidating recognized metadata or existing scientific caches.\n- Preserve MB acquisition gaps through source previews, selected-cycle navigation, derivative calculations, and interactive/exported plots.",
-  "pub_date": "2026-11-09T09:43:19.368Z",
+  "version": "0.28.0-alpha.27",
+  "notes": "### Bug fixes\n\n- Defer background source indexing for ten seconds after startup and until Alpha/Beta library setup is acknowledged, leaving existing indexed results available.\n- Give foreground requests priority over new scans, watcher startup and full-scan header refills; resume admission after one quiet second without resetting active header deadlines.\n- Run indexing workers at below-normal Windows priority and move watcher startup off configuration requests while preserving immediate pause and root-removal behavior.",
+  "pub_date": "2026-11-09T11:57:00.59Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVR2VmhsMEdsZklVbFlQVnRoZkx1NUMwUEFiYklYYWtNUlF6WnNCTVBzK1p2N1UrdkNpTkxsUzFuTUk4ZGpJdlUzWHFJWlBmZGhVdWdIYUhQb2dHOGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjE3Mzk0CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjI2X3g2NC1zZXR1cC5leGUKYWgzMjY3VjlLRkpLVGZUQjViZGpMOXpxc2JRRUJ3SldybGlIT1Z5NUxEV3drckQ2MXQ4VThpU0lqdkcrVFpGcnVrWnV0MFJ1NkJld1lvdVdyRTk5QXc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.26/CellXplorer.Alpha_0.28.0-alpha.26_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWZjTlQ3dkVxV3lOZGZkNHBhRHdHS0dIWHRDNGgxMm5RMkc5cnplYzVSOS9vV082L0tkako5WnB4ekVyZTFHVm5tcFBMaHlsRFZRajhXeUpBcDJ2RVEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjI1NDExCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjI3X3g2NC1zZXR1cC5leGUKc3pQd2pTUkh1RWN2elJvbHNYMy9FYzlXaGZicjdOM2dSZzJyaFZXOE1ndGdPeGFOa01PWkttSlRtRmx1TzNIM0hxV044QXBMbnBKV1BPVkE1S0R1QVE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.27/CellXplorer.Alpha_0.28.0-alpha.27_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVR2VmhsMEdsZklVbFlQVnRoZkx1NUMwUEFiYklYYWtNUlF6WnNCTVBzK1p2N1UrdkNpTkxsUzFuTUk4ZGpJdlUzWHFJWlBmZGhVdWdIYUhQb2dHOGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjE3Mzk0CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjI2X3g2NC1zZXR1cC5leGUKYWgzMjY3VjlLRkpLVGZUQjViZGpMOXpxc2JRRUJ3SldybGlIT1Z5NUxEV3drckQ2MXQ4VThpU0lqdkcrVFpGcnVrWnV0MFJ1NkJld1lvdVdyRTk5QXc9PQo=",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.26/CellXplorer.Alpha_0.28.0-alpha.26_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWZjTlQ3dkVxV3lOZGZkNHBhRHdHS0dIWHRDNGgxMm5RMkc5cnplYzVSOS9vV082L0tkako5WnB4ekVyZTFHVm5tcFBMaHlsRFZRajhXeUpBcDJ2RVEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjI1NDExCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOC4wLWFscGhhLjI3X3g2NC1zZXR1cC5leGUKc3pQd2pTUkh1RWN2elJvbHNYMy9FYzlXaGZicjdOM2dSZzJyaFZXOE1ndGdPeGFOa01PWkttSlRtRmx1TzNIM0hxV044QXBMbnBKV1BPVkE1S0R1QVE9PQo=",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.28.0-alpha.27/CellXplorer.Alpha_0.28.0-alpha.27_x64-setup.exe"
     }
   }
 }
