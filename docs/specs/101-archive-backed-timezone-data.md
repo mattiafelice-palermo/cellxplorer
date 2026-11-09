@@ -76,11 +76,19 @@ registry/NSIS/recovery policy checks and eight native install/reinstall cases in
 disposable profiles. Release creation, publication and channel-pointer steps were
 skipped on this non-tag run. No public release or installed local app was changed.
 
-The local Alpha executable and unsigned installer also built successfully. Local
-manual desktop inspection was not performed because an older Alpha test instance
-already held the single-instance identity; it was left untouched. Native CI
+The local Alpha executable and unsigned installer also built successfully. An
+older Alpha test instance held the single-instance identity and was left untouched.
+A separate Stable-identity packaged desktop was therefore built and launched from
+a new portable folder with both `CELLXPLORER_DATA` and WebView user data redirected
+there. Its Cell Database and Settings rendered, API health was `ok`, the library
+contained zero Cells, and six frozen worker processes started. The archive hash
+was unchanged and no loose timezone package appeared. Only this owned test app
+and its children were closed; the older Alpha process remained running. Native CI
 installation acceptance is not interactive UAC or an old installed-updater test.
 The concurrent local full preflight had analysis/indexing timing and native
 launcher failures while Rust compiled; no deadline/test was suppressed. An
 isolated analysis-engine rerun passed all 134 tests in 58.17 seconds, and the
 clean-Windows full-suite result above supplies the integration gate.
+
+The final exact-file audit hardening at `97237b33` also passed clean-Windows run
+[42671073991](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42671073991).

@@ -34,7 +34,10 @@ No open implementation findings. A final audit-hardening follow-up explicitly
 requires `_internal/tzdata.zip` as a file rather than trusting the component name;
 its regression also rejects a missing archive in a synthetic report.
 
-Interactive local desktop/UAC/old-client-updater acceptance is not claimed. An
-existing Alpha test app was left running. Tcl consolidation is a separate feature,
+The packaged desktop was also launched under a non-conflicting Stable identity,
+with disposable scientific and WebView profiles; Cell Database, Settings, API
+health and frozen-worker startup pass with no timezone extraction. The older
+Alpha test app was left running. Interactive UAC/old-client-updater acceptance is
+not claimed. Tcl consolidation is a separate feature,
 not permission to remove its clock, locale or encoding resources. Actual whole-app
 installation speedup is not inferred from file-count reduction alone.
