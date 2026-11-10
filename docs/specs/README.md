@@ -1,7 +1,7 @@
 # Feature specs
 
 - [104 — Balanced Alpha library cards](104-balanced-alpha-library-cards.md).
-  **Implemented; clean-Windows preflight pending.** Selectable cards and one Continue action; preserve setup safety.
+  **Complete; browser and clean-Windows preflight passed.** Selectable cards and one Continue action; preserve setup safety.
 
 - [103 — Cell identification, useful warnings and throughput](103-cell-identification-warnings-and-throughput.md).
   **Complete; identity, source warnings, cumulative/FEC and signed GCPL energy passed browser/export,

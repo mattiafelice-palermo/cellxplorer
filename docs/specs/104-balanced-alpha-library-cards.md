@@ -1,6 +1,6 @@
 # 104 — Balanced Alpha library cards
 
-Status: Implemented; clean-Windows preflight pending. Branch: `codex/balanced-alpha-chooser`.
+Status: Complete. Branch: `codex/balanced-alpha-chooser`.
 
 ## Approved scope
 
@@ -45,3 +45,7 @@ commit/push branch then merge main once required checks pass.
   clean-Windows canonical preflight is required before merge. The first restricted
   default-temp run failed additional modules and was stopped after hanging;
   the short-path unrestricted rerun supersedes it, not a source workaround.
+- [Clean-Windows canonical preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42773064832)
+  passed on exact implementation commit `a74988d0`, including the native
+  occupied-port launcher test. No test or production launcher behavior changed
+  to accommodate the local host limitation.
