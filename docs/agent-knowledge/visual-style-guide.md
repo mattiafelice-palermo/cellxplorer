@@ -503,12 +503,18 @@ choices first, then the saved-search popup, leaving the loader open.
 ### File-search release introduction
 
 `ReleaseIntroduction` owns the four scientific release cards. Its synthetic
-examples reuse the production Plot wrapper, shared analysis styling, Cell preview
-renderer, imported-source identity panel and source-limitations disclosure. Do
+examples reuse the production Plot wrapper, shared analysis styling, voltage
+trace builder, imported-source identity panel and source-limitations disclosure. Do
 not fabricate screenshot-like controls or navigate to real Cell IDs in examples.
 Keep Previous visible, and reset the tour on close. The isolated browser fixture
 is `frontend/tests/fixtures/releaseIntroductionPreview.html` (no backend required).
 Release-specific, channel-scoped dismissal must not reuse an older search-tour key.
+
+The release tour follows the user's initial composition: centred category/title/
+description, a compact framed example and one footer with count/dots and navigation.
+At ordinary desktop size, verify every default card has no vertical overflow;
+do not accept a clipped example/location merely because scrolling still works.
+Keep compact plot legends outside the axes so they cannot overlap axis titles.
 
 `SearchIntroduction` remains the file-search guide inside the release tour, with
 its static example, requested local walkthrough and expandable guide.

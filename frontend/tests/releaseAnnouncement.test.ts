@@ -32,12 +32,12 @@ function coordinator(options: { setup?: boolean; update?: boolean; ready?: boole
   let opens = 0, closes = 0, searches = 0, marked = 0, existingDialog = options.dialog ?? false;
   let timer: (() => void) | undefined, observer: (() => void) | undefined;
   const component = compile("../src/components/WhatsNewCoordinator.tsx", {
-    "react/jsx-runtime": { jsx: (type: any, props: any) => ({ type, props }) },
+    "react/jsx-runtime": { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }) },
     react: { useRef: (current: any) => ({ current }), useEffect: (effect: () => void) => effect() },
-    "@mantine/core": { Modal: "Modal" }, "@mantine/hooks": { useReducedMotion: () => true },
+    "@mantine/core": new Proxy({}, { get: (_, name) => name }), "@mantine/hooks": { useReducedMotion: () => true },
     "@tanstack/react-query": { useQuery: () => ({ data: { setupState: options.setup === false ? "choice" : "complete", needsChoice: options.setup === false, blockingReason: null } }) },
     "../api": { get: () => { throw Error("No backend calls"); } },
-    "../appChannel": { APP_CHANNEL: "alpha" }, "../downloads": { isTauriApp: () => options.desktop !== false },
+    "../appChannel": { APP_CHANNEL: "alpha", APP_BRANDING: { badgeLabel: "ALPHA" } }, "../downloads": { isTauriApp: () => options.desktop !== false },
     "../whatsNew": { ...policy, releaseIntroWasSeen: () => options.seen, markReleaseIntroSeen: () => marked++ },
     "./ReleaseIntroduction": { ReleaseIntroduction: "ReleaseIntroduction" },
     "./ReleaseIntroduction.module.css": { default: {} },

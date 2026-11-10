@@ -2,6 +2,8 @@
 
 Status: Complete. Branch: `codex/whats-new-release-cards`.
 
+Review document: [Visual refinement](reviews/105-whats-new-visual-refinement-review.md).
+
 ## User decisions
 
 - Restore the Alpha chooser to its pre-104 Direct actions version. Spec 104 was
