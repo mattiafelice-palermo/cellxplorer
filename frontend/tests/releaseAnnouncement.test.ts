@@ -18,14 +18,21 @@ test("new tour has its own channel-scoped dismissal and release threshold", () =
   assert.equal(policy.isAfterReleaseIntroBaseline("0.29.0-alpha.10"), true);
   assert.equal(policy.isAfterReleaseIntroBaseline("0.29.0"), true);
   assert.equal(policy.isAfterReleaseIntroBaseline("invalid"), false);
-  const values = new Map([["cellxplorer:alpha:whats-new:indexed-source-search-v1", "seen"]]);
+  const values = new Map([["cellxplorer:alpha:whats-new:indexed-source-search-v1", "seen"], ["cellxplorer:alpha:whats-new:cycling-analysis-v1", "seen"]]);
   const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) };
   assert.equal(policy.releaseIntroWasSeen(storage), false);
   policy.markReleaseIntroSeen(storage);
   assert.equal(policy.releaseIntroWasSeen(storage), true);
-  assert.match(policy.WHATS_NEW_STORAGE_KEY, /^cellxplorer:alpha:whats-new:cycling-analysis-v1$/);
+  assert.match(policy.WHATS_NEW_STORAGE_KEY, /^cellxplorer:alpha:whats-new:cycling-analysis-v2$/);
   assert.doesNotThrow(() => policy.markReleaseIntroSeen({ setItem() { throw Error("disabled storage"); } }));
   assert.equal(policy.releaseIntroWasSeen({ getItem() { throw Error("disabled storage"); } }), false);
+});
+
+test("renewing Alpha's announcement preserves Stable and Beta dismissal keys", () => {
+  for (const channel of ["stable", "beta"]) {
+    const other = compile("../src/whatsNew.ts", { "./appChannel": { APP_CHANNEL: channel } });
+    assert.equal(other.WHATS_NEW_STORAGE_KEY, `cellxplorer:${channel}:whats-new:cycling-analysis-v1`);
+  }
 });
 
 function coordinator(options: { setup?: boolean; update?: boolean; ready?: boolean; seen?: boolean; dialog?: boolean; desktop?: boolean; version?: string; opened?: boolean } = {}) {

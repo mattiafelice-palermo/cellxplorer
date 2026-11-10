@@ -42,9 +42,11 @@ type CoordinatorPhase = "idle" | "acknowledging" | "staging" | "applying" | "res
 export function BetaBootstrapCoordinator({
   backendReady,
   gateRequiredOnLaunch,
+  onBlockingChange,
 }: {
   backendReady: boolean;
   gateRequiredOnLaunch: boolean;
+  onBlockingChange?: (blocking: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const tauri = isTauriApp();
@@ -504,6 +506,11 @@ export function BetaBootstrapCoordinator({
     (preparationPending
       ? !preparationContinuesInBackground
       : gateOpen);
+
+  // Report the actual UI gate, including copy preparation and restart phases.
+  useEffect(() => {
+    onBlockingChange?.(enabled && (modalOpen || busy));
+  }, [enabled, modalOpen, busy, onBlockingChange]);
 
   if (!enabled || !modalOpen) {
     return null;

@@ -9,12 +9,22 @@ import * as policy from "../src/betaBootstrapPolicy.ts";
 
 type Node = { type: unknown; props: Record<string, any> };
 
+test("bootstrap reports a blocking choice then releases only after completion", () => {
+  const status = policy.mockBetaBootstrapStatus("existing", "alpha");
+  const gates: boolean[] = [];
+  const app = confirmationHarness({ status, runEffects: true, onBlockingChange: value => gates.push(value) });
+  app.render(); assert.equal(gates.at(-1), true);
+  Object.assign(status, { setupState: "complete", needsChoice: false, blockingReason: null });
+  app.render(); assert.equal(gates.at(-1), false);
+});
+
 /** Production component with dependency-aware hooks and an isolated API/native boundary. */
 function confirmationHarness(options: {
   channel?: policy.BootstrapChannel;
   editions?: policy.InstalledEdition[];
   status?: policy.BootstrapStatus;
   runEffects?: boolean;
+  onBlockingChange?: (blocking: boolean) => void;
 } = {}) {
   const slots: any[] = [];
   let cursor = 0;
@@ -109,7 +119,7 @@ function confirmationHarness(options: {
   });
   const render = (): Node => {
     cursor = 0;
-    const node = exports.BetaBootstrapCoordinator({ backendReady: true, gateRequiredOnLaunch: true });
+    const node = exports.BetaBootstrapCoordinator({ backendReady: true, gateRequiredOnLaunch: true, onBlockingChange: options.onBlockingChange });
     while (effects.length) effects.shift()!();
     return node;
   };

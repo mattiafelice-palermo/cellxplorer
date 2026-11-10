@@ -15,19 +15,21 @@ function Fixture() {
   const [scheme, setScheme] = useState<"light" | "dark">("light");
   const [zoom, setZoom] = useState("1");
   const [guideChosen, setGuideChosen] = useState(false);
+  const [bootstrapBlocking, setBootstrapBlocking] = useState(true);
   document.documentElement.style.setProperty("--cellxplorer-ui-zoom", zoom);
   const chooser = new URLSearchParams(window.location.search).has("mockAlphaBootstrap");
   return <MantineProvider forceColorScheme={scheme} theme={{ primaryColor: "violet", defaultRadius: "md" }}>
     <QueryClientProvider client={queryClient}><MemoryRouter>
       <Stack p="md">
         <Text>Synthetic acceptance fixture — no backend connected</Text>
+        <Text>Startup gate: {bootstrapBlocking ? "blocked" : "released"}</Text>
         <Group><Button onClick={() => setOpened(true)}>Open What’s New</Button>
           <SegmentedControl aria-label="Preview theme" value={scheme} onChange={value => setScheme(value as "light" | "dark")} data={["light", "dark"]} />
           <SegmentedControl aria-label="Preview UI zoom" value={zoom} onChange={setZoom} data={[{ value: "0.7", label: "70%" }, { value: "1", label: "100%" }, { value: "1.6", label: "160%" }]} />
         </Group>
         {guideChosen && <Text>Search folder settings requested (isolated callback).</Text>}
       </Stack>
-      {chooser ? <BetaBootstrapCoordinator backendReady={false} gateRequiredOnLaunch /> : <WhatsNewCoordinator opened={opened} onOpen={() => setOpened(true)} onClose={() => setOpened(false)} onTrySearch={() => setGuideChosen(true)} ready={false} version="0.29.0-alpha.1" />}
+      {chooser ? <BetaBootstrapCoordinator backendReady={false} gateRequiredOnLaunch onBlockingChange={setBootstrapBlocking} /> : <WhatsNewCoordinator bootstrapBlocking={false} opened={opened} onOpen={() => setOpened(true)} onClose={() => setOpened(false)} onTrySearch={() => setGuideChosen(true)} ready={false} version="0.29.0-alpha.2" />}
     </MemoryRouter></QueryClientProvider>
   </MantineProvider>;
 }

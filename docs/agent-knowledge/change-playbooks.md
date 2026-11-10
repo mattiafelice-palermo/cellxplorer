@@ -137,6 +137,12 @@ paths.
 
 ## UI or visual change
 
+Startup announcements must consume `BetaBootstrapCoordinator`'s actual blocking
+callback in addition to backend setup completion. Copy preparation, restart and
+recovery can still own the foreground after the backend marker says complete.
+Initialize the App gate closed and keep the generic dialog/transition guard;
+release only when setup closes or preparation explicitly continues in background.
+
 1. Read [`visual-style-guide.md`](visual-style-guide.md) before editing.
 2. Reuse the closest shared component and match neighbouring control geometry.
 3. Check chrome colors for both light and dark; keep Plotly presentation independent.
