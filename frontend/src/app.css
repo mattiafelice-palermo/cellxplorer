@@ -289,26 +289,3 @@ body {
   font-size: calc(var(--mantine-font-size-sm) * var(--cellxplorer-ui-zoom, 1));
   padding: calc(6px * var(--cellxplorer-ui-zoom, 1)) calc(10px * var(--cellxplorer-ui-zoom, 1));
 }
-
-.alpha-library-choice {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mantine-spacing-xs);
-  cursor: pointer;
-  min-width: 0;
-  background: var(--mantine-color-default);
-}
-
-.alpha-library-choice[data-selected] {
-  border-color: var(--mantine-primary-color-filled);
-  background: var(--mantine-primary-color-light);
-}
-
-.alpha-library-choice:focus-within {
-  outline: 2px solid var(--mantine-primary-color-filled);
-  outline-offset: 2px;
-}
-
-.alpha-library-choice[data-disabled] { cursor: not-allowed; }
-.alpha-library-choice[data-disabled] img { opacity: 0.5; }
-.alpha-library-choice-title { min-height: 2.9em; line-height: 1.45; }

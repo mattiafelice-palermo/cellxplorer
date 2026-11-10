@@ -1684,8 +1684,10 @@ Live subtree enrichment publishes progress before every header and streams parti
 not the aggregate duration of many successful network reads. Filename batches remain visible
 before enrichment; slow metadata must not delay searchable discovery.
 
-The search introduction is a channel-scoped local preference, eligible only in packaged versions
-after 0.28.0-alpha.2. Startup waits for compatible backend, completed channel bootstrap and existing
+The release introduction is a channel-scoped local preference. Spec 105's cycling-analysis tour
+uses its own `cycling-analysis-v1` key and is eligible in packaged versions after
+0.29.0-alpha.0; seeing the older search introduction does not suppress it.
+Startup waits for compatible backend, completed channel bootstrap and existing
 dialogs. Manual replay in development does not consume the future announcement. Bundle tutorial
 media in frontend/public/whats-new; no runtime encoder is needed. Verify next-release startup and
 H.264 playback in a rebuilt WebView separately from development browser acceptance.

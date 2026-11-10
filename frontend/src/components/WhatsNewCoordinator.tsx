@@ -6,9 +6,9 @@ import { useEffect, useRef } from "react";
 import { get } from "../api";
 import { APP_CHANNEL } from "../appChannel";
 import { isTauriApp } from "../downloads";
-import { isAfterSearchIntroBaseline, markSearchIntroSeen, searchIntroWasSeen } from "../whatsNew";
-import { SearchIntroduction } from "./SearchIntroduction";
-import styles from "./SearchIntroduction.module.css";
+import { isAfterReleaseIntroBaseline, markReleaseIntroSeen, releaseIntroWasSeen } from "../whatsNew";
+import { ReleaseIntroduction } from "./ReleaseIntroduction";
+import styles from "./ReleaseIntroduction.module.css";
 import { useOptionalAppUpdate } from "./AppUpdateCoordinator";
 
 export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, ready, version }: {
@@ -30,8 +30,8 @@ export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, read
   });
   const setupComplete = APP_CHANNEL === "stable" || (bootstrap.data?.setupState === "complete" && !bootstrap.data.needsChoice && !bootstrap.data.blockingReason);
   useEffect(() => {
-    if (!packaged || !ready || !setupComplete || !version || !isAfterSearchIntroBaseline(version) ||
-      opened || updates?.modalOpen || shown.current || searchIntroWasSeen(window.localStorage)) return;
+    if (!packaged || !ready || !setupComplete || !version || !isAfterReleaseIntroBaseline(version) ||
+      opened || updates?.modalOpen || shown.current || releaseIntroWasSeen(window.localStorage)) return;
     // Wait for any existing dialog to close; never interrupt an import or setup decision.
     const announce = () => {
       if (document.querySelector('[role="dialog"]')) return;
@@ -46,10 +46,10 @@ export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, read
   }, [packaged, ready, setupComplete, version, opened, updates?.modalOpen, onOpen]);
   const close = () => {
     shown.current = true;
-    if (packaged && version && isAfterSearchIntroBaseline(version)) markSearchIntroSeen(window.localStorage);
+    if (packaged && version && isAfterReleaseIntroBaseline(version)) markReleaseIntroSeen(window.localStorage);
     onClose();
   };
   return <Modal opened={opened} onClose={close} title="What’s new" size="52rem" centered padding="lg" classNames={{ content: styles.modalContent, body: styles.modalBody, header: styles.modalHeader }}>
-    {opened && <SearchIntroduction onClose={close} onChooseFolders={() => { close(); onTrySearch(); }} reducedMotion={Boolean(reducedMotion)} />}
+    {opened && <ReleaseIntroduction onClose={close} onChooseFolders={() => { close(); onTrySearch(); }} reducedMotion={Boolean(reducedMotion)} />}
   </Modal>;
 }

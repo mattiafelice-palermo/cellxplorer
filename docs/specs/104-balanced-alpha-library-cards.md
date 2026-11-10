@@ -2,6 +2,10 @@
 
 Status: Complete. Branch: `codex/balanced-alpha-chooser`.
 
+User reversal: [105](105-whats-new-release-cards.md) restores the pre-104 chooser.
+The requested card changes belong to What’s New, not Alpha setup. The record below
+describes the historical change, not the current approved chooser design.
+
 ## Approved scope
 
 Replace Alpha's Direct actions chooser with the user-selected Balanced cards
