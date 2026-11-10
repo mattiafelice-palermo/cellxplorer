@@ -1,6 +1,6 @@
 # 105 — Scientific What’s New cards and chooser restoration
 
-Status: In progress. Branch: `codex/whats-new-release-cards`.
+Status: Complete. Branch: `codex/whats-new-release-cards`.
 
 ## User decisions
 
@@ -35,3 +35,16 @@ the branch; merge only after required verification passes. Preserve unrelated fi
   (`tests.test_start_webapp`), reproducing the prior local-host limitation. No
   test or launcher logic was changed to accommodate it. Final exact-revision
   clean-Windows verification remains required before merge.
+- Isolated production-component browser acceptance passes in light/dark, at
+  390 x 844 and normal desktop width, and at 70%, 100% and 160% UI zoom.
+  Previous/Next/Done, direct navigation, the FEC axis switch, inert Cell links,
+  the real collapsed limitation disclosure and retained search guide work.
+  The restored chooser shows its original direct actions; empty start retains
+  a separate unchecked acknowledgement and disabled destructive action.
+- [Clean-Windows preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42777710813)
+  passes all 239 modules/files and all four stages on implementation revision
+  `4af67bc2` (attempt 2), including the native occupied-port test. Attempt 1
+  failed only the unchanged one-shot header-reader worker test. That test also
+  passed three isolated local repetitions; the identical-revision full retry
+  passed without any indexer/test changes, skips or deadline modifications.
+- No real-library operation, worktree, version bump or installer publication.
