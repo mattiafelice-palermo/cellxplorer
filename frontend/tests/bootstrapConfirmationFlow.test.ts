@@ -119,7 +119,7 @@ function confirmationHarness(options: {
       for (const child of node) { const found = find(child, type, label); if (found) return found; }
       return undefined;
     }
-    if (node.type === type && (node.props.children === label || node.props.label === label)) return node;
+    if (node.type === type && (node.props.children === label || node.props.label === label || node.props["aria-label"] === label)) return node;
     return find(node.props?.children, type, label);
   };
   const click = (label: string) => {
@@ -128,7 +128,13 @@ function confirmationHarness(options: {
     assert.notEqual(button.props.disabled, true, `Disabled button: ${label}`);
     button.props.onClick();
   };
-  return { click, requests, invocations, token, render, find };
+  const select = (label: string) => {
+    const radio = find(render(), "Radio", label);
+    assert.ok(radio, `Missing choice: ${label}`);
+    assert.notEqual(radio.props.disabled, true);
+    radio.props.onChange();
+  };
+  return { click, select, requests, invocations, token, render, find };
 }
 
 for (const channel of ["alpha", "beta"] as const) {
@@ -152,16 +158,18 @@ test("unknown/absent source editions are never offered as copy actions", () => {
       { channel: "stable", availability }, { channel: "beta", availability },
     ] });
     const tree = app.render();
-    assert.equal(app.find(tree, "Button", "Copy Stable library"), undefined);
-    assert.equal(app.find(tree, "Button", "Copy Beta library"), undefined);
-    if (availability === "unknown") assert.ok(app.find(tree, "Button", "Keep current Alpha library"));
+    assert.equal(app.find(tree, "Radio", "Copy Stable library"), undefined);
+    assert.equal(app.find(tree, "Radio", "Copy Beta library"), undefined);
+    if (availability === "unknown") assert.ok(app.find(tree, "Radio", "Keep current Alpha library"));
     assert.equal(app.requests.length, 0);
   }
 });
 
 test("empty Alpha start requires acknowledgement before any staged reset or native action", async () => {
   const app = confirmationHarness();
-  app.click("Start empty");
+  app.select("Start empty");
+  assert.equal(app.requests.length, 0, "Selection alone must not change data");
+  app.click("Continue");
   assert.equal(app.requests.length, 0);
   const before = app.find(app.render(), "Button", "Start empty and restart");
   assert.equal(before?.props.disabled, true);
@@ -189,7 +197,9 @@ for (const source of ["stable", "beta"] as const) {
   test(`existing Alpha confirms ${source} copy using current consent state and the real request path`, async () => {
     const harness = confirmationHarness();
     const product = source === "stable" ? "Stable" : "Beta";
-    harness.click(`Copy ${product} library`);
+    harness.select(`Copy ${product} library`);
+    assert.equal(harness.requests.length, 0, "Selecting a card must not copy data");
+    harness.click("Continue");
     assert.equal(harness.requests.length, 0, "First click must only request confirmation");
     harness.click(`Replace with ${product}`);
     for (let step = 0; step < 5; step++) await setImmediate();
@@ -201,3 +211,25 @@ for (const source of ["stable", "beta"] as const) {
     }]);
   });
 }
+
+test("balanced cards default to keeping Alpha and require Continue", async () => {
+  const app = confirmationHarness();
+  assert.equal(app.find(app.render(), "Radio", "Keep current Alpha library")?.props.checked, true);
+  assert.equal(app.requests.length, 0);
+  app.click("Continue");
+  await setImmediate();
+  assert.deepEqual(app.requests.map((request) => request.url), ["/api/alpha-bootstrap/use-current"]);
+  assert.deepEqual(app.invocations, []);
+});
+
+test("changing the selected copy source clears replacement consent", () => {
+  const app = confirmationHarness();
+  app.select("Copy Stable library"); app.click("Continue");
+  assert.ok(app.find(app.render(), "Button", "Replace with Stable"));
+  app.select("Copy Beta library");
+  assert.equal(app.find(app.render(), "Button", "Replace with Stable"), undefined);
+  assert.equal(app.find(app.render(), "Button", "Replace with Beta"), undefined);
+  assert.equal(app.requests.length, 0);
+  app.click("Continue");
+  assert.ok(app.find(app.render(), "Button", "Replace with Beta"));
+});
