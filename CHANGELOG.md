@@ -7,7 +7,7 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
-## 0.29.0-alpha.1 - 2026-11-09
+## 0.29.0-alpha.1 - 2026-11-10
 
 ### New features
 
@@ -15,6 +15,7 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 - Add full-history cumulative capacity and energy quantities, throughput and net imbalance, with combined-throughput or discharge-based equivalent full cycles (FEC) and optional FEC X axes.
 - Preserve cycle identity, reference capacities and FEC conventions in saved plots, point inspection and exports.
 - Calculate net directional energy for verified BioLogic GCPL recordings without native energy counters using signed cell voltage and measured capacity increments; show measured/calculated provenance and preserve unknown or negative-net directions as unavailable.
+- Add a four-card scientific What’s New introduction with application plots, source examples and Previous/Next navigation.
 
 ### Bug fixes
 
@@ -22,6 +23,7 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 - Disable FEC choices when no positive nominal capacity is available and explain missing energy independently.
 - Preserve missing-counter uncertainty and fixed replicate membership in cumulative results, including protocol-hidden cycles and filesystems without stable inode identifiers.
 - Offer an available development port when Windows cannot safely identify an occupied port owner.
+- Reduce installer file count by retaining timezone resources in archives and omitting unused optional Arrow components; scientific runtime checks are preserved.
 
 ## 0.28.0-alpha.27 - 2026-11-09
 
