@@ -19,13 +19,12 @@ function harness() {
     "./AnalysisSourceLimitations": { AnalysisSourceLimitations: "AnalysisSourceLimitations" },
     "./ImportedSourceIdentity": { ImportedSourceIdentity: "ImportedSourceIdentity" },
     "./Plot": { default: "Plot" },
-    "./CellPreviewPlot": { CellPreviewPlot: "CellPreviewPlot" },
     "./cellPreviewPlotModel": {
-      cellPreviewVoltageLayout: () => ({ production: true }), cellPreviewVoltageTraces: (series: unknown) => series,
+      cellPreviewVoltageTraces: (series: unknown) => series,
     },
     "./SearchIntroduction": { SearchIntroduction: "SearchIntroduction" },
     "../features/analyses/editor/plotting/plotStyle": { DEFAULT_PLOT_STYLE: { line_width: 2.5, tick_font_size: 12, axis_title_size: 14, legend_font_size: 12, paper_bgcolor: "#fff", plot_bgcolor: "#fff" }, PALETTE: ["teal", "blue"] },
-    "../features/analyses/editor/plotting/plotLayout": { plotAxisStyle: () => ({}), hoverLabelLayout: () => ({}), legendLayout: () => ({}) },
+    "../features/analyses/editor/plotting/plotLayout": { plotAxisStyle: () => ({}), hoverLabelLayout: () => ({}) },
     "./ReleaseIntroduction.module.css": { default: new Proxy({}, { get: (_, key) => key }) },
   };
   const source = ts.transpileModule(readFileSync(new URL("../src/components/ReleaseIntroduction.tsx", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -51,7 +50,7 @@ test("four scientific cards retain Previous, Next/Done and direct navigation", (
   assert.equal(app.counts().closes, 1);
   app.button(tree, "Previous").props.onClick(); tree = app.render();
   assert.equal(app.find(tree, "Title").props.children, app.cards[2].title);
-  const first = app.all(tree).find(node => node.type === "ActionIcon" && node.props["aria-label"] === app.cards[0].title)!;
+  const first = app.all(tree).find(node => node.type === "UnstyledButton" && node.props["aria-label"] === app.cards[0].title)!;
   first.props.onClick(); tree = app.render();
   assert.equal(app.button(tree, "Previous").props.disabled, true);
   app.button(tree, "Skip tour").props.onClick();
@@ -61,15 +60,17 @@ test("four scientific cards retain Previous, Next/Done and direct navigation", (
 test("examples use production plot and identity/limitation components without real Cell navigation", () => {
   const app = harness(); let tree = app.render();
   const chart = app.all(tree).find(node => typeof node.type === "function" && node.type.name === "CyclingExample")!;
-  const plot = chart.type(chart.props);
+  const plot = app.find(chart.type(chart.props), "Plot");
   assert.equal(plot.type, "Plot");
   assert.equal(plot.props.data[0].x.length, 200);
-  assert.deepEqual(Array.from(plot.props.layout.xaxis.range), [80, 140]);
+  assert.deepEqual(Array.from(plot.props.layout.xaxis.range), [0, 200]);
+  assert.equal(plot.props.layout.shapes[0].x0, 80);
+  assert.equal(plot.props.layout.shapes[0].x1, 140);
   assert.ok(plot.props.data[0].y[79] > plot.props.data[0].y[0]);
   app.button(tree, "Next").props.onClick(); tree = app.render();
   app.button(tree, "Next").props.onClick(); tree = app.render();
   assert.equal(app.find(tree, "ImportedSourceIdentity").props.cells[0].id, -1);
-  const paper = app.find(tree, "Paper"); let prevented = 0;
+  const paper = app.all(tree).find(node => node.type === "Paper" && node.props.onClickCapture)!; let prevented = 0;
   const event = { target: { closest: () => ({}) }, preventDefault: () => prevented++, stopPropagation() {} };
   paper.props.onClickCapture(event); paper.props.onAuxClickCapture(event);
   assert.equal(prevented, 2);
@@ -87,7 +88,7 @@ test("FEC example changes the actual plot axis without dismissing or writing dat
   const segment = app.find(tree, "SegmentedControl");
   segment.props.onChange("fec"); tree = app.render();
   const chart = app.all(tree).find(node => typeof node.type === "function" && node.type.name === "CyclingExample")!;
-  const plot = chart.type(chart.props);
+  const plot = app.find(chart.type(chart.props), "Plot");
   assert.equal(plot.props.layout.xaxis.title.text, "Equivalent full cycles");
   assert.equal(plot.props.data[1].line.dash, "dash");
   assert.deepEqual(app.counts(), { closes: 0, choices: 0 });
@@ -96,11 +97,23 @@ test("FEC example changes the actual plot axis without dismissing or writing dat
 test("bundled search guide stays available; return preserves the current card", () => {
   const app = harness(); let tree = app.render();
   app.button(tree, "Next").props.onClick(); tree = app.render();
-  app.button(tree, "File search guide").props.onClick(); tree = app.render();
+  app.all(tree).find(node => node.props["aria-label"] === "File search guide")!.props.onClick(); tree = app.render();
   const guide = app.find(tree, "SearchIntroduction");
   assert.equal(guide.props.reducedMotion, true);
   guide.props.onChooseFolders();
   assert.equal(app.counts().choices, 1);
   app.button(tree, "Back to release cards").props.onClick(); tree = app.render();
   assert.equal(app.find(tree, "Title").props.children, app.cards[1].title);
+});
+
+test("initial-style composition keeps compact plots, separate category and quiet dot navigation", () => {
+  const app = harness(); const tree = app.render();
+  assert.ok(app.all(tree).some(node => node.type === "header" && node.props.className === "intro"));
+  assert.equal(app.all(tree).filter(node => node.props.className === "footer").length, 1);
+  const dots = app.all(tree).filter(node => node.type === "UnstyledButton");
+  assert.equal(dots.length, 4);
+  assert.ok(dots.every(node => node.props.children.type === "span" && node.props.children.props.children == null));
+  assert.ok(app.cards.every((card: any) => card.category && card.description.length < 180));
+  const chart = app.all(tree).find(node => typeof node.type === "function" && node.type.name === "CyclingExample")!;
+  assert.ok(app.find(chart.type(chart.props), "Plot").props.layout.height <= 200);
 });

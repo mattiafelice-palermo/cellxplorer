@@ -1,7 +1,7 @@
 # Feature specs
 
 - [105 — Scientific What’s New cards and chooser restoration](105-whats-new-release-cards.md).
-  **Complete; browser and clean-Windows preflight passed.** Four scientific cards using production UI; restore the pre-104 Alpha chooser.
+  **Complete; browser and clean-Windows preflight passed.** Four scientific cards using production UI in the initial tour composition; restore the pre-104 Alpha chooser.
 
 - [104 — Balanced Alpha library cards](104-balanced-alpha-library-cards.md).
   **Superseded by the user's reversal in 105.** Restore the prior Direct actions chooser.

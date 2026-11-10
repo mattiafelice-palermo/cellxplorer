@@ -1,10 +1,10 @@
-import { Modal } from "@mantine/core";
+import { Badge, Group, Modal, Text } from "@mantine/core";
 import { useReducedMotion } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import { get } from "../api";
-import { APP_CHANNEL } from "../appChannel";
+import { APP_CHANNEL, APP_BRANDING } from "../appChannel";
 import { isTauriApp } from "../downloads";
 import { isAfterReleaseIntroBaseline, markReleaseIntroSeen, releaseIntroWasSeen } from "../whatsNew";
 import { ReleaseIntroduction } from "./ReleaseIntroduction";
@@ -49,7 +49,7 @@ export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, read
     if (packaged && version && isAfterReleaseIntroBaseline(version)) markReleaseIntroSeen(window.localStorage);
     onClose();
   };
-  return <Modal opened={opened} onClose={close} title="What’s new" size="52rem" centered padding="lg" classNames={{ content: styles.modalContent, body: styles.modalBody, header: styles.modalHeader }}>
+  return <Modal opened={opened} onClose={close} title={<Group gap="sm"><Text size="sm" fw={700}>What’s new</Text>{APP_BRANDING.badgeLabel && <Badge variant="light" size="sm" radius="sm">{APP_BRANDING.badgeLabel}</Badge>}</Group>} closeButtonProps={{ "aria-label": "Close What’s New" }} size="46rem" centered padding={0} classNames={{ content: styles.modalContent, body: styles.modalBody, header: styles.modalHeader }}>
     {opened && <ReleaseIntroduction onClose={close} onChooseFolders={() => { close(); onTrySearch(); }} reducedMotion={Boolean(reducedMotion)} />}
   </Modal>;
 }
