@@ -334,7 +334,7 @@ def _clone_cells(
         raise RuntimeError(f"Expected one source for cloned fixture Cell {source_cell_id}")
     source = files[0]
     parser_version = (
-        parsing.current_parser_identity_for_extension(source.ext)
+        parsing.current_parser_identity_for_source(source)
         or source.parser_version
     )
     if not parser_version:

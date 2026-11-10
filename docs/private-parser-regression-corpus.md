@@ -82,3 +82,23 @@ results. For the newly recovered source, an independent oracle manually excluded
 the two evidenced original ranges and derived cycle identity from raw Ns returns
 and capacity/CE from signed active counter endpoint differences. All 1,175 cycles
 agreed within 1.14e-13. No golden values or scientific tolerances were changed.
+
+## CP electrode regression
+
+The separate ignored `spec107-cp` corpus contains four immutable CP sources.
+Each source has its own frozen whole-source baseline. The four-source ordered
+Cell is checked independently with:
+
+```powershell
+python scripts/verify_cp_electrode_corpus.py --root .local-regression/parser-corpus/spec107-cp
+python scripts/parser_regression_corpus.py --root .local-regression/parser-corpus/spec107-cp verify
+```
+
+The oracle decodes the observed 49-byte/17-ID layout using explicit byte offsets,
+without the production reader dtype. It checks every recorded Ewe/Ece and signed
+difference after cache reload, consecutive acquisition time, full/compact
+Time/Capacity and a selected-range native export of all three channels. Its
+supported layout is intentionally exact and fails on other column sequences.
+The single-source frozen checks and ordered-chain oracle complement each other:
+reversing CP half-sources can change their physical charge/discharge pairing,
+so scalar order independence is not assumed for that four-source chain.

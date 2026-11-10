@@ -1332,7 +1332,9 @@ def _build_jobs(
                     source_file = source_by_hash.get(source.ref.file_hash)
                     if source_file is not None:
                         matched[quantity].append(source_file)
-        roles, references = analysis_engine._resolve_time_capacity_voltage_context(files, matched)
+        roles, references = analysis_engine._resolve_time_capacity_voltage_context(
+            files, matched, parser_versions=versions,
+        )
         voltage_facts = tuple(
             (
                 quantity,

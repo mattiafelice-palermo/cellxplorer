@@ -1,5 +1,9 @@
 # Feature specs
 
+- [107 — CP electrode potentials and scoped cache repair](107-cp-electrode-potentials.md).
+  **Implemented; Astra and browser acceptance passed, clean-Windows gate pending.**
+  Preserve and expose Ewe, Ece and Ewe−Ece in sequential CP plots with scoped cache repair.
+
 - [106 — Alpha 0.29.0-alpha.1 release](106-alpha29-release.md).
   **Complete; published and independently verified.** Signed build/native gates, public
   installer signature and Alpha feed passed; Stable and Beta unchanged.

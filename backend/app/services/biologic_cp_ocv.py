@@ -17,7 +17,17 @@ from . import biologic_mpr, canonical_cycling
 from .biologic_gcpl import decode_gcpl_log, InvalidBiologicGcplError
 
 BIOLOGIC_CP_OCV_ADAPTER_REVISION = 1
+# Keep the legacy family revision stable for unrelated techniques. Only CP
+# sources with recorded Ece use this additional effective parser revision.
+CP_ELECTRODE_MAPPING_REVISION = 2
 _CURRENT_TOLERANCE_MA = 1e-6
+
+
+def electrode_voltage_capabilities() -> dict:
+    return canonical_cycling.voltage_capabilities(
+        working_potential_available=True, counter_potential_available=True,
+        voltage_derived=True, voltage_origin="derived_working_minus_counter",
+    )
 
 
 def _records_and_flags(source: Any) -> tuple[np.ndarray, Mapping[str, np.ndarray] | None]:
@@ -102,6 +112,10 @@ def map_curve_to_canonical(
         raise InvalidBiologicGcplError("BioLogic CP/OCV elapsed time cannot be negative")
 
     is_cp = technique_id == biologic_mpr.MPR_CP_TECHNIQUE_ID
+    counter = _field(records, "raw_mean_counter_potential", required=False) if is_cp else None
+    working = voltage
+    if counter is not None:
+        voltage = working - counter
     current = _field(records, "raw_current_ma") if is_cp else np.zeros(len(records), dtype=np.float64)
     direction = _directional_state(current)
     cycle, complete = _cycle_labels(direction) if is_cp else (
@@ -159,6 +173,9 @@ def map_curve_to_canonical(
         "cycle_complete": complete,
         "measurement_type": "biologic_cp" if is_cp else "biologic_ocv",
     }
+    if counter is not None:
+        frame_values["working_potential_v"] = working
+        frame_values["counter_potential_v"] = counter
 
     if acquisition_start is None and isinstance(source, biologic_mpr.MprDocument):
         acquisition_start = decode_gcpl_log(source.vmp_log).get("start_time")

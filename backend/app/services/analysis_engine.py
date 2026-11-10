@@ -469,7 +469,7 @@ def ensure_canonical_cycling_available(
 def current_parser_identity(source_file: SourceFile) -> str:
     """Cheap current expected parser identity for one registered source.
 
-    Resolved from the source's stored extension alone — no file I/O, no
+    Resolved from the source's stored extension and CP electrode evidence — no file I/O, no
     parser import (see `parsing.current_parser_identity_for_extension`).
     Falls back to the legacy transitional bundle only for an extension the
     format registry does not recognize, which should not happen for a
@@ -866,6 +866,7 @@ def _resolve_time_capacity_voltage_context(
     matched_files_by_quantity: dict[str, list[SourceFile]],
     *,
     unknown_sources_by_quantity: set[str] | None = None,
+    parser_versions: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str | None]]:
     """Resolve roles/references from source-level finite-data facts."""
 
@@ -889,6 +890,14 @@ def _resolve_time_capacity_voltage_context(
             continue
         for source_file in matched_files:
             capability = _persisted_voltage_capabilities(source_file)
+            resolved = (parser_versions or {}).get(source_file.hash)
+            if (resolved and parsing._has_cp_electrodes(source_file.header_meta)
+                    and f"cp{parsing.biologic_cp_ocv.CP_ELECTRODE_MAPPING_REVISION}" not in resolved.split(":")):
+                # Historical CP artifacts contain Ewe in voltage_v. The live
+                # header may already describe a newer corrected cache.
+                capability = canonical_cycling.voltage_capabilities(
+                    voltage_role="working_vs_reference", voltage_origin="measured",
+                )
             roles = capability.get("voltage_roles")
             role = roles.get(column) if isinstance(roles, dict) else None
             if isinstance(role, str) and role in {
@@ -924,6 +933,8 @@ def _resolve_time_capacity_voltage_context(
 def _time_capacity_voltage_context(
     raw: pd.DataFrame,
     files: list[SourceFile],
+    *,
+    parser_versions: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str | None]]:
     """Resolve truthful role/reference context for the selected raw channels.
 
@@ -968,6 +979,7 @@ def _time_capacity_voltage_context(
         files,
         matched_files_by_quantity,
         unknown_sources_by_quantity=unknown_sources_by_quantity,
+        parser_versions=parser_versions,
     )
 
 
@@ -4322,6 +4334,7 @@ def compute_time_capacity(
                 _resolve_time_capacity_voltage_context,
                 files,
                 matched_files_by_quantity,
+                parser_versions=source_versions,
             )
         else:
             for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
@@ -4337,6 +4350,7 @@ def compute_time_capacity(
                 _time_capacity_voltage_context,
                 raw,
                 files,
+                parser_versions=source_versions,
             )
         for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
             has_data = (

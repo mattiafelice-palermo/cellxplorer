@@ -82,6 +82,7 @@ from typing import Any
 import NewareNDA
 import numpy as np
 import pandas as pd
+from sqlalchemy import inspect as sqlalchemy_inspect
 
 from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, neware_excel
 from .source_format_errors import (
@@ -378,6 +379,12 @@ def source_interpretation_warnings(source: object) -> list[dict]:
 
 
 def record_source_interpretation(source: object, info: dict) -> None:
+    identity = str(info.get("parser_version") or "").removesuffix(":p1")
+    if identity.endswith(f":cp{biologic_cp_ocv.CP_ELECTRODE_MAPPING_REVISION}") and _has_cp_electrodes(getattr(source, "header_meta", None)):
+        header = deepcopy(getattr(source, "header_meta", None) or {})
+        target = header.get("raw") if isinstance(header.get("raw"), dict) else header
+        target[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY] = biologic_cp_ocv.electrode_voltage_capabilities()
+        source.header_meta = header
     if source_read_mode(source) != "permissive":
         return
     header = deepcopy(getattr(source, "header_meta", None) or {})
@@ -400,7 +407,39 @@ def record_source_interpretation(source: object, info: dict) -> None:
 
 
 def current_parser_identity_for_source(source: object) -> str | None:
-    return current_parser_identity_for_extension(getattr(source, "ext", None), read_mode=source_read_mode(source))
+    ext = getattr(source, "ext", None)
+    if str(ext or "").casefold().lstrip(".") != "mpr":
+        return current_parser_identity_for_extension(ext)
+    if "header_meta" in getattr(source, "__dict__", {}):
+        header_meta = source.header_meta
+    else:
+        state = sqlalchemy_inspect(source, raiseerr=False)
+        detached_without_evidence = (state is not None and state.detached
+            and "cp_electrodes_recorded" not in source.__dict__)
+        projected = None if detached_without_evidence else getattr(source, "cp_electrodes_recorded", None)
+        if projected is not None:
+            header_meta = ({"settings": {"technique_id": biologic_mpr.MPR_CP_TECHNIQUE_ID},
+                            "data": {"field_offsets": {"raw_mean_counter_potential": 0}}}
+                           if projected else None)
+        else:
+            header_meta = None if detached_without_evidence else getattr(source, "header_meta", None)
+    return current_parser_identity_for_extension(
+        ext, read_mode=source_read_mode(source), header_meta=header_meta,
+    )
+
+
+def _has_cp_electrodes(header_meta: object) -> bool:
+    """Bounded persisted facts only; never open a source during status checks."""
+    for container in _biologic_mpr_header_containers(header_meta):
+        settings = container.get("settings") or {}
+        data = container.get("data") or {}
+        if not isinstance(settings, dict) or not isinstance(data, dict):
+            continue
+        cp = settings.get("technique_id") == biologic_mpr.MPR_CP_TECHNIQUE_ID
+        fields = data.get("field_offsets") or {}
+        if cp and isinstance(fields, dict) and fields.get("raw_mean_counter_potential") is not None:
+            return True
+    return False
 
 
 def metadata_for_read_mode(path: str | Path, metadata: dict, read_mode: str = "safe") -> dict:
@@ -444,14 +483,14 @@ def metadata_for_read_mode(path: str | Path, metadata: dict, read_mode: str = "s
     return result
 
 
-def current_parser_identity_for_extension(ext: str | None, *, read_mode: str = "safe") -> str | None:
+def current_parser_identity_for_extension(ext: str | None, *, read_mode: str = "safe", header_meta: object = None) -> str | None:
     """Cheap, no-I/O "what identity would building this extension produce now".
 
-    Derived purely from the static format registry — never opens the source
+    Derived from the static format registry and bounded persisted header facts — never opens the source
     file. This is what list/current-cache-status checks must use (per the
     spec's "no file I/O, no parser imports... to answer 'is this source's
     cache current'" performance requirement): it answers "current" from a
-    stored `SourceFile.ext` alone. It intentionally cannot distinguish a
+    stored `SourceFile.ext` and, for CP electrodes, structural header evidence. It intentionally cannot distinguish a
     genuine Neware Excel export from an arbitrary `.xlsx` (that requires
     content sniffing, which `parser_identity()` below performs) — a
     `SourceFile` only reaches this path after already being accepted at
@@ -468,7 +507,14 @@ def current_parser_identity_for_extension(ext: str | None, *, read_mode: str = "
     if format_id is None:
         return None
     identity = _identity_for_format(format_id)
-    return identity + ":p1" if format_id == FORMAT_BIOLOGIC_MPR and normalize_mpr_read_mode(read_mode) == "permissive" else identity
+    if format_id == FORMAT_BIOLOGIC_MPR:
+        if _has_cp_electrodes(header_meta):
+            identity += f":cp{biologic_cp_ocv.CP_ELECTRODE_MAPPING_REVISION}"
+        if normalize_mpr_read_mode(read_mode) == "permissive":
+            identity += ":p1"
+    if len(identity) > _MAX_PARSER_IDENTITY_LENGTH:
+        raise ValueError("Effective parser identity exceeds the SourceFile parser-version budget")
+    return identity
 
 
 def parser_identity(path: str | Path, *, read_mode: str = "safe") -> str:
@@ -489,7 +535,12 @@ def parser_identity(path: str | Path, *, read_mode: str = "safe") -> str:
         raise UnsupportedSourceFormatError(
             f"Unsupported cycling source format: {Path(str(path)).suffix or '<none>'}."
         )
-    return current_parser_identity_for_extension(Path(path).suffix, read_mode=read_mode)
+    header_meta = None
+    if format_id == FORMAT_BIOLOGIC_MPR:
+        with biologic_mpr.read_mpr_header(path) as document:
+            header_meta = {"settings": {"technique_id": biologic_mpr.mpr_technique_id(document)},
+                           "data": {"field_offsets": dict(document.vmp_data.field_offsets)}}
+    return current_parser_identity_for_extension(Path(path).suffix, read_mode=read_mode, header_meta=header_meta)
 
 
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
@@ -1693,6 +1744,9 @@ def _metadata_only_biologic_header(
         if technique_id in profile.technique_ids
     )
     is_mb = technique == "MB"
+    cp_electrodes = technique == "CP" and 185 in document.vmp_data.resolved_base_id_set
+    voltage_metadata = (biologic_cp_ocv.electrode_voltage_capabilities() if cp_electrodes
+                        else canonical_cycling.voltage_capabilities(voltage_origin="measured"))
     log = ({"absolute_timestamps": False} if is_mb else biologic_gcpl.decode_gcpl_log(document.vmp_log))
     from .biologic_mb import NOTICE as mb_notice
     warning = mb_notice if is_mb else (
@@ -1752,6 +1806,7 @@ def _metadata_only_biologic_header(
         "source_format": FORMAT_BIOLOGIC_MPR,
         "technique": technique,
         "raw": {
+            **({canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: voltage_metadata} if cp_electrodes else {}),
             "modules": modules,
             "settings": {
                 "technique_id": technique_id,
@@ -1786,9 +1841,7 @@ def _metadata_only_biologic_header(
         "electrode_area_cm2": None,
         "protocol_warnings": [warning],
         "capabilities": capabilities,
-        "voltage_capabilities": canonical_cycling.voltage_capabilities(
-            voltage_origin="measured",
-        ),
+        "voltage_capabilities": voltage_metadata,
     }
 
 

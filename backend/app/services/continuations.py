@@ -866,7 +866,8 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
     # vice versa.
     filename = source.get("filename") or ""
     expected_identity = (
-        parsing.current_parser_identity_for_extension(
+        source.get("expected_parser_version")
+        or parsing.current_parser_identity_for_extension(
             filename.rsplit(".", 1)[-1] if "." in filename else None,
             read_mode=source.get("read_mode", "safe"),
         )

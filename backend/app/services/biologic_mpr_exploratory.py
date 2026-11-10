@@ -55,7 +55,9 @@ def map_measurements(document: MprDocument, error: Exception) -> pd.DataFrame:
     working = records[voltage_field].astype(float)
     if not np.isfinite(time).all() or not np.isfinite(working).all() or np.any(time < 0):
         raise InvalidMprError("MPR exploratory time and voltage must be finite and time non-negative")
-    counter = records["raw_ece_v"].astype(float) if "raw_ece_v" in names and not is_curve else None
+    cp_counter = mpr_technique_id(document) == MPR_CP_TECHNIQUE_ID and "raw_mean_counter_potential" in names
+    counter = (records["raw_mean_counter_potential"].astype(float) if cp_counter else
+               records["raw_ece_v"].astype(float) if "raw_ece_v" in names and not is_curve else None)
     if counter is not None and not np.isfinite(counter).all():
         raise InvalidMprError("MPR exploratory counter potential must be finite")
     ns = records["raw_sample_index"].astype(np.int64) if "raw_sample_index" in names else np.zeros(len(records), dtype=np.int64)

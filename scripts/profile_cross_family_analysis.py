@@ -100,7 +100,7 @@ def _clone_cells(env: GoldenFixtureEnvironment, family: str, source_cell_id: int
     if len(files) != 1:
         raise RuntimeError(f"Expected one source for cloned fixture Cell {source_cell_id}")
     source = files[0]
-    parser_version = parsing.current_parser_identity_for_extension(source.ext) or source.parser_version
+    parser_version = parsing.current_parser_identity_for_source(source) or source.parser_version
     if not parser_version:
         raise RuntimeError(f"No parser identity for fixture source {source.filename}")
     raw = cache.load_raw(source.hash, parser_version)

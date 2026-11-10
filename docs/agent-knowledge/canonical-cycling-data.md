@@ -626,3 +626,24 @@ atomic-cache inode/device/size identity. No-inode storage bypasses that memo and
 versions persistent Cycles results by actual outcome, including native holes.
 Tests in `test_cycle_energy.py` and the Cycles engine integration regression
 exercise signs, boundaries, cache replacement, paired/ordinary chains and groups.
+
+## CP electrode caches and historical replay
+
+Verified CP sources with recorded mean Ewe (base 174) and Ece (base 185)
+store both auxiliary potentials and signed primary voltage Ewe minus Ece.
+Only these sources add `:cp2` before the optional `:p1` read-mode suffix;
+the MPR family identity and global calculation identity stay unchanged.
+Structural CP technique/field-offset evidence, rather than filename or
+capability claims, determines the suffix. `SourceFile.cp_electrodes_recorded`
+is a query-time SQLite JSON scalar projection, not a schema column, so
+deferred full headers remain unloaded during list/current-status checks.
+An already-loaded header takes precedence over the projection for unflushed edits.
+
+Historical CP raw artifacts have Ewe in `voltage_v`. Time/Capacity resolves
+their role from the actual pinned parser identity, including worker execution,
+even after the live source header has been upgraded. Never relabel those
+arrays as corrected cell voltage or delete them during current-cache repair.
+Startup must publish current identity and capabilities on a validated cache
+hit as well as a fresh parse. Portable import must retain the embedded legacy
+identity until a corrected build succeeds and reject contradictory read modes.
+See `test_cp_electrode_mapping.py` for byte, cache-hit, replay and import checks.

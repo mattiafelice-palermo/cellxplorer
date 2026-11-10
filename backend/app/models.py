@@ -24,8 +24,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_, case, func, or_,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, column_property
 
 from .db import Base
 
@@ -62,6 +63,16 @@ class SourceFile(Base):
     active_mass_mg: Mapped[float | None] = mapped_column(Float, nullable=True)
     nominal_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
     header_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Query-time evidence, not a stored schema column. Keep large JSON deferred
+    # while resolving the source-specific CP parser identity for library rows.
+    cp_electrodes_recorded: Mapped[bool] = column_property(case(
+        (ext == "mpr", or_(
+            and_(func.json_extract(header_meta, "$.settings.technique_id") == 25,
+                 func.json_extract(header_meta, "$.data.field_offsets.raw_mean_counter_potential").is_not(None)),
+            and_(func.json_extract(header_meta, "$.raw.settings.technique_id") == 25,
+                 func.json_extract(header_meta, "$.raw.data.field_offsets.raw_mean_counter_potential").is_not(None)),
+        )), else_=False,
+    ))
 
     # lifecycle
     # location_status: online | offline | changed  (path-level, reactive badge)

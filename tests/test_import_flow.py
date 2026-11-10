@@ -304,7 +304,7 @@ class ImportFlowTests(unittest.TestCase):
         build.assert_not_called()
         self.assertEqual(
             parsing.current_parser_identity_for_extension("mpr"),
-            parsing.parser_identity("preview.mpr"),
+            "bm:gcpl18cpocv1:r1",
         )
 
     def test_biologic_mpr_synthetic_preview_builds_without_mpt(self):

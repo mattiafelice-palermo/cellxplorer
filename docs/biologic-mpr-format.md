@@ -306,6 +306,16 @@ does not provide capacity, and no capacity curve is fabricated. Non-blocking con
 remain visible warnings; import no longer requires users to acknowledge them. Unknown technique
 bytes and unverified column layouts remain unsupported.
 
+For CP with recorded mean Ewe (base 174) and Ece (base 185), the curve adapter
+retains `working_potential_v = Ewe`, `counter_potential_v = Ece`, and derives
+signed cell `voltage_v = Ewe - Ece`. It does not take an absolute value or infer
+a reference-electrode type. These sources use the additional `:cp2` mapping
+identity, before the optional `:p1` suffix, leaving the family identity and
+other techniques unchanged. Historical artifacts without that suffix contain
+working potential in their primary voltage column and retain that role when
+replayed. The same recorded-electrode difference is available to explicit
+Permissive measurement-only fallback without claiming verified cycles/capacity.
+
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
 The direct adapter in `backend/app/services/biologic_gcpl.py` (GCPL adapter revision `gcpl14`,

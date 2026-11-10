@@ -411,7 +411,8 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
             path.write_bytes(filename.encode("ascii"))
             file_hash = parsing.compute_hash(path)
             frame = _cache_provenance_frame(cycles, cycle_source)
-            with patch.object(parsing, "parse_timeseries", return_value=frame):
+            with patch.object(parsing, "parse_timeseries", return_value=frame), \
+                patch.object(parsing, "parser_identity", return_value="bm:gcpl18cpocv1:r1"):
                 fresh = cache.build(file_hash, path)
                 cached = cache.build(file_hash, path)
 
@@ -934,7 +935,9 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         header_queries: list[str] = []
 
         def capture_header_query(_conn, _cursor, statement, _parameters, _context, _executemany):
-            if "header_meta" in statement.casefold():
+            # JSON scalar projections may inspect a header in SQLite; this
+            # guard forbids selecting/hydrating the complete JSON document.
+            if "header_meta as " in statement.casefold():
                 header_queries.append(statement)
 
         event.listen(self.db.bind, "before_cursor_execute", capture_header_query)

@@ -332,7 +332,7 @@ def clone_golden_source_cells(env, count: int) -> list[int]:
     from app.services import cache, parsing
 
     source = env.db.query(SourceFile).filter(SourceFile.hash == env.manifest["sources"][0]["sha256"]).one()
-    current_parser_version = parsing.current_parser_identity_for_extension(source.ext)
+    current_parser_version = parsing.current_parser_identity_for_source(source)
     parser_version = (
         current_parser_version
         if current_parser_version and cache.raw_path(source.hash, current_parser_version).is_file()
@@ -391,7 +391,7 @@ def measure_preparation(env) -> dict:
         .filter(SourceFile.hash == env.manifest["sources"][0]["sha256"])
         .one()
     )
-    current_parser_version = parsing.current_parser_identity_for_extension(source.ext)
+    current_parser_version = parsing.current_parser_identity_for_source(source)
     parser_version = (
         current_parser_version
         if current_parser_version and cache.raw_path(source.hash, current_parser_version).is_file()

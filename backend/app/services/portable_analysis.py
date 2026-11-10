@@ -2611,6 +2611,10 @@ def import_analysis_html(
             # metadata-only one while importing its analysis shell.
             document_header = deepcopy(document.get("header_meta"))
             reported_mode, reported_interpretation = _reported_source_interpretation(document)
+            declared_identity = str(document.get("parser_version") or "")
+            if (parsing._has_cp_electrodes(document_header) and declared_identity
+                    and declared_identity.endswith(":p1") != (reported_mode == "permissive")):
+                raise HTTPException(400, "The CP report read mode contradicts its parser identity.")
             # No legacy cache producer knew the permissive identity. A report
             # cannot use independent cache descriptors to cross either mode's
             # namespace, even if its source document claims the opposite mode.
@@ -2651,11 +2655,21 @@ def import_analysis_html(
                 effective_parser_identity = (
                     parsing.current_parser_identity_for_extension(
                         document.get("ext") or Path(document["filename"]).suffix.lstrip("."),
-                        read_mode=reported_mode,
+                        read_mode=reported_mode, header_meta=document_header,
                     )
                     or document.get("parser_version")
                     or parsing.PARSER_VERSION
                 )
+                if parsing._has_cp_electrodes(document_header):
+                    # Embedded artifacts retain their original identity. A
+                    # newly imported offline registration cannot claim cp2
+                    # before corrected bytes exist or a real build succeeds.
+                    embedded = legacy_raw or legacy_cycles
+                    effective_parser_identity = (
+                        (embedded or {}).get("parser_version")
+                        or document.get("parser_version")
+                        or effective_parser_identity
+                    )
             else:
                 metadata_only = parsing.source_record_metadata_only(existing)
                 metadata_warning = existing.parse_error if metadata_only else None

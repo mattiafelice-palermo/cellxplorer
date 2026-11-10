@@ -261,7 +261,7 @@ def _inspect_import_path(
         "read_mode": read_mode,
         "exploratory": False,
         "scientific_interpretation": "pending" if read_mode == "permissive" else None,
-        "parser_version": parsing.current_parser_identity_for_extension(inspected.ext, read_mode=read_mode),
+        "parser_version": parsing.current_parser_identity_for_extension(inspected.ext, read_mode=read_mode, header_meta=meta),
         "canonical_cycling": not metadata_only and not canonical_cycling_pending,
         "canonical_cycling_pending": canonical_cycling_pending,
         "metadata_only": metadata_only,
@@ -2365,6 +2365,7 @@ def _continuation_existing_source(
         "key": f"existing-{sf.id}",
         "kind": "existing",
         "read_mode": parsing.source_read_mode(sf),
+        "expected_parser_version": parsing.current_parser_identity_for_source(sf),
         "source_file_id": sf.id,
         "filename": sf.filename,
         "source_path": sf.path,
@@ -2561,6 +2562,8 @@ def _continuation_staged_source(
         return source
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
+    source["expected_parser_version"] = parsing.current_parser_identity_for_extension(
+        source_path.suffix, read_mode=draft.read_mode, header_meta=meta)
     source["hash"] = file_hash
     source["metadata_only"] = parsing.source_metadata_only(meta)
     source["canonical_cycling_pending"] = parsing.source_metadata_cycling_pending(meta)
@@ -3923,7 +3926,7 @@ def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile |
             raise HTTPException(409, f"{prepared['filename']} is already registered")
 
     expected_parser_version = (
-        parsing.current_parser_identity_for_extension(prepared["ext"], read_mode=prepared.get("read_mode", "safe"))
+        parsing.current_parser_identity_for_extension(prepared["ext"], read_mode=prepared.get("read_mode", "safe"), header_meta=prepared.get("meta"))
         if existing is not None
         else None
     ) or parsing.PARSER_VERSION
@@ -4161,9 +4164,9 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
             ),
             parse_error=metadata_only_error,
             parser_version=(
-                parsing.current_parser_identity_for_extension(prepared["ext"])
+                parsing.current_parser_identity_for_extension(prepared["ext"], header_meta=prepared.get("meta"))
                 if metadata_only
-                else parsing.current_parser_identity_for_extension(prepared["ext"], read_mode="permissive") if prepared.get("read_mode", "safe") == "permissive" else None
+                else parsing.current_parser_identity_for_extension(prepared["ext"], read_mode="permissive", header_meta=prepared.get("meta")) if prepared.get("read_mode", "safe") == "permissive" else None
             ),
             capacity_summary_status=(
                 "unavailable"
@@ -4179,7 +4182,7 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
     for key, value in values.items():
         setattr(existing, key, value)
     if not prepared["cache_ready"]:
-        existing.parser_version = parsing.current_parser_identity_for_extension(prepared["ext"], read_mode=prepared.get("read_mode", "safe"))
+        existing.parser_version = parsing.current_parser_identity_for_extension(prepared["ext"], read_mode=prepared.get("read_mode", "safe"), header_meta=prepared.get("meta"))
         existing.parse_status = "metadata_only" if metadata_only else "parsing"
         existing.parse_error = metadata_only_error
         existing.capacity_summary_status = "unavailable" if metadata_only else "pending"
@@ -4292,9 +4295,9 @@ def _register_or_refresh_source_file(
                 else None
             ),
             parser_version=(
-                parsing.current_parser_identity_for_extension(ext)
+                parsing.current_parser_identity_for_extension(ext, header_meta=meta)
                 if parsing.source_metadata_only(meta)
-                else parsing.current_parser_identity_for_extension(ext, read_mode="permissive") if read_mode == "permissive" else None
+                else parsing.current_parser_identity_for_extension(ext, read_mode="permissive", header_meta=meta) if read_mode == "permissive" else None
             ),
             capacity_summary_status=(
                 "unavailable" if parsing.source_metadata_only(meta) else "pending"
@@ -4305,7 +4308,7 @@ def _register_or_refresh_source_file(
         return sf
 
     sf = existing
-    sf.parser_version = parsing.current_parser_identity_for_extension(ext, read_mode=read_mode)
+    sf.parser_version = parsing.current_parser_identity_for_extension(ext, read_mode=read_mode, header_meta=meta)
     sf.path = str(source_path)
     sf.filename = filename
     sf.size = source_size
@@ -4326,7 +4329,7 @@ def _register_or_refresh_source_file(
     if parsing.source_metadata_only(meta):
         sf.parse_status = "metadata_only"
         sf.parse_error = parsing.source_metadata_only_message(meta)
-        sf.parser_version = parsing.current_parser_identity_for_extension(ext)
+        sf.parser_version = parsing.current_parser_identity_for_extension(ext, header_meta=meta)
         sf.capacity_summary_status = "unavailable"
     elif sf.parse_status == "metadata_only":
         sf.parse_status = "unparsed"
@@ -5709,6 +5712,13 @@ def preview_file(file_id: int, kind: str = "cycles", db: Session = Depends(get_d
     if sf is None:
         raise HTTPException(404, "No such file")
     ensure_source_can_produce_canonical_cycling(sf)
+    expected = parsing.current_parser_identity_for_source(sf)
+    if (parsing._has_cp_electrodes(sf.header_meta) and sf.parser_version != expected):
+        if not Path(sf.path).is_file():
+            raise HTTPException(409, "The corrected CP voltage cache needs the original source file; restore it and prepare the cache again.")
+        scanner.parse_file(db, sf)
+        if sf.parse_status == "error":
+            raise HTTPException(422, f"Parse failed: {sf.parse_error}")
     if sf.parse_status != "parsed":
         if not Path(sf.path).exists():
             raise HTTPException(409, "File is offline and has no cache yet")

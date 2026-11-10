@@ -516,6 +516,8 @@ def _capacity_source_job(
         "filename": sf.filename,
         "ext": sf.ext,
         "read_mode": parsing.source_read_mode(sf),
+        "expected_parser_version": parsing.current_parser_identity_for_source(sf),
+        "registered_parser_version": sf.parser_version,
         "source_fingerprint": {
             "hash": sf.hash,
             "size": observed_size,
@@ -555,7 +557,8 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
             else None
         )
         expected = (
-            parsing.current_parser_identity_for_extension(job.get("ext"), read_mode=job.get("read_mode", "safe"))
+            job.get("expected_parser_version")
+            or parsing.current_parser_identity_for_extension(job.get("ext"), read_mode=job.get("read_mode", "safe"))
             or parsing.PARSER_VERSION
         )
         cycles = cache.load_cycles(
@@ -564,7 +567,11 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
             cache.CALC_VERSION,
         )
         raw_ready = cache.raw_path(job["hash"], expected).is_file()
-        if cycles is None or (job["prepare_all_missing"] and not raw_ready):
+        identity_bring_forward = (
+            job.get("registered_parser_version") is not None
+            and job["registered_parser_version"] != expected
+        )
+        if cycles is None or (job["prepare_all_missing"] and not raw_ready) or identity_bring_forward:
             source_path = Path(job["path"])
             try:
                 source_stat = source_path.stat()
@@ -669,6 +676,8 @@ def _capacity_source_job_matches(sf: SourceFile, source_job: dict[str, Any]) -> 
         and sf.hash.casefold() == str(source_job.get("hash") or "").casefold()
         and int(sf.observed_size if sf.observed_size is not None else sf.size) == expected_size
         and mtime_matches
+        and (not source_job.get("expected_parser_version")
+             or parsing.current_parser_identity_for_source(sf) == source_job["expected_parser_version"])
     )
 
 

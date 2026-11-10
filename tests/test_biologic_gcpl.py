@@ -275,7 +275,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl18cpocv1:r1")
+        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl18cpocv1:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
