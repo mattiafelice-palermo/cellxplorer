@@ -1,3 +1,4 @@
+import { AnalysisSourceLimitations } from "../../../components/AnalysisSourceLimitations";
 import { RetainedAnalysisPanel, useAnalysisFamilyRetention } from "./RetainedAnalysisPanel";
 // Analysis editor. An analysis owns the sample set; saved plots store reusable
 // views of that set: settings plus hidden/shown sample state.
@@ -604,7 +605,7 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
         : `time (${cfg.time_unit})`;
     return `${voltageChannelSelectionLabel(cfg.voltage_channels)}${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
-  if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs cycle`;
+  if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs ${spec.presentation.cycles_x_axis === "fec" ? "FEC" : "cycle"}`;
   if (tab === "dcir") {
     const view = { ...DEFAULT_DCIR_VIEW, ...(spec.presentation.dcir_view ?? {}) };
     const quantity =
@@ -1193,8 +1194,10 @@ function BadgeBar({ badges }: { badges: ApiBadge[] }) {
     missing_reference: "red",
   };
   return (
+    <Stack gap={4}>
+    <AnalysisSourceLimitations badges={badges} />
     <Group gap={6}>
-      {badges.map((b, i) => (
+      {badges.filter(b => b.kind !== "exploratory_mpr").map((b, i) => (
         <Tooltip key={i} label={b.detail} multiline w={320}>
           <Badge color={colors[b.kind] ?? "gray"} variant="light" size="sm">
             {b.kind === "exploratory_mpr" ? "Permissive MPR" : b.kind.replace(/_/g, " ")}
@@ -1203,6 +1206,7 @@ function BadgeBar({ badges }: { badges: ApiBadge[] }) {
         </Tooltip>
       ))}
     </Group>
+    </Stack>
   );
 }
 

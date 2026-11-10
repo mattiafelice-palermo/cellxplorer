@@ -35,6 +35,8 @@ from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestF
 from . import (
     cache,
     calc,
+    cycle_throughput,
+    cycle_energy,
     canonical_cycling,
     parsing,
     protocol,
@@ -77,10 +79,13 @@ ALL_QUANTITIES: dict[str, tuple[str, str]] = {
     **calc.QUANTITIES,
     **DERIVED_QUANTITIES,
     **SPECIFIC_QUANTITIES,
+    **cycle_throughput.QUANTITIES,
+    **cycle_throughput.SPECIFIC,
 }
 SELECTABLE_QUANTITIES: dict[str, tuple[str, str]] = {
     **calc.QUANTITIES,
     **DERIVED_QUANTITIES,
+    **cycle_throughput.QUANTITIES,
 }
 
 
@@ -2439,7 +2444,7 @@ def aggregate_metrics(rows: list[dict]) -> dict:
 DISPERSIONS = ("std", "sem", "minmax", "percentile")
 
 
-def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation: dict) -> dict:
+def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation: dict, cumulative_members: list[dict] | None = None) -> dict:
     """Replicate mean ± band per cycle index for every quantity, over member
     cells minus exclusions. n(cycle) is tracked per quantity; the band is
     only emitted where n >= min_n_for_band. A rendering — never stored."""
@@ -2457,7 +2462,17 @@ def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation:
     result: dict[str, dict] = {}
     n_overall = np.zeros(len(wide), dtype="int64")
     for col in quantity_cols:
-        vals = wide[[f"{col}__{i}" for i in range(len(members))]].to_numpy(dtype="float64")
+        full_prefix_complete = None
+        if cumulative_members is not None and col in cycle_throughput.STRICT_COLUMNS:
+            full = pd.concat([
+                pd.Series(m["quantities"][col], index=pd.Index(m["x"], name="cycle"), name=i, dtype=float)
+                for i, m in enumerate(cumulative_members)
+            ], axis=1).sort_index()
+            complete_prefix = np.logical_and.accumulate(full.notna().all(axis=1).to_numpy())
+            full_prefix_complete = pd.Series(complete_prefix, index=full.index).reindex(wide.index, fill_value=False).to_numpy()
+            vals = full.reindex(wide.index).to_numpy(dtype=float)
+        else:
+            vals = wide[[f"{col}__{i}" for i in range(len(members))]].to_numpy(dtype="float64")
         n = (~np.isnan(vals)).sum(axis=1)
         n_overall = np.maximum(n_overall, n)
         with np.errstate(invalid="ignore"), warnings.catch_warnings():
@@ -2475,6 +2490,13 @@ def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation:
                 sd = np.nanstd(vals, axis=1, ddof=1)
                 lo, hi = mean - sd, mean + sd
         band_ok = n >= min_n
+        if col in cycle_throughput.STRICT_COLUMNS:
+            # Fixed included cohort: never average around an unknown member.
+            complete = np.logical_and.accumulate(n == len(members))
+            if full_prefix_complete is not None:
+                complete &= full_prefix_complete
+            mean = np.where(complete, mean, np.nan)
+            band_ok &= complete
         result[col] = {
             "mean": _jsonsafe(mean),
             "band_low": _jsonsafe(np.where(band_ok, lo, np.nan)),
@@ -2546,11 +2568,19 @@ def availability_badges(
             else cell_ordered_hashes(db, cell)[1]
         )
         for f in files:
-            if parsing.source_read_mode(f) == "permissive":
-                fresh.append({"kind": "exploratory_mpr", "cell_id": cell.id, "cell_name": cell.name,
-                              "file": f.filename, "exploratory": parsing.source_is_exploratory(f),
-                              "scientific_interpretation": parsing.source_interpretation(f),
-                              "detail": ("Permissive MPR source: unverified interpretation; unresolved scientific quantities are unavailable." if parsing.source_is_exploratory(f) else "Permissive MPR mode selected; the recording passed verified scientific interpretation." if parsing.source_interpretation(f) == "verified" else "Permissive MPR mode selected; scientific interpretation is pending.")})
+            if str(f.ext or "").lower().lstrip(".") == "mpr":
+                interpretation = parsing.source_interpretation(f)
+                source_warnings = parsing.source_interpretation_warnings(f)
+                recorded = cache.load_parser_warnings(f.hash, f.parser_version or current_parser_identity(f))
+                source_warnings = list({(w.get("code"), w.get("message")): w for w in [*source_warnings, *recorded] if isinstance(w, dict) and w.get("message")}.values())
+                if interpretation in {"exploratory", "pending"} or source_warnings:
+                    detail = ("Cycle identity is unverified. Capacity, energy, efficiency and FEC are unavailable for this source."
+                        if interpretation == "exploratory" else "Scientific interpretation is pending; cycle-based results are not yet available for this source."
+                        if interpretation == "pending" else " ".join(w["message"] for w in source_warnings))
+                    fresh.append({"kind": "exploratory_mpr", "cell_id": cell.id, "cell_name": cell.name,
+                        "source_id": f.id, "file": f.filename, "exploratory": interpretation == "exploratory",
+                        "scientific_interpretation": interpretation, "detail": detail,
+                        "limitations": source_warnings})
             if f.location_status == "offline":
                 fresh.append(
                     {"kind": "source_offline", "cell_id": cell.id, "cell_name": cell.name,
@@ -2602,6 +2632,7 @@ def compute(
 
     quantity_cols = [col for col, _ in ALL_QUANTITIES.values()]
     cell_series: list[dict] = []
+    cumulative_series: list[dict] = []
     sources: list[dict] = []
     badges: list[dict] = list(protocol_badges)
     all_pinned_versions: list[str] = []
@@ -2763,12 +2794,21 @@ def compute(
             if request_context is not None
             else None,
         )
+        fec_reference = cell_nominal_capacity_mah(
+            cell,
+            request_context.scalar_metadata.get(cell.id)
+            if request_context is not None else None,
+        )
+        if fec_reference is not None and (not np.isfinite(fec_reference) or fec_reference <= 0):
+            fec_reference = None
         _cycles_profile_finished(
             profiling,
             "cycles_active_mass_resolution",
             active_mass_started,
         )
+        energy_provenance = {"charge": [], "discharge": []}
         if stitched.empty or not complete:
+            cumulative_series.append({"x": [], "quantities": {c: [] for c in quantity_cols}})
             x: list[int] = []
             quantities = {c: [] for c in quantity_cols}
             metrics = {"n_cycles": 0}
@@ -2776,7 +2816,22 @@ def compute(
             source_values = {key: [] for key in ("source_cycle", "source_position", "source_filename", "source_hash")}
         else:
             protocol_mask_started = _cycles_profile_started(profiling)
-            metric_frame = stitched
+            resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve(
+                stitched, refs, cycle_throughput.proven_increments(stitched, refs), segments,
+            )
+            energy_by_cycle = {int(c): i for i, c in enumerate(stitched.cycle)}
+            full_history = cycle_throughput.add_columns(
+                cumulative_inputs, fec_reference, active_mass_mg,
+                (computation.get("fec") or {}).get("convention", "combined_throughput"),
+            )
+            cumulative_series.append({"x": [int(c) for c in full_history.cycle], "quantities": _jsonsafe_columns(full_history, list(cycle_throughput.STRICT_COLUMNS)), "energy_provenance": energy_provenance})
+            # Resolve only energy here; other primitive metrics retain their definitions.
+            metric_frame = stitched.copy()
+            for column in ("charge_energy_mwh", "discharge_energy_mwh", "energy_efficiency_pct"):
+                if column in resolved_energy:
+                    metric_frame[column] = resolved_energy[column]
+            for column in cycle_throughput.STRICT_COLUMNS:
+                metric_frame[column] = full_history[column]
             if protocol_context["only_active"]:
                 metric_frame = metric_frame[metric_frame["cycle"].isin(protocol_cycles["only"])]
             if protocol_cycles["excluded"]:
@@ -2807,6 +2862,7 @@ def compute(
             )
             series_projection_started = _cycles_profile_started(profiling)
             x = [int(v) for v in plot_filtered["cycle"]]
+            energy_provenance = {direction: [entries[energy_by_cycle[c]] for c in x] for direction, entries in energy_provenance.items()}
             quantities = _jsonsafe_columns(plot_filtered, quantity_cols)
             _cycles_profile_finished(
                 profiling,
@@ -2832,6 +2888,9 @@ def compute(
              "archived": cell.archived, "x": x, "quantities": quantities,
              "metrics": metrics, "retention_reference_mah": ref,
              "active_mass_mg": active_mass_mg,
+             "fec_reference_mah": fec_reference,
+             "energy_provenance": energy_provenance,
+             "energy_policy": cycle_energy.POLICY,
              "segments": segments, "source_descriptors": descriptors,
              **source_values})
         sources.append(
@@ -2898,7 +2957,7 @@ def compute(
     aggregation_setup_started = _cycles_profile_started(profiling)
     if (aggregation.get("mode") or "replicate_mean") == "replicate_mean":
         for s in cell_series:
-            if s["group_id"] is not None and not s["excluded"] and len(s["x"]):
+            if s["group_id"] is not None and not s["excluded"]:
                 by_group.setdefault(s["group_id"], []).append(s)
                 group_names[s["group_id"]] = s["group_name"]
     _cycles_profile_finished(
@@ -2907,7 +2966,12 @@ def compute(
         aggregation_setup_started,
     )
     for gid, members in by_group.items():
-        agg = aggregate_series(members, quantity_cols, aggregation)
+        if not any(m["x"] for m in members):
+            continue
+        full_members = [cumulative_series[index] for index, s in enumerate(cell_series) if s["group_id"] == gid and not s["excluded"]]
+        agg = aggregate_series(members, quantity_cols, aggregation, full_members)
+        agg["energy_provenance"] = cycle_energy.aggregate_provenance(members, full_members, agg["x"])
+        agg["energy_quantity_provenance"] = cycle_energy.aggregate_quantity_provenance(members, full_members, agg)
         agg["group_id"] = gid
         agg["group_name"] = group_names[gid]
         aggregates.append(agg)

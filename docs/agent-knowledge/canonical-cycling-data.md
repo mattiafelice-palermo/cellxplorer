@@ -595,3 +595,34 @@ that bypasses `cache.build`/`cache.build_write_behind` — including the
 dispatch-mechanics test above and direct Excel-parser unit tests — does not
 trigger canonical validation. Excel-parser unit tests exercise the adapter's
 own (narrower, stricter) contract in isolation instead.
+
+## Cycles energy derived from GCPL measurements
+
+`cycle_energy.py` derives signed net directional energy at Cycles response time
+when a verified canonical GCPL source has no raw directional energy column.
+It never rewrites raw/per-cycle Parquet or changes parser/CALC_VERSION identities.
+Native energy columns, including holes, take precedence: missing native samples
+are unavailable, never an invitation to synthesize replacement values.
+
+The fallback sums trapezoids of primary signed cell voltage against measured
+capacity increments inside each executed step, source and global cycle. Restore
+source-local `record_index` order for paired GCPL executions; use each segment's
+`cycle_mapping` or its ordinary `(segment, source_cycle)` mapping. Do not integrate
+across sources or steps. `mpr_acquisition_segment` is the canonical acquisition
+boundary field. Even a zero-transfer phase needs contiguous, direction-supported
+recorded participation; only voltage evidence is optional for zero increments.
+Reconcile against full-cycle native capacity deltas. Negative voltage intervals
+subtract, while a negative whole-direction net is unavailable under the existing
+nonnegative energy-quantity contract.
+
+Per-cycle energy is independent of later/earlier gaps. Strict cumulative inputs
+and fixed-cohort provenance stop permanently at their first unknown before any
+display masks. Group figure provenance must use contributors to the actual
+quantity (including mass/efficiency eligibility), rather than all group members.
+
+Only eligible GCPL raw caches are opened; Neware keeps its summary fast path.
+The outcome memo stores immutable compact JSON, bounded by bytes and count, using
+atomic-cache inode/device/size identity. No-inode storage bypasses that memo and
+versions persistent Cycles results by actual outcome, including native holes.
+Tests in `test_cycle_energy.py` and the Cycles engine integration regression
+exercise signs, boundaries, cache replacement, paired/ordinary chains and groups.

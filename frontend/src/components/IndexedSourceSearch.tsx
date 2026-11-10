@@ -1,7 +1,8 @@
+import { importedSourceLabel, renamedImportedCells, subscribeImportedCellNames } from "../importedSourceIdentity";
 import { ActionIcon, Alert, Badge, Button, Checkbox, Group, Highlight, Paper, Popover, ScrollArea, Stack, Text, TextInput, Tooltip, Box } from "@mantine/core";
 import { useDebouncedValue, useResizeObserver } from "@mantine/hooks";
 import { IconArrowDown, IconArrowUp, IconArrowLeft, IconX, IconFolder, IconInfoCircle, IconSearch, IconSettings } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { get, post, type ImportBrowseEntry } from "../api";
 import { createPortal } from "react-dom";
@@ -97,8 +98,15 @@ export function IndexedSourceSearch({ active, selected, sourceRejections, readMo
   useEffect(() => { viewport.current?.scrollTo({ top: 0 }); setScrollTop(0); }, [page]);
   useEffect(() => { if (active && !manage) requestAnimationFrame(() => viewport.current?.scrollTo({ top: scrollTop })); }, [active, manage]);
   useEffect(() => { if (query.data && page && page * 100 >= query.data.total) setPage(Math.max(0, Math.ceil(query.data.total / 100) - 1)); }, [query.data, page]);
+  const ownershipClient = useQueryClient();
+  const [cellNames, setCellNames] = useState<Map<number, string>>(new Map());
+  useEffect(() => {
+    if (!active) return;
+    setCellNames(new Map());
+    return subscribeImportedCellNames(ownershipClient, names => setCellNames(current => new Map([...current, ...names])));
+  }, [active, ownershipClient]);
   const files: IndexedFile[] = (query.data?.items ?? []).map((file) => {
-    const entry: IndexedFile = withMprReadMode({ ...file, kind: "file", root_status: settings.data?.roots.find((r) => r.id === file.root_id)?.status ?? file.root_status }, readModes);
+    const entry: IndexedFile = withMprReadMode({ ...file, cells: renamedImportedCells(file.cells, cellNames), kind: "file", root_status: settings.data?.roots.find((r) => r.id === file.root_id)?.status ?? file.root_status }, readModes);
     if (entry.read_mode === "permissive") { entry.readability_error = null; entry.source_error_kind = null; }
     const rejection = sourceRejections ? importSourceRejection(entry, sourceRejections) : undefined;
     return rejection ? { ...entry, readability_error: rejection.error, source_error_kind: rejection.kind } : entry;
@@ -192,7 +200,7 @@ export function IndexedSourceSearch({ active, selected, sourceRejections, readMo
           px="xs" py={6} style={{ position: "absolute", top: rowIndex * rowHeight, height: rowHeight, width: "100%", boxSizing: "border-box", userSelect: "none", cursor: "pointer", borderBottom: "1px solid var(--mantine-color-default-border)", background: isSelected(file) ? "var(--mantine-primary-color-light)" : focused === file.path ? "light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5))" : undefined }}>
           <Group wrap="nowrap" gap="xs">
             <Checkbox aria-label={`Include ${file.name}`} disabled={!indexedFileAvailable(file)} checked={isSelected(file)} onClick={(event) => event.stopPropagation()} onChange={() => select(file)} />
-            <Stack gap={1} style={{ flex: 1, minWidth: 0 }}><Tooltip label={file.name}><Text size="sm" fw={500} c={file.registered || file.root_status === "offline" || file.readability_error ? "dimmed" : undefined} truncate><Highlight component="span" highlight={highlights}>{file.name}</Highlight></Text></Tooltip><Text size="xs" c="dimmed" truncate title={file.path}>{searchLocationName(file.root_path)}{folder !== file.relative_path ? ` / ${folder}` : ""}</Text>{explanation && <Tooltip label={explanation} multiline w={420} withArrow events={{ hover: true, focus: true, touch: false }}><Text size="xs" c={queryText.trim() ? undefined : "dimmed"} truncate tabIndex={0} aria-label={explanation}><Highlight component="span" highlight={highlights}>{explanation}</Highlight></Text></Tooltip>}</Stack>
+            <Stack gap={1} style={{ flex: 1, minWidth: 0 }}><Tooltip label={file.registered ? `${file.name} — ${importedSourceLabel(file.cells)}` : file.name}><Text size="sm" fw={500} c={file.registered || file.root_status === "offline" || file.readability_error ? "dimmed" : undefined} truncate><Highlight component="span" highlight={highlights}>{file.name}</Highlight></Text></Tooltip><Text size="xs" c="dimmed" truncate title={file.path}>{searchLocationName(file.root_path)}{folder !== file.relative_path ? ` / ${folder}` : ""}</Text>{explanation && <Tooltip label={explanation} multiline w={420} withArrow events={{ hover: true, focus: true, touch: false }}><Text size="xs" c={queryText.trim() ? undefined : "dimmed"} truncate tabIndex={0} aria-label={explanation}><Highlight component="span" highlight={highlights}>{explanation}</Highlight></Text></Tooltip>}</Stack>
             <Stack gap={1} align="flex-end"><Text size="xs" c="dimmed">{((file.size ?? 0) / 1048576).toFixed(2)} MB</Text><Text size="xs" c="dimmed" title={file.modified_at ?? undefined}>{file.modified_at ? `Modified ${new Date(file.modified_at).toLocaleDateString()}` : ""}</Text><Badge size="xs" variant="light" color={file.root_status === "offline" ? "red" : file.metadata_state === "unavailable" ? "orange" : "gray"}>{status}</Badge></Stack>
             {onTryPermissive && !file.registered && file.root_status !== "offline" && canTryPermissiveMpr(file, Boolean(file.readability_error)) && <Button size="compact-xs" color="orange" variant="light" aria-label={`Try Permissive reading for ${file.name}`} onClick={(event) => { event.stopPropagation(); onTryPermissive(file); }}>Try Permissive</Button>}
             {file.read_mode === "permissive" && <Badge size="xs" color="orange" variant="light">Permissive</Badge>}

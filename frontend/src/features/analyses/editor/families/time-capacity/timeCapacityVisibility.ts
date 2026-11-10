@@ -37,8 +37,8 @@ function traceVoltageValues(
   return channel === fallbackChannel ? trace.voltage_v : [];
 }
 
-function hasFinitePoint(values: (number | null)[]): boolean {
-  return values.some((value) => value !== null && Number.isFinite(value));
+function hasFinitePoint(values: (number | null)[] | undefined): boolean {
+  return values?.some((value) => value !== null && Number.isFinite(value)) ?? false;
 }
 
 export function timeCapacityTraceIsHidden(

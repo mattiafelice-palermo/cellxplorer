@@ -9,6 +9,7 @@ import * as axisLayout from "../src/features/analyses/editor/plotting/plotAxisLa
 import * as mprReadNotice from "../src/features/analyses/editor/plotting/mprReadNotice.ts";
 import * as referenceLines from "../src/features/analyses/editor/plotting/plotReferenceLines.ts";
 import * as cycleShading from "../src/features/analyses/editor/plotting/cycleShading.ts";
+import * as cycleEnergyBasis from "../src/features/analyses/editor/families/cycles/cycleEnergyBasis.ts";
 import * as voltage from "../src/features/analyses/editor/policies/voltageChannelPolicy.ts";
 import * as timePolicy from "../src/features/analyses/editor/policies/timeCapacityQueryPolicy.ts";
 import * as timeVisibility from "../src/features/analyses/editor/families/time-capacity/timeCapacityVisibility.ts";
@@ -21,7 +22,7 @@ function family(name: string, file: string): Record<string, any> {
   const module = { exports: {} };
   const stubs = new Map<string, unknown>([
     ["mprReadNotice", mprReadNotice], ["plotStyle", plotStyle], ["plotLayout", plotLayout], ["plotAxisLayout", axisLayout], ["plotReferenceLines", referenceLines], ["cycleShading", cycleShading],
-    ["voltageChannelPolicy", voltage], ["timeCapacityQueryPolicy", timePolicy], ["timeCapacityVisibility", timeVisibility], ["analysisVisibility", visibility],
+    ["voltageChannelPolicy", voltage], ["timeCapacityQueryPolicy", timePolicy], ["timeCapacityVisibility", timeVisibility], ["analysisVisibility", visibility], ["cycleEnergyBasis", cycleEnergyBasis],
   ]);
   runInNewContext(compiled, { exports: module.exports, require(id: string) {
     const base = id.split("/").pop()!.replace(/\.tsx?$/, "");

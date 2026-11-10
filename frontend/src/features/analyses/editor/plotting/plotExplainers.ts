@@ -169,7 +169,31 @@ const NORMALIZED: Record<string, string> = {
     "CV charge capacity (mAh/g) = CV charge capacity (mAh) / active material mass (g).",
 };
 
-export function getCycleQuantityExplainer(quantity: string, normalizeByMass: boolean): PlotExplainer {
+export function getCycleQuantityExplainer(quantity: string, normalizeByMass: boolean, fecConvention = "combined_throughput"): PlotExplainer {
+  const fullHistoryNotes = [
+    "Includes every recorded cycle in the ordered Cell source chain before range, protocol or diagnostic filtering.",
+    "A missing required increment makes this and all later dependent totals unavailable. Replicate totals require every included member.",
+  ];
+  if (quantity === "fec") return {
+    title: "Equivalent full cycles (FEC)",
+    formula: fecConvention === "discharge"
+      ? "FEC = cumulative discharge capacity / effective nominal capacity."
+      : "FEC = cumulative (charge + discharge) capacity / (2 × effective nominal capacity).",
+    requires: ["nominal_capacity_mah", "discharge_capacity_mah", ...(fecConvention === "discharge" ? [] : ["charge_capacity_mah"])],
+    notes: [...fullHistoryNotes, "The positive nominal reference is fixed per Cell. Missing references disable FEC only. Group FEC uses the member mean at indexed-cycle alignment."],
+  };
+  if (/^(cumulative_|capacity_throughput|energy_throughput|net_coulomb_imbalance|net_energy_imbalance)/.test(quantity)) {
+    const dimension = quantity.includes("energy") ? "energy" : "capacity";
+    const operation = quantity.includes("throughput") ? "charge + discharge"
+      : quantity.includes("imbalance") ? "charge − discharge"
+      : quantity.includes("discharge") ? "discharge" : "charge";
+    return {
+      title: quantity.replace(/_/g, " "),
+      formula: `Prefix sum of ${operation} ${dimension}, using positive directional magnitudes.${normalizeByMass ? " Divide the Cell total by its active mass in grams." : ""}`,
+      requires: [dimension, ...(normalizeByMass ? ["active_material_mg"] : [])],
+      notes: fullHistoryNotes,
+    };
+  }
   const base = CYCLE_EXPLAINERS[quantity] ?? {
     title: quantity.replace(/_/g, " "),
     formula: "This quantity is read from the cached per-cycle table.",

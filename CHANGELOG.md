@@ -7,6 +7,22 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.1 - 2026-11-09
+
+### New features
+
+- Show current Cell names and direct Cell links for already imported sources in the import browser.
+- Add full-history cumulative capacity and energy quantities, throughput and net imbalance, with combined-throughput or discharge-based equivalent full cycles (FEC) and optional FEC X axes.
+- Preserve cycle identity, reference capacities and FEC conventions in saved plots, point inspection and exports.
+- Calculate net directional energy for verified BioLogic GCPL recordings without native energy counters using signed cell voltage and measured capacity increments; show measured/calculated provenance and preserve unknown or negative-net directions as unavailable.
+
+### Bug fixes
+
+- Consolidate actual source limitations, retain verified BioLogic EIS exclusions, and open the specific source referenced by a warning.
+- Disable FEC choices when no positive nominal capacity is available and explain missing energy independently.
+- Preserve missing-counter uncertainty and fixed replicate membership in cumulative results, including protocol-hidden cycles and filesystems without stable inode identifiers.
+- Offer an available development port when Windows cannot safely identify an occupied port owner.
+
 ## 0.28.0-alpha.27 - 2026-11-09
 
 ### Bug fixes

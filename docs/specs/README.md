@@ -1,5 +1,11 @@
 # Feature specs
 
+- [103 — Cell identification, useful warnings and throughput](103-cell-identification-warnings-and-throughput.md).
+  **Complete; identity, source warnings, cumulative/FEC and signed GCPL energy passed browser/export,
+  private-corpus, frozen, clean-Windows and exact-revision Astra gates.** Children: [103.1](103.1-imported-cell-identification.md),
+  [103.2](103.2-useful-source-limitations.md), [103.3](103.3-cumulative-quantities-and-fec.md),
+  [103.4](103.4-calculated-gcpl-energy.md).
+
 - [102 — Tcl timezone archive and bounded PyArrow packaging](102-tcl-timezones-arrow-packaging.md).
   **Complete; frozen science, clean-Windows preflight and signed native installer gates passed.**
   Preserve both Tcl resource layouts, omit audited Arrow optionals and reduce controlled local

@@ -984,6 +984,11 @@ export function timeCapacityLayout(
 ): Partial<Plotly.Layout> {
   const style = currentPlotStyle(spec, "time_capacity");
   const cfg = timeCapacityConfig(spec);
+  const visibleKeys = result ? timeCapacitySeriesVisibilityCandidates(result, spec).filter((candidate) => !isSeriesHidden(spec, candidate.key)).map((candidate) => candidate.key) : [];
+  const limitationContext = { cellIds: (result?.cell_traces ?? []).filter((s) => {
+    const key = timeCapacityVisibilityKey(s.group_id ? `g${s.group_id}` : `c${s.cell_id}`);
+    return !timeCapacityTraceIsHidden(s, spec) && visibleKeys.some((visible) => visible === key || visible.startsWith(key + "|"));
+  }).map((s) => s.cell_id), cycleBased: cfg.x_axis !== "time" || cfg.view !== "voltage_current" };
   const xTitle = result?.cell_traces[0] ? timeCapacityXAxisTitle(cfg) : "Time (min)";
   const leftCurrentLabel = currentAxisLabel(cfg.current_left ?? "current_ma");
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
@@ -1053,7 +1058,7 @@ export function timeCapacityLayout(
     }, style, [
       referenceAxis("x", `time_capacity:${cfg.view}:x:${specific ? "specific" : "absolute"}`, referenceUnits(xTitle), xTitle),
       referenceAxis("y", `time_capacity:${cfg.view}:y:${specific ? "specific" : "absolute"}`, referenceUnits(yTitle), yTitle),
-    ]), result?.badges);
+    ]), result?.badges, limitationContext);
   }
   return withMprReadNotice(withCycleShadingKey(withReferenceLines({
     height: cfg.stacked ? 620 : 560,
@@ -1198,7 +1203,7 @@ export function timeCapacityLayout(
     referenceAxis("y", `time_capacity:voltage:${[...cfg.voltage_channels].sort().join(",")}`, "V", `Voltage (${voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)}) (V)`),
     ...(cfg.stacked ? [referenceAxis("y2", `time_capacity:left:${cfg.current_left}`, referenceUnits(leftCurrentLabel), leftCurrentLabel)] : []),
     ...(hasRightCurrent ? [referenceAxis(cfg.stacked ? "y3" : "y2", `time_capacity:right:${cfg.current_right}`, referenceUnits(rightCurrentLabel), rightCurrentLabel)] : []),
-  ]), traces), result?.badges);
+  ]), traces), result?.badges, limitationContext);
 }
 
 function TimeCapacityVoltageChannelSelector({

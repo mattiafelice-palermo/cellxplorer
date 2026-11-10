@@ -662,6 +662,10 @@ Interactive plots may use WebGL for responsiveness, but saved thumbnails and por
 fallbacks are persisted artifacts. Updating a saved plot must invalidate and regenerate every
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails
 during every report export when the valid saved artifact already exists.
+`SAVED_PLOT_THUMBNAIL_RENDER_VERSION` participates in `savedPlotPreviewSignature`, which
+also keys the full saved figure reused by portable reports. Increment it when a renderer
+change makes old figure annotations or provenance stale, even if the scientific data signature
+is unchanged; otherwise the live plot can disagree with a retained report figure.
 
 Cycles member rendering, CE Appearance entries and visibility targets share
 `cycleDisplayPolicy.ts`. An individual belongs to the displayed set when its
@@ -1696,6 +1700,16 @@ filesystem access is needed.
 
 ## Disposable Windows workspace cleanup
 
+Windows TCP ownership enumeration can fail independently of actual connectivity.
+On the current development host, a disposable socket proved to be listening while
+`GetExtendedTcpTable` returned state 0, so both `Get-NetTCPConnection -State Listen`
+and netstat's LISTENING filter missed its owner. Never reinterpret that invalid
+state or a zero PID as proof for process termination. The development launcher
+offers a confirmed alternate port, preserving the existing process and forwarding
+the new backend port to Vite. CIM lookup failure must still reach the independent
+netstat fallback. Native owner-based termination tests remain meaningful on hosts
+with valid TCP state reporting; alternate-port tests cover the safe recovery path.
+
 `filesystem_cleanup.py` owns bounded cleanup for explicitly owned temporary or
 staging trees. Windows read-only directory attributes can propagate through
 `copytree` from OneDrive-managed fixtures; directory/file deletion can also briefly
@@ -1722,3 +1736,22 @@ headers retain their original watchdog; cancellation and epochs still win.
 Configuration applies pause/removal immediately with `start_watchers=False`; only
 the admitted monitor thread spawns watchers. Direct isolated SearchIndexer tests
 and benchmarks default to an always-open gate unless they supply admission.
+
+## Full-history cumulative cycle quantities
+
+`cycle_throughput.py` derives cumulative capacity/energy and FEC before protocol,
+range and diagnostic projection. Keep complete member histories separately for
+fixed-cohort aggregation: a hidden member row is not an unknown increment. Raw
+counter availability matters because historical primitive summaries can sum an
+all-missing step as zero. The additive qualifier checks Parquet null statistics
+before materializing suspect counter columns; never reparse original sources.
+It inspects only active-direction rows and preserves paired-source cycle identity.
+Its bounded memo stores only each counter's first unknown cycle. Use raw file
+identity and size, not mtime: cache reads touch mtime for reclamation. Cycles
+result dependencies include that evidence identity so raw-cache arrival/removal
+cannot preserve an obsolete FEC result. Primitive cache identities remain unchanged.
+When a readable filesystem reports no stable inode, bypass the memo and put the
+actual counter-availability outcome in result dependencies. Missing identity is
+not missing evidence. FEC needs a positive effective nominal reference; energy
+does not. GCPL capacity/voltage availability alone does not supply a recorded
+energy summary, and a display range never restarts a cumulative quantity.

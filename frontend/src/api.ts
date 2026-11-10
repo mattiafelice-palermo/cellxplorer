@@ -1348,6 +1348,7 @@ export interface AnalysisSpec {
     exclude_check_cycles_every_n: number;
     retention_reference: { mode: "max_first_n" | "cycle"; n: number; cycle: number | null };
     formation_cycles: number;
+    fec?: { convention: "combined_throughput" | "discharge" };
     polarization: {
       method:
         | "mean"
@@ -1416,6 +1417,7 @@ export interface AnalysisSpec {
   presentation: {
     quantity: string;
     normalize_by_mass?: boolean;
+    cycles_x_axis?: "cycle" | "fec";
     ce_overlay: boolean;
     show_individual_cells: boolean;
     legend: boolean;
@@ -1708,6 +1710,10 @@ export interface SourceDescriptor extends MprReadPresentation {
 export interface Badge {
   kind: string;
   detail: string;
+  source_id?: number;
+  exploratory?: boolean;
+  scientific_interpretation?: MprReadPresentation["scientific_interpretation"];
+  limitations?: MprReadPresentation["interpretation_warnings"];
   cell_id?: number;
   cell_name?: string;
   file?: string;
@@ -1743,6 +1749,15 @@ export interface CellMetrics {
   mean_cv_charge_fraction_pct?: number | null;
 }
 
+export interface EnergyProvenanceEntry {
+  basis: "measured" | "calculated" | "mixed" | "unavailable";
+  reason: string | null;
+  cumulative_basis: "measured" | "calculated" | "mixed" | "unavailable";
+  cumulative_reason: string | null;
+}
+export type EnergyProvenance = Record<"charge" | "discharge", EnergyProvenanceEntry[]>;
+export type EnergyQuantityProvenance = Record<string, Pick<EnergyProvenanceEntry, "basis" | "reason">[]>;
+
 export interface CellSeries {
   cell_id: number;
   cell_name: string;
@@ -1756,6 +1771,9 @@ export interface CellSeries {
   quantities: Record<string, (number | null)[]>;
   metrics: CellMetrics;
   retention_reference_mah: number | null;
+  fec_reference_mah?: number | null;
+  energy_provenance?: EnergyProvenance;
+  energy_policy?: string;
   active_mass_mg: number | null;
   segments: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
   source_descriptors?: SourceDescriptor[];
@@ -1766,6 +1784,8 @@ export interface CellSeries {
 }
 
 export interface AggregateSeries {
+  energy_provenance?: EnergyProvenance;
+  energy_quantity_provenance?: EnergyQuantityProvenance;
   group_id: number;
   group_name: string;
   x: number[];

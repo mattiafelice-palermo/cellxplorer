@@ -681,6 +681,10 @@ def _apply_cycles_projection(projected: dict[str, Any], mode: str) -> dict[str, 
     else:
         return projected
 
+    # The original corpus locks the pre-103 catalogue and quantities. New
+    # full-history quantities have independent raw-to-summary/chain/gap tests.
+    projected["quantities"] = [q for q in projected.get("quantities", []) if q.get("column") in CYCLES_ABSOLUTE_QUANTITIES]
+
     for series in projected.get("cell_series") or []:
         quantities = series.get("quantities") or {}
         series["quantities"] = _filter_mapping(quantities, quantity_keys)
@@ -748,6 +752,12 @@ def project_result(
                             "source_filename",
                             "source_hash",
                             "source_boundary_indices",
+                            # Additive Spec 103 context, independently covered
+                            # by full-chain/FEC reference tests. Historical
+                            # golden projections keep their locked quantities.
+                            "fec_reference_mah",
+                            "energy_provenance",
+                            "energy_policy",
                         ):
                             trace.pop(key, None)
                         if traces_key == "cell_traces":
@@ -759,6 +769,11 @@ def project_result(
                                 "display_cycle_spans",
                             ):
                                 trace.pop(key, None)
+        # Additive GCPL derivation provenance has focused signed-energy and
+        # fixed-cohort tests. Keep every existing numeric golden value locked.
+        for aggregate in projected.get("aggregates") or []:
+            aggregate.pop("energy_provenance", None)
+            aggregate.pop("energy_quantity_provenance", None)
         if projection:
             projected = _apply_cycles_projection(projected, projection)
     return projected

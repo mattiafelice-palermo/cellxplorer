@@ -907,7 +907,7 @@ export function CyclePointInspector({
                   </Tooltip>}
                 </Table.Th>
                 <Table.Th ta="right" w="16%" aria-sort={sort.key === "scientificCycle" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("Original cycle", "scientificCycle")}</Table.Th>
-                <Table.Th ta="right" w="16%" aria-sort={sort.key === "displayedX" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("Plotted cycle", "displayedX")}</Table.Th>
+                <Table.Th ta="right" w="16%" aria-sort={sort.key === "displayedX" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader(spec.presentation.cycles_x_axis === "fec" ? `FEC (${spec.computation.fec?.convention === "discharge" ? "discharge" : "combined"})` : "Plotted cycle", "displayedX")}</Table.Th>
                 <Table.Th ta="right" w="28%" aria-sort={sort.key === "displayedY" ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>{sortHeader(measurePresentation.yHeader, "displayedY")}</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -950,6 +950,7 @@ export function CyclePointInspector({
                               {record.quantityLabel}
                             </Text>
                           )}
+                          {record.energyBasis && <Text size="xs" c="dimmed" lh={1.25} mt={2}>{record.energyBasis}</Text>}
                           </Box>
                         </Group>
                       </Tooltip>

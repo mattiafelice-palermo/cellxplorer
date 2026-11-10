@@ -424,6 +424,7 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
                 "description": plot.get("description"),
                 "tab": tab,
                 "presentation": presentation,
+                "fec_convention": (spec.get("computation", {}).get("fec") or {}).get("convention", "combined_throughput"),
                 "hidden_cycles": hidden_cycles,
                 "hidden_cycle_ranges": diagnostic_cycles.format_ranges(hidden_cycles),
                 "result": result,
@@ -449,6 +450,7 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
                 "description": None,
                 "tab": "cycles",
                 "presentation": analysis.spec.get("presentation", {}),
+                "fec_convention": (analysis.spec.get("computation", {}).get("fec") or {}).get("convention", "combined_throughput"),
                 "result": result,
                 "data_signature": result["data_signature"],
                 "plot_revision": None,
@@ -1278,9 +1280,12 @@ def _html_tail() -> str:
   function viewColumn(view) {
     const quantity = view.presentation?.quantity || "discharge_capacity";
     if (view.presentation?.normalize_by_mass && normalizedQuantityMap[quantity]) {
-      return normalizedQuantityMap[quantity];
+      return { key: normalizedQuantityMap[quantity].column, label: normalizedQuantityMap[quantity].label };
     }
     const info = (view.result.quantities || []).find((item) => item.key === quantity);
+    if (view.presentation?.normalize_by_mass && info && /^(cumulative_|capacity_throughput|energy_throughput|net_coulomb_imbalance|net_energy_imbalance)/.test(quantity)) {
+      return { key: info.column + "_g", label: info.label.replace(/\)$/, "/g)") };
+    }
     return { key: info?.column || "discharge_capacity_mah", label: info?.label || quantity.replaceAll("_", " ") };
   }
   function cycleRows(view) {
@@ -1289,9 +1294,23 @@ def _html_tail() -> str:
     for (const series of view.result.cell_series || []) {
       if (series.excluded) continue;
       const values = series.quantities?.[column.key] || [];
-      (series.x || []).forEach((x, index) => rows.push({ series: series.label, x, y: values[index] }));
+      (series.x || []).forEach((cycle, index) => rows.push({
+        series: series.label,
+        x: view.presentation?.cycles_x_axis === "fec" ? series.quantities?.fec?.[index] ?? null : cycle,
+        cycle, y: values[index], fec_reference_mah: series.fec_reference_mah ?? null,
+        ...(column.key.includes("energy") ? {
+          charge_energy_basis: series.energy_provenance?.charge?.[index]?.basis ?? "",
+          discharge_energy_basis: series.energy_provenance?.discharge?.[index]?.basis ?? "",
+          charge_energy_reason: series.energy_provenance?.charge?.[index]?.reason ?? "",
+          discharge_energy_reason: series.energy_provenance?.discharge?.[index]?.reason ?? "",
+          cumulative_charge_energy_basis: series.energy_provenance?.charge?.[index]?.cumulative_basis ?? "",
+          cumulative_discharge_energy_basis: series.energy_provenance?.discharge?.[index]?.cumulative_basis ?? "",
+          cumulative_charge_energy_reason: series.energy_provenance?.charge?.[index]?.cumulative_reason ?? "",
+          cumulative_discharge_energy_reason: series.energy_provenance?.discharge?.[index]?.cumulative_reason ?? ""
+        } : {})
+      }));
     }
-    return { rows, xLabel: "Cycle", yLabel: column.label };
+    return { rows, xLabel: view.presentation?.cycles_x_axis === "fec" ? "Equivalent full cycles (FEC)" : "Cycle", yLabel: column.label };
   }
   function timeRows(view) {
     const rows = [];
@@ -1719,6 +1738,9 @@ def _html_tail() -> str:
       const ys = Array.from(trace.y || []);
       if (!ys.length) continue;
       const name = String(trace.name || "series");
+      for (const column of trace.cellxplorer_export_columns || []) {
+        columns.push({ header: String(column.header), values: Array.from(column.values || []) });
+      }
       columns.push({ header: `${name} | ${axisTitle(layout, trace, "x")}`, values: xs });
       columns.push({ header: `${name} | ${axisTitle(layout, trace, "y")}`, values: ys });
     }
@@ -1730,6 +1752,7 @@ def _html_tail() -> str:
     const precision = byId("csv-precision").value;
     const decimals = (header) => {
       const value = String(header || "").toLowerCase();
+      if (value.includes("fec") || value.includes("equivalent full")) return 6;
       if (value.includes("cycle")) return 0;
       if (value.includes("time")) return 3;
       if (value.includes("voltage") || value.includes("current")) return 5;

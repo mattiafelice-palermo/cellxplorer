@@ -8,6 +8,7 @@ export type ImportHeaderHint = {
   cycle_count: number | null;
   compatible?: boolean | null;
   registered?: boolean;
+  cells?: { id: number; name: string }[];
   error: string | null;
   source_error_kind?: "unsupported" | "invalid" | null;
 };

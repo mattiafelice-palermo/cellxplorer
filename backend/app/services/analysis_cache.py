@@ -43,7 +43,7 @@ RESULT_SCHEMA_VERSIONS = {
     # Spec 040.3: each kind's persisted "sources" entries gained a "files"
     # array (per-source {hash, position, parser_version}), so a legacy
     # cached payload missing that array must not be served as if it had it.
-    "cycles": 3,
+    "cycles": 5,  # Signed GCPL V dQ energy derivation and provenance.
     # Specs 040.4/041.5: the payload gained a top-level "voltage_channels"
     # availability map, "settings" gained "voltage_channel", and the channel
     # entries now carry resolved role/reference presentation context. Legacy
@@ -240,6 +240,7 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
                 "retention_reference": computation.get("retention_reference") or {},
                 "formation_cycles": computation.get("formation_cycles") or 0,
                 "polarization": computation.get("polarization") or {},
+                "fec": computation.get("fec") or {},
                 "protocol_filter": computation.get("protocol_filter") or {},
             },
             "aggregation": aggregation,
@@ -362,6 +363,8 @@ def _result_fingerprint_payload(
                 # cached result for the cell.
                 "hashes": hashes,
                 "source_parser_versions": [source_versions[h] for h in hashes],
+                **({"cycle_increment_evidence": [engine.cycle_throughput.evidence_identity(engine.stitch.CachedSourceRef(h, source_versions[h])) for h in hashes]} if kind == "cycles" else {}),
+                **({"cycle_energy_evidence": [engine.cycle_energy.dependency_identity(engine.stitch.CachedSourceRef(h, source_versions[h])) for h in hashes]} if kind == "cycles" else {}),
                 "active_mass_mg": engine.cell_active_mass_mg(cell, scalar_metadata.get(cell.id)),
                 "nominal_capacity_mah": engine.cell_nominal_capacity_mah(cell, scalar_metadata.get(cell.id)),
                 "electrode_area_cm2": engine.cell_electrode_area_cm2(cell, scalar_metadata.get(cell.id)),

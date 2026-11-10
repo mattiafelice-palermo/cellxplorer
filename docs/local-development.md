@@ -38,6 +38,12 @@ If either selected backend or frontend port is already occupied, the launcher li
 executable when available. Confirm the prompt with `y` to stop that exact process tree and continue launching;
 answering anything else leaves it running and exits without starting the app.
 
+If Windows cannot identify an occupied port's owner, the launcher offers an available
+replacement port instead. Answer `y` to use it and leave the existing server running.
+The replacement backend port is also passed to Vite's API proxy. The launcher never
+stops a process whose ownership could not be verified; `-StopExisting` reports an
+explicit alternative-port command in this case.
+
 ## Build the Windows installer
 
 ```powershell

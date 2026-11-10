@@ -100,7 +100,7 @@ async function loadCycleTraceRenderer(): Promise<CycleTraceRenderer> {
         const module = await server.ssrLoadModule(
           "/src/features/analyses/editor/families/cycles/CyclePlotCard.tsx",
         );
-        return module.cycleTracesForResult as CycleTraceRenderer;
+        return Object.assign(module.cycleTracesForResult, { layout: module.cyclePlotLayout }) as CycleTraceRenderer;
       } finally {
         await server.close();
       }
@@ -182,6 +182,59 @@ function cellResult(): ComputeResult {
     ],
   } as unknown as ComputeResult;
 }
+
+test("FEC X retains scientific cycle selection and source/export identity", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = cellResult();
+  result.cell_series[0].quantities.fec = [0.7, 1.4, 2.1];
+  result.cell_series[0].fec_reference_mah = 10;
+  const spec = cycleSpec();
+  spec.selection.entries = [{ kind: "cell", ref_id: 1 }];
+  spec.presentation.cycles_x_axis = "fec";
+  const traces = render(result, spec, false, true) as unknown as Record<string, any>[];
+  const primary = traces.find((t) => t.meta?.cellxplorerCycleSelection?.axis === "y")!;
+  assert.deepEqual(primary.x, [0.7, 1.4, 2.1]);
+  assert.deepEqual(primary.meta.cellxplorerCycleSelection.scientificCycles, [1, 2, 3]);
+  assert.deepEqual(primary.cellxplorer_export_columns.find((c: any) => c.header === "Global cycle").values, [1, 2, 3]);
+  assert.deepEqual(primary.cellxplorer_export_columns.find((c: any) => c.header === "FEC reference (mAh)").values, [10, 10, 10]);
+  const ce = traces.find((t) => t.meta?.cellxplorerCycleSelection?.axis === "y2")!;
+  assert.deepEqual(ce.x, primary.x);
+  assert.deepEqual(ce.cellxplorer_export_columns, primary.cellxplorer_export_columns);
+  assert.match(primary.hovertemplate, /FEC %\{x/);
+  assert.match(ce.hovertemplate, /FEC %\{x/);
+  const boundary = traces.find((t) => t.name === "Source boundary")!;
+  assert.deepEqual(boundary.x, [2.1]);
+});
+
+test("FEC X uses aligned member mean and leaves an unknown reference as a gap", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = aggregateResult();
+  result.aggregates[0].quantities.fec = { mean: [0.8, null], band_low: [null, null], band_high: [null, null], n: [2, 1] };
+  const spec = cycleSpec();
+  spec.presentation.cycles_x_axis = "fec";
+  const traces = render(result, spec, false, true) as unknown as Record<string, any>[];
+  const primary = traces.find((t) => t.meta?.cellxplorerCycleSelection?.axis === "y")!;
+  assert.equal(primary.x[0], .8);
+  assert.ok(Number.isNaN(primary.x[1]));
+  assert.deepEqual(primary.meta.cellxplorerCycleSelection.scientificCycles, [1, 2]);
+  assert.deepEqual(primary.customdata, [[1, 2], [2, 2]]);
+});
+
+test("FEC quantities use backend values and the existing mass normalization", async () => {
+  const render = await loadCycleTraceRenderer();
+  const result = cellResult();
+  result.quantities.push({ key: "capacity_throughput", column: "capacity_throughput_mah", label: "Capacity throughput (mAh)" });
+  result.cell_series[0].quantities.capacity_throughput_mah = [10, 30, 60];
+  result.cell_series[0].quantities.capacity_throughput_mah_g = [5, 15, 30];
+  const spec = cycleSpec();
+  spec.selection.entries = [{ kind: "cell", ref_id: 1 }];
+  spec.presentation.quantity = "capacity_throughput";
+  spec.presentation.normalize_by_mass = true;
+  const traces = render(result, spec, false, true) as unknown as Record<string, any>[];
+  const primary = traces.find((t) => t.meta?.cellxplorerCycleSelection?.axis === "y")!;
+  assert.deepEqual(primary.y, [5, 15, 30]);
+  assert.deepEqual(primary.x, [1, 2, 3]);
+});
 
 test("group members render CE in Cells only, including independent visibility", async () => {
   const render = await loadCycleTraceRenderer();
@@ -379,4 +432,25 @@ test("Cycles traces expose point metadata only for the live interactive path", a
     ),
     true,
   );
+});
+
+test("fixed-cohort cumulative inspection includes members with hidden display cycles", async()=>{
+ const render=await loadCycleTraceRenderer();const result=aggregateResult();
+ result.quantities=[{key:"fec",column:"fec",label:"FEC"}];
+ result.aggregates[0].quantities.fec={mean:[1,2],band_low:[.9,1.9],band_high:[1.1,2.1],n:[2,2]};
+ result.cell_series=[{cell_id:1,group_id:7,excluded:false,x:[1],quantities:{fec:[1]}},{cell_id:2,group_id:7,excluded:false,x:[1,2],quantities:{fec:[1,2]}}] as any;
+ const spec=cycleSpec();spec.selection.entries=[{kind:"replicate_group",ref_id:7}];spec.presentation.quantity="fec";spec.presentation.show_individual_cells=false;
+ const primary=(render(result,spec,false,true) as any[]).find(t=>t.meta?.cellxplorerCycleSelection?.sampleKind==="replicate");
+ assert.deepEqual(primary.meta.cellxplorerCycleSelection.detailCellIds,[[1,2],[1,2]]);
+});
+
+test("figure limitations follow actual primary and CE series visibility",async()=>{
+ const render=await loadCycleTraceRenderer();const result=cellResult();
+ result.cell_series.push({...result.cell_series[0],cell_id:2,label:"Cell B"});
+ (result as any).badges=[{kind:"exploratory_mpr",cell_id:1,scientific_interpretation:"verified",detail:"EIS executions excluded",limitations:[{code:"biologic_mb_eis_exclusion",message:"EIS executions excluded"}]}];
+ const spec=cycleSpec();spec.selection.entries=[{kind:"cell",ref_id:1},{kind:"cell",ref_id:2}];
+ const layout=(render as any).layout;
+ assert.ok(layout(result,spec,render(result,spec)).annotations.some((a:any)=>a.text.includes("EIS executions excluded")));
+ spec.presentation.hidden_series_ids=["cycles:c1",cycleCeVisibilityKey("c1")];
+ assert.ok(!(layout(result,spec,render(result,spec)).annotations??[]).some((a:any)=>a.text.includes("EIS executions excluded")));
 });

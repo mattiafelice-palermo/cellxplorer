@@ -50,7 +50,7 @@ test("figure notice persists in export layout without changing scientific traces
   const marked = withMprReadNotice(layout, [{ kind: "exploratory_mpr", detail: "Source interpretation uncertain" }]);
   assert.equal(marked.annotations?.length, 2);
   assert.equal(marked.annotations?.[0].text, "Reference");
-  assert.match(marked.annotations?.[1].text ?? "", /Permissive MPR/);
+  assert.match(marked.annotations?.[1].text ?? "", /unverified cycle identity/);
   assert.equal(marked.margin?.t, 40);
   assert.equal(layout.annotations.length, 1);
 });
