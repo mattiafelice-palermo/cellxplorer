@@ -1,8 +1,8 @@
 # 103 verification and independent review
 
-Status: 103.4 implementation and verification in progress after the user's energy
-amendment. Prior gates below apply to `f056af63`; final energy gates and exact-revision
-Astra review remain required. No installer publication is authorized.
+Status: Complete. All integration gates passed for implementation `235d2242`,
+including the user's energy and compact-info refinements. Earlier evidence below
+also describes `f056af63`. No installer publication is authorized.
 
 ## Implemented scope
 
@@ -53,7 +53,8 @@ GPT-6 Astra reviewed the implementation and repeated the review after fixes for
 raw-counter zero-fill evidence, asymmetric protocol masks, source warning scope,
 FEC hover/inspection/export identity, zero-inode evidence, source navigation,
 duplicate warning text and full-cohort inspection. Its focused checks pass.
-Final clean verdict and exact revision are still required before merging.
+Final exact-revision approval for `235d2242` followed the successful clean-Windows
+canonical run linked below; no findings remain.
 
 ## 103.4 energy amendment
 
@@ -79,8 +80,9 @@ Final clean verdict and exact revision are still required before merging.
 - Isolated headless Edge passes point-inspector basis, signs/gaps/efficiency,
   light/dark, save/reload exact figure, CSV/XLSX/PNG and portable figure parity.
   Screenshots were inspected; all artifacts remain private local test outputs.
-- Repeated independent GPT-6 Astra review is clean for the working implementation;
-  exact pushed revision and clean-Windows evidence remain final merge gates.
+- Repeated independent GPT-6 Astra review is clean for exact implementation
+  `235d224262b2843a1b6b03f87f2e191e092f2382`; final verdict approved merge after
+  independently checking the clean-Windows canonical success.
 - User refinement replaces persistent FEC/energy prose and reference/reason lists
   with short phrases and hover/focus info buttons. Figure energy qualification is
   concise, with the signed integral convention in its hover explanation. Saved
@@ -91,8 +93,14 @@ Final clean verdict and exact revision are still required before merging.
 - Final canonical local verification ran all 124 backend modules and 114 frontend
   files with the four-worker Windows budget. All checks pass except the same
   host-native occupied-port owner test; no assertion was skipped or weakened.
-  Clean-Windows canonical acceptance remains required.
+  Clean-Windows canonical acceptance passed, including that native launcher test.
 - A fresh backend-only build passes bundle validation, frozen/source lossless
   science, Arrow/codecs, 609 Tcl zones, archive-backed Python zones and API smoke.
   Its actual frozen Cycles API also reproduces the isolated 1–15 GCPL energy and
   negative-net gap results. No installer was built or published locally.
+
+Final remote gate: [clean-Windows run 42724115095](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42724115095),
+job `129525225136`, passed all four canonical preflight stages for `235d2242`.
+Logs confirm all 123 committed backend modules and 114 frontend files passed,
+including `test_start_webapp`. No assertions or mandatory tests were skipped or
+weakened. Exact-revision Astra review approved the implementation with no blockers.

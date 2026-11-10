@@ -1,6 +1,6 @@
 # 103 — Cell identification, useful warnings, cumulative quantities and FEC
 
-Status: In progress. Non-implementable parent; one shared branch `codex/spec-103-analysis-usability`.
+Status: Complete. Non-implementable parent; implemented on shared branch `codex/spec-103-analysis-usability`.
 User-approved plan; preserve Specs 101–102 installation changes, add no dependencies,
 and do not publish an installer. Implement children sequentially with pushed checkpoints.
 Review document: [103 verification and review](reviews/103-cell-identification-warnings-and-throughput-review.md).
@@ -58,3 +58,9 @@ scientific/packaging checks preserving archive-backed timezone/audited Arrow beh
 No skipping local launcher failures; use clean-Windows verification if needed.
 Independent GPT-6 Astra review of final diff/evidence; fix, retest and repeat until clean.
 Only then merge and push main. No real-library mutation or installer publication.
+
+Closure: all children, isolated browser/export acceptance, both private corpora,
+frozen science/API checks and independent exact-revision Astra review passed.
+[Clean-Windows canonical preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42724115095)
+passed for `235d2242`, including native occupied-port acceptance. See the review
+document for evidence and the preserved local-host verification boundary.
