@@ -302,7 +302,8 @@ def write_raw_mpr_layout(
     return output
 
 
-def write_cp_mpr(path: str | Path, *, times=(0., 10., 20., 30., 40., 50.), shift=0.) -> Path:
+def write_cp_mpr(path: str | Path, *, times=(0., 10., 20., 30., 40., 50.), shift=0.,
+                 loop_indexes: tuple[int, ...] | None = None) -> Path:
     """Independent encoder for the observed 49-byte CP electrode layout."""
     columns = (1, 2, 3, 21, 31, 65, 131, 4, 20, 174, 185, 264, 179, 434, 468, 467, 295)
     records = bytearray(49 * len(times))
@@ -312,9 +313,14 @@ def write_cp_mpr(path: str | Path, *, times=(0., 10., 20., 30., 40., 50.), shift
         struct.pack_into('<fffIdH', records, base + 23, 2. if i < len(times) // 2 else -2., 0., 0., 0, float(i), 10)
     data = (struct.pack('<IB', len(times), len(columns)) + struct.pack(f'>{len(columns)}H', *columns))
     data = data.ljust(VMP_DATA_RECORD_OFFSET, b'\0') + records
-    Path(path).write_bytes(MPR_MAGIC + _module(short_name=b'VMP Set', long_name=b'VMP settings',
+    content = MPR_MAGIC + _module(short_name=b'VMP Set', long_name=b'VMP settings',
         payload=b'\x19' + bytes(31), version=10) + _module(short_name=b'VMP data',
-        long_name=b'VMP data', payload=data, version=11))
+        long_name=b'VMP data', payload=data, version=11)
+    if loop_indexes is not None:
+        payload = struct.pack('<I', len(loop_indexes)) + struct.pack(f'<{len(loop_indexes)}I', *loop_indexes)
+        content += _module(short_name=b'VMP loop', long_name=b'VMP expt. loop indexes',
+            payload=payload.ljust(280, b'\0'), version=10)
+    Path(path).write_bytes(content)
     return Path(path)
 
 

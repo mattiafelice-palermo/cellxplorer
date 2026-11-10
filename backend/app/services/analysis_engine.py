@@ -892,7 +892,7 @@ def _resolve_time_capacity_voltage_context(
             capability = _persisted_voltage_capabilities(source_file)
             resolved = (parser_versions or {}).get(source_file.hash)
             if (resolved and parsing._has_cp_electrodes(source_file.header_meta)
-                    and f"cp{parsing.biologic_cp_ocv.CP_ELECTRODE_MAPPING_REVISION}" not in resolved.split(":")):
+                    and not parsing.biologic_cp_ocv.has_corrected_electrode_mapping(resolved)):
                 # Historical CP artifacts contain Ewe in voltage_v. The live
                 # header may already describe a newer corrected cache.
                 capability = canonical_cycling.voltage_capabilities(
@@ -1287,6 +1287,16 @@ def _downsample_indices(
         fill = np.linspace(0, length - 1, max_points - len(selected) + 2).astype("int64")
         selected = np.union1d(selected, fill)
     return selected
+
+
+def time_capacity_boundary_sample_rows(raw: pd.DataFrame, source_boundaries: np.ndarray) -> np.ndarray:
+    """Retain both sides of explicit boundaries before display decimation."""
+    boundaries = np.asarray(source_boundaries, dtype="int64")
+    if "mpr_acquisition_segment" in raw.columns:
+        from . import exploratory_plotting
+        boundaries = np.union1d(boundaries, exploratory_plotting.break_before(raw))
+    boundaries = boundaries[(boundaries > 0) & (boundaries < len(raw))]
+    return np.union1d(boundaries - 1, boundaries).astype("int64")
 
 
 def time_capacity_sampling_metadata(
@@ -4887,7 +4897,7 @@ def compute_time_capacity(
             with time_capacity_path.timed_stage(
                 profile_diagnostics, "display_post_downsample_materialization"
             ):
-                take = np.unique(np.concatenate((take, source_boundary_indices)))
+                take = np.union1d(take, time_capacity_boundary_sample_rows(raw, source_boundary_indices))
                 raw = raw.iloc[take]
                 display_row_indices = take if display_row_indices is None else display_row_indices[take]
                 display_x = display_x[take]

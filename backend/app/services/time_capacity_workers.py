@@ -976,7 +976,7 @@ def _cell_result(
             take = analysis_engine._downsample_indices(
                 len(raw), request.display_max_points_per_cell, visible_values, envelope_series
             )
-        take = np.unique(np.concatenate((take, source_boundary_indices)))
+        take = np.union1d(take, analysis_engine.time_capacity_boundary_sample_rows(raw, source_boundary_indices))
         raw = raw.iloc[take]
         display_row_indices = take if display_row_indices is None else display_row_indices[take]
         display_x = display_x[take]

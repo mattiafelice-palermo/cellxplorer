@@ -85,20 +85,25 @@ agreed within 1.14e-13. No golden values or scientific tolerances were changed.
 
 ## CP electrode regression
 
-The separate ignored `spec107-cp` corpus contains four immutable CP sources.
-Each source has its own frozen whole-source baseline. The four-source ordered
-Cell is checked independently with:
+The ignored `spec107-cp` corpus retains four immutable CP sources and their
+frozen CP2 expectations. The separate `spec108-cp` corpus holds the current CP3
+baselines; the former is preserved historical evidence and is not refreshed
+with the new parser. The current four-source ordered Cell is checked with:
 
 ```powershell
-python scripts/verify_cp_electrode_corpus.py --root .local-regression/parser-corpus/spec107-cp
-python scripts/parser_regression_corpus.py --root .local-regression/parser-corpus/spec107-cp verify
+python scripts/verify_cp_electrode_corpus.py --root .local-regression/parser-corpus/spec108-cp
+python scripts/parser_regression_corpus.py --root .local-regression/parser-corpus/spec108-cp verify
 ```
 
 The oracle decodes the observed 49-byte/17-ID layout using explicit byte offsets,
 without the production reader dtype. It checks every recorded Ewe/Ece and signed
 difference after cache reload, consecutive acquisition time, full/compact
 Time/Capacity and a selected-range native export of all three channels. Its
-supported layout is intentionally exact and fails on other column sequences.
+CP3 checks also compare explicit loop segments with the independently observed
+table and require both adjacent original samples at every full/compact boundary.
+All prior raw columns and cycle results were compared exactly with retained
+CP2 Parquet before capturing the new baseline; only the segment column is new.
+The supported layout is intentionally exact and fails on other column sequences.
 The single-source frozen checks and ordered-chain oracle complement each other:
 reversing CP half-sources can change their physical charge/discharge pairing,
 so scalar order independence is not assumed for that four-source chain.

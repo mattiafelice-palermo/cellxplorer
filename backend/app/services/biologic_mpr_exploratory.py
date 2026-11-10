@@ -66,13 +66,20 @@ def map_measurements(document: MprDocument, error: Exception) -> pd.DataFrame:
     # Preserve acquisition order and native elapsed clock. Each regression starts
     # a separate display segment; canonical step time is local to that segment.
     regression = np.r_[False, np.diff(time) < 0]
+    loop_boundary = np.zeros(len(time), dtype=bool)
+    if cp_counter:
+        from .biologic_cp_ocv import recorded_loop_indexes
+        loop_indexes = recorded_loop_indexes(document)
+        if loop_indexes is not None:
+            loop_boundary[list(loop_indexes[1:-1])] = True
     boundaries = np.r_[True, np.diff(ns) != 0] | regression
     starts = np.maximum.accumulate(np.where(boundaries, np.arange(len(time)), 0))
     steps = np.cumsum(boundaries)
-    segments = 1 + np.cumsum(regression)
+    segments = 1 + np.cumsum(regression | loop_boundary)
+    storage_cycles = 1 + np.cumsum(regression)
     frame = pd.DataFrame({
         "record_index": np.arange(1, len(time) + 1, dtype=np.int64),
-        "cycle": segments, "step_index": ns + 1, "step": steps,
+        "cycle": storage_cycles, "step_index": ns + 1, "step": steps,
         "status": "Unverified", "time_s": time - time[starts],
         "voltage_v": working if counter is None else working - counter,
         "current_ma": np.nan, "charge_capacity_mah": np.nan,

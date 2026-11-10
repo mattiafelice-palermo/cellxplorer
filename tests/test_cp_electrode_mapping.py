@@ -48,11 +48,11 @@ class CpElectrodeMappingTests(unittest.TestCase):
         self.cache_patch.stop()
         self.temp.cleanup()
 
-    def ingest(self, index=0):
-        return scanner.ingest_path(self.db, write_cp_mpr(self.root / f'cp{index}.mpr', shift=index / 10), parse_now=True)
+    def ingest(self, index=0, **options):
+        return scanner.ingest_path(self.db, write_cp_mpr(self.root / f'cp{index}.mpr', shift=index / 10, **options), parse_now=True)
 
-    def chain(self, count=2):
-        sources = [self.ingest(i) for i in range(count)]
+    def chain(self, count=2, **options):
+        sources = [self.ingest(i, **options) for i in range(count)]
         cell = Cell(name='CP electrodes')
         self.db.add(cell); self.db.flush()
         test = Test(cell_id=cell.id, name='internal')
@@ -74,7 +74,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
         np.testing.assert_array_equal(raw.working_potential_v, we)
         np.testing.assert_array_equal(raw.counter_potential_v, ce)
         np.testing.assert_array_equal(raw.voltage_v, we - ce)
-        self.assertEqual(sf.parser_version, LEGACY + ':cp2')
+        self.assertEqual(sf.parser_version, LEGACY + ':cp3')
         capabilities = sf.header_meta[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY]
         self.assertEqual(capabilities['voltage_roles']['voltage_v'], 'cell')
         self.assertTrue(capabilities['voltage_v_derived'])
@@ -88,7 +88,112 @@ class CpElectrodeMappingTests(unittest.TestCase):
         self.assertTrue(exploratory.charge_capacity_mah.isna().all())
         self.assertFalse(exploratory.cycle_complete.any())
         self.assertEqual(exploratory.mpr_elapsed_time_s.tolist(), [0, 10, 3, 7, 8, 9])
-        self.assertEqual(parsing.parser_identity(path, read_mode='permissive'), LEGACY + ':cp2:p1')
+        self.assertEqual(parsing.parser_identity(path, read_mode='permissive'), LEGACY + ':cp3:p1')
+
+    def test_loop_breaks_use_declared_indexes_and_never_a_time_threshold(self):
+        from app.services import biologic_cp_ocv
+        ordinary = write_cp_mpr(self.root / 'ordinary.mpr')
+        declared = write_cp_mpr(self.root / 'declared.mpr', loop_indexes=(0, 2, 4, 6))
+        baseline = parsing.parse_timeseries(ordinary)
+        frame = parsing.parse_timeseries(declared)
+        pd.testing.assert_frame_equal(frame.drop(columns='mpr_acquisition_segment'), baseline, check_exact=True)
+        self.assertEqual(frame.mpr_acquisition_segment.tolist(), [1, 1, 2, 2, 3, 3])
+        self.assertEqual(analysis_engine._phase_from_raw(frame), analysis_engine._phase_from_raw(baseline))
+        pd.testing.assert_frame_equal(calc.per_cycle(frame), calc.per_cycle(baseline), check_exact=True)
+        sparse = write_cp_mpr(self.root / 'sparse.mpr', times=(0, .5, 1000, 1000.5, 2000, 2000.5))
+        self.assertNotIn('mpr_acquisition_segment', parsing.parse_timeseries(sparse))
+        with parsing.biologic_mpr.read_mpr(declared) as document:
+            self.assertEqual(biologic_cp_ocv.recorded_loop_indexes(document), (0, 2, 4, 6))
+        # Unsupported annotations must not withdraw or modify voltage records.
+        content = declared.read_bytes()
+        variations = {
+            'duplicate-module': content + content[-345:],
+            'unordered': write_cp_mpr(self.root / 'bad-order.mpr', loop_indexes=(0, 4, 2, 6)).read_bytes(),
+            'past-end': write_cp_mpr(self.root / 'bad-end.mpr', loop_indexes=(0, 2, 7)).read_bytes(),
+            'no-first-zero': write_cp_mpr(self.root / 'bad-first.mpr', loop_indexes=(1, 2, 6)).read_bytes(),
+            'no-terminal': write_cp_mpr(self.root / 'bad-terminal.mpr', loop_indexes=(0, 2, 5)).read_bytes(),
+            'nonzero-padding': content[:-1] + b'\1',
+        }
+        for offset in (-280, -280 - 12, -280 - 16):
+            changed = bytearray(content); changed[offset:offset + 4] = b'\xff' * 4
+            variations[f'changed-{offset}'] = bytes(changed)
+        for name, value in variations.items():
+            with self.subTest(annotation=name):
+                path = self.root / f'{name}.mpr'; path.write_bytes(value)
+                result = parsing.parse_timeseries(path)
+                pd.testing.assert_frame_equal(result, baseline, check_exact=True)
+        # Explicit permissive fallback keeps both loop and native clock boundaries.
+        bad_clock = write_cp_mpr(self.root / 'declared-clock.mpr', times=(0, 1, 2, 0, 1, 2), loop_indexes=(0, 2, 4, 6))
+        exploratory = parsing.parse_timeseries(bad_clock, read_mode='permissive')
+        self.assertEqual(exploratory.mpr_acquisition_segment.tolist(), [1, 1, 2, 3, 4, 4])
+        self.assertEqual(exploratory.cycle.tolist(), [1, 1, 1, 2, 2, 2])
+        old_clock = write_cp_mpr(self.root / 'old-clock.mpr', times=(0, 1, 2, 0, 1, 2))
+        previous = parsing.parse_timeseries(old_clock, read_mode='permissive')
+        pd.testing.assert_frame_equal(exploratory.drop(columns='mpr_acquisition_segment'),
+            previous.drop(columns='mpr_acquisition_segment'), check_exact=True)
+
+    def test_source_loop_boundaries_survive_both_paths_and_decimation(self):
+        from app.services import time_capacity_reusable
+        sources, cell, spec = self.chain(times=tuple(np.arange(1200) / 2), loop_indexes=(0, 399, 801, 1200))
+        expected_breaks = [399, 801, 1200, 1599, 2001]
+        for baseline in (False, True):
+            with patch.object(time_capacity_workers, 'try_compute_time_capacity', return_value=None) if baseline else patch.object(time_capacity_workers, '_run_serial', wraps=time_capacity_workers._run_serial):
+                result = analysis_engine.compute_time_capacity(self.db, spec, None, precision='full')
+            trace = result['cell_traces'][0]
+            self.assertEqual(trace['display_break_before'], expected_breaks)
+            self.assertEqual(len(trace['voltage_v']), 2400)
+            self.assertNotIn('unverified', trace['phase'])
+        plan = {'x_title': 'Time (s)', 'traces': [{'cell_id': cell.id, 'group_id': None,
+            'current_name': cell.name, 'voltage_series': [{'channel': q, 'name': q,
+                'y_title': result['voltage_channels'][q]['label']} for q in CHANNELS]}]}
+        target = self.root / 'loop-records.parquet'
+        time_capacity_workers.write_time_capacity_data_export(result, plan,
+            analysis_engine.time_capacity_settings(spec['computation']), target,
+            export_format='parquet', data_precision='full')
+        exported = pd.read_parquet(target)
+        self.assertEqual(len(exported), 2400)
+        for q in CHANNELS:
+            column = next(c for c in exported if c.startswith(q + ' |') and result['voltage_channels'][q]['label'] in c)
+            np.testing.assert_array_equal(exported[column], trace['voltage_v_by_channel'][q])
+        spec['computation']['time_capacity']['max_points_per_cell'] = 800
+        for baseline in (False, True):
+            with patch.object(time_capacity_workers, 'try_compute_time_capacity', return_value=None) if baseline else patch.object(time_capacity_workers, '_run_serial', wraps=time_capacity_workers._run_serial), \
+                patch.object(analysis_engine, '_downsample_indices', side_effect=lambda length, *args: np.array([0, length - 1], dtype='int64')):
+                compact = analysis_engine.compute_time_capacity(self.db, spec, None, precision='standard', compact=True)
+            trace = compact['cell_traces'][0]
+            self.assertEqual(trace['display_break_before'], [2, 4, 6, 8, 10])
+            self.assertEqual(len(trace['display_x']), 12)
+        selected = deepcopy(spec); selected['computation']['time_capacity']['cycle_start'] = 2
+        trace = analysis_engine.compute_time_capacity(self.db, selected, None, precision='full')['cell_traces'][0]
+        self.assertEqual(trace['display_break_before'], [399, 801])
+        built = time_capacity_workers._build_jobs(self.db, spec, None, use_current_versions=False,
+            viewport_width=1200, precision='standard', compact=True)
+        self.assertIsNotNone(built)
+        self.assertIsNone(time_capacity_reusable.artifact_key(built[0][0], built[1]))
+        # CP2 caches already contain corrected cell voltage and retain that role.
+        pins = {'sources': [{'cell_id': cell.id, 'files': []}]}
+        for sf in sources:
+            cp2 = cache.load_raw(sf.hash, sf.parser_version).drop(columns='mpr_acquisition_segment')
+            cache._publish_optimized_raw(cp2, cache.raw_path(sf.hash, LEGACY + ':cp2'), LEGACY + ':cp2')
+            pins['sources'][0]['files'].append({'hash': sf.hash, 'parser_version': LEGACY + ':cp2'})
+        historical = analysis_engine.compute_time_capacity(self.db, spec, pins, precision='full')
+        self.assertEqual(historical['voltage_channels']['voltage']['role'], 'cell')
+        self.assertTrue(historical['voltage_channels']['working_potential']['available'])
+        self.assertEqual(historical['cell_traces'][0]['display_break_before'], [])
+
+    def test_derivative_stays_inside_declared_loops(self):
+        path = write_cp_mpr(self.root / 'derivative.mpr', times=tuple(range(18)), loop_indexes=(0, 6, 12, 18))
+        frame = parsing.parse_timeseries(path)
+        frame['segment'] = 0
+        phase = analysis_engine._phase_from_raw(frame)
+        capacity = np.arange(len(frame), dtype=float)
+        for view in ('dqdv', 'dvdq'):
+            settings = {'view': view, 'smoothing_window': 5}
+            actual = analysis_engine._derivative_curve(frame, phase, capacity, capacity, settings)
+            separate = [analysis_engine._derivative_curve(frame.iloc[a:b], phase[a:b], capacity[a:b], capacity[a:b], settings)
+                for a, b in ((0, 6), (6, 12), (12, 18))]
+            for i in (0, 1):
+                np.testing.assert_allclose(actual[i], np.concatenate([part[i] for part in separate]), rtol=0, atol=0, equal_nan=True)
 
     def test_scalar_identity_matches_python_and_does_not_load_deferred_headers(self):
         headers = [HEADER, {'raw': HEADER}, {'technique': 'CP'},
@@ -197,7 +302,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
     def test_raw_preview_repairs_online_cp_and_rejects_offline_legacy(self):
         sf = self.ingest(); sf.parser_version = LEGACY
         data = preview_file(sf.id, kind='raw', db=self.db)
-        self.assertEqual(sf.parser_version, LEGACY + ':cp2')
+        self.assertEqual(sf.parser_version, LEGACY + ':cp3')
         self.assertGreater(min(data['voltage_v']), 1.)
         sf.parser_version = LEGACY; sf.path = str(self.root / 'missing.mpr')
         with self.assertRaises(HTTPException) as context:
@@ -269,7 +374,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
                 restored.path = str(original_path); restored.location_status = 'online'
                 self.assertTrue(scanner._needs_identity_bring_forward(restored))
                 scanner.parse_file(imported_db, restored)
-                self.assertEqual(restored.parser_version, LEGACY + ':cp2')
+                self.assertEqual(restored.parser_version, LEGACY + ':cp3')
                 self.assertFalse(scanner._needs_identity_bring_forward(restored))
         finally:
             imported_engine.dispose()

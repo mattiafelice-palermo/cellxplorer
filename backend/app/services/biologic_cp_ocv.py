@@ -9,6 +9,7 @@ appearing as measured full cycles.
 from __future__ import annotations
 
 from typing import Any, Mapping
+import struct
 
 import numpy as np
 import pandas as pd
@@ -19,8 +20,42 @@ from .biologic_gcpl import decode_gcpl_log, InvalidBiologicGcplError
 BIOLOGIC_CP_OCV_ADAPTER_REVISION = 1
 # Keep the legacy family revision stable for unrelated techniques. Only CP
 # sources with recorded Ece use this additional effective parser revision.
-CP_ELECTRODE_MAPPING_REVISION = 2
+CP_ELECTRODE_MAPPING_REVISION = 3
 _CURRENT_TOLERANCE_MA = 1e-6
+
+
+def has_corrected_electrode_mapping(parser_identity: str) -> bool:
+    """CP2 already stores signed cell voltage; later annotations do not undo it."""
+    return any(token.startswith("cp") and token[2:].isdigit() and int(token[2:]) >= 2
+               for token in str(parser_identity).split(":"))
+
+
+def recorded_loop_indexes(source: Any) -> tuple[int, ...] | None:
+    """Decode the observed CP loop envelope, without inferring pauses from time.
+
+    An unverified annotation never withdraws otherwise readable voltage rows.
+    The terminal index is an end sentinel, not an additional empty loop.
+    """
+    if not isinstance(source, biologic_mpr.MprDocument):
+        return None
+    modules = [module for module in source.modules if module.short_name == "VMP loop"]
+    if len(modules) != 1:
+        return None
+    module = modules[0]
+    if (module.version != 10 or module.old_version != 0
+            or module.long_name != "VMP expt. loop indexes" or module.length != 280):
+        return None
+    payload = bytes(module.payload)
+    count = struct.unpack_from("<I", payload)[0]
+    if not 2 <= count <= 69:
+        return None
+    end = 4 + count * 4
+    indexes = struct.unpack_from(f"<{count}I", payload, 4)
+    if (indexes[0] != 0 or indexes[-1] != source.vmp_data.n_datapoints
+            or any(a >= b for a, b in zip(indexes, indexes[1:]))
+            or any(payload[end:])):
+        return None
+    return indexes
 
 
 def electrode_voltage_capabilities() -> dict:
@@ -176,6 +211,11 @@ def map_curve_to_canonical(
     if counter is not None:
         frame_values["working_potential_v"] = working
         frame_values["counter_potential_v"] = counter
+        loop_indexes = recorded_loop_indexes(source)
+        if loop_indexes is not None and len(loop_indexes) > 2:
+            frame_values["mpr_acquisition_segment"] = np.searchsorted(
+                loop_indexes[1:-1], np.arange(len(records)), side="right",
+            ) + 1
 
     if acquisition_start is None and isinstance(source, biologic_mpr.MprDocument):
         acquisition_start = decode_gcpl_log(source.vmp_log).get("start_time")

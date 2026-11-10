@@ -482,3 +482,34 @@ test("exploratory voltage curves retain native backward clocks and gaps without 
   const current = exported[0].cellxplorer_export_columns?.find((column) => column.header === "Current (mA)");
   assert.ok(!current || current.values.every((value) => value == null));
 });
+
+test("declared CP loop breaks reach all three interactive and exported voltage channels", async () => {
+  const result = makeResult();
+  const trace = result.cell_traces[0];
+  trace.cycle = Array(8).fill(1);
+  trace.time_s = [0, 1, 1000, 1001, 1002, 1003, 1004, 1005];
+  trace.display_x = trace.time_s;
+  // A long interval inside a loop stays connected; the ordinary interval
+  // at the explicit source loop boundary is disconnected.
+  trace.display_break_before = [4];
+  trace.voltage_v = [3, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7];
+  trace.voltage_v_by_channel = {
+    voltage: trace.voltage_v,
+    working_potential: trace.voltage_v.map(v => (v as number) - 1),
+    counter_potential: Array(8).fill(-1),
+  };
+  trace.current_ma = Array(8).fill(2);
+  trace.phase = Array(8).fill("charge");
+  trace.status = Array(8).fill("CC_Chg");
+  trace.source_position = Array(8).fill(1);
+  trace.source_filename = Array(8).fill("cp.mpr");
+  trace.source_hash = Array(8).fill("cp");
+  const { interactive } = await assertParity(result, makeSpec({
+    voltage_channels: ["voltage", "working_potential", "counter_potential"],
+  }));
+  assert.equal(interactive.length, 3);
+  for (const rendered of interactive) {
+    assert.deepEqual(rendered.x, [0, 1, 1000, 1001, null, 1002, 1003, 1004, 1005]);
+    assert.equal((rendered.y as unknown[]).filter(v => v != null).length, 8);
+  }
+});

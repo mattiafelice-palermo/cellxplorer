@@ -631,7 +631,7 @@ exercise signs, boundaries, cache replacement, paired/ordinary chains and groups
 
 Verified CP sources with recorded mean Ewe (base 174) and Ece (base 185)
 store both auxiliary potentials and signed primary voltage Ewe minus Ece.
-Only these sources add `:cp2` before the optional `:p1` read-mode suffix;
+Only these sources add a CP revision before the optional `:p1` read-mode suffix;
 the MPR family identity and global calculation identity stay unchanged.
 Structural CP technique/field-offset evidence, rather than filename or
 capability claims, determines the suffix. `SourceFile.cp_electrodes_recorded`
@@ -647,3 +647,20 @@ Startup must publish current identity and capabilities on a validated cache
 hit as well as a fresh parse. Portable import must retain the embedded legacy
 identity until a corrected build succeeds and reject contradictory read modes.
 See `test_cp_electrode_mapping.py` for byte, cache-hit, replay and import checks.
+
+CP2 introduced corrected electrode roles. CP3 additionally carries explicit
+recorded-loop display segments from the verified `VMP loop` table. CP2 pinned
+artifacts therefore still use cell-voltage labels; compare the meaning of the
+historical revision rather than requiring it to equal the current CP revision.
+The bounded loop decoder accepts the observed v10/old-v0, 280-byte envelope,
+ordered zero-based boundaries and final row-count sentinel. Unsupported tables
+leave otherwise verified voltage rows readable without inferred breaks. Long
+sampling intervals and raw half-cycle transitions alone never create a segment.
+
+Use `mpr_acquisition_segment` for these source-defined loop boundaries. Adding
+`mpr_elapsed_time_s` would incorrectly mark verified CP phases unverified.
+In Permissive fallback, clock-derived storage cycles remain separate from the
+combined loop/clock display segments. Pin both sides of explicit boundaries
+before decimation and derive response break indexes after sampling. Derivative
+smoothing/calculation also stays inside each explicit segment. Numeric exports
+retain every recorded row; interactive and graphical exports share line breaks.

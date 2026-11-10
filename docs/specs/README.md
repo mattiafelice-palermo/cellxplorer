@@ -1,5 +1,9 @@
 # Feature specs
 
+- [108 — Source-evidenced CP loop display boundaries](108-cp-loop-display-boundaries.md).
+  **Implemented; Astra/browser/private-corpus passed, clean-Windows gate pending.**
+  Split drawn CP curves at validated source loop boundaries; never infer breaks from elapsed time alone.
+
 - [107 — CP electrode potentials and scoped cache repair](107-cp-electrode-potentials.md).
   **Complete; Astra, browser, private-corpus and clean-Windows preflight passed.**
   Preserve and expose Ewe, Ece and Ewe−Ece in sequential CP plots with scoped cache repair.

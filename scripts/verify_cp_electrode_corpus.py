@@ -29,6 +29,7 @@ def decode(path: Path) -> dict[str, np.ndarray]:
         raise ValueError('Unexpected MPR envelope')
     cursor = 52
     data = None
+    loop_payloads = []
     technique = None
     while cursor < len(content):
         if content[cursor:cursor + 6] != b'MODULE':
@@ -40,6 +41,7 @@ def decode(path: Path) -> dict[str, np.ndarray]:
             raise ValueError('Truncated module')
         if name == b'VMP Set': technique = payload[0]
         if name == b'VMP data': data = payload
+        if name == b'VMP loop': loop_payloads.append(payload)
         cursor += 65 + length
     if technique != 25 or data is None:
         raise ValueError('Expected CP')
@@ -50,7 +52,15 @@ def decode(path: Path) -> dict[str, np.ndarray]:
     def array(offset, fmt):
         return np.array([struct.unpack_from(fmt, data, 1007 + 49 * i + offset)[0] for i in range(rows)], dtype=float)
     time, we, ce = array(3, '<d'), array(15, '<f'), array(19, '<f')
-    return {'time': time - time[0], 'voltage': we - ce, 'working_potential': we, 'counter_potential': ce}
+    if len(loop_payloads) != 1 or len(loop_payloads[0]) != 280:
+        raise ValueError('Expected one observed loop table')
+    # This corpus oracle deliberately accepts exactly the independently
+    # inspected four-block table, rather than reusing production validation.
+    expected_loops = (0, 7201, 14402, 21603, 28804)
+    if struct.unpack_from('<6I', loop_payloads[0]) != (5, *expected_loops):
+        raise ValueError('Unexpected original loop table')
+    return {'time': time - time[0], 'voltage': we - ce, 'working_potential': we,
+        'counter_potential': ce, 'loop_indexes': np.asarray(expected_loops)}
 
 
 def verify(root: Path, work: Path) -> dict:
@@ -77,6 +87,8 @@ def verify(root: Path, work: Path) -> dict:
             np.testing.assert_array_equal(raw.time_s, values['time'])
             for q, col in zip(channels, ['voltage_v', 'working_potential_v', 'counter_potential_v']):
                 np.testing.assert_array_equal(raw[col], values[q])
+            expected_segments = np.repeat(np.arange(1, 5), 7201)
+            np.testing.assert_array_equal(raw.mpr_acquisition_segment, expected_segments)
         cell = Cell(name='Private CP regression'); db.add(cell); db.flush()
         internal = Test(cell_id=cell.id, name='internal'); db.add(internal); db.flush()
         db.add_all([TestFile(test_id=internal.id, file_id=sf.id, position=i) for i, sf in enumerate(sources)])
@@ -86,13 +98,18 @@ def verify(root: Path, work: Path) -> dict:
         spec['computation']['time_capacity'] = {'view': 'voltage_current', 'x_axis': 'time',
             'display_mode': 'consecutive', 'time_unit': 'min', 'cycle_start': 1,
             'voltage_channels': channels, 'max_points_per_cell': 200000}
-        x = []; offset = 0.
+        x = []; offset = 0.; expected_breaks = []
         for values in oracle.values():
+            start = len(x)
+            if start: expected_breaks.append(start)
+            expected_breaks.extend((start + values['loop_indexes'][1:-1]).tolist())
             x.extend((values['time'] / 60 + offset).tolist()); offset = x[-1]
         for compact, precision in [(False, 'full'), (True, 'full'), (True, 'standard')]:
             result = analysis_engine.compute_time_capacity(db, spec, None, compact=compact, precision=precision)
             trace = result['cell_traces'][0]
             if precision == 'full':
+                if trace['display_break_before'] != expected_breaks:
+                    raise ValueError('Full-resolution loop/source breaks disagree with the source tables')
                 np.testing.assert_allclose(trace['display_x'], x, rtol=0, atol=2e-12)
                 for q in channels:
                     np.testing.assert_array_equal(trace['voltage_v_by_channel'][q], np.concatenate([v[q] for v in oracle.values()]))
@@ -110,6 +127,12 @@ def verify(root: Path, work: Path) -> dict:
                 if not matched.all():
                     first = int(np.flatnonzero(~matched)[0])
                     raise ValueError(f'Compact samples disagree: x={self_x[first]}, actual={actual[first]}, nearest={nearest[first]}, expected_x={x[min(nearest[first], len(x)-1)]}, expected={expected[min(nearest[first],len(x)-1)]}')
+                if len(trace['display_break_before']) != len(expected_breaks):
+                    raise ValueError('Compact loop/source breaks were lost')
+                # Every explicit boundary keeps the adjacent original samples.
+                for position, boundary in zip(trace['display_break_before'], expected_breaks):
+                    np.testing.assert_allclose(self_x[position - 1:position + 1], np.asarray(x)[boundary - 1:boundary + 1], rtol=0, atol=1e-5)
+                    np.testing.assert_allclose(actual[position - 1:position + 1], expected[boundary - 1:boundary + 1], rtol=0, atol=1e-5)
             if not all(result['voltage_channels'][q]['available'] for q in channels):
                 raise ValueError('Missing channel capability')
         full = analysis_engine.compute_time_capacity(db, spec, None, precision='full', compact=True)
@@ -128,7 +151,8 @@ def verify(root: Path, work: Path) -> dict:
     engine.dispose()
     checked_sources(root, manifest)
     return {'sources': len(paths), 'rows': len(x), 'sequential_minutes': offset,
-        'channels': channels, 'independent_bytes_and_export': 'passed'}
+        'channels': channels, 'source_evidenced_loop_boundaries': len(expected_breaks) - len(paths) + 1,
+        'independent_bytes_and_export': 'passed'}
 
 
 if __name__ == '__main__':

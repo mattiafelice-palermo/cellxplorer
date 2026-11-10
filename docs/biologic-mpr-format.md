@@ -316,6 +316,24 @@ working potential in their primary voltage column and retain that role when
 replayed. The same recorded-electrode difference is available to explicit
 Permissive measurement-only fallback without claiming verified cycles/capacity.
 
+The four inspected CP sources also contain one `VMP loop` module with long
+name `VMP expt. loop indexes`, envelope version 10, old version 0 and a 280-byte
+payload. A little-endian u32 count precedes that many u32 zero-based record
+indexes. The observed indexes are 0, 7201, 14402, 21603 and 28804; the last is an
+exclusive end sentinel matching the data record count. The rest of the payload
+is zero. This interpretation is corroborated by the primary
+[eclabfiles format notes](https://github.com/vetschn/eclabfiles/blob/master/src/eclabfiles/mpr.py).
+It identifies recorded loop blocks and does not establish why acquisition
+intervals vary or what occurred between recorded points.
+
+CP3, scoped to the same recorded-Ece sources as CP2, emits explicit display
+segments only for this validated envelope: exactly one module, count 2..69,
+first zero, strict increasing indexes, terminal row count and zero padding.
+Unverified/malformed annotations are ignored while preserving independently
+verified voltage rows. Time spacing does not classify a boundary. All ordinary
+raw quantities, capacity/cycle meaning and original clocks are retained; line
+connections and derivative windows stop at the source-defined boundaries.
+
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
 The direct adapter in `backend/app/services/biologic_gcpl.py` (GCPL adapter revision `gcpl14`,
