@@ -502,9 +502,18 @@ choices first, then the saved-search popup, leaving the loader open.
 
 ### File-search release introduction
 
-`SearchIntroduction` owns the static example, requested local walkthrough and
-expandable guide; `WhatsNewCoordinator` owns eligibility and dismissal. Mount
-the view only while opened so playback and guide state reset on close. The
+`ReleaseIntroduction` owns the four scientific release cards. Its synthetic
+examples reuse the production Plot wrapper, shared analysis styling, Cell preview
+renderer, imported-source identity panel and source-limitations disclosure. Do
+not fabricate screenshot-like controls or navigate to real Cell IDs in examples.
+Keep Previous visible, and reset the tour on close. The isolated browser fixture
+is `frontend/tests/fixtures/releaseIntroductionPreview.html` (no backend required).
+Release-specific, channel-scoped dismissal must not reuse an older search-tour key.
+
+`SearchIntroduction` remains the file-search guide inside the release tour, with
+its static example, requested local walkthrough and expandable guide.
+`WhatsNewCoordinator` owns eligibility and dismissal. Mount the view only while
+opened so playback and guide state reset on close. The
 illustration is native HTML/CSS and clearly labelled as an example, never a
 catalog result or editable input. Keep the video toggle mounted while changing
 the stage so keyboard focus remains on the same button. The dialog header and

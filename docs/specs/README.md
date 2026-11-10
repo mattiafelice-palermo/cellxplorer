@@ -1,7 +1,10 @@
 # Feature specs
 
+- [105 — Scientific What’s New cards and chooser restoration](105-whats-new-release-cards.md).
+  **In progress.** Four scientific cards using production UI; restore the pre-104 Alpha chooser.
+
 - [104 — Balanced Alpha library cards](104-balanced-alpha-library-cards.md).
-  **Complete; browser and clean-Windows preflight passed.** Selectable cards and one Continue action; preserve setup safety.
+  **Superseded by the user's reversal in 105.** Restore the prior Direct actions chooser.
 
 - [103 — Cell identification, useful warnings and throughput](103-cell-identification-warnings-and-throughput.md).
   **Complete; identity, source warnings, cumulative/FEC and signed GCPL energy passed browser/export,

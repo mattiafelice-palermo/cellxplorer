@@ -1,0 +1,8 @@
+.modalContent { display: flex; flex-direction: column; height: 44rem; }
+.modalHeader { flex-shrink: 0; }
+.modalBody { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.surface { flex: 1; min-height: 0; min-width: 0; container-type: inline-size; }
+.work { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.work:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: -2px; }
+.example { min-width: 0; background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6)); }
+.footer { flex-shrink: 0; border-top: 1px solid var(--mantine-color-default-border); padding-top: var(--mantine-spacing-sm); }
