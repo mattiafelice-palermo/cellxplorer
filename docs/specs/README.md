@@ -1,8 +1,8 @@
 # Feature specs
 
 - [109 — Alpha startup tour ordering and Alpha .2 release](109-alpha-startup-tour.md).
-  **Implementation verified; publication in progress.** Show the tour after the actual
-  library-setup gate; publish the CP fixes as Alpha .2.
+  **Complete; Alpha .2 published and independently verified.** Show the tour after the
+  actual library-setup gate; include the CP fixes with signed/native gates passed.
 
 - [108 — Source-evidenced CP loop display boundaries](108-cp-loop-display-boundaries.md).
   **Complete; Astra/browser/private-corpus and clean-Windows preflight passed.**
