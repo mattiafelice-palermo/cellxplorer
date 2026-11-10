@@ -1,6 +1,6 @@
 # 107 — CP electrode potentials and scoped cache repair
 
-Status: Implementation complete; clean-Windows preflight required before merge.
+Status: Complete; Astra, browser, private-corpus and clean-Windows preflight passed.
 Branch: `codex/cp-electrode-mapping`.
 Review document: [107 review](reviews/107-cp-electrode-potentials-review.md).
 
@@ -69,5 +69,7 @@ corpora pass. The prior 6/13-source expectations remain unchanged. Astra Medium
 approved after lifecycle/mode findings were fixed. Full local four-worker
 preflight passes 240/241 modules/files plus version/type/build stages; the sole
 failure is the already-established Windows native port-owner detection limit.
-No tests or production protections were skipped or weakened. A clean-Windows
-branch preflight is the remaining merge gate.
+No tests or production protections were skipped or weakened. Clean-Windows
+[branch preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42882487438)
+passed all 240 committed backend/frontend modules/files plus all four canonical
+stages on implementation commit `a3301503`, including native launcher ownership.

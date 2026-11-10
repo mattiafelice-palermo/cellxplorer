@@ -36,3 +36,8 @@ sources); the new four-source frozen baselines and ordered oracle passed.
 Browser acceptance is separate from the code review. The production UI was
 checked against disposable data with the existing three-quantity selector
 and Continuous display; no real profile or installation was changed.
+
+The clean-Windows branch preflight passed all 240 committed backend/frontend
+modules/files and all canonical stages on `a3301503`. The native launcher test
+also passes there; the local port-owner detection limitation did not require a
+production change or test exception.
