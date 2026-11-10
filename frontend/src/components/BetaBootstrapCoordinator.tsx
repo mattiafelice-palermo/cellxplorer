@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Group, Image, Loader, Modal, Paper, Progress, SimpleGrid, Stack, Text } from "@mantine/core";
+import { Alert, Button, Checkbox, Group, Image, Loader, Modal, Paper, Progress, Radio, SimpleGrid, Stack, Text } from "@mantine/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconLoader2 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -67,6 +67,7 @@ export function BetaBootstrapCoordinator({
   const [acknowledgeEmpty, setAcknowledgeEmpty] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [alphaSource, setAlphaSource] = useState<"stable" | "beta" | null>(null);
+  const [alphaChoice, setAlphaChoice] = useState<"stable" | "beta" | "keep" | "empty">("keep");
   const [loadingElapsedSeconds, setLoadingElapsedSeconds] = useState(0);
   const [preparationContinuesInBackground, setPreparationContinuesInBackground] =
     useState(false);
@@ -522,7 +523,7 @@ export function BetaBootstrapCoordinator({
       title={
         preparationPending
           ? `Preparing copied ${isAlpha ? "Alpha" : "Beta"} library`
-          : `Set up CellXplorer ${isAlpha ? "Alpha" : "Beta"}`
+          : isAlpha && showChoice ? "Choose your Alpha library" : `Set up CellXplorer ${isAlpha ? "Alpha" : "Beta"}`
       }
       zIndex={400}
     >
@@ -603,7 +604,7 @@ export function BetaBootstrapCoordinator({
         {showChoice ? (
           <Text size="sm">
             {isAlpha
-              ? "Alpha keeps its library separate from CellXplorer and CellXplorer Beta. You can start empty, or copy a one-time snapshot of one of your existing libraries. The library you copy from is not modified, and the two stay independent afterwards."
+              ? "How would you like to start CellXplorer Alpha?"
               : hasExistingBeta
               ? "This Beta installation already has its own library. You can keep it, or replace it with a fresh snapshot of your current Stable library."
               : "Beta keeps its library separate from the stable app. You can copy a snapshot of your current Stable library, or start with a clean Beta library."}
@@ -742,92 +743,50 @@ export function BetaBootstrapCoordinator({
               ) : null}
             </Group>
             {isAlpha ? (
-              <SimpleGrid spacing="sm" w="100%" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))" }}>
-                {stableInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/copy-stable.png" alt="Stable library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
-                  <Text size="xs" fw={700} ta="center">Stable → Alpha</Text>
-                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Stable stays unchanged.</Text>
-                  <Button
-                    variant="default"
-                    color={hasExistingAlpha && confirmReplace ? "red" : APP_BRANDING.primaryColor}
+              <Stack gap="md" w="100%">
+                <SimpleGrid spacing="sm" role="radiogroup" aria-label="Alpha library choice"
+                  style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 165px), 1fr))" }}>
+                  {([
+                    { value: "stable", label: "Copy Stable library", description: "Bring a copy into Alpha.", art: "copy-stable", visible: stableInstalled && !outstandingToken, disabled: copyStableDisabled, reason: stableBlockingReason },
+                    { value: "beta", label: "Copy Beta library", description: "Continue from your Beta data.", art: "copy-beta", visible: betaInstalled && !outstandingToken, disabled: copyBetaDisabled, reason: betaBlockingReason },
+                    { value: "keep", label: "Keep current Alpha library", description: "Everything stays as it is.", art: "keep-alpha", visible: true, disabled: busy, reason: null },
+                    { value: "empty", label: "Start empty", description: "Replace Alpha with a blank library.", art: "start-empty", visible: true, disabled: busy, reason: null },
+                  ] as const).filter((choice) => choice.visible).map((choice) => (
+                    <Paper key={choice.value} component="label" withBorder radius="md" p="sm"
+                      className="alpha-library-choice" data-disabled={choice.disabled || undefined}
+                      data-selected={alphaChoice === choice.value || undefined} title={choice.reason ?? undefined}>
+                      <Radio name="alpha-library-choice" value={choice.value} aria-label={choice.label}
+                        checked={alphaChoice === choice.value} disabled={choice.disabled}
+                        onChange={() => {
+                          setAlphaChoice(choice.value);
+                          setConfirmReplace(false);
+                          setAlphaSource(null);
+                        }} />
+                      <Image src={`/setup/${choice.art}.png`} alt="" w={88} h={88} mx="auto" fit="contain" />
+                      <Text component="span" size="sm" fw={700} ta="center" className="alpha-library-choice-title">{choice.label}</Text>
+                      <Text component="span" size="xs" c="dimmed" ta="center">{choice.description}</Text>
+                    </Paper>
+                  ))}
+                </SimpleGrid>
+                <Group justify="space-between" align="center">
+                  <Text size="xs" c="dimmed">
+                    Stable and Beta libraries are never changed.<br />
+                    Starting empty requires a separate confirmation.
+                  </Text>
+                  <Button disabled={busy || confirmReplace ||
+                    (alphaChoice === "stable" && (!stableInstalled || copyStableDisabled || Boolean(outstandingToken))) ||
+                    (alphaChoice === "beta" && (!betaInstalled || copyBetaDisabled || Boolean(outstandingToken)))}
                     onClick={() => {
-                      setAlphaSource("stable");
-                      if (hasExistingAlpha && !confirmReplace) {
-                        setConfirmReplace(true);
-                        return;
+                      if (alphaChoice === "keep") { void runUseCurrent(); return; }
+                      if (alphaChoice === "empty") {
+                        setAcknowledgeEmpty(false); setConfirmReplace(false); setConfirmEmpty(true); return;
                       }
-                      void runCopyFlow("stable");
-                    }}
-                    disabled={copyStableDisabled}
-                    title={stableBlockingReason ?? undefined}
-                  >
-                    {outstandingToken
-                      ? hasExistingAlpha && confirmReplace
-                        ? "Replace with Stable"
-                        : "Retry activation"
-                      : hasExistingAlpha && confirmReplace
-                        ? "Replace with Stable"
-                        : "Copy Stable library"}
-                  </Button>
-                  {stableBlockingReason ? (
-                    <Text size="xs" c="orange" ta="center">
-                      {stableBlockingReason}
-                    </Text>
-                  ) : null}
-                </Stack></Paper> : null}
-                {betaInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/copy-beta.png" alt="Beta library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
-                  <Text size="xs" fw={700} ta="center">Beta → Alpha</Text>
-                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Beta stays unchanged.</Text>
-                  <Button
-                    variant="default"
-                    color={hasExistingAlpha && confirmReplace ? "red" : APP_BRANDING.primaryColor}
-                    onClick={() => {
-                      setAlphaSource("beta");
-                      if (hasExistingAlpha && !confirmReplace) {
-                        setConfirmReplace(true);
-                        return;
-                      }
-                      void runCopyFlow("beta");
-                    }}
-                    disabled={copyBetaDisabled}
-                    title={betaBlockingReason ?? undefined}
-                  >
-                    {outstandingToken
-                      ? hasExistingAlpha && confirmReplace
-                        ? "Replace with Beta"
-                        : "Retry activation"
-                      : hasExistingAlpha && confirmReplace
-                        ? "Replace with Beta"
-                        : "Copy Beta library"}
-                  </Button>
-                  {betaBlockingReason ? (
-                    <Text size="xs" c="orange" ta="center">
-                      {betaBlockingReason}
-                    </Text>
-                  ) : null}
-                </Stack></Paper> : null}
-                <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/keep-alpha.png" alt="Keep the current Alpha library" w={88} h={88} mx="auto" fit="contain" />
-                  <Text size="xs" fw={700} ta="center">Current Alpha</Text>
-                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Keep your Alpha cells, analyses and settings.</Text>
-                  <Button px="sm" onClick={() => void runUseCurrent()} disabled={busy}>
-                    Keep current Alpha library
-                  </Button>
-                </Stack></Paper>
-                <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/start-empty.png" alt="An empty Alpha library" w={88} h={88} mx="auto" fit="contain" />
-                  <Text size="xs" fw={700} ta="center">Empty Alpha</Text>
-                  <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Replace Alpha with a blank library. Confirmation required.</Text>
-                <Button color="red" variant="light" onClick={() => {
-                  setAcknowledgeEmpty(false);
-                  setConfirmReplace(false);
-                  setConfirmEmpty(true);
-                }} disabled={busy}>
-                  Start empty
-                </Button>
-                </Stack></Paper>
-              </SimpleGrid>
+                      setAlphaSource(alphaChoice);
+                      if (hasExistingAlpha) { setConfirmReplace(true); return; }
+                      void runCopyFlow(alphaChoice);
+                    }}>Continue</Button>
+                </Group>
+              </Stack>
             ) : (
               <SimpleGrid spacing="sm" w="100%" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))" }}>
                 <Paper withBorder p="sm"><Stack gap="xs" h="100%">
@@ -868,6 +827,12 @@ export function BetaBootstrapCoordinator({
         ) : null}
         {showChoice && confirmReplace ? <Group justify="flex-end">
           <Button variant="default" onClick={() => setConfirmReplace(false)} disabled={busy}>Cancel</Button>
+          {isAlpha && alphaSource && !outstandingToken ? (
+            <Button color="red" disabled={alphaSource === "stable" ? copyStableDisabled : copyBetaDisabled}
+              onClick={() => void runCopyFlow(alphaSource)}>
+              {alphaSource === "stable" ? "Replace with Stable" : "Replace with Beta"}
+            </Button>
+          ) : null}
         </Group> : null}
         {showChoice && outstandingToken && outstandingOperation === "copy" ? (
           <Button color={confirmReplace ? "red" : APP_BRANDING.primaryColor} disabled={busy} onClick={() => {

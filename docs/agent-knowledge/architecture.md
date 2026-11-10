@@ -43,7 +43,9 @@ Beta and Alpha first-launch setup share the implementation in
 Beta retains its released Stable-copy contract and `beta-bootstrap.json` marker. Alpha uses
 `alpha-bootstrap.json` and `alpha-bootstrap-apply-error.json` in its own root and offers exactly
 Copy Stable library, Copy Beta library, Start empty, and Keep current Alpha library
-as separate actions. Only verified installed source editions are offered, using
+as selectable cards with one Continue action (Spec 104). Selection alone never
+invokes a mutation; changing cards clears replacement consent. Beta retains its
+separate action buttons. Only verified installed source editions are offered, using
 native registry evidence rather than data-directory presence; unknown detection
 does not imply absence. A verified sole Alpha/Beta edition can acknowledge its
 current or pristine library through the guarded `complete-single-edition` path,
