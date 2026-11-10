@@ -1,7 +1,8 @@
 # Feature specs
 
 - [106 — Alpha 0.29.0-alpha.1 release](106-alpha29-release.md).
-  **Release preparation.** User-authorized Alpha publication; Stable and Beta unchanged.
+  **Complete; published and independently verified.** Signed build/native gates, public
+  installer signature and Alpha feed passed; Stable and Beta unchanged.
 
 - [105 — Scientific What’s New cards and chooser restoration](105-whats-new-release-cards.md).
   **Complete; browser and clean-Windows preflight passed.** Four scientific cards using production UI in the initial tour composition; restore the pre-104 Alpha chooser.
