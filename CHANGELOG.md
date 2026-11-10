@@ -7,6 +7,14 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.2 - 2026-11-10
+
+### Bug fixes
+
+- Expose recorded working and counter electrode potentials for supported BioLogic CP recordings, with signed cell voltage calculated as Ewe minus Ece and scoped repair of affected caches.
+- Break plotted CP curves at validated, source-recorded loop boundaries while preserving all measurements and elapsed time; do not infer gaps from time spacing alone.
+- Show What’s New after the Alpha library picker and blocking preparation finish, or after explicitly continuing preparation in background. Show the tour once again for this Alpha release and retain dismissal afterward.
+
 ## 0.29.0-alpha.1 - 2026-11-10
 
 ### New features
