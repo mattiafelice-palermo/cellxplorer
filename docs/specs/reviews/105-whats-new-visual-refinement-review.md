@@ -1,6 +1,6 @@
 # 105 — What’s New visual refinement
 
-Status: In progress. Branch: `codex/whats-new-visual-refinement`.
+Status: Complete. Branch: `codex/whats-new-visual-refinement`.
 
 User request: restore the initial release-tour composition. Keep the four
 scientific cards, real application plots/components and Previous/Next navigation.
@@ -27,4 +27,17 @@ chrome. Verify all four cards, expanded limitations, guide return, light/dark,
   Light/dark desktop and the 390 x 844 dark FEC card have been visually checked;
   Previous/Next stay inside the viewport at narrow width.
 - Alpha chooser coordinator, global CSS and bootstrap handler tests are unchanged.
-- Canonical local preflight is running; final clean-Windows check is pending.
+- Light/dark, 390 px width and 70/100/160 percent UI zoom pass. The FEC switch,
+  expanded native limitation disclosure and keyboard guide return work. The
+  browser preview is left at 100 percent/light for direct comparison with the
+  initial composition.
+- Canonical local no-cache preflight passes version/typecheck/bundle and 239/240
+  modules/files. The only failure is the documented local occupied-port owner
+  identification limitation in `test_start_webapp`. No launcher workaround.
+- Hosted attempt 1 on `5501e1d0` passes all UI tests and typecheck/build, but fails
+  the unchanged one-shot header-reader test and a PowerShell process-startup
+  timeout in `test_installer_scope`. The identical-revision retry passes all
+  239 files/modules and all four preflight stages, including the native port
+  test. No backend/test/deadline changes or skipped tests are part of this
+  refinement. [Clean-Windows evidence](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42842990155)
+  is on exact implementation revision `5501e1d0` (attempt 2).
