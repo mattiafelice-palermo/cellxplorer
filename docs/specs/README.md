@@ -1,7 +1,7 @@
 # Feature specs
 
 - [108 — Source-evidenced CP loop display boundaries](108-cp-loop-display-boundaries.md).
-  **Implemented; Astra/browser/private-corpus passed, clean-Windows gate pending.**
+  **Complete; Astra/browser/private-corpus and clean-Windows preflight passed.**
   Split drawn CP curves at validated source loop boundaries; never infer breaks from elapsed time alone.
 
 - [107 — CP electrode potentials and scoped cache repair](107-cp-electrode-potentials.md).

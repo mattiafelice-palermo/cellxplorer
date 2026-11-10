@@ -38,4 +38,5 @@ QA data. Both preserve the source-defined line breaks and measured post-boundary
 transients. The local canonical preflight passes 240/241 modules/files and all
 version/type/build stages; its only failure remains the established native
 Windows port-owner reporting limitation. A clean-Windows branch gate is required
-before merge.
+before merge. That branch run passed all 240 committed backend/frontend modules/
+files and all canonical stages on `d8c6a763`, including the native launcher test.

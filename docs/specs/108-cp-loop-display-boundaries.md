@@ -1,6 +1,6 @@
 # 108 — Source-evidenced CP loop display boundaries
 
-Status: Implemented; Astra/browser/private-corpus passed, clean-Windows gate pending.
+Status: Complete; Astra/browser/private-corpus and clean-Windows preflight passed.
 Branch: `codex/cp-loop-boundaries`.
 Review document: [108 review](reviews/108-cp-loop-display-boundaries-review.md).
 
@@ -73,4 +73,6 @@ visually verified. Recorded post-boundary transients remain visible.
 The complete local four-worker preflight passes 240/241 modules/files plus
 version, type and production-bundle stages. Its only failure is the established
 host-native port-owner reporting limitation; no tests or protections were skipped.
-A clean-Windows branch run remains the merge gate.
+The clean-Windows [branch preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/42903002873)
+passed all 240 committed backend/frontend modules/files and all canonical stages
+on implementation revision `d8c6a763`, including the native launcher test.
