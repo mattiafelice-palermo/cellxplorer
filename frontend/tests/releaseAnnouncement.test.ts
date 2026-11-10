@@ -23,7 +23,7 @@ test("new tour has its own channel-scoped dismissal and release threshold", () =
   assert.equal(policy.releaseIntroWasSeen(storage), false);
   policy.markReleaseIntroSeen(storage);
   assert.equal(policy.releaseIntroWasSeen(storage), true);
-  assert.match(policy.WHATS_NEW_STORAGE_KEY, /^cellxplorer:alpha:whats-new:cycling-analysis-v1$/);
+  assert.match(policy.WHATS_NEW_STORAGE_KEY, /^cellxplorer:alpha:whats-new:cycling-analysis-v2$/);
   assert.doesNotThrow(() => policy.markReleaseIntroSeen({ setItem() { throw Error("disabled storage"); } }));
   assert.equal(policy.releaseIntroWasSeen({ getItem() { throw Error("disabled storage"); } }), false);
 });

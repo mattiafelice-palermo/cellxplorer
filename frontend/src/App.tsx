@@ -120,6 +120,7 @@ export default function App({
   const queryClient = useQueryClient();
   const [debugOpen, setDebugOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [bootstrapBlocking, setBootstrapBlocking] = useState(true);
   const openWhatsNew = useCallback(() => setWhatsNewOpen(true), []);
   const [activityOpen, setActivityOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -439,6 +440,7 @@ export default function App({
         <BetaBootstrapCoordinator
           backendReady={false}
           gateRequiredOnLaunch={betaBootstrapGateRequired}
+          onBlockingChange={setBootstrapBlocking}
         />
         <Group h="100vh" justify="center" p="xl">
           <Alert
@@ -563,8 +565,10 @@ export default function App({
       <BetaBootstrapCoordinator
         backendReady={databaseStatus.data?.compatible === true}
         gateRequiredOnLaunch={betaBootstrapGateRequired}
+        onBlockingChange={setBootstrapBlocking}
       />
       <WhatsNewCoordinator opened={whatsNewOpen} onOpen={openWhatsNew} onClose={() => setWhatsNewOpen(false)}
+        bootstrapBlocking={bootstrapBlocking}
         ready={databaseStatus.data?.compatible === true} version={databaseStatus.data?.app_version ?? null}
         onTrySearch={() => guardedNavigate("/settings/file-search")} />
       <AppShell.Header>

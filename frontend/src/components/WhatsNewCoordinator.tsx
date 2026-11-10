@@ -11,9 +11,10 @@ import { ReleaseIntroduction } from "./ReleaseIntroduction";
 import styles from "./ReleaseIntroduction.module.css";
 import { useOptionalAppUpdate } from "./AppUpdateCoordinator";
 
-export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, ready, version }: {
+export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, ready, version, bootstrapBlocking }: {
   opened: boolean; onOpen: () => void; onClose: () => void; onTrySearch: () => void;
   ready: boolean; version: string | null;
+  bootstrapBlocking: boolean;
 }) {
   const desktop = isTauriApp();
   const packaged = desktop && !import.meta.env.DEV;
@@ -30,7 +31,7 @@ export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, read
   });
   const setupComplete = APP_CHANNEL === "stable" || (bootstrap.data?.setupState === "complete" && !bootstrap.data.needsChoice && !bootstrap.data.blockingReason);
   useEffect(() => {
-    if (!packaged || !ready || !setupComplete || !version || !isAfterReleaseIntroBaseline(version) ||
+    if (!packaged || !ready || bootstrapBlocking || !setupComplete || !version || !isAfterReleaseIntroBaseline(version) ||
       opened || updates?.modalOpen || shown.current || releaseIntroWasSeen(window.localStorage)) return;
     // Wait for any existing dialog to close; never interrupt an import or setup decision.
     const announce = () => {
@@ -43,7 +44,7 @@ export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, read
     observer.observe(document.body, { childList: true, subtree: true });
     const timer = window.setTimeout(announce, 350);
     return () => { observer.disconnect(); window.clearTimeout(timer); };
-  }, [packaged, ready, setupComplete, version, opened, updates?.modalOpen, onOpen]);
+  }, [packaged, ready, bootstrapBlocking, setupComplete, version, opened, updates?.modalOpen, onOpen]);
   const close = () => {
     shown.current = true;
     if (packaged && version && isAfterReleaseIntroBaseline(version)) markReleaseIntroSeen(window.localStorage);

@@ -1,6 +1,6 @@
 import { APP_CHANNEL } from "./appChannel";
 
-export const RELEASE_INTRO_ID = "cycling-analysis-v1";
+export const RELEASE_INTRO_ID = "cycling-analysis-v2";
 export const RELEASE_INTRO_BASELINE = "0.29.0-alpha.0";
 export const WHATS_NEW_STORAGE_KEY = `cellxplorer:${APP_CHANNEL}:whats-new:${RELEASE_INTRO_ID}`;
 
