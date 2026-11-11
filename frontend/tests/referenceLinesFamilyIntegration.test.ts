@@ -13,16 +13,20 @@ import * as cycleEnergyBasis from "../src/features/analyses/editor/families/cycl
 import * as voltage from "../src/features/analyses/editor/policies/voltageChannelPolicy.ts";
 import * as timePolicy from "../src/features/analyses/editor/policies/timeCapacityQueryPolicy.ts";
 import * as timeVisibility from "../src/features/analyses/editor/families/time-capacity/timeCapacityVisibility.ts";
+import * as seriesStyling from "../src/features/analyses/editor/plotting/seriesStyling.ts";
+import * as rateDisplayCategories from "../src/features/analyses/editor/families/rate-capability/rateDisplayCategories.ts";
+import * as paletteDraft from "../src/features/analyses/editor/plotting/paletteDraft.ts";
 import * as visibility from "../src/features/analyses/editor/policies/analysisVisibility.ts";
 
 /** Evaluate the actual family module; UI/query hooks are not invoked by layout builders. */
 function family(name: string, file: string): Record<string, any> {
   const source = readFileSync(new URL(`../src/features/analyses/editor/families/${name}/${file}.tsx`, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source.replaceAll("import.meta.env.DEV", "false"), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const compiled = ts.transpileModule(source.replaceAll("import.meta.env.DEV", "false"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
   const stubs = new Map<string, unknown>([
     ["mprReadNotice", mprReadNotice], ["plotStyle", plotStyle], ["plotLayout", plotLayout], ["plotAxisLayout", axisLayout], ["plotReferenceLines", referenceLines], ["cycleShading", cycleShading],
     ["voltageChannelPolicy", voltage], ["timeCapacityQueryPolicy", timePolicy], ["timeCapacityVisibility", timeVisibility], ["analysisVisibility", visibility], ["cycleEnergyBasis", cycleEnergyBasis],
+    ["seriesStyling", seriesStyling], ["rateDisplayCategories", rateDisplayCategories], ["paletteDraft", paletteDraft],
   ]);
   runInNewContext(compiled, { exports: module.exports, require(id: string) {
     const base = id.split("/").pop()!.replace(/\.tsx?$/, "");
@@ -95,12 +99,13 @@ test("production Time/Capacity derivative/voltage/current layouts share composit
   for (const view of ["voltage_current", "dqdv", "dvdq"]) {
     const s: any = spec(); s.computation.time_capacity = { view, stacked: view === "voltage_current", current_left: "current_ma", current_right: "current_density", voltage_channels: ["voltage"] };
     s.presentation.plot_styles.time_capacity = plotStyle.normalizePlotStyle({ show_frame: true });
-    const initial = tc.timeCapacityLayout(result, s, traces);
+    const plotted = view === "voltage_current" ? [...traces, { x: [1, 2], y: [1, 2], yaxis: "y3" }] : traces;
+    const initial = tc.timeCapacityLayout(result, s, plotted);
     const ids = referenceLines.referenceAxesFromLayout(initial).filter((axis) => axis.numeric).map((axis) => axis.axis);
     assert.deepEqual(Array.from(ids), view === "voltage_current" ? ["x", "y", "y2", "y3"] : ["x", "y"]);
     for (const id of ids) {
       add(s, "time_capacity", initial, id);
-      const final = tc.timeCapacityLayout(result, s, traces);
+      const final = tc.timeCapacityLayout(result, s, plotted);
       assert.equal(final.shapes.length, initial.shapes.length + 1, `${view}/${id}`);
       assert.equal(final.annotations.length, 1); assert.equal(final.xaxis.matches, initial.xaxis.matches);
       assert.equal(final.uirevision, initial.uirevision);
@@ -108,6 +113,22 @@ test("production Time/Capacity derivative/voltage/current layouts share composit
       if (id === "y3") assert.equal(final.shapes.at(-1).yref, "y3");
     }
   }
+});
+
+test("C-rate categories align traces without changing measured export coordinates", () => {
+  const s: any = spec();
+  const result = { blocks: [0.99, 0.999, 1, 2].map((rate_c, index) => ({
+    id: String(index), family: "discharge", cell_id: index + 1, cell_name: `Cell ${index}`,
+    label: `Cell ${index}`, points: [{ rate_c, capacity_mah: 2, retention_pct: 100 }],
+  })) };
+  s.presentation.rate_capability_view = { x_axis: "c_rate", x_spacing: "equal", y_axis: "capacity_mah" };
+  const plotted = crate.rateCapabilityTracesForResult(result, s);
+  assert.deepEqual(Array.from(plotted, (trace: any) => trace.x[0]), ["1C", "1C", "1C", "2C"]);
+  assert.deepEqual(Array.from(plotted, (trace: any) => trace.meta.cellxplorer_export_x[0]), [0.99, 0.999, 1, 2]);
+  const layout = crate.rateCapabilityLayoutForSpec(s, result, plotted);
+  assert.deepEqual(Array.from(layout.xaxis.categoryarray), ["1C", "2C"]);
+  s.presentation.rate_capability_view.x_spacing = "proportional";
+  assert.deepEqual(Array.from(crate.rateCapabilityTracesForResult(result, s), (trace: any) => trace.x[0]), [0.99, 0.999, 1, 2]);
 });
 
 test("Time/Capacity voltage-channel, time-unit and derivative-normalization changes hide saved thresholds", () => {

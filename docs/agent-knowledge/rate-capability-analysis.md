@@ -181,3 +181,11 @@ Add a corpus entry whenever a new supported protocol grammar or confirmed false-
 is found. Keep the generator free of production detector calls when constructing its expected
 inputs, or a bug could reproduce itself in both sides of the test. Synthetic coverage protects the
 protocol grammar but does not replace validation against independently produced real cycler files.
+
+## Display grouping
+
+The equally spaced C-rate axis groups nearby measured rates for display only.
+The full span of a group is bounded to 1% of its largest rate, so adjacent near
+matches cannot bridge distinct rates. Trace coordinates and tick order share
+the grouping policy. Hover, export coordinates, proportional axes and backend
+recognition retain measured rates.

@@ -8,6 +8,9 @@ import {
   resolveSeriesStyle,
   timeCapacitySeriesDescriptor,
   timeCapacityVoltageSeriesDescriptor,
+  timeCapacityCurrentSeriesDescriptors,
+  timeCapacityCurrentBaseStyle,
+  timeCapacityCurrentAxisLabel as currentAxisLabel,
 } from "../../plotting/seriesStyling.ts";
 import { timeCapacitySourceAt } from "./timeCapacityProvenance.ts";
 import {
@@ -37,6 +40,7 @@ export type TimeCapacityNativeExportPlan = {
     cell_id: number;
     group_id: number | null;
     current_name: string;
+    current_series?: Array<{ panel: "left" | "right"; name: string }>;
     voltage_series: Array<{
       channel: VoltageChannel;
       name: string;
@@ -50,12 +54,6 @@ function xAxisTitle(config: TimeCapacityExportConfig): string {
   if (config.x_axis === "capacity_mah_cm2") return "Areal capacity (mAh/cm²)";
   if (config.x_axis === "capacity_mah") return "Capacity (mAh)";
   return `Time (${config.time_unit})`;
-}
-
-function currentAxisLabel(quantity: ExportCurrentQuantity): string {
-  if (quantity === "current_density") return "Current density (mA/cm2)";
-  if (quantity === "c_rate") return "C-rate (C)";
-  return "Current (mA)";
 }
 
 function selectedIndices(values: readonly number[], range: PlotDataXRange | null): number[] | null {
@@ -145,14 +143,16 @@ export function timeCapacityNativeExportPlan(
   const multipleChannels = selectedChannels.length > 1;
   const xTitle = style.x_title ?? xAxisTitle(config);
   const traces: TimeCapacityNativeExportPlan["traces"] = [];
+  const colors = new Map<string, string>();
   let colorIndex = 0;
 
   for (const trace of result.cell_traces) {
     if (timeCapacityTraceIsHidden(trace, spec)) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     if (!multipleChannels && isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) continue;
-    const color = style.custom_colors[seriesKey] ??
-      paletteColorAt(palette, colorIndex++, paletteOverflow);
+    if (!colors.has(seriesKey)) colors.set(seriesKey, style.custom_colors[seriesKey] ??
+      paletteColorAt(palette, colorIndex++, paletteOverflow));
+    const color = colors.get(seriesKey)!;
     const descriptor = timeCapacitySeriesDescriptor(trace);
     const resolved = resolveSeriesStyle(
       {
@@ -200,11 +200,19 @@ export function timeCapacityNativeExportPlan(
         y_title: style.y_title ?? voltageChannelLabel(channel, result.voltage_channels),
       });
     }
-    if (voltageSeries.length === 0) continue;
+    const currentSeries = timeCapacityCurrentSeriesDescriptors(trace, config, resolved.name).flatMap((descriptor) => {
+      if (isSeriesHidden(spec, descriptor.visibilityKey!)) return [];
+      const appearance = resolveSeriesStyle(timeCapacityCurrentBaseStyle({
+        ...resolved, color: style.custom_colors[descriptor.key] ?? color,
+      }, descriptor.currentPanel!), descriptor, style.series_rules, style.series_overrides);
+      return appearance.hidden ? [] : [{ panel: descriptor.currentPanel!, name: appearance.name }];
+    });
+    if (!voltageSeries.length && !currentSeries.length) continue;
     traces.push({
       cell_id: trace.cell_id,
       group_id: trace.group_id,
       current_name: resolved.name,
+      ...(config.stacked ? { current_series: currentSeries } : {}),
       voltage_series: voltageSeries,
     });
   }
@@ -253,25 +261,15 @@ export function consecutiveTimeCapacityExportColumns(
     }
 
     if (!config.stacked) continue;
-    const left = config.current_left;
-    const leftValues = currentValues(trace, left, config, indices);
-    if (hasFinite(leftValues)) {
-      const label = `${plannedTrace.current_name} ${currentAxisLabel(left)}`;
+    for (const current of plannedTrace.current_series ?? []) {
+      const quantity = current.panel === "left" ? config.current_left : config.current_right;
+      if (quantity === "none") continue;
+      const values = currentValues(trace, quantity, config, indices);
+      if (!hasFinite(values)) continue;
       columns.push(
-        { header: `${label} | ${plan.x_title}`, values: selectedX },
-        { header: `${label} | ${currentAxisLabel(left)}`, values: leftValues },
+        { header: `${current.name} | ${plan.x_title}`, values: selectedX },
+        { header: `${current.name} | ${currentAxisLabel(quantity)}`, values },
       );
-    }
-    if (config.current_right !== "none") {
-      const right = config.current_right;
-      const rightValues = currentValues(trace, right, config, indices);
-      if (hasFinite(rightValues)) {
-        const label = `${plannedTrace.current_name} ${currentAxisLabel(right)}`;
-        columns.push(
-          { header: `${label} | ${plan.x_title}`, values: selectedX },
-          { header: `${label} | ${currentAxisLabel(right)}`, values: rightValues },
-        );
-      }
     }
   }
   return columns;

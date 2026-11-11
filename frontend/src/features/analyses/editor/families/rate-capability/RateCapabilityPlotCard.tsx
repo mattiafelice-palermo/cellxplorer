@@ -1,5 +1,6 @@
 import { referenceAxis, referenceUnits, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
+import { groupedDisplayRates } from "./rateDisplayCategories";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   Accordion,
@@ -398,16 +399,15 @@ function xCategory(value: number, view: RateCapabilityViewSpec) {
   return String(Number(value.toPrecision(6)));
 }
 
-function orderedXCategories(
+function xCategoryValues(
   result: RateCapabilityResult | undefined,
   view: RateCapabilityViewSpec,
 ) {
-  const categories = new Map<string, number>();
   const visibleFamilies = new Set([
     ...(view.show_charge ? ["charge"] : []),
     ...(view.show_discharge ? ["discharge"] : []),
   ]);
-  const values =
+  return (
     view.y_axis === "asymmetry_ratio"
       ? (result?.comparison?.points ?? []).map((point) => point.rate_c)
       : (result?.blocks ?? [])
@@ -415,10 +415,33 @@ function orderedXCategories(
           .flatMap((block) => block.points)
           .filter((point) => finite(pointY(point, view)))
           .map((point) => pointX(point, view))
-          .filter(finite);
+          .filter(finite)
+  );
+}
+
+function categoryLabels(result: RateCapabilityResult | undefined, view: RateCapabilityViewSpec) {
+  const values = xCategoryValues(result, view);
+  const grouped = effectiveXAxis(view) === "c_rate" ? groupedDisplayRates(values) : new Map<number, number>();
+  const labels = new Map<string, Set<number>>();
+  for (const representative of grouped.values()) {
+    const formatted = cRate(representative);
+    if (!labels.has(formatted)) labels.set(formatted, new Set());
+    labels.get(formatted)!.add(representative);
+  }
+  const label = (value: number) => {
+    const representative = grouped.get(value) ?? value;
+    const formatted = xCategory(representative, view);
+    return (labels.get(formatted)?.size ?? 0) > 1 ? `${representative}C` : formatted;
+  };
+  return { values, label };
+}
+
+function orderedXCategories(result: RateCapabilityResult | undefined, view: RateCapabilityViewSpec) {
+  const categories = new Map<string, number>();
+  const { values, label } = categoryLabels(result, view);
   for (const value of values) {
     if (!finite(value)) continue;
-    const category = xCategory(value, view);
+    const category = label(value);
     const current = categories.get(category);
     if (current === undefined || value < current) categories.set(category, value);
   }
@@ -503,8 +526,8 @@ export function rateCapabilityTracesForResult(
       ? style.custom_colors[`rate-capability-${blockId}`]
       : undefined) ??
     paletteColorAt(palette, Math.max(0, cellIds.indexOf(cellId)), paletteOverflow);
-  const plottedX = (value: number) =>
-    view.x_spacing === "equal" ? xCategory(value, view) : value;
+  const plottedX: (value: number) => string | number =
+    view.x_spacing === "equal" ? categoryLabels(result, view).label : (value) => value;
   const isBar = view.visualization === "bar";
 
   if (view.y_axis === "asymmetry_ratio") {

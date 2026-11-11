@@ -95,6 +95,7 @@ import {
   matchingRules,
   moveSeriesWithinGroup,
   orderedSeriesDescriptors,
+  seriesQuantityGroupKey,
   pruneOverrides,
   resolveAllSeriesStyles,
   seriesSelectionModifiers,
@@ -723,12 +724,12 @@ export function SeriesStyleModal({
    * secondary quantity/axis is actually present.
    */
   const seriesGroups = useMemo(() => {
-    const groups = new Map<string, { plot: number; axis: "y" | "y2"; measureLabel?: string; items: SeriesDescriptor[] }>();
+    const groups = new Map<string, { plot: number; axis: "y" | "y2" | "y3"; measureLabel?: string; items: SeriesDescriptor[] }>();
     for (const descriptor of descriptors) {
       const plot = descriptor.plot ?? 0;
       const axis = descriptor.axis ?? "y";
       const measureLabel = descriptor.measureLabel;
-      const key = `${plot}:${measureLabel ?? axis ?? "y"}`;
+      const key = seriesQuantityGroupKey(descriptor);
       let group = groups.get(key);
       if (!group) {
         group = { plot, axis, measureLabel, items: [] };
@@ -739,12 +740,12 @@ export function SeriesStyleModal({
     const ordered = Array.from(groups.values()).sort((a, b) => {
       if (a.plot !== b.plot) return a.plot - b.plot;
       if (a.axis === b.axis) return 0;
-      return a.axis === "y" ? -1 : 1;
+      return a.axis.localeCompare(b.axis);
     });
     const multiPlot = new Set(ordered.map((g) => g.plot)).size > 1;
     const showHeadings = ordered.length > 1;
     return ordered.map((group) => ({
-      key: `${group.plot}:${group.measureLabel ?? group.axis ?? "y"}`,
+      key: `${group.plot}:${group.axis}:${group.measureLabel ?? ""}`,
       heading: showHeadings
         ? `${multiPlot ? `Plot ${group.plot + 1} · ` : ""}${
             group.measureLabel ?? (group.axis === "y2" ? "Right axis" : "Left axis")

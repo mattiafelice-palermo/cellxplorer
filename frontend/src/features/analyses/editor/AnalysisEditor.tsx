@@ -1,4 +1,5 @@
 import { AnalysisSourceLimitations } from "../../../components/AnalysisSourceLimitations";
+import { SelectInitialTitleInput } from "../SelectInitialTitleInput";
 import { RetainedAnalysisPanel, useAnalysisFamilyRetention } from "./RetainedAnalysisPanel";
 // Analysis editor. An analysis owns the sample set; saved plots store reusable
 // views of that set: settings plus hidden/shown sample state.
@@ -6038,7 +6039,7 @@ function AnalysisEditorView({
 
       <Modal opened={saveDraft !== null} onClose={() => setSaveDraft(null)} title="Save new plot">
         <Stack>
-          <TextInput
+          {saveDraft && <SelectInitialTitleInput
             label="Title"
             value={saveDraft?.name ?? ""}
             onChange={(event) => {
@@ -6048,7 +6049,7 @@ function AnalysisEditorView({
             onKeyDown={(event) => {
               if (event.key === "Enter") commitSavedPlot();
             }}
-          />
+          />}
           <Text size="sm" c="dimmed">
             {plotSubtitle(activeTab, displayResult, spec)}
           </Text>
@@ -6082,7 +6083,7 @@ function AnalysisEditorView({
             You changed the quantity shown on this plot. Update the plot name to match the new
             quantity?
           </Text>
-          <TextInput
+          {quantityRenamePrompt && <SelectInitialTitleInput
             label="Plot name"
             value={quantityRenamePrompt?.name ?? ""}
             onChange={(event) => {
@@ -6096,7 +6097,7 @@ function AnalysisEditorView({
                 confirmQuantityRenameUpdate();
               }
             }}
-          />
+          />}
           {quantityRenamePrompt &&
           quantityRenamePrompt.suggestedName.trim() &&
           quantityRenamePrompt.suggestedName !== quantityRenamePrompt.name ? (
@@ -6161,9 +6162,9 @@ function AnalysisEditorView({
                 </Text>
               ) : null}
             </>
-          ) : (
+          ) : leavePrompt ? (
             <>
-              <TextInput
+              <SelectInitialTitleInput
                 label="Title"
                 value={leavePrompt?.name ?? ""}
                 onChange={(event) => {
@@ -6175,7 +6176,6 @@ function AnalysisEditorView({
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && leavePrompt?.name.trim()) savePlotAndLeave();
                 }}
-                data-autofocus
               />
               <Text size="sm" c="dimmed">
                 {plotSubtitle(activeTab, displayResult, spec)}
@@ -6194,7 +6194,7 @@ function AnalysisEditorView({
                 }}
               />
             </>
-          )}
+          ) : null}
           <Group justify="space-between" wrap="nowrap" gap="sm" preventGrowOverflow={false}>
             <Button
               variant="subtle"

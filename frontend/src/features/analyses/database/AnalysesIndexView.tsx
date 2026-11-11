@@ -49,6 +49,7 @@ import {
   Tree,
 } from "../../../api";
 import { clearAnalysisQueryCache } from "../workspace/analysisQueryCache";
+import { SelectInitialTitleInput } from "../SelectInitialTitleInput";
 import { AnalysisDatabaseTable } from "./AnalysisDatabaseTable";
 import {
   ANALYSIS_WORKSPACE_TABS_EVENT,
@@ -308,14 +309,13 @@ function AnalysisCreateForm({
   };
   return (
     <Stack>
-      <TextInput
+      <SelectInitialTitleInput
         label="Title"
         value={title}
         onChange={(event) => setTitle(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") submit();
         }}
-        data-autofocus
       />
       <Select
         label="Folder"

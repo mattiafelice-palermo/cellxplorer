@@ -54,6 +54,7 @@ import {
   seriesPaletteSlots,
   timeCapacityVoltageChannelPaletteIndex,
   timeCapacitySeriesDescriptors,
+  timeCapacityCurrentBaseStyle,
   type SeriesDescriptor,
 } from "./seriesStyling";
 import { SeriesStyleModal, type SeriesPreviewBuilder } from "./SeriesStyleModal";
@@ -207,6 +208,7 @@ export function PlotStylePanel({
       return timeCapacitySeriesDescriptors(
         timeCapacityResult.cell_traces,
         timeCapacity.view === "voltage_current" ? selectedVoltageChannels : [],
+        { ...timeCapacity, ...spec.computation.time_capacity },
       );
     }
     if (computeResult) {
@@ -258,7 +260,7 @@ export function PlotStylePanel({
       const colorIndex = descriptor.channel
         ? timeCapacityVoltageChannelPaletteIndex(descriptor.channel)
         : index;
-      return {
+      const base = {
         color:
           seriesBaseDefaults.customColors[descriptor.key] ??
           legacyColor ??
@@ -275,6 +277,7 @@ export function PlotStylePanel({
             ? 1
             : seriesBaseDefaults.individualOpacity,
       };
+      return descriptor.currentPanel ? timeCapacityCurrentBaseStyle(base, descriptor.currentPanel) : base;
     },
     [seriesKeyOrder, seriesBaseDefaults],
   );
