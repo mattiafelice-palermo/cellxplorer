@@ -1,15 +1,15 @@
 {
-  "version": "0.29.0-alpha.2",
-  "notes": "### Bug fixes\n\n- Expose recorded working and counter electrode potentials for supported BioLogic CP recordings, with signed cell voltage calculated as Ewe minus Ece and scoped repair of affected caches.\n- Break plotted CP curves at validated, source-recorded loop boundaries while preserving all measurements and elapsed time; do not infer gaps from time spacing alone.\n- Show What’s New after the Alpha library picker and blocking preparation finish, or after explicitly continuing preparation in background. Show the tour once again for this Alpha release and retain dismissal afterward.",
-  "pub_date": "2026-11-10T21:59:55.718Z",
+  "version": "0.29.0-alpha.3",
+  "notes": "### Bug fixes\n\n- Select suggested analysis and plot titles so typing replaces the full name.\n- Group near-identical rates on equally spaced C-rate plots without changing measured values.\n- Let users edit the appearance of stacked current traces independently of the voltage channels.",
+  "pub_date": "2026-11-11T22:09:07.126Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVZRGpOcGJNNndKUGFxcVROWmJGcEJOWW1OMHgrVTVHRE1tRkROanpTSEFiRVlMTUpLcDVObzVNOUplQU0zcHlrb0h5eGl3Tkgva0JYZStpMWxsV1E0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MzQ3OTg5CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOS4wLWFscGhhLjJfeDY0LXNldHVwLmV4ZQpVMVdtT1RNUUdRaWFYS2o1MlhrZ0RlNEdpWkVsTUx4bDQxWTREdUhvK1hsTlVTUjJoRU0vcUx4Z0N1YWQ5ZHFuZTlqMnJWcldCb2lVUUE4SkI5S1JEQT09Cg==",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.29.0-alpha.2/CellXplorer.Alpha_0.29.0-alpha.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWV2eStzQTZCS082QXFMUHlCdXdzRlF3VFVrOU1SRW9TcCthYzhDUEF0aVV5aWlpcyt5VkZLOUVJbUhaejJRUUdzb3lqanhVSmFjU2M4SSt5bjhkdUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDM0OTQwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOS4wLWFscGhhLjNfeDY0LXNldHVwLmV4ZQpaY0pNMklJSFZlWkZmanJxL3FYUS9vTEsybUhnWm0zb2gwRDJFOEJLTGNPYmdJeUQvRllhbk8vb1lXQ1ZaTnJWUG05dVR2aUpRMEpCVE1YSXNHSjNEdz09Cg==",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.29.0-alpha.3/CellXplorer.Alpha_0.29.0-alpha.3_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVZRGpOcGJNNndKUGFxcVROWmJGcEJOWW1OMHgrVTVHRE1tRkROanpTSEFiRVlMTUpLcDVObzVNOUplQU0zcHlrb0h5eGl3Tkgva0JYZStpMWxsV1E0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MzQ3OTg5CWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOS4wLWFscGhhLjJfeDY0LXNldHVwLmV4ZQpVMVdtT1RNUUdRaWFYS2o1MlhrZ0RlNEdpWkVsTUx4bDQxWTREdUhvK1hsTlVTUjJoRU0vcUx4Z0N1YWQ5ZHFuZTlqMnJWcldCb2lVUUE4SkI5S1JEQT09Cg==",
-      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.29.0-alpha.2/CellXplorer.Alpha_0.29.0-alpha.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWV2eStzQTZCS082QXFMUHlCdXdzRlF3VFVrOU1SRW9TcCthYzhDUEF0aVV5aWlpcyt5VkZLOUVJbUhaejJRUUdzb3lqanhVSmFjU2M4SSt5bjhkdUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDM0OTQwCWZpbGU6Q2VsbFhwbG9yZXIgQWxwaGFfMC4yOS4wLWFscGhhLjNfeDY0LXNldHVwLmV4ZQpaY0pNMklJSFZlWkZmanJxL3FYUS9vTEsybUhnWm0zb2gwRDJFOEJLTGNPYmdJeUQvRllhbk8vb1lXQ1ZaTnJWUG05dVR2aUpRMEpCVE1YSXNHSjNEdz09Cg==",
+      "url": "https://github.com/mattiafelice-palermo/cellxplorer/releases/download/v0.29.0-alpha.3/CellXplorer.Alpha_0.29.0-alpha.3_x64-setup.exe"
     }
   }
 }
