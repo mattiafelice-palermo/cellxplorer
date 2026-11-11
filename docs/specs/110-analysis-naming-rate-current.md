@@ -16,3 +16,20 @@ Local canonical preflight passed all checks except the known native occupied-por
 owner test. [Clean-Windows preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/43100330432)
 passed all stages on retry after an unchanged installer PowerShell probe timed
 out. No check was skipped or weakened.
+
+## Alpha release
+
+Published as [0.29.0-alpha.3](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.29.0-alpha.3)
+on 2026-11-11, from `cffa73f8a1a368038b09bb17772dc9f71e23c7df`.
+The release uses the version already prepared on main; only the Alpha revision
+advanced since .2. Fresh focused verification passed 31 frontend and 10 worker
+tests. Fresh local preflight passed 242/243 test files and modules and all other
+stages; the only failure was the known local Windows port-owner check. The
+[exact-commit Windows preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/43101963318)
+and [signed release workflow](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/43108362290)
+passed, including the mandatory native installer checks.
+
+Independent public checks matched the published assets, release notes and Alpha
+feed, verified the installer against the embedded updater key, and confirmed the
+Stable and Beta feed blobs were unchanged. Installer SHA-256:
+`c05aefd37ff8a03166ab6f9b5af694fda0b1f42383dabfceeb2c1de83ca101f9`.
