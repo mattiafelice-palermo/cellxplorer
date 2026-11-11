@@ -1802,7 +1802,14 @@ def _time_capacity_export_columns(
         current_name = str(planned.get("current_name") or trace.get("label") or "series")
         area = settings.get("electrode_area_cm2") or trace.get("electrode_area_cm2")
         nominal = trace.get("nominal_capacity_mah")
-        for quantity in (settings.get("current_left") or "current_ma", settings.get("current_right")):
+        panel_quantities = {"left": settings.get("current_left") or "current_ma", "right": settings.get("current_right")}
+        current_series = planned.get("current_series")
+        series = (
+            ((panel_quantities[entry["panel"]], entry["name"]) for entry in current_series)
+            if current_series is not None
+            else ((quantity, None) for quantity in panel_quantities.values())
+        )
+        for quantity, name in series:
             if not quantity or quantity == "none":
                 continue
             if quantity == "current_density":
@@ -1827,7 +1834,7 @@ def _time_capacity_export_columns(
             ):
                 continue
             axis_label = _export_current_axis_label(str(quantity))
-            label = f"{current_name} {axis_label}"
+            label = name or f"{current_name} {axis_label}"
             columns.append((f"{label} | {x_title}", selected_x))
             columns.append((f"{label} | {axis_label}", values))
     return columns

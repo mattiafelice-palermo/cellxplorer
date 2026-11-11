@@ -1,4 +1,5 @@
 import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
+import { SelectInitialTitleInput } from "../features/analyses/SelectInitialTitleInput";
 import {
   ActionIcon,
   Alert,
@@ -2414,14 +2415,13 @@ function AnalysisCreateForm({
   };
   return (
     <Stack>
-      <TextInput
+      <SelectInitialTitleInput
         label="Title"
         value={title}
         onChange={(event) => setTitle(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") submit();
         }}
-        data-autofocus
       />
       <Select
         label="Folder"

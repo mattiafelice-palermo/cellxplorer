@@ -150,6 +150,30 @@ function withoutExportColumns(traces: RenderedTrace[]) {
   return traces.map(({ cellxplorer_export_columns: _columns, ...trace }) => trace);
 }
 
+test("stacked current has an independent style and visibility alongside three electrodes", async () => {
+  const result = makeResult();
+  result.cell_traces[0].voltage_v_by_channel!.counter_potential = Array(8).fill(0.5);
+  const spec = makeSpec({
+    stacked: true, current_left: "current_ma", current_right: "c_rate",
+    voltage_channels: ["voltage", "working_potential", "counter_potential"],
+  });
+  spec.presentation.plot_style.series_overrides = {
+    "c1|current_left|current_ma": { name: "Measured current", marker_mode: "lines_points", line_dash: "solid", line_width: 4 },
+    "c1|current_right|c_rate": { marker_mode: "points" },
+  };
+  const render = await loadRenderer();
+  const traces = render(result, spec) as (RenderedTrace & { yaxis?: string; mode: string; line: { width: number; dash: string } })[];
+  const current = traces.find((trace) => trace.yaxis === "y2")!;
+  assert.equal(current.name, "Measured current");
+  assert.equal(current.mode, "lines+markers");
+  assert.equal(current.line.width, 4);
+  assert.equal(current.line.dash, "solid");
+  assert.equal(traces.find((trace) => trace.yaxis === "y3")?.mode, "markers");
+  assert.equal(traces.filter((trace) => !trace.yaxis).length, 3);
+  spec.presentation.hidden_series_ids = ["time_capacity:c1|current_left|current_ma"];
+  assert.equal(render(result, spec).some((trace) => trace.name === "Measured current"), false);
+});
+
 async function assertParity(result: TimeCapacityResult, spec: AnalysisSpec, webGl = false, preserve = false) {
   const render = await loadRenderer();
   const before = structuredClone({ result, spec });

@@ -102,6 +102,20 @@ class TimeCapacityWorkerTests(unittest.TestCase):
         ])
         self.assertEqual(rows[1][-4:], ["1", "10", "1", "0.2"])
 
+    def test_native_export_uses_only_the_current_panels_selected_by_the_plot(self):
+        result, plan, settings = self._export_fixture()
+        plan["traces"][0]["current_series"] = [{"panel": "right", "name": "Normalized current"}]
+        with TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "current.csv"
+            workers.write_time_capacity_data_export(
+                result, plan, settings, destination, export_format="csv", data_precision="standard",
+            )
+            with destination.open("r", encoding="utf-8-sig", newline="") as source:
+                header, first, *_ = csv.reader(source)
+        self.assertEqual(header[-2:], ["Normalized current | Time (min)", "Normalized current | C-rate (C)"])
+        self.assertFalse(any("Current density" in column for column in header))
+        self.assertEqual(first[-2:], ["0", "0.1"])
+
     def test_native_parquet_export_keeps_full_rows_and_unique_field_names(self):
         import pyarrow.parquet as pq
 

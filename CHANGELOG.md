@@ -7,6 +7,14 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.3 - 2026-11-11
+
+### Bug fixes
+
+- Select suggested analysis and plot titles so typing replaces the full name.
+- Group near-identical rates on equally spaced C-rate plots without changing measured values.
+- Let users edit the appearance of stacked current traces independently of the voltage channels.
+
 ## 0.29.0-alpha.2 - 2026-11-10
 
 ### Bug fixes

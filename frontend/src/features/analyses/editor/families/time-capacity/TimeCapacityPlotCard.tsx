@@ -127,7 +127,12 @@ import {
   timeCapacitySeriesDescriptors,
   timeCapacitySeriesDescriptor,
   timeCapacityVoltageSeriesDescriptor,
+  timeCapacityCurrentSeriesDescriptors,
+  timeCapacityCurrentBaseStyle,
+  timeCapacityCurrentAxisLabel as currentAxisLabel,
+  type TimeCapacityCurrentQuantity as CurrentQuantity,
   type SeriesDescriptor,
+  type BaseSeriesStyle,
 } from "../../plotting/seriesStyling";
 import { sourceExportColumns, sourceExportColumnsFromPoints } from "../../plotting/sourceChainPlot";
 import {
@@ -566,13 +571,6 @@ function timeCapacitySegments(
   return segments;
 }
 
-function currentAxisLabel(quantity: TimeCapacityCurrentAxis): string {
-  if (quantity === "current_density") return "Current density (mA/cm2)";
-  if (quantity === "c_rate") return "C-rate (C)";
-  if (quantity === "current_ma") return "Current (mA)";
-  return "";
-}
-
 function currentAxisValues(
   segment: TimeCapacitySegment,
   trace: TimeCapacityTrace,
@@ -665,6 +663,7 @@ export function timeCapacityTracesForResult(
     timeCapacitySeriesDescriptors(
       result.cell_traces,
       cfg.view === "voltage_current" ? selectedVoltageChannels : [],
+      cfg,
     ),
     style.series_order,
   );
@@ -684,9 +683,8 @@ export function timeCapacityTracesForResult(
     descriptor: SeriesDescriptor,
     color: string,
     lineDash: PlotStyle["line_dash"],
-  ) =>
-    resolveSeriesStyle(
-      {
+  ) => {
+    const base: BaseSeriesStyle = {
         color,
         lineWidth: style.line_width,
         lineDash,
@@ -695,11 +693,14 @@ export function timeCapacityTracesForResult(
         markerSize: style.marker_size,
         markerOpen: style.marker_open,
         opacity: 1,
-      },
+    };
+    return resolveSeriesStyle(
+      descriptor.currentPanel ? timeCapacityCurrentBaseStyle(base, descriptor.currentPanel) : base,
       descriptor,
       style.series_rules,
       style.series_overrides,
     );
+  };
 
   if (cfg.view !== "voltage_current") {
     for (const trace of result.cell_traces) {
@@ -810,6 +811,11 @@ export function timeCapacityTracesForResult(
     );
     if (resolved.hidden) continue;
     const name = resolved.name;
+    const currentStyles = timeCapacityCurrentSeriesDescriptors(trace, cfg, name).flatMap((current) => {
+      if (isSeriesHidden(spec, current.visibilityKey!)) return [];
+      const currentStyle = resolveTrace(current, style.custom_colors[current.key] ?? color, style.line_dash);
+      return currentStyle.hidden ? [] : [{ descriptor: current, resolved: currentStyle }];
+    });
     const fullX = timeCapacityX(trace, spec).x;
     const channelStyles = selectedVoltageChannels.map((channel) => {
       const channelKey = `${seriesKey}|${channel}`;
@@ -847,7 +853,7 @@ export function timeCapacityTracesForResult(
           visibleVoltageChannels.has(channelStyle.channel) &&
           hasFinitePoint(segment.voltageByChannel[channelStyle.channel] ?? []),
       );
-      if (visibleChannelStyles.length === 0) continue;
+      if (!visibleChannelStyles.length && !currentStyles.length) continue;
       const segmentCustomdata = segment.x.map((_, index) => [
         segment.displayOnlyCycle[index]
           ? "curve only (not a counted cycle)"
@@ -909,56 +915,35 @@ export function timeCapacityTracesForResult(
             "time: %{x:.4f}<br>cycle %{customdata[0]} · source label %{customdata[1]}<extra></extra>",
         } as Plotly.Data);
       }
-      if (cfg.stacked) {
-        const left = cfg.current_left ?? "current_ma";
-        const leftValues = currentAxisValues(segment, trace, left, cfg);
-        if (hasFinitePoint(leftValues)) {
-          out.push({
-            x: segment.x,
-            y: leftValues,
-            name: `${name} ${currentAxisLabel(left)}`,
-            xaxis: "x2",
-            yaxis: "y2",
-            legendgroup: seriesKey,
-            line: { color, width: Math.max(1, style.line_width - 0.6), dash: "dot" },
-            mode: "lines",
-            type: traceType,
-            connectgaps: false,
-            cellxplorer_analysis_sample: analysisSample,
-            showlegend: false,
-            opacity: 0.85,
-            meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
-            hovertemplate:
-              `<b>${compactHoverName(name)}</b><br>` +
-              `${plotlySafeText(currentAxisLabel(left))}: %{y:.4f}<br>` +
-              "time: %{x:.4f}<br>%{meta}<extra></extra>",
-          } as Plotly.Data);
-        }
-        if (cfg.current_right && cfg.current_right !== "none") {
-          const rightValues = currentAxisValues(segment, trace, cfg.current_right, cfg);
-          if (hasFinitePoint(rightValues)) {
-            out.push({
-              x: segment.x,
-              y: rightValues,
-              name: `${name} ${currentAxisLabel(cfg.current_right)}`,
-              xaxis: "x2",
-              yaxis: "y3",
-              legendgroup: seriesKey,
-              line: { color, width: Math.max(1, style.line_width - 0.6), dash: "dash" },
-              mode: "lines",
-              type: traceType,
-              connectgaps: false,
-              cellxplorer_analysis_sample: analysisSample,
-              showlegend: false,
-              opacity: 0.75,
-              meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
-              hovertemplate:
-                `<b>${compactHoverName(name)}</b><br>` +
-                `${plotlySafeText(currentAxisLabel(cfg.current_right))}: %{y:.4f}<br>` +
-                "time: %{x:.4f}<br>%{meta}<extra></extra>",
-            } as Plotly.Data);
-          }
-        }
+      for (const { descriptor: current, resolved: appearance } of currentStyles) {
+        const quantity = current.measure as CurrentQuantity;
+        const values = currentAxisValues(segment, trace, quantity, cfg);
+        if (!hasFinitePoint(values)) continue;
+        const showlegend = !legendShown.has(current.key) && appearance.showInLegend;
+        legendShown.add(current.key);
+        out.push({
+          x: segment.x,
+          y: values,
+          name: appearance.name,
+          xaxis: "x2",
+          yaxis: current.axis,
+          legendgroup: current.key,
+          legendrank: legendRanks.get(current.key),
+          line: { color: appearance.color, width: appearance.lineWidth, dash: appearance.lineDash, shape: appearance.lineShape },
+          marker: { color: appearance.color, size: appearance.markerSize, symbol: seriesPlotlySymbol(appearance) },
+          mode: seriesPlotlyMode(appearance),
+          type: traceType,
+          connectgaps: false,
+          cellxplorer_analysis_sample: analysisSample,
+          cellxplorer_export_axis_labels: { y: currentAxisLabel(quantity) },
+          showlegend,
+          opacity: appearance.opacity,
+          meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
+          hovertemplate:
+            `<b>${compactHoverName(appearance.name)}</b><br>` +
+            `${plotlySafeText(currentAxisLabel(quantity))}: %{y:.4f}<br>` +
+            "time: %{x:.4f}<br>%{meta}<extra></extra>",
+        } as Plotly.Data);
       }
     }
   }
@@ -992,7 +977,9 @@ export function timeCapacityLayout(
   const xTitle = result?.cell_traces[0] ? timeCapacityXAxisTitle(cfg) : "Time (min)";
   const leftCurrentLabel = currentAxisLabel(cfg.current_left ?? "current_ma");
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
-  const hasRightCurrent = hasRightCurrentValues(result, spec);
+  const hasRightCurrent = traces.length
+    ? traces.some((trace) => (trace as Partial<Plotly.ScatterData>).yaxis === "y3")
+    : hasRightCurrentValues(result, spec);
   const lm = legendMargins(style, spec.presentation.legend);
   const leftGap = axisGapDelta(style.y_axis);
   const bottomGap = axisGapDelta(style.x_axis);

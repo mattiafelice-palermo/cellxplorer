@@ -14,7 +14,7 @@
  * Pure by design — no React, no Plotly, no network. Everything here is unit
  * tested in `frontend/tests/seriesStyling.test.ts`.
  */
-import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "../../../../api";
+import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField, TimeCapacityTrace } from "../../../../api";
 import { cycleCellIsDisplayed, hasFiniteCycleValues } from "../families/cycles/cycleDisplayPolicy.ts";
 import { plotlySafeText } from "../policies/voltageChannelPolicy.ts";
 import { normalizeChannelNaming } from "../../../../electrodeDisplayLabels.ts";
@@ -59,7 +59,7 @@ export interface SeriesDescriptor {
   /** Subplot index. Default 0. */
   plot?: number;
   /** Which y axis the series is drawn on. Default "y". */
-  axis?: "y" | "y2";
+  axis?: "y" | "y2" | "y3";
   /** The quantity plotted, when it differs from the plot's primary quantity. Default null. */
   measure?: string | null;
   /** Identity within a plot/axis/measure, e.g. "c12", "g3", "dcir-abc". */
@@ -80,6 +80,7 @@ export interface SeriesDescriptor {
   measureLabel?: string;
   /** Selected Time/Capacity voltage channel for a channel-specific descriptor. */
   channel?: TimeCapacityVoltageChannel;
+  currentPanel?: "left" | "right";
 }
 
 /** Everything a trace needs, after all three layers are applied. */
@@ -347,6 +348,58 @@ export function timeCapacityVoltageSeriesDescriptor(
   };
 }
 
+export type TimeCapacityCurrentQuantity = "current_ma" | "current_density" | "c_rate";
+export type TimeCapacityCurrentConfig = {
+  view: string;
+  stacked: boolean;
+  current_left: TimeCapacityCurrentQuantity;
+  current_right: TimeCapacityCurrentQuantity | "none";
+  display_mode: string;
+  electrode_area_cm2?: number | null;
+};
+
+export function timeCapacityCurrentAxisLabel(quantity: TimeCapacityCurrentQuantity | "none"): string {
+  if (quantity === "current_density") return "Current density (mA/cm2)";
+  if (quantity === "c_rate") return "C-rate (C)";
+  return quantity === "current_ma" ? "Current (mA)" : "";
+}
+
+export function timeCapacityCurrentSeriesDescriptors(
+  trace: CellSeriesLike & Partial<TimeCapacityTrace>,
+  config: TimeCapacityCurrentConfig,
+  sampleName?: string,
+): SeriesDescriptor[] {
+  if (config.view !== "voltage_current" || !config.stacked ||
+    !trace.current_ma?.some((value, index) => value != null && Number.isFinite(value) &&
+      (config.display_mode === "consecutive" || trace.phase?.[index] === "charge" || trace.phase?.[index] === "discharge"))) return [];
+  const base = timeCapacitySeriesDescriptor(trace);
+  const area = config.electrode_area_cm2 ?? trace.electrode_area_cm2;
+  const nominal = trace.nominal_capacity_mah;
+  const descriptors: SeriesDescriptor[] = [];
+  for (const [panel, quantity] of [["left", config.current_left], ["right", config.current_right]] as const) {
+    if (!quantity || quantity === "none" ||
+      (quantity === "current_density" && !(area != null && Number.isFinite(area) && area > 0)) ||
+      (quantity === "c_rate" && !(nominal != null && Number.isFinite(nominal) && nominal > 0))) continue;
+    const key = `${base.key}|current_${panel}|${quantity}`;
+    const label = timeCapacityCurrentAxisLabel(quantity);
+    descriptors.push({
+      ...base, key, sourceKey: base.key, visibilityKey: `time_capacity:${key}`,
+      label: `${sampleName ?? base.label} ${label}`,
+      measure: quantity, measureLabel: label, plot: 1,
+      axis: panel === "left" ? "y2" : "y3", currentPanel: panel,
+    });
+  }
+  return descriptors;
+}
+
+export function timeCapacityCurrentBaseStyle(base: BaseSeriesStyle, panel: "left" | "right"): BaseSeriesStyle {
+  return {
+    ...base, lineWidth: Math.max(1, base.lineWidth - 0.6),
+    lineDash: panel === "left" ? "dot" : "dash", markerMode: "none",
+    opacity: panel === "left" ? 0.85 : 0.75,
+  };
+}
+
 /**
  * Stylable time/capacity series, de-duplicated by key.
  *
@@ -355,8 +408,9 @@ export function timeCapacityVoltageSeriesDescriptor(
  * the original Cell key so existing saved overrides remain untouched.
  */
 export function timeCapacitySeriesDescriptors(
-  traces: CellSeriesLike[],
+  traces: (CellSeriesLike & Partial<TimeCapacityTrace>)[],
   voltageChannels: readonly TimeCapacityVoltageChannel[] = [],
+  currentConfig?: TimeCapacityCurrentConfig,
 ): SeriesDescriptor[] {
   const seen = new Set<string>();
   const out: SeriesDescriptor[] = [];
@@ -366,7 +420,7 @@ export function timeCapacitySeriesDescriptors(
     const descriptors = channels
       ? channels.map((channel) => timeCapacityVoltageSeriesDescriptor(trace, channel))
       : [timeCapacitySeriesDescriptor(trace, voltageChannels[0])];
-    for (const descriptor of descriptors) {
+    for (const descriptor of [...descriptors, ...(currentConfig ? timeCapacityCurrentSeriesDescriptors(trace, currentConfig) : [])]) {
       if (seen.has(descriptor.key)) continue;
       seen.add(descriptor.key);
       out.push(descriptor);
@@ -418,12 +472,14 @@ export function seriesVisibilityKey(descriptor: SeriesDescriptor): string {
 
 /** True when a series is on the secondary axis, or plots a named (non-primary) measure. */
 export function isSecondarySeries(descriptor: SeriesDescriptor): boolean {
+  if (descriptor.currentPanel) return false; // Independent subplot, not a CE-style overlay.
   if (descriptor.axis === "y2") return true;
   return typeof descriptor.measure === "string" && descriptor.measure.length > 0;
 }
 
 /** Stable grouping key used by the Series panel and legend-order policy. */
 export function seriesQuantityGroupKey(descriptor: SeriesDescriptor): string {
+  if (descriptor.currentPanel) return `${descriptor.plot}:${descriptor.axis}:${descriptor.measureLabel}`;
   return `${descriptor.plot ?? 0}:${descriptor.measureLabel ?? descriptor.axis ?? "y"}`;
 }
 
@@ -572,7 +628,7 @@ export function seriesPaletteSlots(descriptors: SeriesDescriptor[]): Map<string,
   const slots = new Map<string, number>();
   let next = 0;
   for (const descriptor of descriptors) {
-    if (isSecondarySeries(descriptor)) continue;
+    if (descriptor.currentPanel || isSecondarySeries(descriptor)) continue;
     slots.set(descriptor.key, next++);
   }
   for (const descriptor of descriptors) {
@@ -580,6 +636,10 @@ export function seriesPaletteSlots(descriptors: SeriesDescriptor[]): Map<string,
     const primaryKey = primarySeriesKeyFor(descriptor);
     const primarySlot = primaryKey === null ? undefined : slots.get(primaryKey);
     slots.set(descriptor.key, primarySlot ?? next++);
+  }
+  const sources = [...new Set(descriptors.map((descriptor) => descriptor.sourceKey ?? descriptor.key))];
+  for (const descriptor of descriptors) {
+    if (descriptor.currentPanel) slots.set(descriptor.key, sources.indexOf(descriptor.sourceKey ?? descriptor.key));
   }
   return slots;
 }
@@ -726,7 +786,7 @@ export function resolveSeriesStyle(
     markerSize: base.markerSize,
     markerOpen: base.markerOpen,
     opacity: base.opacity,
-    showInLegend: true,
+    showInLegend: descriptor.currentPanel === undefined,
     hidden: false,
   };
 

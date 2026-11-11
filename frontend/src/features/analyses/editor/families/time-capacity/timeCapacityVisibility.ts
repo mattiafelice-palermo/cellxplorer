@@ -1,7 +1,7 @@
 import type { AnalysisSpec, TimeCapacityResult, TimeCapacityTrace } from "../../../../../api.ts";
 import { isAnalysisSampleHidden, isSeriesHidden } from "../../policies/analysisVisibility.ts";
 import type { VoltageChannel } from "../../policies/voltageChannelPolicy.ts";
-import { timeCapacityVoltageChannelShortLabel } from "../../plotting/seriesStyling.ts";
+import { timeCapacityCurrentSeriesDescriptors, timeCapacityVoltageChannelShortLabel, type TimeCapacityCurrentConfig } from "../../plotting/seriesStyling.ts";
 
 const TIME_CAPACITY_VISIBILITY_PREFIX = "time_capacity:";
 
@@ -56,7 +56,7 @@ export function timeCapacitySeriesVisibilityCandidatesForConfig(
     view: string;
     voltage_channels: readonly VoltageChannel[];
     voltage_channel: VoltageChannel;
-  },
+  } & Partial<TimeCapacityCurrentConfig>,
 ): { key: string; label: string }[] {
   const multipleVoltageChannels =
     config.view === "voltage_current" && config.voltage_channels.length > 1;
@@ -65,6 +65,12 @@ export function timeCapacitySeriesVisibilityCandidatesForConfig(
     if (timeCapacityTraceIsHidden(trace, spec)) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     const baseLabel = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+    if (config.stacked && config.current_left && config.display_mode) {
+      for (const descriptor of timeCapacityCurrentSeriesDescriptors(trace, {
+        ...config, stacked: true, current_left: config.current_left,
+        current_right: config.current_right ?? "none", display_mode: config.display_mode,
+      })) candidates.push({ key: descriptor.visibilityKey!, label: descriptor.label });
+    }
     if (multipleVoltageChannels) {
       for (const channel of config.voltage_channels) {
         if (!hasFinitePoint(traceVoltageValues(trace, channel, config.voltage_channel))) continue;

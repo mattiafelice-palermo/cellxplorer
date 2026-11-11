@@ -461,10 +461,16 @@ class TimeCapacityExportVoltageSeries(BaseModel):
     y_title: str = Field(min_length=1, max_length=500)
 
 
+class TimeCapacityExportCurrentSeries(BaseModel):
+    panel: Literal["left", "right"]
+    name: str = Field(min_length=1, max_length=500)
+
+
 class TimeCapacityExportSeriesPlan(BaseModel):
     cell_id: int
     group_id: int | None = None
     current_name: str = Field(min_length=1, max_length=500)
+    current_series: list[TimeCapacityExportCurrentSeries] | None = Field(default=None, max_length=2)
     voltage_series: list[TimeCapacityExportVoltageSeries] = Field(max_length=3)
 
 

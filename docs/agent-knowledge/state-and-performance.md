@@ -667,6 +667,11 @@ also keys the full saved figure reused by portable reports. Increment it when a 
 change makes old figure annotations or provenance stale, even if the scientific data signature
 is unchanged; otherwise the live plot can disagree with a retained report figure.
 
+Stacked Time/Capacity current series use source, panel and quantity in their
+appearance keys. Their lower-panel defaults and overrides are separate from
+the voltage traces. Native data exports carry an explicit list of visible
+current panels and names; an absent list preserves the older export contract.
+
 Cycles member rendering, CE Appearance entries and visibility targets share
 `cycleDisplayPolicy.ts`. An individual belongs to the displayed set when its
 own group lacks an aggregate or individual members are enabled. Do not suppress
