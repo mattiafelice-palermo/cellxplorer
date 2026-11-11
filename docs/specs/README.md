@@ -1,7 +1,7 @@
 # Feature specs
 
 - [110 — Analysis naming, C-rate categories and current appearance](110-analysis-naming-rate-current.md).
-  **Implemented; verification pending.**
+  **Complete; focused tests, in-app browser checks and clean-Windows preflight passed.**
 
 - [109 — Alpha startup tour ordering and Alpha .2 release](109-alpha-startup-tour.md).
   **Complete; Alpha .2 published and independently verified.** Show the tour after the

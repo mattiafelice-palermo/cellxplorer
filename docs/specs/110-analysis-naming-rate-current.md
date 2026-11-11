@@ -1,6 +1,6 @@
 # 110 — Analysis naming, C-rate categories and current appearance
 
-Status: Implemented; clean-Windows verification pending.
+Status: Complete. Clean-Windows preflight passed for implementation `8e274e41`.
 
 - Select the suggested title when opening the new-analysis or plot-save title field.
   Returning to the field does not select text again.
@@ -13,4 +13,6 @@ Status: Implemented; clean-Windows verification pending.
 
 Focused renderer/export tests and desktop-width in-app browser checks passed.
 Local canonical preflight passed all checks except the known native occupied-port
-owner test. No check was skipped; clean-Windows preflight is the merge gate.
+owner test. [Clean-Windows preflight](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/43100330432)
+passed all stages on retry after an unchanged installer PowerShell probe timed
+out. No check was skipped or weakened.
