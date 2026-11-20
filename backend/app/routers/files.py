@@ -224,6 +224,7 @@ def _inspect_import_path(
             "device_info": _bounded_staged_text_or_none(meta.get("device_info")),
             "channel": _bounded_staged_text_or_none(meta.get("channel")),
             "start_time": _bounded_staged_text_or_none(meta.get("start_time")),
+            **({"recorded_masses": parsing.recorded_biologic_masses(meta)} if inspected.ext == "mpr" else {}),
             "active_mass_mg": meta.get("active_mass_mg"),
             "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
             "nda_version": _bounded_staged_text_or_none(meta.get("nda_version")),

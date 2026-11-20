@@ -1,3 +1,5 @@
+import { nominalCapacityFromMass } from "../scientificMetadata";
+import { CellMassInput } from "./CellMassInput";
 import {
   Alert,
   Badge,
@@ -1122,7 +1124,16 @@ export function ContinuedImportEditor({
               <TextInput label="Cell name" value={cellDraft.cell_name} onChange={(event) => updateDraft({ cell_name: event.currentTarget.value })} />
               <Textarea label="Cell notes" autosize minRows={3} value={cellDraft.description} onChange={(event) => updateDraft({ description: event.currentTarget.value })} />
               <Divider label="Scientific overrides and presets" labelPosition="left" />
-              <NumberInput label="Active material mass (mg)" min={0.000001} decimalScale={6} value={cellDraft.active_mass_mg_override ?? ""} placeholder={cellDraft.source_metadata?.active_mass_mg?.toString() ?? "Source value"} onChange={(value) => updateDraft({ active_mass_mg_override: value === "" ? null : Number(value) })} />
+              <CellMassInput sources={drafts} label="Active material mass (mg)" min={0.000001} decimalScale={6} value={cellDraft.active_mass_mg_override ?? ""} placeholder={cellDraft.source_metadata?.active_mass_mg?.toString() ?? "Source value"} onChange={(value) => {
+                const mass = value === "" ? null : Number(value);
+                const specific = cellDraft.active_material_specific_capacity_mah_g;
+                updateDraft({
+                  active_mass_mg_override: mass,
+                  nominal_capacity_mah_override: cellDraft.active_material_selection !== "custom" && specific
+                    ? nominalCapacityFromMass(mass ?? cellDraft.source_metadata?.active_mass_mg ?? null, specific)
+                    : cellDraft.nominal_capacity_mah_override,
+                });
+              }} />
               <Select label="Active material preset" data={materialOptions} value={cellDraft.active_material_selection} searchable onChange={(value) => { const preset = materialPresets.find((item) => item.id === value); updateDraft({ active_material_selection: value ?? "custom", active_material_preset_id: preset?.id ?? null, active_material_name: preset?.name ?? null, active_material_specific_capacity_mah_g: preset?.specific_capacity_mah_g ?? null, nominal_capacity_mah_override: preset ? (cellDraft.active_mass_mg_override ?? cellDraft.source_metadata?.active_mass_mg) ? ((cellDraft.active_mass_mg_override ?? cellDraft.source_metadata?.active_mass_mg)! * preset.specific_capacity_mah_g) / 1000 : null : cellDraft.nominal_capacity_mah_override }); }} />
               <AddScientificPresetButton kind="material" disabled={importing} onCreated={(preset) => { const mass = cellDraft.active_mass_mg_override ?? cellDraft.source_metadata?.active_mass_mg; updateDraft({ active_material_selection: preset.id, active_material_preset_id: preset.id, active_material_name: preset.name, active_material_specific_capacity_mah_g: preset.specific_capacity_mah_g, nominal_capacity_mah_override: mass ? mass * preset.specific_capacity_mah_g / 1000 : null }); }} />
               <NumberInput label="Nominal capacity (mAh)" min={0.000001} decimalScale={6} value={cellDraft.nominal_capacity_mah_override ?? ""} placeholder={cellDraft.source_metadata?.nominal_capacity_mah?.toString() ?? "Source value"} disabled={cellDraft.active_material_selection !== "custom"} onChange={(value) => updateDraft({ nominal_capacity_mah_override: value === "" ? null : Number(value) })} />

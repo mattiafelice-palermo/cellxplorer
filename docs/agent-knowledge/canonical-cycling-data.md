@@ -664,3 +664,10 @@ combined loop/clock display segments. Pin both sides of explicit boundaries
 before decimation and derive response break indexes after sampling. Derivative
 smoothing/calculation also stays inside each explicit segment. Numeric exports
 retain every recorded row; interactive and graphical exports share line breaks.
+
+## BioLogic mass selection
+
+Import review and Cell editing offer active-material and characteristic masses from unit-verified
+GCPL settings. Picking a recorded value stores a numeric Cell override in mg, just like manual
+entry. Source headers retain their values and units. All sources in a continued Cell share the
+selected normalization mass. Clearing the override restores normal Cell mass resolution.

@@ -1,3 +1,4 @@
+import { CellMassInput } from "../components/CellMassInput";
 import cellTableClasses from "./LibraryPage.module.css";
 import { StickyTableScrollArea } from "../components/StickyTableScrollArea";
 import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
@@ -2484,7 +2485,7 @@ export function LibraryPage() {
                   in the Metadata tab. Clear a field to restore the source value.
                 </Alert>
                 <Group grow align="start">
-                  <NumberInput
+                  <CellMassInput sources={detail.data.sources}
                     label="Active material mass (mg)"
                     description={`Source: ${
                       detail.data.scientific_metadata.active_mass_mg.source_value ?? "not detected"
@@ -2493,7 +2494,8 @@ export function LibraryPage() {
                     decimalScale={6}
                     value={editActiveMass ?? ""}
                     placeholder={
-                      detail.data.scientific_metadata.active_mass_mg.effective_value?.toString() ??
+                      (detail.data.scientific_metadata.active_mass_mg.legacy_value ??
+                        detail.data.scientific_metadata.active_mass_mg.source_value)?.toString() ??
                       "Custom value"
                     }
                     error={

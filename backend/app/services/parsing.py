@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 import zipfile
@@ -881,6 +882,25 @@ def source_uses_legacy_biologic_parser(source: object) -> bool:
         getattr(source, "ext", None),
         getattr(source, "parser_version", None),
     )
+
+
+def recorded_biologic_masses(header: object) -> list[dict]:
+    """Return selectable specimen masses only from unit-verified GCPL settings."""
+    for container in _biologic_mpr_header_containers(header):
+        settings = container.get("settings")
+        if not isinstance(settings, dict) or settings.get("technique") != "GCPL":
+            continue
+        choices = []
+        for kind, value, unit in (
+            ("active_material", settings.get("active_material_mass_mg"), settings.get("active_material_mass_unit")),
+            ("characteristic", settings.get("characteristic_mass_raw"), settings.get("characteristic_mass_unit")),
+        ):
+            if unit not in ("g", "mg") or type(value) not in (int, float):
+                continue
+            if value > 0 and math.isfinite(value):
+                choices.append({"kind": kind, "value": value, "unit": unit})
+        return choices
+    return []
 
 
 def _biologic_mpr_header_containers(header_meta: object) -> list[dict]:

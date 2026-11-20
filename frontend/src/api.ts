@@ -618,9 +618,16 @@ export interface CellSummary {
   }[];
 }
 
+export interface RecordedMass {
+  kind: "active_material" | "characteristic";
+  value: number;
+  unit: "mg" | "g";
+}
+
 export type CellSource = Omit<SourceFile, "test_id" | "test_name"> & {
   position: number;
   tracked_tail: boolean;
+  recorded_masses?: RecordedMass[];
 };
 
 export interface CellDetail extends CellSummary {
@@ -2144,6 +2151,7 @@ export interface Meta {
 }
 
 export interface ImportPreview extends MprReadPresentation {
+  recorded_masses?: RecordedMass[];
   staged_name: string;
   source_path: string | null;
   filename: string;

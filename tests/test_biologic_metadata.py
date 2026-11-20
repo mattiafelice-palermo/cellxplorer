@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import struct
 import tempfile
-import struct
 import unittest
 from unittest.mock import patch
 
@@ -103,6 +102,12 @@ class BiologicMetadataTests(unittest.TestCase):
                     self.assertEqual(header["active_mass_mg"], 2.0)
                     self.assertEqual(header["electrode_area_cm2"], area_cm2)
                     self.assertEqual(settings["characteristic_mass_g"], mass_g)
+                    choices = [{"kind": "active_material", "value": 2.0, "unit": "mg"}]
+                    if mass_code in (1, 2):
+                        choices.append({"kind": "characteristic", "value": 1.5,
+                                        "unit": "g" if mass_code == 1 else "mg"})
+                    self.assertEqual(parsing.recorded_biologic_masses(header), choices)
+                    self.assertEqual(parsing.recorded_biologic_masses(header["raw"]), choices)
                     self.assertEqual(settings["characteristic_mass_raw"], 1.5)
                     self.assertEqual(settings["electrode_area_unit_code"], area_code)
 

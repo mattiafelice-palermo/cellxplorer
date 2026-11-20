@@ -1412,6 +1412,8 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
         source = file_dict(link.file)
         source.pop("test_id", None)
         source.pop("test_name", None)
+        if link.file.ext == "mpr":
+            source["recorded_masses"] = parsing.recorded_biologic_masses(link.file.header_meta)
         source["position"] = position
         source["tracked_tail"] = position == len(links)
         d["sources"].append(source)

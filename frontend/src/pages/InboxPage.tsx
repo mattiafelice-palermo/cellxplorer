@@ -1,3 +1,4 @@
+import { CellMassInput } from "../components/CellMassInput";
 import { inspectPathsWithReadModes, type MprReadModes } from "../mprReadMode";
 import {
   Alert,
@@ -2255,7 +2256,7 @@ function ImportModal({
                 labelPosition="left"
               />
               <Group grow align="start">
-                <NumberInput
+                <CellMassInput sources={[draft]}
                   label="Active material mass (mg)"
                   description={
                     draft.active_mass_mg === null

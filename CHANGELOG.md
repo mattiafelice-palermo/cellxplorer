@@ -7,6 +7,10 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.5 - 2026-11-20
+
+- Choose a recorded BioLogic specimen mass during import or Cell editing for mass-normalized calculations.
+
 ## 0.29.0-alpha.4 - 2026-11-20
 
 - Correct GCPL capacity at delayed counter resets and respect EC-Lab mass and electrode area units.
