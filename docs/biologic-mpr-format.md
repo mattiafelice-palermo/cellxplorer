@@ -218,10 +218,11 @@ and Pascal strings are one-byte-length `cp1252` strings.
 | ---: | --- | --- |
 | `0x0000` | `u8` | GCPL technique discriminator (`0x77`) |
 | `0x0007` | Pascal | Comments |
-| `0x0107` / `0x010F` / `0x0113` / `0x0117` | `f32` | Active mass (g), molecular weight, atomic weight, acquisition-start raw value |
+| `0x0107` / `0x010F` / `0x0113` / `0x0117` | `f32` | Active material mass (mg), molecular weight, atomic weight, acquisition-start raw value |
 | `0x011B` | `u16` | Electrons transferred |
 | `0x011E` / `0x01C0` / `0x0215` | Pascal | Electrode material, electrolyte, reference-electrode text |
-| `0x0211` / `0x024C` | `f32` | Electrode area (cm2), characteristic mass (g) |
+| `0x0211` / `0x024C` | `f32` | Electrode area and characteristic mass in their selected units |
+| `0x0250` / `0x0251` | `u8` | Area unit (2 = cm², 3 = mm²) and characteristic mass unit (1 = g, 2 = mg) |
 | `0x025C` / `0x0260` | `f32` / `u8` | Battery capacity and capacity unit |
 | `0x1847` / `0x1849` | `u16` / `u16` | Sequence count (`Ns`) and parameter count (`33`) |
 
@@ -240,12 +241,28 @@ and Pascal strings are one-byte-length `cp1252` strings.
 | `+100` / `+104` | `u32` / `u32` | `goto Ns` and repeat count `nc` |
 
 The verified private sample provides representative independent values: three sequences, an active
-mass of about `0.001 g`, a sequence-2 current of about `-7.69 mA`, a `0.2 V` sequence-2 `EM`, a
+mass of about `0.001 mg`, a sequence-2 current of about `-7.69 mA`, a `0.2 V` sequence-2 `EM`, a
 `900 s` post-discharge `tR`, and a final zero-current `tM` of `3,600 s`. Current and capacity units
 are normalized to mA and mA.h using validated source unit codes. Explicit C-rate settings are
 retained only when the sequence selects C/C×N control; a C-rate is never inferred from active mass.
 The current-reference selector is independently verified only for code `2` in this revision; other
 selectors fail closed rather than receiving the same current meaning by assumption.
+
+Paired EC-Lab exports establish the storage units independently. The active material field
+at `0x0107` is in mg for these settings layouts. Characteristic mass is a separate
+field with its own selector. Changing it does not rescale active material mass.
+Unknown area or characteristic mass selectors retain the source number and code and
+leave the normalized quantity unavailable. These byte and text pairs exercise both
+area units and mass selectors in the
+[public EC-Lab fixture collection](https://github.com/dgbowl/yadg/tree/21d443c05f0320834851f2d912fbfb911ef2d9cc/tests/test_x_eclab)
+(`gcpl`, `gcpl.issue_211`, and `gcpl.issue_226.I`).
+
+At an active step start, ID 211 can retain the preceding final counter for one
+zero-transfer row. The next stored value then equals the signed ID-7 interval
+from a fresh zero origin. Verify the remaining increments, including ID-13
+differences when recorded, before replacing the stale baseline in canonical
+capacity. Apply this rule symmetrically to both polarities. A continuous signed
+counter with a nonzero baseline remains valid.
 
 The normalized protocol uses the existing CellXplorer step schema. A voltage limit with no hold
 duration is CC until an operational cutoff. A verified voltage target plus hold duration is represented

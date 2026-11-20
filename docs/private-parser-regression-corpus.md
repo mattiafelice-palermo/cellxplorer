@@ -83,6 +83,13 @@ the two evidenced original ranges and derived cycle identity from raw Ns returns
 and capacity/CE from signed active counter endpoint differences. All 1,175 cycles
 agreed within 1.14e-13. No golden values or scientific tolerances were changed.
 
+The default deployment corpus now includes a seventh source with a one-record-late
+GCPL counter reset. Independently sum signed ID-7 increments over each discharge.
+The existing six sources retain exact raw rows, cycle summaries and unnormalized
+curves. Their verified active mass unit correction changes the mass-normalized
+Time/Capacity coordinates by a factor of 1,000. The previous manifest and
+expectations are retained locally for comparison.
+
 ## CP electrode regression
 
 The ignored `spec107-cp` corpus retains four immutable CP sources and their

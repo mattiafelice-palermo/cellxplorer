@@ -52,7 +52,7 @@ from .source_format_errors import (
 # active-to-active returns after an interrupted phase, without inventing rest.
 # gcpl17 omits only fully matched, adjacent replayed measurement blocks.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl18"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl19"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -619,7 +619,7 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
         _GCPL_PASCAL_FIELDS["electrolyte"],
         "electrolyte",
     )
-    active_mass_g = _positive_setting(_read_f32(payload, 0x0107, "active material mass"))
+    active_mass_mg = _positive_setting(_read_f32(payload, 0x0107, "active material mass"))
     molecular_weight = _positive_setting(
         _read_f32(payload, 0x010F, "molecular weight")
     )
@@ -627,7 +627,13 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
         _read_f32(payload, 0x0113, "atomic weight")
     )
     electrons_transferred = _read_u16(payload, 0x011B, "electrons transferred")
-    electrode_area_cm2 = _positive_setting(_read_f32(payload, 0x0211, "electrode area"))
+    electrode_area = _positive_setting(_read_f32(payload, 0x0211, "electrode area"))
+    area_code = _read_u8(payload, 0x0250, "electrode area unit")
+    # Only selectors independently paired with an EC-Lab export have units.
+    area_unit = {2: "cm2", 3: "mm2"}.get(area_code)
+    electrode_area_cm2 = None
+    if electrode_area is not None and area_unit is not None:
+        electrode_area_cm2 = electrode_area / (100 if area_unit == "mm2" else 1)
     battery_capacity_raw = _positive_setting(
         _read_f32(payload, 0x025C, "battery capacity")
     )
@@ -635,9 +641,14 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
     battery_capacity_mah = _capacity_to_mah(
         battery_capacity_raw, battery_capacity_unit_code
     )
-    characteristic_mass_g = _positive_setting(
+    characteristic_mass = _positive_setting(
         _read_f32(payload, 0x024C, "characteristic mass")
     )
+    mass_code = _read_u8(payload, 0x0251, "characteristic mass unit")
+    mass_unit = {1: "g", 2: "mg"}.get(mass_code)
+    characteristic_mass_g = None
+    if characteristic_mass is not None and mass_unit is not None:
+        characteristic_mass_g = characteristic_mass / (1000 if mass_unit == "mg" else 1)
     acquisition_start_raw = _read_f32(payload, 0x0117, "acquisition start")
     sequences = list(
         _decode_gcpl_sequence(payload, sequence_number, profile)
@@ -665,10 +676,15 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
         "electrode_material_raw": electrode_material,
         "electrolyte": _source_text(electrolyte),
         "electrolyte_raw": electrolyte,
-        "active_material_mass_g": active_mass_g,
-        "active_material_mass_mg": (
-            None if active_mass_g is None else active_mass_g * 1000.0
-        ),
+        "active_material_mass_g": None if active_mass_mg is None else active_mass_mg / 1000,
+        "active_material_mass_mg": active_mass_mg,
+        "active_material_mass_unit": "mg",
+        "electrode_area_raw": electrode_area,
+        "electrode_area_unit_code": area_code,
+        "electrode_area_unit": area_unit,
+        "characteristic_mass_raw": characteristic_mass,
+        "characteristic_mass_unit_code": mass_code,
+        "characteristic_mass_unit": mass_unit,
         "electrode_area_cm2": electrode_area_cm2,
         "molecular_weight": molecular_weight,
         "atomic_weight": atomic_weight,
@@ -2415,6 +2431,38 @@ def _classify_block(mode: np.ndarray, direction: int, start: int, end: int) -> s
     )
 
 
+def _repair_stale_counter_origins(
+    counter: np.ndarray, dq: np.ndarray, q_minus_q0: np.ndarray | None,
+    mode: np.ndarray, ranges: list[tuple[int, int]],
+) -> np.ndarray:
+    """Repair a one-record-late ID-211 reset using signed interval evidence."""
+    repaired = counter
+    for start, end in ranges:
+        if start == 0 or end - start < 2 or mode[start] == MPR_MODE_REST:
+            continue
+        carried = counter[start]
+        first_increment = dq[start + 1]
+        if (dq[start] != 0 or carried != counter[start - 1]
+                or abs(carried) <= _CAPACITY_TOLERANCE_MAH
+                or abs(counter[start + 1] - first_increment) > _CAPACITY_TOLERANCE_MAH
+                or abs(counter[start + 1] - carried - first_increment) <= _CAPACITY_TOLERANCE_MAH):
+            continue
+        # Row two starts a fresh signed counter. Require agreement through
+        # the whole block before replacing only its stale first sample.
+        later = np.diff(counter[start + 1:end])
+        if not np.allclose(later, dq[start + 2:end], rtol=0, atol=_CAPACITY_TOLERANCE_MAH):
+            raise UnsupportedBiologicGcplError("GCPL late reset disagrees with recorded dQ")
+        if q_minus_q0 is not None and not np.allclose(
+            np.diff(q_minus_q0[start:end]), dq[start + 1:end],
+            rtol=0, atol=_ID13_ACTIVE_INCREMENT_PARITY_TOLERANCE_MAH,
+        ):
+            raise UnsupportedBiologicGcplError("GCPL late reset disagrees with Q-Q0")
+        if repaired is counter:
+            repaired = counter.copy()
+        repaired[start] = 0.0
+    return repaired
+
+
 def _capacity_columns(
     raw_capacity: np.ndarray,
     directions: list[int],
@@ -2683,15 +2731,20 @@ def map_gcpl_to_canonical(
         raise UnsupportedBiologicGcplError(
             "ID-13 capacity profile boundary evidence changed during validation"
         )
+    ranges = _block_ranges(boundaries)
     capacity_for_mapping = raw_capacity
+    if capacity_counter_profile is _ID211_CAPACITY_COUNTER_PROFILE:
+        capacity_for_mapping = _repair_stale_counter_origins(
+            raw_capacity, raw_dq_mAh, _optional_column(records, "raw_q_minus_q0_mAh"),
+            mode, ranges,
+        )
     dq_for_mapping = raw_dq_mAh
     if delayed_active_transfers:
-        capacity_for_mapping = raw_capacity.copy()
+        capacity_for_mapping = capacity_for_mapping.copy()
         dq_for_mapping = raw_dq_mAh.copy()
         for boundary, _delta in delayed_active_transfers.items():
             capacity_for_mapping[boundary - 1] = raw_capacity[boundary]
             dq_for_mapping[boundary] = 0.0
-    ranges = _block_ranges(boundaries)
     directions = [
         _direction_for_block(
             current_ma,
@@ -2842,6 +2895,17 @@ def map_gcpl_to_canonical(
         },
         "timestamp_timezone": "local_wall_clock_naive" if start_timestamp is not None else None,
     }
+    if declared_settings is not None:
+        # A successful cache rebuild can refresh headers on older registrations
+        # using the exact settings read alongside these records.
+        frame.attrs["biologic_gcpl"]["cell_dimensions"] = {
+            key: declared_settings[key] for key in (
+                "active_material_mass_mg", "active_material_mass_g", "active_material_mass_unit",
+                "characteristic_mass_raw", "characteristic_mass_unit", "characteristic_mass_unit_code",
+                "characteristic_mass_g", "electrode_area_raw", "electrode_area_unit",
+                "electrode_area_unit_code", "electrode_area_cm2",
+            )
+        }
     if execution_ids is not None:
         from . import biologic_gcpl_executions as executions
 

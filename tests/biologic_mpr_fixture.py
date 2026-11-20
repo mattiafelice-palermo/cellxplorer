@@ -125,7 +125,7 @@ def encode_gcpl_settings(
     *,
     technique_id: int = 0x77,
     comments: str | None = "fixture GCPL",
-    active_mass_g: float = 0.001,
+    active_mass_mg: float = 1.0,
     electrode_area_cm2: float = 1.5,
     reference_electrode: str | None = None,
     battery_capacity: float = 0.0,
@@ -138,8 +138,10 @@ def encode_gcpl_settings(
     payload = bytearray(0x1847 + 4 + len(sequences) * 108)
     payload[0] = technique_id
     _pascal_write(payload, 0x0007, comments)
-    struct.pack_into("<f", payload, 0x0107, active_mass_g)
+    struct.pack_into("<f", payload, 0x0107, active_mass_mg)
     struct.pack_into("<f", payload, 0x0211, electrode_area_cm2)
+    payload[0x0250] = 2  # cm2
+    payload[0x0251] = 1  # g (characteristic mass)
     _pascal_write(payload, 0x0215, reference_electrode)
     struct.pack_into("<f", payload, 0x025C, battery_capacity)
     payload[0x0260] = battery_capacity_unit

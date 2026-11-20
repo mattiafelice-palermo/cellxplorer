@@ -28,6 +28,7 @@ from tests.biologic_mpr_fixture import write_cp_mpr
 
 
 LEGACY = 'bm:gcpl18cpocv1:r1'
+CURRENT_BASE = 'bm:gcpl19cpocv1:r1'
 HEADER = {'settings': {'technique_id': 25}, 'data': {'field_offsets': {'raw_mean_counter_potential': 19}}}
 CHANNELS = ['voltage', 'working_potential', 'counter_potential']
 
@@ -74,7 +75,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
         np.testing.assert_array_equal(raw.working_potential_v, we)
         np.testing.assert_array_equal(raw.counter_potential_v, ce)
         np.testing.assert_array_equal(raw.voltage_v, we - ce)
-        self.assertEqual(sf.parser_version, LEGACY + ':cp3')
+        self.assertEqual(sf.parser_version, CURRENT_BASE + ':cp3')
         capabilities = sf.header_meta[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY]
         self.assertEqual(capabilities['voltage_roles']['voltage_v'], 'cell')
         self.assertTrue(capabilities['voltage_v_derived'])
@@ -88,7 +89,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
         self.assertTrue(exploratory.charge_capacity_mah.isna().all())
         self.assertFalse(exploratory.cycle_complete.any())
         self.assertEqual(exploratory.mpr_elapsed_time_s.tolist(), [0, 10, 3, 7, 8, 9])
-        self.assertEqual(parsing.parser_identity(path, read_mode='permissive'), LEGACY + ':cp3:p1')
+        self.assertEqual(parsing.parser_identity(path, read_mode='permissive'), CURRENT_BASE + ':cp3:p1')
 
     def test_loop_breaks_use_declared_indexes_and_never_a_time_threshold(self):
         from app.services import biologic_cp_ocv
@@ -213,7 +214,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
             self.assertTrue(all('header_meta' not in row.__dict__ for row in rows))
             self.assertEqual(actual, [parsing.current_parser_identity_for_extension('mpr', header_meta=h) for h in headers])
             rows[0].header_meta = None
-            self.assertEqual(parsing.current_parser_identity_for_source(rows[0]), LEGACY)
+            self.assertEqual(parsing.current_parser_identity_for_source(rows[0]), CURRENT_BASE)
         finally:
             event.remove(self.engine, 'before_cursor_execute', observed)
         class Neware:
@@ -302,7 +303,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
     def test_raw_preview_repairs_online_cp_and_rejects_offline_legacy(self):
         sf = self.ingest(); sf.parser_version = LEGACY
         data = preview_file(sf.id, kind='raw', db=self.db)
-        self.assertEqual(sf.parser_version, LEGACY + ':cp3')
+        self.assertEqual(sf.parser_version, CURRENT_BASE + ':cp3')
         self.assertGreater(min(data['voltage_v']), 1.)
         sf.parser_version = LEGACY; sf.path = str(self.root / 'missing.mpr')
         with self.assertRaises(HTTPException) as context:
@@ -374,7 +375,7 @@ class CpElectrodeMappingTests(unittest.TestCase):
                 restored.path = str(original_path); restored.location_status = 'online'
                 self.assertTrue(scanner._needs_identity_bring_forward(restored))
                 scanner.parse_file(imported_db, restored)
-                self.assertEqual(restored.parser_version, LEGACY + ':cp3')
+                self.assertEqual(restored.parser_version, CURRENT_BASE + ':cp3')
                 self.assertFalse(scanner._needs_identity_bring_forward(restored))
         finally:
             imported_engine.dispose()

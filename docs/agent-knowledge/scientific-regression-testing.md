@@ -88,6 +88,12 @@ registration, independent baseline review and snapshot controls. Synthetic publi
 tests remain independent of private files.
 
 
+GCPL capacity regressions should compare canonical phase endpoints against sums
+of the signed instrument increments for each executed phase. A valid voltage
+curve and monotone cumulative counter can coexist with a stale first-row baseline.
+When correcting mass units, check absolute and mass-normalized curves independently
+before accepting changes to frozen Time/Capacity hashes.
+
 ## Windows verification paths
 
 Canonical preflight nests per-module data directories below its temporary root.

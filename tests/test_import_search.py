@@ -109,6 +109,20 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(state["metadata_ready"], 0)
         self.assertEqual(state["metadata_unavailable"], 0)
 
+    def test_gcpl_upgrade_expires_only_stale_mass_and_search_text(self):
+        item = fact(r"C:\cycling\units.mpr")
+        item.update(extension=".mpr", metadata={"technique": "GCPL", "active_mass_mg": "12345.6"})
+        self.catalog.apply_batch("root", "one", [item])
+        with self.catalog.connect() as db:
+            db.execute("PRAGMA user_version=3")
+        with Catalog(self.catalog.path).connect() as db:
+            entry = db.execute("SELECT * FROM entries").fetchone()
+            self.assertEqual(entry["metadata_state"], "pending")
+            self.assertEqual(entry["metadata_version"], 0)
+            self.assertNotIn("12345.6", entry["search_text"])
+            self.assertIn("GCPL", entry["metadata_json"])
+            self.assertNotIn("active_mass_mg", entry["metadata_json"])
+
     def test_mb_upgrade_retries_only_negative_mpr_catalog_facts_once(self):
         items = [fact("C:\\cycling\\old-mb.mpr"), fact("C:\\cycling\\known.mpr"),
                  fact("C:\\cycling\\known.ndax"), fact("C:\\cycling\\unsupported.xlsx")]

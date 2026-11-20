@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import struct
 import tempfile
+import struct
 import unittest
 from unittest.mock import patch
 
@@ -51,7 +52,7 @@ def _settings(*, reference_electrode: str | None = "Ag/AgCl") -> bytes:
             },
         ],
         comments="known GCPL settings",
-        active_mass_g=0.002,
+        active_mass_mg=2.0,
         electrode_area_cm2=1.25,
         reference_electrode=reference_electrode,
         battery_capacity=2.0,
@@ -84,6 +85,26 @@ class BiologicMetadataTests(unittest.TestCase):
         self.assertEqual(data["ignored_known_column_ids"], [379, 124, 125, 126, 182])
         self.assertEqual(data["opaque_trailing_column_ids"], [])
         self.assertEqual(data["opaque_trailing_base_ids"], [])
+
+    def test_cell_characteristic_units_are_independent(self) -> None:
+        with TemporaryDirectory() as temp:
+            for area_code, mass_code, area_cm2, mass_g in (
+                (2, 1, 113.0, 1.5), (3, 2, 1.13, 0.0015), (255, 255, None, None),
+            ):
+                with self.subTest(area_code=area_code, mass_code=mass_code):
+                    payload = bytearray(_settings())
+                    struct.pack_into("<f", payload, 0x0211, 113)
+                    struct.pack_into("<f", payload, 0x024C, 1.5)
+                    payload[0x0250:0x0252] = bytes((area_code, mass_code))
+                    path = write_gcpl_mpr(Path(temp) / "units.mpr", _HEADER_ROWS,
+                                          settings_payload=bytes(payload))
+                    header = parsing.read_header_metadata(path)
+                    settings = header["raw"]["settings"]
+                    self.assertEqual(header["active_mass_mg"], 2.0)
+                    self.assertEqual(header["electrode_area_cm2"], area_cm2)
+                    self.assertEqual(settings["characteristic_mass_g"], mass_g)
+                    self.assertEqual(settings["characteristic_mass_raw"], 1.5)
+                    self.assertEqual(settings["electrode_area_unit_code"], area_code)
 
     def test_modern_settings_log_and_protocol_are_normalized(self) -> None:
         with TemporaryDirectory() as temp:

@@ -11,6 +11,10 @@ User data must stay outside the install directory. The current backend already s
 explicit packaged schema migrations and automatic pre-migration backups. See
 `docs/database-migrations.md`.
 
+Before deploying a version, run `python scripts/parser_regression_corpus.py verify`
+on the workstation holding the [private difficult-source corpus](private-parser-regression-corpus.md).
+This checks the archived GCPL late-reset recording through import, cache, analysis and preview.
+
 ## Required local tools
 
 - Node.js and npm

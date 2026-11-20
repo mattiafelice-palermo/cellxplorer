@@ -271,11 +271,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl18cpocv1",
+                "adapter_revision": "gcpl19cpocv1",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl18cpocv1:r1")
+        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl19cpocv1:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
@@ -1308,6 +1308,35 @@ class BiologicGcplMappingTests(unittest.TestCase):
         ]
         with self.assertRaises(InvalidBiologicGcplError):
             _map_rows(rows)
+
+    def test_late_counter_reset_preserves_first_interval_in_both_directions(self) -> None:
+        for sign in (1, -1):
+            with self.subTest(sign=sign):
+                rows = [
+                    _row(0, control=sign, ns_changed=True),
+                    _row(1, control=sign, q_mAh=5*sign, dq_mAh=5*sign),
+                    _row(2, control=0, mode=MPR_MODE_REST, q_mAh=5*sign),
+                    _row(3, ns=1, ns_changed=True, control=-sign, q_mAh=5*sign),
+                    _row(4, ns=1, control=-sign, q_mAh=-sign, dq_mAh=-sign),
+                    _row(5, ns=1, control=-sign, q_mAh=-3*sign, dq_mAh=-2*sign),
+                ]
+                records = _structured_records(rows)
+                records["raw_q_minus_q0_mAh"][3:] = np.array([0, -1, -3]) * sign
+                frame = map_gcpl_to_canonical(records)
+                quantity = "discharge_capacity_mah" if sign == 1 else "charge_capacity_mah"
+                np.testing.assert_array_equal(frame[quantity].iloc[3:], [0, 1, 3])
+                self.assertEqual(calc.per_cycle(frame)[quantity][0], 3)
+                self.assertEqual(records["raw_q_charge_discharge_mAh"][3], 5*sign)
+
+                # A genuine continuous counter keeps its nonzero baseline.
+                records["raw_q_charge_discharge_mAh"][4:] = np.array([-1, -3]) * sign + 5*sign
+                unchanged = map_gcpl_to_canonical(records)
+                np.testing.assert_array_equal(unchanged[quantity].iloc[3:], [0, 1, 3])
+
+                records["raw_q_charge_discharge_mAh"][4:] = np.array([-1, -3]) * sign
+                records["raw_q_minus_q0_mAh"][-1] += 0.1
+                with self.assertRaisesRegex(UnsupportedBiologicGcplError, "Q-Q0"):
+                    map_gcpl_to_canonical(records)
 
     def test_capacity_counter_reset_to_baseline_within_step_fails_closed(self) -> None:
         rows = [

@@ -66,11 +66,35 @@ def _assert_stable_fingerprint(
         raise SourceChangedDuringRead("Source is still changing; update deferred") from exc
 
 
+def _refresh_gcpl_dimensions(sf: SourceFile, settings: dict | None) -> None:
+    if not settings or "active_material_mass_unit" not in settings:
+        return
+    header = sf.header_meta or {}
+    stored = header.get("settings") or {}
+    if "active_material_mass_g" not in stored or "active_material_mass_unit" in stored:
+        return
+    old_mass = sf.active_mass_mg
+    sf.active_mass_mg = settings["active_material_mass_mg"]
+    sf.header_meta = {**header, "settings": {**stored, **settings}}
+    # Only refresh the copied primary-source summary. Explicit overrides,
+    # user-entered values, and masses from other sources retain their owner.
+    link = sf.test_link
+    if old_mass is not None and link and link.test.file_links[0] is link:
+        for entry in link.test.cell.metadata_entries:
+            if entry.key == "active_material_mg" and entry.value == str(old_mass):
+                if sf.active_mass_mg is None:
+                    link.test.cell.metadata_entries.remove(entry)
+                else:
+                    entry.value = str(sf.active_mass_mg)
+                break
+
+
 def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
     sf.total_charge_capacity_mah = info.get("total_charge_capacity_mah")
     sf.total_discharge_capacity_mah = info.get("total_discharge_capacity_mah")
     sf.max_discharge_capacity_mah = info.get("max_discharge_capacity_mah")
     sf.capacity_summary_status = "ready"
+    _refresh_gcpl_dimensions(sf, info.get("gcpl_cell_dimensions"))
     parsing.record_source_interpretation(sf, info)
 
 
@@ -1434,6 +1458,7 @@ def update_source_from_path(db: Session, sf: SourceFile, *, update_batch_key: st
     sf.barcode = meta.get("barcode")
     sf.remarks = meta.get("remarks")
     sf.start_time = meta.get("start_time")
+    _refresh_gcpl_dimensions(sf, (meta.get("raw") or {}).get("settings"))
     sf.active_mass_mg = meta.get("active_mass_mg")
     sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
     sf.header_meta = meta.get("raw") or None
@@ -1540,6 +1565,7 @@ def update_source_from_path_if_stable(
     sf.barcode = meta.get("barcode")
     sf.remarks = meta.get("remarks")
     sf.start_time = meta.get("start_time")
+    _refresh_gcpl_dimensions(sf, (meta.get("raw") or {}).get("settings"))
     sf.active_mass_mg = meta.get("active_mass_mg")
     sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
     sf.header_meta = meta.get("raw") or None

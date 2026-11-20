@@ -13,7 +13,7 @@ from pathlib import Path
 from ..config import APP_DATA_DIR
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 METADATA_VERSION = 2
 FORMATS = (".ndax", ".mpr", ".xlsx")
 METADATA_FIELDS = ("barcode", "remarks", "part_number", "start_time", "technique",
@@ -75,7 +75,7 @@ class Catalog:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, SCHEMA_VERSION):
+            if version not in (0, 1, 2, 3, SCHEMA_VERSION):
                 raise ValueError("Search catalog version changed; rebuild the search index.")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS roots (
@@ -131,6 +131,16 @@ class Catalog:
                 db.execute("""UPDATE entries SET recognition='pending', metadata_state='pending',
                               metadata_version=0, metadata_json='{}', technique=NULL
                               WHERE extension='.mpr' AND recognition='unsupported'""")
+            if version < 4:
+                # Drop stale GCPL header facts so the next enrichment reads
+                # the instrument units. Preserve all other indexed files.
+                db.create_function("catalog_text", 3, lambda path, metadata, canonical:
+                                   search_text(path, json.loads(metadata), canonical))
+                db.execute("""UPDATE entries SET metadata_state='pending', metadata_version=0,
+                              metadata_json=json_remove(metadata_json, '$.active_mass_mg'),
+                              search_text=catalog_text(path, json_remove(metadata_json, '$.active_mass_mg'), canonical)
+                              WHERE extension='.mpr' AND technique='GCPL'
+                              AND json_extract(metadata_json, '$.active_mass_mg') IS NOT NULL""")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

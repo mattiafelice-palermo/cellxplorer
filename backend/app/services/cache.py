@@ -1014,6 +1014,8 @@ def _build_raw_layout_index(
         if isinstance(biologic_attrs, dict) and biologic_attrs.get("cycle_source")
         else None
     )
+    if isinstance(biologic_attrs, dict) and "cell_dimensions" in biologic_attrs:
+        result["gcpl_cell_dimensions"] = biologic_attrs["cell_dimensions"]
     if biologic_cycle_source in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
         result["biologic_cycle_identity_source"] = biologic_cycle_source
     step_column = next(
@@ -2697,10 +2699,12 @@ def build(
                 # with valid raw/cycle caches must remain scientifically usable
                 # when its sidecar cannot be published.
                 logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
+        cached_dimensions = None
         cached_cycle_identity_source = None
         if Path(source_path).suffix.casefold() == ".mpr":
             index = load_raw_layout_index(file_hash, parser_identity)
             if index is not None:
+                cached_dimensions = index.get("gcpl_cell_dimensions")
                 cached_cycle_identity_source = index.get("biologic_cycle_identity_source")
             if cached_cycle_identity_source is None:
                 # A pre-gcpl11 cache created before provenance was persisted is
@@ -2715,6 +2719,7 @@ def build(
                 "calc_version": CALC_VERSION,
                 "cached": True,
                 "cycle_identity_source": cached_cycle_identity_source,
+                "gcpl_cell_dimensions": cached_dimensions,
                 "scientific_interpretation": "exploratory" if cached_cycle_identity_source == "exploratory_unverified" else "verified",
                 **totals,
             }
@@ -2776,6 +2781,7 @@ def build(
         "calc_version": CALC_VERSION,
         "cached": False,
         "cycle_identity_source": cycle_identity_source,
+        "gcpl_cell_dimensions": (biologic_attrs or {}).get("cell_dimensions"),
         "scientific_interpretation": "exploratory" if cycle_identity_source == "exploratory_unverified" else "verified",
         **capacity_totals(cycles),
     }
