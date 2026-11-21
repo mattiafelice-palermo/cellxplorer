@@ -1,5 +1,8 @@
 # Feature specs
 
+- [112 — Alpha 0.29.0-alpha.14 release](112-alpha14-release.md).
+  **Release verification in progress.** Consolidate the completed .4–.13 checkpoints; virtual cells remain planned separately.
+
 - [110 — Analysis naming, C-rate categories and current appearance](110-analysis-naming-rate-current.md).
   **Complete; focused tests, in-app browser checks and clean-Windows preflight passed.**
 

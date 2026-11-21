@@ -7,6 +7,27 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
+summarizes their accumulated changes since published Alpha.3.
+
+## 0.29.0-alpha.14 - 2026-11-21
+
+### New features
+
+- Choose discharge followed by charge in Time / capacity and Cycles analyses, including supported pairs across ordered source files. The default programmed-cycle convention remains available.
+- Choose a recorded, unit-aware BioLogic specimen mass during import or Cell editing for mass-normalized calculations.
+- Use Days on Time / capacity and Chargeability plots, with an explanation of negative cycle-aligned times.
+
+### Bug fixes
+
+- Correct GCPL capacity at delayed counter resets, interpret EC-Lab mass and electrode-area units, and keep final-step rests and resumptions in the correct loop iteration.
+- Preserve independently verified BioLogic voltage, current and cycle information when another quantity cannot be determined. Unverified capacity stays empty; excluded MB impedance measurements retain visible acquisition gaps.
+- Restore combined BioLogic continuation previews and suggest one continued Cell only when recordings share strong run evidence. Show technique, cycle count and optional measured time bounds on source cards.
+- Identify unsupported BioLogic files from their headers, including PEIS, while retaining the Safe and Permissive choices for supported layouts.
+- Fix analysis crashes when toggling stacked current and related plot controls.
+- Briefly highlight newly imported Cells when their database rows become visible.
+- Start Continuous time at the first measurement, including rest or discharge before the first complete cycle, and preserve day coordinates and zoom ranges when connected to an older backend.
+
 ## 0.29.0-alpha.13 - 2026-11-21
 
 ### New features
