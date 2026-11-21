@@ -1,5 +1,9 @@
 # Feature specs
 
+- [111 — Virtual cells for BioLogic experiments](111-virtual-cells.md).
+  **Planned, non-implementable parent.** Combine existing physical cells as an ordered virtual analysis sample, with reversible grouping and run-scoped protocol analysis.
+  Children in implementation order: [111.1 Identity, storage and resolution](111.1-virtual-cell-identity.md), [111.2 Combine, ungroup and tracking](111.2-virtual-cell-lifecycle.md), [111.3 Join-aware timeline and preview](111.3-virtual-cell-timeline.md), [111.4 Cycles and scientific references](111.4-virtual-cell-cycle-metrics.md), [111.5 Existing analyses, Steps and overlap](111.5-virtual-cell-analysis-selection.md), [111.6 Library actions and reversible preview](111.6-virtual-cell-library.md), [111.7 Portable reports and pilot verification](111.7-virtual-cell-portable-closure.md).
+
 - [110 — Analysis naming, C-rate categories and current appearance](110-analysis-naming-rate-current.md).
   **Complete; focused tests, in-app browser checks and clean-Windows preflight passed.**
 
