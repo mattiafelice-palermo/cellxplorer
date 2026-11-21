@@ -1883,9 +1883,11 @@ def read_header_metadata(
     path = Path(path)
     suffix = path.suffix.casefold()
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix)
+    mpr_layout_verified = False
     try:
         if format_id == FORMAT_BIOLOGIC_MPR:
             with biologic_mpr.read_mpr_header(path) as document:
+                mpr_layout_verified = True
                 technique_id = biologic_mpr.mpr_technique_id(document)
                 if technique_id in {
                     biologic_mpr.MPR_CP_TECHNIQUE_ID,
@@ -1924,6 +1926,11 @@ def read_header_metadata(
         }
         if suffix == ".mpr":
             result["source_format"] = FORMAT_BIOLOGIC_MPR
+            if not mpr_layout_verified and error_kind:
+                # Both reading modes require the same binary container and layout.
+                result["permissive_error"] = error_message
+                if isinstance(exc, biologic_mpr.UnsupportedMprTechnique):
+                    result["technique"] = exc.technique_name
         return result
     except Exception as exc:
         if suffix == ".mpr":

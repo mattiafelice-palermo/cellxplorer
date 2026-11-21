@@ -73,6 +73,13 @@ Transport failures, cancellation, cache-write failures and readable sources with
 no complete cycles do not establish unreadability. Header hints, inspection and
 indexed results must respect a known semantic rejection of that exact identity.
 
+New MPR selections default to Permissive. Both readers require a supported binary
+layout. A shared header rejection disables the file in either mode. When only
+Safe interpretation fails, the picker checks the Permissive header before disabling
+exploratory voltage access. A blank protocol alone says nothing about eligibility.
+Standalone technique code `0x1d` is PEIS, as confirmed by the paired EC-Lab
+sequence program. Label it in the picker without registering a cycling adapter.
+
 `source_error_messages.py` presents known BioLogic failures in scientific language
 while metadata `error` and the registry's `diagnostic` retain the raw reason.
 Incomplete blocks, unsupported layouts and ambiguous execution/capacity ownership

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .lazy_module import LazyModule
+from .source_format_errors import SourceFormatError, source_rejection_kind
 
 
 def _load_parsing():
@@ -39,6 +40,28 @@ def _cycle_count_hint(metadata: dict[str, Any]) -> int | None:
     return None
 
 
+def _check_permissive_header(path: Path, result: dict[str, object]) -> None:
+    """A Safe rejection alone cannot establish whether exploratory voltage is readable."""
+    from .biologic_mpr import UnsupportedMprTechnique
+    from .source_error_messages import source_error_message
+
+    try:
+        before = path.stat()
+        try:
+            parsing.metadata_for_read_mode(path, {}, "permissive")
+        except SourceFormatError as exc:
+            if source_rejection_kind(exc) is None:
+                return
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                return
+            result["permissive_error"] = source_error_message(path, exc)
+            if isinstance(exc, UnsupportedMprTechnique):
+                result["technique"] = exc.technique_name
+    except OSError:
+        return
+
+
 def inspect_header_hint(
     path_string: str,
     *,
@@ -65,6 +88,8 @@ def inspect_header_hint(
             result.update(compatible=False, error=rejection.error,
                           source_error_kind=rejection.kind, size=rejection.identity.size,
                           mtime_ns=rejection.identity.mtime_ns)
+            if path.suffix.casefold() == ".mpr":
+                _check_permissive_header(path, result)
             return result
         before = path.stat()
         if not path.is_file() or not parsing.source_filename_allowed(path.name):
@@ -126,6 +151,10 @@ def inspect_header_hint(
         if path.suffix.casefold() in {".xlsx", ".mpr"} and metadata.get("error_kind") in {"unsupported", "invalid"}:
             result["compatible"] = False
             result["source_error_kind"] = metadata["error_kind"]
+            if metadata.get("permissive_error"):
+                result.update(permissive_error=metadata["permissive_error"], technique=metadata.get("technique"))
+            elif path.suffix.casefold() == ".mpr":
+                _check_permissive_header(path, result)
         result["error"] = str(exc)[:300] or "Header metadata is unavailable."
     return result
 

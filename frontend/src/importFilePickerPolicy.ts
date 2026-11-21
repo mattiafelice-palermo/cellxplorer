@@ -1,4 +1,4 @@
-import type { ImportBrowseEntry } from "./api";
+import type { ImportBrowseEntry, MprReadMode } from "./api";
 
 export type ImportHeaderHint = {
   path: string;
@@ -7,11 +7,17 @@ export type ImportHeaderHint = {
   technique: string | null;
   cycle_count: number | null;
   compatible?: boolean | null;
+  permissive_error?: string;
   registered?: boolean;
   cells?: { id: number; name: string }[];
   error: string | null;
   source_error_kind?: "unsupported" | "invalid" | null;
 };
+
+export function importHeaderError(hint: ImportHeaderHint | undefined, mode: MprReadMode): string | undefined {
+  if (mode === "permissive") return hint?.permissive_error;
+  return hint?.compatible === false ? hint.error ?? "This source format is not supported." : undefined;
+}
 
 export type ImportBrowserSortKey =
   | "name"

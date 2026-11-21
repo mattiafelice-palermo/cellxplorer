@@ -109,6 +109,7 @@ import {
   EMPTY_IMPORT_BROWSER_FILTERS,
   filterAndSortImportEntries,
   importEntryExtension,
+  importHeaderError,
   importEntrySupplier,
   nextImportBrowserSort,
   prioritizeImportHeaderHintPaths,
@@ -377,13 +378,13 @@ export function ImportFilesystemPickerModal({
   const selectedSourceRejection = selectedPreviewEntry
     ? importSourceRejection(sourceEntry(selectedPreviewEntry), sourceRejections)
     : undefined;
-  const selectedPreviewHeaderError = selectedReadMode === "safe" && selectedPreviewEntry && headerHints.get(selectedPreviewEntry.path)?.compatible === false
-    ? headerHints.get(selectedPreviewEntry.path)?.error ?? "This source format is not supported."
-    : undefined;
+  const selectedHeaderHint = selectedPreviewEntry ? headerHints.get(selectedPreviewEntry.path) : undefined;
+  const selectedPreviewHeaderError = importHeaderError(selectedHeaderHint, selectedReadMode);
   const selectedRecoverableMpr = Boolean(selectedPreviewEntry
     && !headerHints.get(selectedPreviewEntry.path)?.registered
     && !(indexedPreviewEntry?.path === selectedPreviewEntry.path
       && (indexedPreviewEntry.registered || indexedPreviewEntry.root_status === "offline"))
+    && !selectedHeaderHint?.permissive_error
     && canTryPermissiveMpr(sourceEntry(selectedPreviewEntry), Boolean(selectedSourceRejection || selectedPreviewHeaderError)));
   const selectedPreviewFallbackKey = selectedPreviewEntry?.path
     ? `${selectedPreviewEntry.path}\u0000${selectedPreviewVersion ?? "unknown"}`
@@ -450,6 +451,7 @@ export function ImportFilesystemPickerModal({
       return preview;
     },
     enabled: opened && mode === "files" && !previewCollapsed && selectedPreviewEntry?.kind === "file"
+      && !selectedPreviewHeaderError && !selectedSourceRejection
       && (!/\.(ndax|xlsx)$/i.test(selectedPreviewEntry.path) || quickPreviewGateReleased)
       // Excel's quick preview is display-only; defer the full inspection until
       // the user includes the file. An explicitly previewed workbook whose
@@ -487,7 +489,7 @@ export function ImportFilesystemPickerModal({
       for (const hint of files) next.set(hint.path, hint);
       return next;
       });
-      const unavailable = new Set(files.filter((hint) => hint.registered || (hint.compatible === false && mprReadModeForPath(hint.path, readModesRef.current) === "safe")).map((hint) => hint.path));
+      const unavailable = new Set(files.filter((hint) => hint.registered || importHeaderError(hint, mprReadModeForPath(hint.path, readModesRef.current))).map((hint) => hint.path));
       if (unavailable.size) setSelected((current) => {
         const next = new Map(current);
         unavailable.forEach((path) => next.delete(path));
@@ -521,7 +523,7 @@ export function ImportFilesystemPickerModal({
     const hint = headerHints.get(entry.path);
     return headerScanPending(entry)
       || hint?.registered === true
-      || (hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe")
+      || Boolean(importHeaderError(hint, mprReadModeForPath(entry.path, readModes)))
       || Boolean(importSourceRejection(sourceEntry(entry), sourceRejections));
   };
   const isRegisteredFile = (entry: ImportBrowseEntry) =>
@@ -531,13 +533,13 @@ export function ImportFilesystemPickerModal({
   const displayedEntries = useMemo(() => hideUnavailable
     ? visibleEntries.filter((entry) => {
         const hint = headerHints.get(entry.path);
-        return entry.kind === "folder" || !(hint?.registered === true || (hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe") || importSourceRejection(sourceEntry(entry), sourceRejections));
+        return entry.kind === "folder" || !(hint?.registered === true || Boolean(importHeaderError(hint, mprReadModeForPath(entry.path, readModes))) || importSourceRejection(sourceEntry(entry), sourceRejections));
       })
     : visibleEntries, [headerHints, hideUnavailable, visibleEntries, sourceRejections, readModes]);
   const selectableVisibleEntries = displayedEntries.filter((entry) => entry.kind === "folder" || !unavailableFile(entry));
   const filesInDirectory = useMemo(() => directoryEntries.filter((entry) =>
-    entry.kind === "file" && headerHints.get(entry.path)?.compatible !== false,
-  ), [directoryEntries, headerHints]);
+    entry.kind === "file" && !importHeaderError(headerHints.get(entry.path), mprReadModeForPath(entry.path, readModes)),
+  ), [directoryEntries, headerHints, readModes]);
   const availableForSupplier = filesInDirectory.filter((entry) =>
     (!fileFilters.extensions.length || fileFilters.extensions.includes(importEntryExtension(entry)))
     && (!fileFilters.protocols.length || fileFilters.protocols.includes(headerHints.get(entry.path)?.technique ?? "")),
@@ -971,7 +973,7 @@ export function ImportFilesystemPickerModal({
   };
 
   const selectedEntries = [...selected.values()].filter((entry) => !importSourceRejection(sourceEntry(entry), sourceRejections)
-    && (entry.kind !== "file" || ((headerHints.get(entry.path)?.compatible !== false || mprReadModeForPath(entry.path, readModes) === "permissive") && !headerHints.get(entry.path)?.registered)));
+    && (entry.kind !== "file" || (!importHeaderError(headerHints.get(entry.path), mprReadModeForPath(entry.path, readModes)) && !headerHints.get(entry.path)?.registered)));
   const visibleSelectedEntries = selectedEntries.filter((entry) =>
     `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(selectedSearch.trim().toLocaleLowerCase()),
   );
@@ -1532,8 +1534,8 @@ export function ImportFilesystemPickerModal({
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
             <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
               {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch sourceRejections={sourceRejections}
-                  readModes={readModes} onTryPermissive={(file) => { setIndexedPreviewEntry(file); tryPermissive(file); }} onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
-                setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (next.has(file.path) && file.recognition === "recognized") hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, cells: file.cells, compatible: file.recognition === "recognized", error: null }); return hints; });
+                  headerHints={headerHints} readModes={readModes} onTryPermissive={(file) => { setIndexedPreviewEntry(file); tryPermissive(file); }} onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
+                setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (!hints.has(file.path) && next.has(file.path) && file.recognition === "recognized" && !/\.mpr$/i.test(file.path)) hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, cells: file.cells, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
               }} /></Box>}
               {!indexedScope && (browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : mode === "folder" ? <ScrollArea h={IMPORT_BROWSER_VIEWPORT_HEIGHT} offsetScrollbars><Stack gap={2} p="xs">{displayedEntries.filter((entry) => entry.kind === "folder").map((entry) => <Button key={entry.path} variant="subtle" justify="flex-start" leftSection={<IconFolder size={16} />} onClick={() => navigate(entry.path)}><Text size="sm" truncate title={entry.path}>{entry.name}</Text></Button>)}{!displayedEntries.some((entry) => entry.kind === "folder") && <Text size="sm" c="dimmed" p="sm">{folderPurpose === "search" ? "No subfolders here. You can index the current folder." : "No subfolders here. You can use the current folder."}</Text>}</Stack></ScrollArea> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%" } : undefined} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
@@ -1563,11 +1565,12 @@ export function ImportFilesystemPickerModal({
                   const cellStyle: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", alignSelf: "center" };
                   const scanPending = headerScanPending(entry);
                   const sourceRejection = importSourceRejection(sourceEntry(entry), sourceRejections);
-                  const recoverableMpr = !registeredFile && canTryPermissiveMpr(sourceEntry(entry), Boolean(sourceRejection || hint?.compatible === false));
+                  const headerError = importHeaderError(hint, mprReadModeForPath(entry.path, readModes));
+                  const recoverableMpr = !registeredFile && !hint?.permissive_error && canTryPermissiveMpr(sourceEntry(entry), Boolean(sourceRejection || hint?.compatible === false));
                   const disabledReason = sourceRejection ? `Cannot import: ${sourceRejection.error}. Click to view the error.` : registeredFile
                     ? `${importedSourceLabel(hint?.cells)} Click to preview; this file cannot be imported again.`
-                    : hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe"
-                      ? `${hint.error ?? "This source format is not supported."} Click to view the error.`
+                    : headerError
+                      ? `${headerError} Click to view the error.`
                       : hint?.error && hint.compatible !== false
                         ? `Header scan unavailable: ${hint.error}. Select to try importing, or use Refresh to retry the scan.`
                         : scanPending ? "Checking whether this file can be imported. Click to preview while the check finishes." : null;
@@ -1575,7 +1578,7 @@ export function ImportFilesystemPickerModal({
                     ? `Double-click or press Enter to open ${entry.name}. Press Space or Ctrl-click to include its files.`
                     : registeredFile
                       ? `Already registered. Click or press Enter to preview ${entry.name}; it cannot be imported again.`
-                      : sourceRejection || (hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe")
+                      : sourceRejection || headerError
                         ? `Cannot import ${entry.name}. Click or press Enter to view the error.`
                       : scanPending
                         ? `Import eligibility is being checked. Click or press Enter to preview ${entry.name}; selection will be available if the file can be imported.`
@@ -1636,10 +1639,9 @@ export function ImportFilesystemPickerModal({
                     />
                     <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, width: "var(--import-name-width)", minWidth: 0, boxSizing: "border-box", overflow: "hidden", background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
-                      {!isFolder && (sourceRejection || (hint?.compatible === false && mprReadModeForPath(entry.path, readModes) === "safe")) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
+                      {!isFolder && (sourceRejection || headerError) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
                       <Text size="md" truncate title={registeredFile ? `${entry.name} — ${importedSourceLabel(hint?.cells)}` : entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
                       {recoverableMpr && <Button size="compact-xs" color="orange" variant="light" style={{ flexShrink: 0 }} aria-label={`Try Permissive reading for ${entry.name}`} onClick={(event) => { event.stopPropagation(); tryPermissive(entry); }}>Try Permissive</Button>}
-                      {!isFolder && mprReadModeForPath(entry.path, readModes) === "permissive" && <Text size="xs" c="orange" style={{ flexShrink: 0 }}>Permissive</Text>}
                     </Group>
                     <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntryExtension(entry)} style={cellStyle}>{isFolder ? "" : importEntryExtension(entry)}</Text>
                     <Text size="sm" c={metadataColor} truncate title={isFolder ? undefined : importEntrySupplier(entry, hint)} style={cellStyle}>{isFolder ? "" : importEntrySupplier(entry, hint)}</Text>
@@ -1681,14 +1683,14 @@ export function ImportFilesystemPickerModal({
                       <>
                         {(headerHints.get(selectedPreviewEntry.path)?.registered || (indexedPreviewEntry?.path === selectedPreviewEntry.path && indexedPreviewEntry.registered)) && <ImportedSourceIdentity
                           cells={indexedPreviewEntry?.path === selectedPreviewEntry.path ? indexedPreviewEntry.cells : headerHints.get(selectedPreviewEntry.path)?.cells} onOpen={onClose} />}
-                        {/\.mpr$/i.test(selectedPreviewEntry.path) && <Stack gap={4}>
+                        {/\.mpr$/i.test(selectedPreviewEntry.path) && !selectedHeaderHint?.permissive_error && <Stack gap={4}>
                           <Group justify="space-between" gap="xs"><Text size="sm" fw={700}>MPR reading</Text>
                             <SegmentedControl size="xs" aria-label="MPR reading mode" value={selectedReadMode} data={[{ value: "safe", label: "Safe" }, { value: "permissive", label: "Permissive" }]} onChange={(value) => changeReadMode(selectedPreviewEntry, value as MprReadMode)} />
                           </Group>
                           <Text size="xs" c="dimmed">{selectedReadMode === "safe" ? "Uses verified cycle and capacity interpretations." : "Attempts exploratory curves when interpretation is uncertain; binary integrity checks remain enabled."}</Text>
                         </Stack>}
                         {selectedSourceRejection || selectedPreviewHeaderError ? (
-                          <Alert color="red" title={selectedReadMode === "safe" && /\.mpr$/i.test(selectedPreviewEntry.path) ? "Safe reading could not interpret this recording" : "This file cannot be imported"}>
+                          <Alert color="red" title={selectedRecoverableMpr ? "Safe reading could not interpret this recording" : "This file cannot be imported"}>
                             <Stack gap="xs"><Text size="sm">{selectedSourceRejection?.error ?? selectedPreviewHeaderError}</Text>
                             {selectedRecoverableMpr && <><Text size="sm">Try Permissive to inspect recorded voltage. Uncertain cycle capacity and CE may be unavailable.</Text><Button size="compact-sm" color="orange" variant="light" onClick={() => tryPermissive(selectedPreviewEntry)}>Try Permissive</Button></>}
                             </Stack>

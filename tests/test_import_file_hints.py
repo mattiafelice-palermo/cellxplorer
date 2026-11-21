@@ -10,6 +10,31 @@ from backend.app.services import import_file_hints
 
 
 class ImportFileHintTests(unittest.TestCase):
+    def test_peis_is_unavailable_in_both_modes_from_its_header_alone(self):
+        from tests.biologic_mpr_fixture import write_gcpl_mpr
+
+        with TemporaryDirectory() as directory:
+            path = write_gcpl_mpr(Path(directory) / "misleading_OCV.mpr", [{}], settings_payload=b"\x1d")
+            with patch.object(import_file_hints.parsing, "metadata_for_read_mode",
+                              side_effect=AssertionError("shared binary rejection opened twice")):
+                hint = import_file_hints.inspect_header_hint(str(path))
+        self.assertIs(hint["compatible"], False)
+        self.assertEqual(hint["technique"], "PEIS")
+        self.assertIn("0x1d", hint["permissive_error"])
+
+    def test_safe_only_rejection_keeps_a_readable_permissive_header_available(self):
+        from tests.biologic_mpr_fixture import encode_gcpl_settings, write_gcpl_mpr
+
+        with TemporaryDirectory() as directory:
+            path = write_gcpl_mpr(Path(directory) / "sample.mpr", [{}],
+                                  settings_payload=encode_gcpl_settings([{}]))
+            with patch.object(import_file_hints.parsing, "read_header_metadata", return_value={
+                "error": "Unresolved program", "error_kind": "unsupported",
+            }):
+                hint = import_file_hints.inspect_header_hint(str(path))
+        self.assertIs(hint["compatible"], False)
+        self.assertNotIn("permissive_error", hint)
+
     def test_header_hints_are_optional_and_keep_supplier_format_and_protocol(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "cell.mpr"

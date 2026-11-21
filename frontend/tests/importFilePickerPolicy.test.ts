@@ -7,6 +7,7 @@ import {
   filterAndSortImportEntries,
   importEntryExtension,
   importEntryFormat,
+  importHeaderError,
   importEntrySupplier,
   nextImportBrowserSort,
   prioritizeImportHeaderHintPaths,
@@ -106,4 +107,14 @@ test("header scan prioritizes viewport order before the rest of the active sort"
     new Set(),
     2,
   ), ["c.mpr", "b.mpr"]);
+});
+
+test("both modes block a structural rejection, while a Safe-only rejection permits exploratory reading", () => {
+  const safeOnly = { ...hints.get("b.mpr")!, compatible: false, error: "Ambiguous cycles" };
+  const peis = { ...safeOnly, technique: "PEIS", permissive_error: "Unsupported technique" };
+  assert.equal(importHeaderError(peis, "permissive"), peis.permissive_error);
+  assert.equal(importHeaderError(peis, "safe"), peis.error);
+  assert.equal(importHeaderError(safeOnly, "permissive"), undefined);
+  assert.equal(importHeaderError(safeOnly, "safe"), safeOnly.error);
+  assert.equal(importHeaderError({ ...safeOnly, compatible: null, technique: null }, "safe"), undefined);
 });

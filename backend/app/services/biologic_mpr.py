@@ -648,6 +648,12 @@ class UnsupportedMprError(MprError, UnsupportedSourceFormatError):
     """The source is an MPR container outside the supported layout."""
 
 
+class UnsupportedMprTechnique(UnsupportedMprError):
+    def __init__(self, message: str, *, technique_name: str | None = None):
+        super().__init__(message)
+        self.technique_name = technique_name
+
+
 class UnsupportedMprModuleVersion(UnsupportedMprError):
     """A required VMP module uses an unverified version."""
 
@@ -834,9 +840,9 @@ def _layout_profile_for_settings(module: MprModule, path: Path) -> MprTechniqueL
         settings.release()
     profile = _MPR_TECHNIQUE_LAYOUT_BY_ID.get(technique_id)
     if profile is None:
-        raise UnsupportedMprError(
-            f"{_source_label(path)} uses unsupported BioLogic technique discriminator "
-            f"0x{technique_id:02x}"
+        raise UnsupportedMprTechnique(
+            f"{_source_label(path)} uses unsupported BioLogic technique discriminator 0x{technique_id:02x}",
+            technique_name={0x1D: "PEIS"}.get(technique_id),
         )
     return profile
 
