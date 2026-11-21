@@ -52,7 +52,7 @@ from .source_format_errors import (
 # active-to-active returns after an interrupted phase, without inventing rest.
 # gcpl17 omits only fully matched, adjacent replayed measurement blocks.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl19"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl20"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -2235,14 +2235,15 @@ def _reconstruct_loop_cycles(
             iteration_directions.append(direction)
             continue
 
-        if previous_step == control_step:
-            if step_index == control_step and direction == 0:
-                # GCPL may emit a post-step rest block under the same Ns as
-                # the loop's final active sequence. It belongs to the current
-                # iteration and must not be mistaken for a failed loop wrap.
-                cycles.append(current_cycle)
-                iteration_directions.append(direction)
-                continue
+        if previous_step == control_step and step_index == previous_step:
+            # Mode changes split measured blocks, not the programmed sequence.
+            # Rest and subsequent resumption share its Ns and cycle. A second
+            # active block without an intervening rest is an unexplained restart.
+            if direction and iteration_directions[-1]:
+                raise UnsupportedBiologicGcplError(
+                    "GCPL final loop step restarts without a rest or a validated loop edge"
+                )
+        elif previous_step == control_step:
             if step_index != start_step:
                 raise UnsupportedBiologicGcplError(
                     f"GCPL loop control step {control_step} does not return to loop start "

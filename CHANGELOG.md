@@ -7,6 +7,10 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.8 - 2026-11-21
+
+- Keep the current trace and cycle counts when a BioLogic GCPL loop pauses and resumes its final step.
+
 ## 0.29.0-alpha.7 - 2026-11-21
 
 - Show the combined preview for BioLogic continuations and select one continued cell when the recordings share strong run evidence. Source cards show the technique and available cycle count, with a button to show or hide measurement times.

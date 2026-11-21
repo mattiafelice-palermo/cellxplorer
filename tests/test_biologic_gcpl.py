@@ -271,11 +271,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl19cpocv1",
+                "adapter_revision": "gcpl20cpocv1",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl19cpocv1:r1")
+        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl20cpocv1:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
@@ -902,6 +902,32 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertEqual(frame.attrs["biologic_gcpl"]["cycle_source"], "protocol_loop_reconstruction")
         self.assertEqual(frame.loc[frame["step_index"] == 1, "cycle"].tolist(), [1, 2, 3])
         canonical_cycling.validate_raw_timeseries(frame)
+
+    def test_final_sequence_can_rest_and_resume_before_the_actual_loop_wrap(self) -> None:
+        for reverse, settings in (
+            (False, _observed_loop_settings()),
+            (True, _repeating_loop_settings(reverse=True)),
+        ):
+            with self.subTest(reverse=reverse), TemporaryDirectory() as temp:
+                rows = _repeating_loop_rows(iterations=2, reverse=reverse)
+                sign = 1 if reverse else -1
+                # First loop has five rows, ending at signed capacity 1.
+                # Pause in its last Ns, resume and transfer another 0.5 mAh.
+                rows[5]["q_mAh"] = 1.5 * sign
+                rows[5:5] = [
+                    _row(0, ns=2, mode=MPR_MODE_REST, control=0, q_mAh=sign),
+                    _row(0, ns=2, control=sign, q_mAh=sign),
+                    _row(0, ns=2, control=sign, q_mAh=1.5 * sign, dq_mAh=0.5 * sign),
+                ]
+                for index, row in enumerate(rows):
+                    row["total_time_s"] = float(index)
+                path = write_gcpl_mpr(Path(temp) / "paused-step.mpr", rows, settings_payload=settings)
+                frame = parsing.parse_timeseries(path)
+                self.assertEqual(frame.cycle.tolist(), [1] * 8 + [2] * 5)
+                self.assertEqual(frame.current_ma.iloc[4:8].tolist(), [sign, 0, sign, sign])
+                self.assertEqual(frame.step.iloc[4:8].tolist(), [3, 4, 5, 5])
+                column = "charge_capacity_mah" if reverse else "discharge_capacity_mah"
+                self.assertEqual(calc.per_cycle(frame)[column].tolist(), [1.5, 1.0])
 
     def test_declared_loop_starting_with_discharge_reconstructs_cycles(self) -> None:
         rows = _repeating_loop_rows(reverse=True)

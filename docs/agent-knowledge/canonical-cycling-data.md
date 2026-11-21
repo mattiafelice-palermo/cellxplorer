@@ -265,6 +265,11 @@ or an invalid backward edge remains metadata-only. A partial final loop prefix i
 it is a valid continuation of the same loop and no missing phase is fabricated. This boundary is
 owned by the adapter and is not a BioLogic-specific branch in generic scientific services.
 
+A Rest block can interrupt the loop's final active sequence. Resuming the
+same programmed `Ns` changes the executed block and restores its current.
+The next cycle starts at the validated return to the loop start. The raw
+step boundaries still govern capacity attribution on both sides of the rest.
+
 BioLogic CP and OCV can provide useful voltage curves without a complete cycling cycle. Preserve
 their source-local raw cycle labels only as Parquet row-address keys. In the stitched Time/Capacity
 view, complete cycles receive positive dense global numbers; rows without a completed charge /

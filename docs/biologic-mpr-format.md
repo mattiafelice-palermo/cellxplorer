@@ -425,6 +425,13 @@ and other restarts remain metadata-only with a precise reason. A valid loop wrap
 source-local cycle exactly once; an interrupted final prefix is retained without fabricating its
 missing phase.
 
+GCPL can pause and resume the last active sequence before wrapping. A change
+from active to Rest and back under the same `Ns` creates separate measured
+blocks within one loop iteration. Current and capacity remain subject to the
+usual mode, direction and counter-boundary checks. Two successive active
+blocks on the final sequence without an intervening rest still have an
+unresolved restart and cannot establish the next iteration.
+
 The ID-468 half-cycle remains decoded diagnostic evidence only. It must be finite, integer, and
 non-negative, but its starting value, parity, progression, and resets are not converted with an
 arithmetic formula and are not a sole step/cycle boundary. Explicit `raw_cycle_index` remains the

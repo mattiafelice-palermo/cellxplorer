@@ -90,6 +90,13 @@ curves. Their verified active mass unit correction changes the mass-normalized
 Time/Capacity coordinates by a factor of 1,000. The previous manifest and
 expectations are retained locally for comparison.
 
+The eighth source exercises a final GCPL sequence that pauses and resumes.
+The archived EC-Lab loop indexes agree with the completed iteration starts.
+The current in every row was checked against the recorded mode and control,
+and the six charge/discharge pairs were checked against signed charge
+increments. Routine verification includes its raw current, cycle summaries
+and Time/Capacity trace in the frozen baseline.
+
 ## CP electrode regression
 
 The ignored `spec107-cp` corpus retains four immutable CP sources and their
