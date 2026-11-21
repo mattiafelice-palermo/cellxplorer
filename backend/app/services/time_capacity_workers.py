@@ -1508,6 +1508,9 @@ def try_compute_time_capacity(
     from . import analysis_engine
 
     settings = analysis_engine.time_capacity_settings(spec.get("computation", {}), preserve_cycle_window=refinement)
+    if analysis_engine.analysis_cycle_pairing.enabled(spec.get("computation", {})):
+        # The raw index addresses programmed cycles. A pair can span two sources.
+        return None
     ordinary_compact = precision == "standard" and compact
     full_export = precision == "full" and not refinement
     if not (ordinary_compact or full_export) or settings.get("view") != "voltage_current":

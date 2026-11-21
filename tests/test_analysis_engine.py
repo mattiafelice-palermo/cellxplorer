@@ -1078,6 +1078,28 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
 
+    def test_paired_summary_and_day_trace_select_the_same_discharge_then_charge(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        programmed = engine.compute(self.db, spec, None)["cell_series"][0]
+        spec["computation"]["cycle_pairing"] = "discharge_charge"
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1, "cycle_end": 1, "time_unit": "d",
+        }
+        paired = engine.compute(self.db, spec, None)["cell_series"][0]
+        quantities = paired["quantities"]
+        self.assertEqual(len(paired["x"]), len(programmed["x"]) - 1)
+        self.assertAlmostEqual(quantities["discharge_capacity_mah"][0], programmed["quantities"]["discharge_capacity_mah"][0])
+        self.assertAlmostEqual(quantities["charge_capacity_mah"][0], programmed["quantities"]["charge_capacity_mah"][1])
+        for compact in (False, True):
+            result = engine.compute_time_capacity(self.db, spec, None, compact=compact)
+            self.assertEqual(result["paired_cycle_max"], len(paired["x"]))
+            trace = result["cell_traces"][0]
+            self.assertEqual(trace["cycle"], [1, 1, 1, 1])
+            self.assertEqual(trace["source_cycle"], [1, 1, 2, 2])
+            self.assertEqual(trace["current_ma"], [-1000, -1000, 1000, 1000])
+            self.assertEqual(trace["display_x"][0], 0)
+            self.assertAlmostEqual(trace["display_x"][-1], 2700 / 86400, places=6)
+
     def test_cycle_free_curve_is_visible_in_default_time_capacity_view(self):
         source_hash = "c3" * 32
         frame = synth_raw(3, 2.0, 0.0)

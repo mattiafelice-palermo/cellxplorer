@@ -232,6 +232,7 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
         return {
             "selection": selection,
             "computation": {
+                **({"cycle_pairing": "discharge_charge"} if computation.get("cycle_pairing") == "discharge_charge" else {}),
                 "cycle_range": computation.get("cycle_range") or {},
                 "exclude_check_cycles_every_n": computation.get(
                     "exclude_check_cycles_every_n"
@@ -256,6 +257,7 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
                 # Time/Capacity retains the generic cycle-range fallback used
                 # by time_capacity_settings() for legacy specs without a
                 # dedicated time_capacity range.
+                **({"cycle_pairing": "discharge_charge"} if computation.get("cycle_pairing") == "discharge_charge" else {}),
                 "cycle_range": computation.get("cycle_range") or {},
                 "protocol_filter": computation.get("protocol_filter") or {},
             },

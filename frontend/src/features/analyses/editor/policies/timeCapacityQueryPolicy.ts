@@ -147,6 +147,7 @@ export function timeCapacityCompatibilitySignature(
   return JSON.stringify({
     // Explicit time references supersede the earlier implicit origin.
     timeCoordinateRevision: config.x_axis === "time" && config.display_mode === "consecutive" ? 3 : null,
+    cyclePairing: scientificSpec.computation.cycle_pairing ?? "programmed",
     timeReference: config.time_reference ?? "selected_range",
     selection: scientificSpec.selection,
     protocol_segments: scientificSpec.protocol_segments ?? [],
@@ -182,6 +183,7 @@ export function timeCapacityDataSignature(
   return JSON.stringify({
     // Explicit time references supersede the earlier implicit origin.
     timeCoordinateRevision: config.x_axis === "time" && config.display_mode === "consecutive" ? 3 : null,
+    cyclePairing: scientificSpec.computation.cycle_pairing ?? "programmed",
     timeReference: config.time_reference ?? "selected_range",
     selection: scientificSpec.selection,
     protocol_segments: scientificSpec.protocol_segments ?? [],

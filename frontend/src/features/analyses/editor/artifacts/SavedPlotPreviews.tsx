@@ -1,3 +1,4 @@
+import { postTimeCapacity } from "../../../../api";
 import { Center, Loader, Text } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -654,7 +655,7 @@ export function SavedTimeCapacityPreview({
   const preview = useQuery({
     queryKey: previewQueryKey,
     queryFn: ({ signal }) =>
-      post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+      postTimeCapacity<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
         spec: previewSpec,
         viewport_width: 1200,
         precision: "standard",
@@ -1235,7 +1236,7 @@ export async function buildPortablePlotSnapshots(
           kind: "time_capacity",
           spec: viewSpec,
         });
-        const result = await post<TimeCapacityResult>(
+        const result = await postTimeCapacity<TimeCapacityResult>(
           `/api/analyses/${analysisId}/time-capacity`,
           {
             spec: viewSpec,

@@ -692,3 +692,7 @@ Import review and Cell editing offer active-material and characteristic masses f
 GCPL settings. Picking a recorded value stores a numeric Cell override in mg, just like manual
 entry. Source headers retain their values and units. All sources in a continued Cell share the
 selected normalization mass. Clearing the override restores normal Cell mass resolution.
+
+### Discharge-first analysis
+
+Time / capacity and Cycles can pair a discharge with the charge that follows it across the ordered Cell sources. This is a saved plot computation setting. The default uses programmed cycle identities. Pair the full acquisition before selecting a cycle range or applying protocol filters. The programmed per-source cycle index cannot select these rows because a single programmed cycle can contribute to two discharge-first pairs. Raw source cycle labels remain available for provenance. Leading rest, unmatched half-cycles, and measurements across unresolved intervals remain visible in the full time trace. Only completed pairs contribute a cycle summary.

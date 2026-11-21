@@ -440,3 +440,11 @@ test("Continuous ignores saved cycle limits for queries and plot-range exports, 
   assert.equal(timeCapacityUsesContinuousTime({ ...config, view: "dqdv" }), false);
   assert.equal(timeCapacityUsesContinuousTime({ ...config, x_axis: "capacity_mah" }), false);
 });
+
+test("pairing changes the request and prevents reuse of a programmed-cycle placeholder", () => {
+  const programmed = makeSpec();
+  const config = makeConfig();
+  const paired = { ...programmed, computation: { ...programmed.computation, cycle_pairing: "discharge_charge" as const } };
+  assert.notEqual(timeCapacityDataSignature(paired, config, 1200), timeCapacityDataSignature(programmed, config, 1200));
+  assert.notEqual(timeCapacityCompatibilitySignature(paired, config, 1200), timeCapacityCompatibilitySignature(programmed, config, 1200));
+});

@@ -7,6 +7,16 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.13 - 2026-11-21
+
+### New features
+
+- Choose discharge followed by charge in Time / capacity and Cycles plots, including pairs spanning two source files.
+
+### Bug fixes
+
+- Keep day coordinates and zoom ranges correct when the development interface connects to an older backend.
+
 ## 0.29.0-alpha.12 - 2026-11-21
 
 - Cycle-aligned plots explain negative times beside the title. Time/capacity and Chargeability plots now offer Days.

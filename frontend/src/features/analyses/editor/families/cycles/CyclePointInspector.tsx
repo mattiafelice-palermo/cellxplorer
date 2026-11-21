@@ -1,3 +1,4 @@
+import { postTimeCapacity } from "../../../../../api";
 import {
   ActionIcon,
   Alert,
@@ -376,7 +377,7 @@ function CycleDetail({
       request.dataSignature,
     ],
     queryFn: ({ signal }) =>
-      post<TimeCapacityResult>(
+      postTimeCapacity<TimeCapacityResult>(
         `/api/analyses/${analysisId}/time-capacity`,
         {
           spec: request.spec,
@@ -464,7 +465,7 @@ function CycleDetail({
         refinementTimerRef.current = null;
         const controller = new AbortController();
         refinementAbortRef.current = controller;
-        void post<TimeCapacityRefinementResult>(
+        void postTimeCapacity<TimeCapacityRefinementResult>(
           `/api/analyses/${analysisId}/time-capacity/refine`,
           {
             spec: requestAtSchedule.spec,

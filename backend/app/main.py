@@ -219,7 +219,7 @@ def health():
     return {
         "status": "ok" if DATABASE_STATUS.compatible else "degraded",
         "database": DATABASE_STATUS.as_dict(),
-        "capabilities": {"analysis_cache_only": True},
+        "capabilities": {"analysis_cache_only": True, "time_capacity_days": True, "discharge_charge_pairing": True},
     }
 
 

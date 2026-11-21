@@ -1,7 +1,7 @@
 import { Box } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { get, type AnalysisTabKey, type SavedAnalysisPlot } from "../../../api";
+import { analysisHealth, type AnalysisTabKey, type SavedAnalysisPlot } from "../../../api";
 import { ANALYSIS_WORKSPACE_POLICY_EVENT, loadAnalysisWorkspaceMemoryPolicy } from "../workspace/analysisWorkspace";
 import { estimatedPreloadedViewMemoryBytes, familyPreloadAdmissionAllowed, familyPreloadCandidates, familyPreloadIdentity, FAMILY_PRELOAD_RESERVATION_BYTES } from "./policies/analysisFamilyRetention";
 import { PlotFamilyActivityContext } from "./plotting/plotFamilyActivity";
@@ -71,7 +71,7 @@ export function useAnalysisFamilyRetention({
   // It must explicitly advertise cache-only support before any speculation.
   const capabilities = useQuery({
     queryKey: ["analysis-preload-capabilities"],
-    queryFn: () => get<{ capabilities?: { analysis_cache_only?: boolean } }>("/api/health"),
+    queryFn: analysisHealth,
     staleTime: 60_000,
   });
   const canPreload = capabilities.data?.capabilities?.analysis_cache_only === true;

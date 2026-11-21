@@ -35,6 +35,7 @@ from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestF
 from . import (
     cache,
     calc,
+    analysis_cycle_pairing,
     cycle_throughput,
     cycle_energy,
     canonical_cycling,
@@ -2723,7 +2724,13 @@ def compute(
             "cycles_source_bookkeeping",
             source_bookkeeping_started,
         )
-        stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
+        paired_raw = None
+        if analysis_cycle_pairing.enabled(computation):
+            paired_raw, segments, missing = analysis_cycle_pairing.measurements(refs)
+            stitched = analysis_cycle_pairing.summary(paired_raw) if not missing else pd.DataFrame()
+            stitched.attrs.update(paired_raw.attrs)
+        else:
+            stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
         post_stitch_started = _cycles_profile_started(profiling)
         descriptors = source_descriptors(files, segments, missing, stitched)
         complete = stitch.stitch_metadata(stitched)["complete"]
@@ -2735,15 +2742,16 @@ def compute(
                 cell,
                 protocol_by_source=dict(getattr(request_context, "protocol_by_source", ())),
             )
-            protocol_cycles = _protocol_cycle_sets(
-                files,
-                segments,
-                source_versions,
-                step_targets,
-                protocol_context,
-                badges,
-                cell,
-            )
+            if paired_raw is not None:
+                protocol_cycles = {
+                    mode: set(paired_raw.loc[_protocol_row_mask(paired_raw, step_targets, mode), "cycle"])
+                    if "cycle" in paired_raw else set()
+                    for mode in PROTOCOL_SEGMENT_MODES
+                }
+            else:
+                protocol_cycles = _protocol_cycle_sets(
+                    files, segments, source_versions, step_targets, protocol_context, badges, cell,
+                )
         else:
             protocol_cycles = {"only": set(), "excluded": set(), "hidden": set()}
             badges.append(
@@ -2832,9 +2840,14 @@ def compute(
             source_values = {key: [] for key in ("source_cycle", "source_position", "source_filename", "source_hash")}
         else:
             protocol_mask_started = _cycles_profile_started(profiling)
-            resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve(
-                stitched, refs, cycle_throughput.proven_increments(stitched, refs), segments,
-            )
+            if paired_raw is None:
+                resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve(
+                    stitched, refs, cycle_throughput.proven_increments(stitched, refs), segments,
+                )
+            else:
+                resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve_pairs(
+                    stitched, paired_raw, refs,
+                )
             energy_by_cycle = {int(c): i for i, c in enumerate(stitched.cycle)}
             full_history = cycle_throughput.add_columns(
                 cumulative_inputs, fec_reference, active_mass_mg,
@@ -4110,7 +4123,7 @@ def compute_time_capacity(
         )
         if optimized is not None:
             return optimized
-        if refinement:
+        if refinement and not analysis_cycle_pairing.enabled(spec.get("computation", {})):
             raise time_capacity_workers.RefinementUnavailable(
                 "refinement is unavailable for this request"
             )
@@ -4160,6 +4173,7 @@ def compute_time_capacity(
             visible_cell_count,
         )
     )
+    max_paired_cycle = 0
     total_returned_points = 0
     if access_diagnostics is not None:
         access_diagnostics.setdefault("cells", [])
@@ -4242,7 +4256,8 @@ def compute_time_capacity(
         )
         time_prepared_before_filter = False
         source_facts: dict[str, dict] | None = None
-        indexed_path = plan.path in {"indexed", "missing"}
+        paired = analysis_cycle_pairing.enabled(computation)
+        indexed_path = not paired and plan.path in {"indexed", "missing"}
         # A legacy index without time prefixes must use the complete timeline;
         # silently zeroing the selected range would produce false coordinates.
         if canonical_time and plan.complete and display_origin_time_s is None:
@@ -4291,7 +4306,9 @@ def compute_time_capacity(
                 source_facts = plan.source_facts
         else:
             with time_capacity_path.timed_stage(cell_diagnostics, "legacy_full_raw_read"):
-                raw, segments, missing = stitch.stitch_raw(refs)
+                raw, segments, missing = (
+                    analysis_cycle_pairing.measurements(refs) if paired else stitch.stitch_raw(refs)
+                )
 
         cell_diagnostics["raw_rows_loaded_before_filter"] = len(raw)
         if not indexed_path:
@@ -4321,6 +4338,8 @@ def compute_time_capacity(
                 requested_cycles,
                 available_cycles=complete_cycles,
             )
+        if paired:
+            max_paired_cycle = max(max_paired_cycle, max(complete_cycles, default=0))
         if indexed_path:
             matched_files_by_quantity = {
                 quantity: [] for quantity in canonical_cycling.VOLTAGE_QUANTITIES
@@ -4507,6 +4526,8 @@ def compute_time_capacity(
         with time_capacity_path.timed_stage(
             cell_diagnostics, "exact_cycle_filter_and_sort"
         ):
+            if paired and not include_display_only_rows:
+                raw = raw.loc[~raw["display_only_cycle"]]
             if settings["cycles"]:
                 raw = raw[
                     raw["cycle"].isin(settings["cycles"])
@@ -5093,6 +5114,7 @@ def compute_time_capacity(
         "current_calc_version": CALC_VERSION,
         "settings": settings,
         "cell_traces": traces,
+        **({"paired_cycle_max": max_paired_cycle} if analysis_cycle_pairing.enabled(computation) else {}),
         "badges": badges,
         # Spec 040.4: data-driven, per-selection availability — never a
         # static per-format declaration — so the frontend can offer exactly

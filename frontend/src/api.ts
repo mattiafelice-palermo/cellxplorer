@@ -1,3 +1,4 @@
+import { secondsResultInDays } from "./plotTimeUnits";
 // Typed API client for the CellXplorer backend.
 import { addDebugEvent, describeRequestBody } from "./debug";
 import type { PlotTimeUnit } from "./plotTimeUnits";
@@ -140,6 +141,46 @@ export const post = <T>(url: string, body?: unknown, options?: Pick<RequestInit,
     body: body === undefined ? undefined : JSON.stringify(body),
     ...options,
   });
+// A Vite session can outlive its Python backend. Older servers accept "d"
+// but return seconds, so use their supported seconds protocol explicitly.
+export interface AnalysisCapabilities {
+  capabilities?: { time_capacity_days?: boolean; discharge_charge_pairing?: boolean; analysis_cache_only?: boolean };
+}
+
+let pendingHealth: { until: number; request: Promise<AnalysisCapabilities> } | undefined;
+export function analysisHealth(): Promise<AnalysisCapabilities> {
+  if (!pendingHealth || Date.now() >= pendingHealth.until) {
+    const request = get<AnalysisCapabilities>("/api/health").catch((error) => {
+      pendingHealth = undefined;
+      throw error;
+    });
+    pendingHealth = { until: Date.now() + 60_000, request };
+  }
+  return pendingHealth.request;
+}
+
+export async function supportsDayCoordinates() {
+  return (await analysisHealth()).capabilities?.time_capacity_days === true;
+}
+
+export async function postTimeCapacity<T extends TimeCapacityResult>(
+  url: string, body: { spec: AnalysisSpec; [key: string]: unknown }, options?: Pick<RequestInit, "signal">,
+): Promise<T> {
+  const cfg = body.spec.computation.time_capacity;
+  if (cfg?.time_unit !== "d" || cfg.x_axis !== "time" || cfg.view !== "voltage_current"
+      || await supportsDayCoordinates()) {
+    return post<T>(url, body, options);
+  }
+  const seconds = {
+    ...body,
+    spec: { ...body.spec, computation: { ...body.spec.computation, time_capacity: { ...cfg, time_unit: "s" } } },
+  };
+  for (const key of ["viewport_x_min", "viewport_x_max"] as const) {
+    if (typeof body[key] === "number") Object.assign(seconds, { [key]: body[key] * 86400 });
+  }
+  return secondsResultInDays(await post<T>(url, seconds, options));
+}
+
 export const postForm = <T>(url: string, body: FormData) =>
   request<T>(url, { method: "POST", body });
 export const put = <T>(url: string, body: unknown) =>
@@ -1352,6 +1393,7 @@ export interface AnalysisSpec {
   /** DCIR-only rest/pulse definitions. Never shared with other analysis tabs. */
   dcir_segments?: DcirSegment[];
   computation: {
+    cycle_pairing?: "programmed" | "discharge_charge";
     cycle_range: { start: number | null; end: number | null };
     exclude_check_cycles_every_n: number;
     retention_reference: { mode: "max_first_n" | "cycle"; n: number; cycle: number | null };
@@ -1955,6 +1997,7 @@ export interface TimeCapacityBackendProfile {
 }
 
 export interface TimeCapacityResult {
+  paired_cycle_max?: number;
   computed_at: string;
   type: string;
   parser_version: string;

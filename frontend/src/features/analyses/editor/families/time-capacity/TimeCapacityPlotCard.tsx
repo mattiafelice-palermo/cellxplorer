@@ -1,3 +1,4 @@
+import { postTimeCapacity, supportsDayCoordinates } from "../../../../../api";
 import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { PLOT_TIME_UNITS, secondsPerPlotTimeUnit } from "../../../../../plotTimeUnits";
 import { NegativeTimeNotice } from "./NegativeTimeNotice";
@@ -1588,7 +1589,7 @@ function TimeCapacityPlotCardView({
   updatePlotEnabled = false,
   updatePlotLabel = "Update",
   active: activeProp = true,
-  maxAvailableCycle,
+  maxAvailableCycle: programmedMaximum,
   isVirginNavigation = false,
   navigationResetKey,
 }: {
@@ -1642,6 +1643,11 @@ function TimeCapacityPlotCardView({
   const refinementAbortRef = useRef<AbortController | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const familyActivity = usePlotFamilyActivity();
+  const pairingSelection = JSON.stringify(spec.selection.entries);
+  const [pairedMaximum, setPairedMaximum] = useState<{ selection: string; maximum: number } | null>(null);
+  const maxAvailableCycle = spec.computation.cycle_pairing === "discharge_charge"
+    ? (pairedMaximum?.selection === pairingSelection ? pairedMaximum.maximum : null)
+    : programmedMaximum;
   const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -1828,7 +1834,7 @@ function TimeCapacityPlotCardView({
     void queryClient.prefetchQuery({
       queryKey: panWarmQuery.queryKey,
       queryFn: ({ signal }) =>
-        post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+        postTimeCapacity<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
           spec: panWarmQuery.spec,
           viewport_width: TIME_CAPACITY_BUFFER_VIEWPORT_WIDTH,
           precision: "standard",
@@ -2156,7 +2162,7 @@ function TimeCapacityPlotCardView({
       }
       const httpStarted = profileRequest ? timeCapacityPerformanceNow() : 0;
       try {
-        const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+        const result = await postTimeCapacity<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
           spec: scientificRequestSpec,
           ...(token ? { job_token: token } : {}),
           cache_only: familyActivity.cacheOnly,
@@ -2218,6 +2224,12 @@ function TimeCapacityPlotCardView({
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,
   });
+  useEffect(() => {
+    const maximum = timeResult.data?.paired_cycle_max;
+    if (maximum !== undefined && !timeResult.isPlaceholderData) {
+      setPairedMaximum({ selection: pairingSelection, maximum });
+    }
+  }, [timeResult.data, timeResult.isPlaceholderData, pairingSelection]);
   usePlotFamilyQuerySettled(timeResult);
   useTimeCapacityProgressiveWarmup({
     analysisId, spec, config: cfg, maximum: maxAvailableCycle,
@@ -3252,7 +3264,7 @@ function TimeCapacityPlotCardView({
                 for (let index = 0; index < chunks.length; index += 1) {
                   if (controller.signal.aborted) break;
                   const chunk = chunks[index];
-                  const response = await post<TimeCapacityRefinementResult>(
+                  const response = await postTimeCapacity<TimeCapacityRefinementResult>(
                     `/api/analyses/${analysisId}/time-capacity/refine`,
                     {
                       // Fetch the first few cycles as soon as possible, then
@@ -3299,7 +3311,7 @@ function TimeCapacityPlotCardView({
                   // This optional request never holds up publication or replaces
                   // the foreground figure. A new gesture cancels it immediately.
                   try {
-                    const response = await post<TimeCapacityRefinementResult>(
+                    const response = await postTimeCapacity<TimeCapacityRefinementResult>(
                       `/api/analyses/${analysisId}/time-capacity/refine`,
                       { spec: scientificRenderSpec, viewport_x_min: buffered.min, viewport_x_max: buffered.max,
                         viewport_width: viewportWidth, cycle_start: bufferedCycles.start, cycle_end: bufferedCycles.end,
@@ -3413,7 +3425,8 @@ function TimeCapacityPlotCardView({
     try {
       const exportConfig = timeCapacityConfig(exportSpec);
       const nativePlan =
-        exportStyle.data_export_format === "csv" || exportStyle.data_export_format === "parquet"
+        (exportStyle.data_export_format === "csv" || exportStyle.data_export_format === "parquet")
+          && (exportConfig.time_unit !== "d" || await supportsDayCoordinates())
           ? timeCapacityNativeExportPlan(
               currentResult,
               exportSpec,
@@ -3469,7 +3482,7 @@ function TimeCapacityPlotCardView({
         return;
       }
       const requestStarted = performance.now();
-      const fullResult = await post<TimeCapacityResult>(
+      const fullResult = await postTimeCapacity<TimeCapacityResult>(
         `/api/analyses/${analysisId}/time-capacity`,
         {
           spec: exportSpec,

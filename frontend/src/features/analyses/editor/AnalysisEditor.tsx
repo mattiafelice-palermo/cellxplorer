@@ -1,3 +1,4 @@
+import { analysisHealth, postTimeCapacity } from "../../../api";
 import { AnalysisSourceLimitations } from "../../../components/AnalysisSourceLimitations";
 import { SelectInitialTitleInput } from "../SelectInitialTitleInput";
 import { RetainedAnalysisPanel, useAnalysisFamilyRetention } from "./RetainedAnalysisPanel";
@@ -1572,10 +1573,10 @@ function AddEntriesModal({
   }, [activePreviewCellId, analysisSpec, previewCycleCount, previewXAxis, resolvedPreviewCycleEnd, resolvedPreviewCycleStart]);
   const previewQuery = useQuery({
     queryKey: ["analysis-cell-picker-preview", analysisId, activePreviewCellId, previewXAxis, resolvedPreviewCycleStart, resolvedPreviewCycleEnd],
-    queryFn: () => post<TimeCapacityResult>(
+    queryFn: () => postTimeCapacity<TimeCapacityResult>(
       `/api/analyses/${analysisId}/time-capacity`,
       {
-        spec: previewSpec,
+        spec: previewSpec!,
         recompute: false,
         compact: true,
         viewport_width: 420,
@@ -4003,6 +4004,11 @@ function AnalysisEditorView({
     queryKey: ["replicate-groups"],
     queryFn: () => get<ReplicateGroupSummary[]>("/api/replicate-groups"),
   });
+  const analysisCapabilities = useQuery({
+    queryKey: ["analysis-preload-capabilities"],
+    queryFn: analysisHealth,
+    staleTime: 60_000,
+  });
   const cellsQuery = useQuery({
     queryKey: ["cells", "analysis-picker"],
     queryFn: () => get<CellSummary[]>("/api/cells"),
@@ -5483,6 +5489,23 @@ function AnalysisEditorView({
           }
           onToggleExcluded={toggleProtocolSegmentExcluded}
           onUseOnly={useOnlyProtocolSegment}
+        />
+      )}
+      {(activeTab === "cycles" || activeTab === "time_capacity") && (
+        <Select
+          label="Cycle pairing"
+          description={analysisCapabilities.isSuccess && !analysisCapabilities.data.capabilities?.discharge_charge_pairing
+            ? "Restart CellXplorer to use discharge-first pairing." : undefined}
+          size="xs"
+          allowDeselect={false}
+          data={[
+            { value: "programmed", label: "Programmed cycles" },
+            { value: "discharge_charge", label: "Discharge followed by charge", disabled: !analysisCapabilities.data?.capabilities?.discharge_charge_pairing },
+          ]}
+          value={spec.computation.cycle_pairing ?? "programmed"}
+          onChange={(value) => update((draft) => {
+            draft.computation.cycle_pairing = value === "discharge_charge" ? value : "programmed";
+          })}
         />
       )}
       {activeTab === "time_capacity" && (

@@ -146,11 +146,37 @@ def _outcomes(ref, names):
     return outcomes
 
 
-def resolve(frame: pd.DataFrame, refs: list, qualified: pd.DataFrame, segments=None):
+def resolve_pairs(frame, raw, refs):
+    """Derive absent GCPL energy only from the rows of the selected pair."""
+    candidates = {}
+    for segment, rows in raw.loc[raw.cycle_complete].groupby("segment"):
+        names = _descriptor(refs[int(segment)])
+        if names is None:
+            continue
+        for direction in DIRECTIONS:
+            if f"{direction}_energy_mwh" in names:
+                continue
+            status = rows.status.astype("string").fillna("")
+            discharge = status.str.contains("DChg", case=False)
+            active = discharge if direction == "discharge" else status.str.contains("Chg", case=False) & ~discharge
+            column = f"{direction}_capacity_mah"
+            if column not in rows:
+                continue
+            for cycle, phase in rows.loc[active].groupby("cycle"):
+                counters = phase.groupby("step")[column]
+                capacity = float((counters.max() - counters.min()).sum())
+                value, reason = integrate_phase(phase, direction, capacity)
+                candidates.setdefault((int(cycle), direction), []).append(
+                    {"basis": "calculated", "value": value, "capacity": capacity, "reason": reason}
+                )
+    return resolve(frame, [], frame, candidates=candidates)
+
+
+def resolve(frame: pd.DataFrame, refs: list, qualified: pd.DataFrame, segments=None, *, candidates=None):
     """Resolve source-local evidence before masks and prefixes, preserving natives."""
     result, cumulative = frame.copy(), qualified.copy()
     provenance = {direction: [] for direction in DIRECTIONS}
-    candidates = {}
+    candidates = {} if candidates is None else candidates
     for segment, ref in enumerate(refs):
         names = _descriptor(ref)
         if names is None:
