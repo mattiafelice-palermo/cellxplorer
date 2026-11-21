@@ -254,3 +254,10 @@ test("provenance guides keep one colored marker and file number for every segmen
   assert.deepEqual(guides.annotations?.map((annotation) => annotation.y), [1.04, 1.04]);
   assert.deepEqual(guides.annotations?.map((annotation) => annotation.font?.color), ["#1f2937", "#1f2937"]);
 });
+
+test("combined previews preserve each source's reader and separate cache keys by mode", () => {
+  const sources = drafts.map((d, i) => ({...d, read_mode: i ? "safe" as const : "permissive" as const}));
+  const order = sources.map(s => s.staged_name).reverse();
+  assert.deepEqual(continuationPreviewRequest(sources, order).sources.map(s => s.read_mode), ["safe", "permissive"]);
+  assert.notDeepEqual(continuationPreviewQueryKey(order, sources), continuationPreviewQueryKey(order, drafts));
+});

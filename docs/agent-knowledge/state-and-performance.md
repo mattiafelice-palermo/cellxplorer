@@ -1769,3 +1769,12 @@ actual counter-availability outcome in result dependencies. Missing identity is
 not missing evidence. FEC needs a positive effective nominal reference; energy
 does not. GCPL capacity/voltage availability alone does not supply a recorded
 energy summary, and a display range never restarts a cumulative quantity.
+
+## Continued import recordings
+
+BioLogic files from successive techniques can share the run's start timestamp.
+Use the first and last measured rows for source-card times. Selected GCPL, CP
+and OCV drafts read the two elapsed-time fields from the verified record layout.
+Keep this out of folder browsing. The combined preview must carry each draft's
+read mode in both its request and its query key because prepared raw data is
+keyed by the corresponding parser identity.

@@ -7,6 +7,10 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.7 - 2026-11-21
+
+- Show the combined preview for BioLogic continuations and select one continued cell when the recordings share strong run evidence. Source cards show the technique and available cycle count, with a button to show or hide measurement times.
+
 ## 0.29.0-alpha.6 - 2026-11-21
 
 - The import browser greys out unsupported BioLogic recordings, identifies PEIS from its header, and keeps the Safe and Permissive controls in the file preview.

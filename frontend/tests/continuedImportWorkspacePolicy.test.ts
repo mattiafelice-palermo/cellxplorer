@@ -7,6 +7,7 @@ import {
   assignContinuationSourceColors,
   buildContinuedImportSubmissionState,
   compactContinuationMetaLine,
+  continuedImportChannel,
   formatContinuationTimestamp,
   nextSelectedSourceKey,
   reorderContinuationSourceKeys,
@@ -93,25 +94,43 @@ test("nextSelectedSourceKey returns null when no sources remain", () => {
 });
 
 test("formatContinuationTimestamp keeps source wall-clock time while making it readable", () => {
-  assert.equal(formatContinuationTimestamp("2026-07-10T14:41:20.7440"), "10/07/2026 14:41");
-  assert.equal(formatContinuationTimestamp("2026-07-10 14:41:20"), "10/07/2026 14:41");
+  assert.equal(formatContinuationTimestamp("2026-07-10T14:41:20.7440"), "10/07/2026 14:41:20");
+  assert.equal(formatContinuationTimestamp("2026-07-10 14:41:20"), "10/07/2026 14:41:20");
   assert.equal(formatContinuationTimestamp("not-a-timestamp"), "not-a-timestamp");
   assert.equal(formatContinuationTimestamp(null), null);
 });
 
-test("compactContinuationMetaLine labels source dates and reports only the cycle count", () => {
-  assert.equal(
-    compactContinuationMetaLine({
-      local_cycle_count: 1,
-      start_time: "2026-07-10T14:41:20.7440",
-      end_time: "2026-07-10T15:42:21.7440",
-    }),
-    "1 cycle · [S] 10/07/2026 14:41 · [E] 10/07/2026 15:42",
-  );
-  assert.equal(
-    compactContinuationMetaLine({ local_cycle_count: 4, start_time: "2026-07-10T14:41:20", end_time: null }),
-    "4 cycles · Started: 10/07/2026 14:41",
-  );
+test("source cards keep technique and cycle counts when toggling measurement times", () => {
+  const source = {
+    technique: "GCPL", local_cycle_count: 0, first_measurement: "2026-07-10T14:41:20.744",
+    last_measurement: "2026-07-10T15:42:21.744",
+  };
+  assert.equal(compactContinuationMetaLine(source), "GCPL · 0 cycles");
+  assert.equal(compactContinuationMetaLine(source, true),
+    "GCPL · 0 cycles\nFirst measurement  10/07/2026 14:41:20\nLast measurement  10/07/2026 15:42:21");
+  assert.equal(compactContinuationMetaLine({ technique: "OCV", local_cycle_count: null }, true), "OCV");
+  assert.equal(compactContinuationMetaLine({local_cycle_count: null}), null);
+});
+
+test("auto grouping requires the same run and channel and consecutive distinct recordings", () => {
+  const a = {
+    ext: "mpr", metadata_only: false, hash: "a", instrument_serial: "instrument-A",
+    channel: "2", barcode: null, start_time: "2025-01-14T08:00:10",
+    first_measurement: "2025-01-14T08:01:00", last_measurement: "2025-01-14T09:10:00",
+  };
+  const b = {
+    ...a, hash: "b", first_measurement: "2025-01-14T09:11:00", last_measurement: "2025-01-14T12:00:10",
+  };
+  assert.equal(continuedImportChannel([b, a]), "2");
+  for (const change of [
+    {channel: "1"}, {hash: "a"}, {instrument_serial: "other"}, {instrument_serial: null},
+    {first_measurement: null}, {start_time: "other"}, {first_measurement: a.first_measurement},
+    {first_measurement: "2025-01-14T10:00:00"}, {metadata_only: true}, {ext: "ndax"},
+  ]) {
+    assert.equal(continuedImportChannel([a, {...b, ...change}]), null);
+  }
+  assert.equal(continuedImportChannel([{...a, barcode: "cell A"}, {...b, barcode: "cell B"}]), null);
+  assert.equal(continuedImportChannel([a]), null);
 });
 
 test("reorderContinuationSourceKeys moves stable source ids without changing invalid orders", () => {

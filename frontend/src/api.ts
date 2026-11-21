@@ -2152,6 +2152,9 @@ export interface Meta {
 
 export interface ImportPreview extends MprReadPresentation {
   recorded_masses?: RecordedMass[];
+  first_measurement?: string | null;
+  last_measurement?: string | null;
+  instrument_serial?: string | null;
   staged_name: string;
   source_path: string | null;
   filename: string;
@@ -2374,6 +2377,8 @@ export interface ImportPathInspectRequest {
 }
 
 export interface ContinuationInspectSource extends MprReadPresentation {
+  first_measurement?: string | null;
+  last_measurement?: string | null;
   key: string;
   kind: ContinuationSourceKind;
   source_file_id: number | null;

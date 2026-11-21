@@ -217,6 +217,10 @@ def _inspect_import_path(
     preview_meta = _metadata_preview(meta)
     metadata_only = parsing.source_metadata_only(meta)
     canonical_cycling_pending = parsing.source_metadata_cycling_pending(meta)
+    mpr_facts = {}
+    if inspected.ext == "mpr":
+        mpr_facts = parsing.staged_mpr_measurements(path, meta)
+        mpr_facts["recorded_masses"] = parsing.recorded_biologic_masses(meta)
     metadata_facts = _bounded_staged_metadata_fields(
         {
             "barcode": _bounded_staged_text_or_none(meta.get("barcode")),
@@ -224,7 +228,7 @@ def _inspect_import_path(
             "device_info": _bounded_staged_text_or_none(meta.get("device_info")),
             "channel": _bounded_staged_text_or_none(meta.get("channel")),
             "start_time": _bounded_staged_text_or_none(meta.get("start_time")),
-            **({"recorded_masses": parsing.recorded_biologic_masses(meta)} if inspected.ext == "mpr" else {}),
+            **mpr_facts,
             "active_mass_mg": meta.get("active_mass_mg"),
             "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
             "nda_version": _bounded_staged_text_or_none(meta.get("nda_version")),
@@ -4453,6 +4457,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             fingerprint.hash,
             fingerprint.size,
             fingerprint.mtime_ns,
+            **({"read_mode": draft.read_mode} if draft.read_mode != "safe" else {}),
         )
         if not isinstance(meta, dict):
             meta = parsing.read_header_metadata(source_path)

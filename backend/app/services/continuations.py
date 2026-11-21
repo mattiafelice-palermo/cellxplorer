@@ -729,6 +729,8 @@ def _continuation_chain_response(
                 "source_path": source.get("source_path"),
                 "hash": source.get("hash"),
                 "start_time": source.get("start_time"),
+                "first_measurement": _iso_timestamp(source.get("first_record_timestamp")),
+                "last_measurement": _iso_timestamp(source.get("end_timestamp")),
                 "end_time": source.get("end_time"),
                 "local_cycle_start": source.get("local_cycle_start"),
                 "local_cycle_end": source.get("local_cycle_end"),

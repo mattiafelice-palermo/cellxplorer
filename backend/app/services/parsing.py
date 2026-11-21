@@ -71,10 +71,12 @@ import logging
 import math
 import os
 import re
+import struct
 import zipfile
 import xml.etree.ElementTree as ET
 from collections import Counter
 from copy import deepcopy
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISREG
@@ -882,6 +884,35 @@ def source_uses_legacy_biologic_parser(source: object) -> bool:
         getattr(source, "ext", None),
         getattr(source, "parser_version", None),
     )
+
+
+def staged_mpr_measurements(path: Path, metadata: dict) -> dict:
+    """Read just the two elapsed-time fields of a selected EC-Lab recording."""
+    if metadata.get("technique") not in {"GCPL", "CP", "OCV"} or not metadata.get("start_time"):
+        return {}
+    try:
+        origin = datetime.fromisoformat(metadata["start_time"])
+        with biologic_mpr.read_mpr_header(path) as doc:
+            data = doc.vmp_data
+            offset = data.field_offsets.get("elapsed_time_s")
+            if offset is None or data.n_datapoints < 1:
+                return {}
+            first_offset = data.record_offset + offset
+            last_offset = first_offset + (data.n_datapoints - 1) * data.record_stride
+            first = struct.unpack_from("<d", data.payload, first_offset)[0]
+            last = struct.unpack_from("<d", data.payload, last_offset)[0]
+            if not (0 <= first <= last and math.isfinite(last)):
+                return {}
+            times = {
+                "first_measurement": (origin + timedelta(seconds=first)).isoformat(),
+                "last_measurement": (origin + timedelta(seconds=last)).isoformat(),
+            }
+    except (ValueError, OverflowError, OSError):
+        return {}
+    device = ((metadata.get("raw") or {}).get("log") or {}).get("device_serial")
+    if device:
+        times["instrument_serial"] = str(device)[:128]
+    return times
 
 
 def recorded_biologic_masses(header: object) -> list[dict]:

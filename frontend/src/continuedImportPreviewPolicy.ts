@@ -9,7 +9,7 @@ import type {
 
 type PreviewDraft = Pick<
   ImportPreview,
-  "staged_name" | "source_path" | "hash" | "size" | "inspection" | "metadata_only"
+  "staged_name" | "source_path" | "hash" | "size" | "inspection" | "metadata_only" | "read_mode"
 >;
 
 export type ContinuationPreviewQuantity =
@@ -50,6 +50,7 @@ function draftIdentity(draft: PreviewDraft): string {
   return [
     draft.staged_name,
     draft.hash,
+    draft.read_mode ?? "safe",
     draft.inspection?.size ?? draft.size,
     draft.inspection?.mtime_ns ?? "",
     draft.source_path ?? "",
@@ -94,8 +95,9 @@ export function continuationPreviewRequest(
         staged_name: draft.staged_name,
         source_path: draft.source_path,
         inspection: draft.inspection,
+        read_mode: draft.read_mode,
         allow_metadata_only: draft.metadata_only,
-    })),
+      })),
     proposed_order: [...order],
     quantity,
     interpretation,

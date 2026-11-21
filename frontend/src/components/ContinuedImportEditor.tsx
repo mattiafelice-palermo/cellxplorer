@@ -53,6 +53,7 @@ import {
 } from "../continuationPolicy";
 import {
   assignContinuationSourceColors,
+  formatContinuationTimestamp,
   buildContinuedImportSubmissionState,
   nextSelectedSourceKey,
   reorderContinuationSourceKeys,
@@ -127,6 +128,9 @@ function fallbackSource(draft: DraftSource) {
     read_mode: draft.read_mode,
     hash: draft.hash || null,
     start_time: draft.start_time,
+    first_measurement: draft.first_measurement,
+    last_measurement: draft.last_measurement,
+    technique: draft.technique,
     end_time: null,
     local_cycle_start: null,
     local_cycle_end: null,
@@ -221,6 +225,7 @@ export function ContinuedImportEditor({
 }) {
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
   const [colors, setColors] = useState<SourceColorAssignments>({});
+  const [showMeasurementTimes, setShowMeasurementTimes] = useState(false);
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
   const [findingDialog, setFindingDialog] = useState<"warnings" | "errors" | null>(null);
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
@@ -676,8 +681,14 @@ export function ContinuedImportEditor({
       ? order
         .map((key) => result.sources.find((source) => source.key === key))
         .filter((source): source is NonNullable<typeof source> => Boolean(source))
+        .map((source) => ({
+          ...source,
+          technique: byKey.get(source.key)?.technique,
+          first_measurement: source.first_measurement ?? byKey.get(source.key)?.first_measurement,
+          last_measurement: source.last_measurement ?? byKey.get(source.key)?.last_measurement,
+        }))
       : orderedDrafts.map(fallbackSource),
-    [order, orderedDrafts, result],
+    [order, orderedDrafts, result, byKey],
   );
 
   // Keep the visible order in sync with staged drafts: append newly staged
@@ -929,12 +940,19 @@ export function ContinuedImportEditor({
         <Paper withBorder p="xs" w={328} style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}>
           <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
             <Group justify="space-between" wrap="nowrap" style={{ flex: "none" }}>
-              <Text size="sm" fw={700}>Source chain</Text>
-              <Badge size="xs" variant="light">{orderedSources.length}</Badge>
+              <Group gap={6} wrap="nowrap">
+                <Text size="sm" fw={700}>Source chain</Text>
+                <Badge size="xs" variant="light">{orderedSources.length}</Badge>
+              </Group>
+              <Button size="compact-xs" variant="subtle" aria-expanded={showMeasurementTimes}
+                onClick={() => setShowMeasurementTimes((shown) => !shown)}>
+                {showMeasurementTimes ? "Hide measurement times" : "Show measurement times"}
+              </Button>
             </Group>
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
               <ContinuationSourceList
                 variant="compact-import"
+                showMeasurementTimes={showMeasurementTimes}
                 sources={orderedSources}
                 findings={result?.findings ?? []}
                 colorsBySourceKey={colors}
@@ -1108,8 +1126,9 @@ export function ContinuedImportEditor({
                         : null
                     }
                   />
-                  <SummaryRow label="Started" value={selectedSource?.start_time ?? selectedDraft?.start_time} />
-                  <SummaryRow label="Ended" value={selectedSource?.end_time} />
+                  <SummaryRow label="Run started" value={formatContinuationTimestamp(selectedSource?.start_time)} />
+                  <SummaryRow label="First measurement" value={formatContinuationTimestamp(selectedSource?.first_measurement)} />
+                  <SummaryRow label="Last measurement" value={formatContinuationTimestamp(selectedSource?.last_measurement)} />
                   <SummaryRow label="Protocol" value={selectedSource?.protocol_signature} />
                 </Stack>
               </Stack>

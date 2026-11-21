@@ -114,3 +114,13 @@ The supported layout is intentionally exact and fails on other column sequences.
 The single-source frozen checks and ordered-chain oracle complement each other:
 reversing CP half-sources can change their physical charge/discharge pairing,
 so scalar order independence is not assumed for that four-source chain.
+
+## Continued-import preview
+
+The private `cell38-import/sources` corpus holds the three Cell 38 OCV/GCPL6
+recordings as `step-02.mpr`, `step-04.mpr`, and `step-06.mpr`. For deployment,
+run `python -m unittest discover -s tests -p test_continued_import_recordings.py`
+on the workstation with the corpus installed. A skip means these recordings
+were unavailable. The test checks all three hashes, measured times and raw row
+counts, then passes the staged drafts through the editor's grouping policy
+and request builder to the combined voltage preview route.

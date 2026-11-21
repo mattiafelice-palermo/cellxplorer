@@ -34,7 +34,7 @@ import {
   findingSummary,
   sourceRoleLabel,
 } from "../continuationPolicy";
-import { compactContinuationMetaLine as formatCompactContinuationMetaLine } from "../continuedImportWorkspacePolicy";
+import { compactContinuationMetaLine } from "../continuedImportWorkspacePolicy";
 
 export type ContinuationSourceListVariant = "default" | "compact-import";
 
@@ -149,10 +149,6 @@ function SourceIdentityGutter({
   );
 }
 
-function compactMetaLine(source: ContinuationInspectSource): string | null {
-  return formatCompactContinuationMetaLine(source);
-}
-
 function SortableCompactSourceCard({
   source,
   index,
@@ -245,7 +241,7 @@ function SortableCompactSourceCard({
             <ActionIcon size="sm" variant="subtle" color="red" aria-label={`Remove ${source.filename}`} disabled={disabled || canRemoveSource?.(source.key) === false} onClick={(event) => { stop(event); onRemove(source.key); }}><IconX size={13} /></ActionIcon>
           </Tooltip>}
         </Group>
-        {metaLine && <Text size="xs" c={selected ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
+        {metaLine && <Text size="xs" c={selected ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} title={metaLine} style={{ whiteSpace: "pre-line", minWidth: 0 }}>{metaLine}</Text>}
         {source.inspection_error && (
           <Text size="xs" c="red" title={source.inspection_error}>
             {source.inspection_error}
@@ -280,11 +276,12 @@ export function ContinuationSourceList({
   disabled = false,
   emptyMessage = "No continuation sources selected.",
   variant = "default",
+  showMeasurementTimes = false,
   colorsBySourceKey,
   selectedSourceKey,
   onSelect,
 }: {
-  sources: ContinuationInspectSource[];
+  sources: (ContinuationInspectSource & { technique?: string | null })[];
   focusedSourceId?: number | null;
   findings: ContinuationFinding[];
   onMove: (index: number, direction: -1 | 1) => void;
@@ -301,6 +298,7 @@ export function ContinuationSourceList({
   emptyMessage?: string;
   /** "compact-import" is used only by the continued-cell import workspace. Default callers (existing-cell continuation management) are unaffected. */
   variant?: ContinuationSourceListVariant;
+  showMeasurementTimes?: boolean;
   /** Stable session source colors, keyed by source key. Compact-import only. */
   colorsBySourceKey?: Record<string, string>;
   /** Currently selected source for preview/details. Compact-import only. */
@@ -348,7 +346,7 @@ export function ContinuationSourceList({
                 source={source}
                 index={index}
                 selected={selectedSourceKey === source.key}
-                metaLine={compactMetaLine(source)}
+                metaLine={compactContinuationMetaLine(source, showMeasurementTimes)}
                 sourceColor={colorsBySourceKey?.[source.key]}
                 disabled={disabled || !onReorder}
                 onRemove={onRemove && sources.length > 1 ? onRemove : undefined}

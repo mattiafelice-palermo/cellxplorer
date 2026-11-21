@@ -1,4 +1,4 @@
-import type { ContinuationInspectResult, ContinuationInspectSource } from "./api";
+import type { ContinuationInspectResult, ContinuationInspectSource, ImportPreview } from "./api";
 import {
   continuedImportCanSubmit,
   continuedInspectionStatus,
@@ -11,37 +11,70 @@ import {
 
 export type SourceColorAssignments = Record<string, string>;
 
+type RunEvidence = Pick<ImportPreview, "hash" | "channel" | "instrument_serial" | "start_time"
+  | "first_measurement" | "last_measurement" | "barcode" | "metadata_only" | "ext">;
+
+const MAX_CONTINUATION_GAP_MS = 10 * 60 * 1000;
+
+export function continuedImportChannel(sources: readonly RunEvidence[]): string | null {
+  const first = sources[0];
+  if (sources.length < 2 || !first?.instrument_serial || !first.channel || !first.start_time) return null;
+  const sameRun = sources.every((source) =>
+    source.ext.toLowerCase() === "mpr" && !source.metadata_only && source.hash
+    && source.instrument_serial === first.instrument_serial
+    && source.channel === first.channel && source.start_time === first.start_time
+  );
+  const hashes = new Set(sources.map((source) => source.hash));
+  const barcodes = new Set(sources.map((source) => source.barcode?.trim()).filter(Boolean));
+  if (!sameRun || hashes.size !== sources.length || barcodes.size > 1) return null;
+
+  // The MPR reader supplies instrument-local ISO timestamps. Compare on a common
+  // clock so the browser's timezone and daylight-saving rules cannot change the gaps.
+  const windows = sources.map((source) => ({
+    start: Date.parse((source.first_measurement ?? "") + "Z"),
+    end: Date.parse((source.last_measurement ?? "") + "Z"),
+  })).sort((a, b) => a.start - b.start);
+  for (const [index, window] of windows.entries()) {
+    if (!Number.isFinite(window.start) || !Number.isFinite(window.end) || window.start >= window.end) return null;
+    if (index > 0) {
+      const gap = window.start - windows[index - 1].end;
+      if (gap <= 0 || gap > MAX_CONTINUATION_GAP_MS) return null;
+    }
+  }
+  return first.channel;
+}
+
 /** Format a source timestamp without changing its source-local wall-clock value. */
 export function formatContinuationTimestamp(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
 
-  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2}))?/.exec(trimmed);
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(trimmed);
   if (!match) return trimmed;
 
-  const [, year, month, day, hour, minute] = match;
+  const [, year, month, day, hour, minute, second] = match;
   const date = `${day!.padStart(2, "0")}/${month!.padStart(2, "0")}/${year}`;
-  return hour === undefined ? date : `${date} ${hour.padStart(2, "0")}:${minute}`;
+  return hour === undefined ? date : `${date} ${hour.padStart(2, "0")}:${minute}${second ? `:${second}` : ""}`;
 }
 
 /** Compact, labelled source facts for the continued-import source chain. */
 export function compactContinuationMetaLine(
-  source: Pick<ContinuationInspectSource, "local_cycle_count" | "start_time" | "end_time">,
+  source: Pick<ContinuationInspectSource, "local_cycle_count" | "first_measurement" | "last_measurement">
+    & { technique?: string | null },
+  showMeasurementTimes = false,
 ): string | null {
-  const parts: string[] = [];
+  const summary = [];
+  if (source.technique) summary.push(source.technique);
   if (source.local_cycle_count !== null && source.local_cycle_count !== undefined) {
-    parts.push(`${source.local_cycle_count} cycle${source.local_cycle_count === 1 ? "" : "s"}`);
+    summary.push(`${source.local_cycle_count} cycle${source.local_cycle_count === 1 ? "" : "s"}`);
   }
-  const start = formatContinuationTimestamp(source.start_time);
-  const end = formatContinuationTimestamp(source.end_time);
-  if (start && end) {
-    parts.push(`[S] ${start}`, `[E] ${end}`);
-  } else if (start) {
-    parts.push(`Started: ${start}`);
-  } else if (end) {
-    parts.push(`[E] ${end}`);
-  }
-  return parts.length ? parts.join(" · ") : null;
+  const parts = summary.length ? [summary.join(" · ")] : [];
+  if (!showMeasurementTimes) return parts[0] ?? null;
+  const start = formatContinuationTimestamp(source.first_measurement);
+  const end = formatContinuationTimestamp(source.last_measurement);
+  if (start) parts.push(`First measurement  ${start}`);
+  if (end) parts.push(`Last measurement  ${end}`);
+  return parts.length ? parts.join("\n") : null;
 }
 
 /** Reorder source keys by the stable indices reported by a sortable drag. */

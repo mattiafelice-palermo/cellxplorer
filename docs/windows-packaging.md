@@ -14,6 +14,8 @@ explicit packaged schema migrations and automatic pre-migration backups. See
 Before deploying a version, run `python scripts/parser_regression_corpus.py verify`
 on the workstation holding the [private difficult-source corpus](private-parser-regression-corpus.md).
 This checks the archived GCPL late-reset recording through import, cache, analysis and preview.
+On the same workstation, run `python -m unittest discover -s tests -p test_continued_import_recordings.py`
+to check the three-file Cell 38 import and combined voltage preview.
 
 ## Required local tools
 

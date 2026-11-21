@@ -27,6 +27,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
+import { ContinuedModeNotice } from "../components/ContinuedModeNotice";
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -80,7 +81,7 @@ import { ImportSourcePreview } from "../components/ImportSourcePreview";
 import { AddScientificPresetButton } from "../components/AddScientificPresetButton";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { FolderTrackingSettingsModal } from "../components/FolderTrackingSettingsModal";
-import type { ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
+import { continuedImportChannel, type ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
 import { folderTrackingEligibility, folderTrackingInlineSummary } from "../folderTrackingPolicy";
 import {
   ImportFilesystemPickerModal as SharedImportFilesystemPickerModal,
@@ -1066,7 +1067,9 @@ function ImportModal({
   const [selectedStagedNames, setSelectedStagedNames] = useState<Set<string>>(new Set());
   const [replicateGroups, setReplicateGroups] = useState<ImportReplicateDraft[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
-  const [continuedMode, setContinuedMode] = useState(false);
+  const [modeOverride, setModeOverride] = useState<boolean | null>(null);
+  const suggestedChannel = useMemo(() => continuedImportChannel(drafts), [drafts]);
+  const continuedMode = modeOverride ?? Boolean(suggestedChannel);
   const [folderWatch, setFolderWatch] = useState<ImportFolderWatchDraft | null>(null);
   const [folderTrackingSettingsOpen, setFolderTrackingSettingsOpen] = useState(false);
   const [registerToken, setRegisterToken] = useState<string | null>(null);
@@ -1126,7 +1129,7 @@ function ImportModal({
       setSelectedStagedNames(new Set());
       setReplicateGroups([]);
       setNewGroupName(drafts.length > 1 ? `${drafts[0]?.cell_name ?? "Imported"} replicates` : "");
-      setContinuedMode(false);
+      setModeOverride(null);
       setFolderWatch(null);
       setFolderTrackingSettingsOpen(false);
       setRegistrationAccepted(false);
@@ -1803,20 +1806,24 @@ function ImportModal({
           >
           <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
             {drafts.length >= 1 && (
-              <SegmentedControl
-                fullWidth
-                style={{ flex: "none" }}
-                value={continuedMode ? "continued" : "separate"}
-                onChange={(value) => {
-                  const nextMode = value === "continued";
-                  setContinuedMode(nextMode);
-                  if (nextMode) onActive(0);
-                }}
-                data={[
-                  { value: "separate", label: "Separate cells" },
-                  { value: "continued", label: "One continued cell" },
-                ]}
-              />
+              <Box pos="relative" style={{ flex: "none" }}>
+                <SegmentedControl
+                  fullWidth
+                  value={continuedMode ? "continued" : "separate"}
+                  onChange={(value) => {
+                    const nextMode = value === "continued";
+                    setModeOverride(nextMode);
+                    if (nextMode) onActive(0);
+                  }}
+                  data={[
+                    { value: "separate", label: "Separate cells" },
+                    { value: "continued", label: "One continued cell" },
+                  ]}
+                />
+                {opened && modeOverride === null && suggestedChannel && (
+                  <ContinuedModeNotice key={suggestedChannel} channel={suggestedChannel} />
+                )}
+              </Box>
             )}
             {continuedMode ? (
               <ContinuedImportEditor
@@ -1826,7 +1833,7 @@ function ImportModal({
                 onCellDraftChange={setContinuedCellDraft}
                 onAddMoreSources={onAddMoreSources}
                 onRemoveSource={removeSource}
-                onSwitchToSeparate={() => setContinuedMode(false)}
+                onSwitchToSeparate={() => setModeOverride(false)}
                 addingMore={addingMore || save.isPending}
                 destinationFolders={destinationFolders}
                 onDestinationFoldersChange={setDestinationFolders}
