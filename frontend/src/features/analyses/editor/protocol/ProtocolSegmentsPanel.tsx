@@ -1327,10 +1327,10 @@ function GroupedProtocolComparisonModal({
                           size="xs"
                           label={option.label}
                           checked={customDimensions[option.key]}
-                          onChange={(event) =>
+                          onChange={({ currentTarget: { checked } }) =>
                             setCustomDimensions((current) => ({
                               ...current,
-                              [option.key]: event.currentTarget.checked,
+                              [option.key]: checked,
                             }))
                           }
                         />

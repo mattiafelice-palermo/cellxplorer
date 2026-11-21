@@ -1304,9 +1304,9 @@ export function CycleSettings({
                 <Switch
                   label="Normalize by g"
                   checked={Boolean(spec.presentation.normalize_by_mass)}
-                  onChange={(e) =>
+                  onChange={({ currentTarget: { checked } }) =>
                     update((s) => {
-                      s.presentation.normalize_by_mass = e.currentTarget.checked;
+                      s.presentation.normalize_by_mass = checked;
                       resetAxis(s, "y_axis");
                     })
                   }
@@ -1316,25 +1316,25 @@ export function CycleSettings({
                 <Switch
                   label="CE on right axis"
                   checked={spec.presentation.ce_overlay}
-                  onChange={(e) =>
-                    update((s) => void (s.presentation.ce_overlay = e.currentTarget.checked))
+                  onChange={({ currentTarget: { checked } }) =>
+                    update((s) => void (s.presentation.ce_overlay = checked))
                   }
                 />
               )}
               <Switch
                 label="Individual cells"
                 checked={spec.presentation.show_individual_cells}
-                onChange={(e) =>
-                  update((s) => void (s.presentation.show_individual_cells = e.currentTarget.checked))
+                onChange={({ currentTarget: { checked } }) =>
+                  update((s) => void (s.presentation.show_individual_cells = checked))
                 }
               />
               <Group gap={4} wrap="nowrap">
                 <Switch
                   label="Hide diagnostic cycles"
                   checked={spec.presentation.hide_diagnostic_cycles ?? false}
-                  onChange={(e) =>
+                  onChange={({ currentTarget: { checked } }) =>
                     update((s) => {
-                      s.presentation.hide_diagnostic_cycles = e.currentTarget.checked;
+                      s.presentation.hide_diagnostic_cycles = checked;
                       resetAxis(s, "y_axis");
                     })
                   }
@@ -1382,9 +1382,9 @@ export function CycleSettings({
                     ml="md"
                     label="Reindex remaining cycles"
                     checked={spec.presentation.reindex_diagnostic_cycles ?? false}
-                    onChange={(e) =>
+                    onChange={({ currentTarget: { checked } }) =>
                       update((s) => {
-                        s.presentation.reindex_diagnostic_cycles = e.currentTarget.checked;
+                        s.presentation.reindex_diagnostic_cycles = checked;
                         resetAxis(s, "x_axis");
                       })
                     }

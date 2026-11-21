@@ -34,6 +34,48 @@ function visit(node: ts.Node) {
 }
 visit(source);
 
+const timeCard = ts.createSourceFile("TimeCapacityPlotCard.tsx", readFileSync(new URL(
+  "../src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx", import.meta.url,
+), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const timeSwitches = new Map<string, string>();
+function readTimeSwitch(node: ts.Node) {
+  if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(timeCard) === "Switch") {
+    const props = node.attributes.properties.filter(ts.isJsxAttribute);
+    const label = props.find((p) => p.name.getText(timeCard) === "label")?.initializer;
+    const change = props.find((p) => p.name.getText(timeCard) === "onChange")?.initializer;
+    if (label && ts.isStringLiteral(label) && change && ts.isJsxExpression(change) && change.expression) {
+      timeSwitches.set(label.text, change.expression.getText(timeCard));
+    }
+  }
+  ts.forEachChild(node, readTimeSwitch);
+}
+readTimeSwitch(timeCard);
+
+for (const [label, field] of [
+  ["Stack current below voltage", "stacked"],
+  ["Normalize capacity by g", "derivative_specific"],
+  ["Absolute discharge derivative", "derivative_absolute_discharge"],
+]) {
+  test(`${label} applies the clicked value when React processes the plot update later`, () => {
+    const code = timeSwitches.get(label);
+    assert.ok(code, label);
+    const pending: Array<(config: Record<string, boolean>) => void> = [];
+    const handler = runInNewContext(ts.transpileModule(`(${code})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+    }).outputText, { updateTime: (fn: (config: Record<string, boolean>) => void) => pending.push(fn) });
+    for (const checked of [true, false]) {
+      const input = { checked };
+      const event: { currentTarget: typeof input | null } = { currentTarget: input };
+      handler(event);
+      event.currentTarget = null;
+      input.checked = !checked;
+      const config = { [field]: !checked };
+      pending.shift()!(config);
+      assert.equal(config[field], checked);
+    }
+  });
+}
+
 test("covers the production title/description inputs in all three save dialogs", () => {
   assert.deepEqual(handlers.map(({ setter, field }) => `${setter}.${field}`).sort(), [
     "setLeavePrompt.description", "setLeavePrompt.name", "setQuantityRenamePrompt.name",

@@ -630,8 +630,8 @@ export function PlotHeader({
                       <Switch
                         label="Include title in figure"
                         checked={exportStyle.export_include_title}
-                        onChange={(event) =>
-                          setExportStyle((next) => void (next.export_include_title = event.currentTarget.checked))
+                        onChange={({ currentTarget: { checked } }) =>
+                          setExportStyle((next) => void (next.export_include_title = checked))
                         }
                       />
                     </Stack>

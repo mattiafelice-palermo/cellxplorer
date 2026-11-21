@@ -7,6 +7,10 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.10 - 2026-11-21
+
+- Fixed an analysis page crash when switching stacked current on or off. The same fix covers related plot controls.
+
 ## 0.29.0-alpha.9 - 2026-11-21
 
 - BioLogic GCPL, CP and MB recordings keep verified voltage and current when cycles or capacities cannot be determined. Unavailable capacities appear empty, and MB plots preserve the gaps from excluded impedance measurements.

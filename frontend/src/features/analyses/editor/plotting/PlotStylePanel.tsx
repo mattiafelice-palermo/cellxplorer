@@ -1093,22 +1093,22 @@ export function PlotStylePanel({
               <Switch
                 label="Grid"
                 checked={style.show_grid}
-                onChange={(event) =>
-                  setStyle((next) => void (next.show_grid = event.currentTarget.checked))
+                onChange={({ currentTarget: { checked } }) =>
+                  setStyle((next) => void (next.show_grid = checked))
                 }
               />
               <Switch
                 label="Zero line (Y)"
                 checked={style.show_zero_line}
-                onChange={(event) =>
-                  setStyle((next) => void (next.show_zero_line = event.currentTarget.checked))
+                onChange={({ currentTarget: { checked } }) =>
+                  setStyle((next) => void (next.show_zero_line = checked))
                 }
               />
               <Switch
                 label="Border"
                 checked={style.show_frame}
-                onChange={(event) =>
-                  setStyle((next) => void (next.show_frame = event.currentTarget.checked))
+                onChange={({ currentTarget: { checked } }) =>
+                  setStyle((next) => void (next.show_frame = checked))
                 }
               />
               <Group grow>
@@ -1161,8 +1161,8 @@ export function PlotStylePanel({
               <Switch
                 label="Show legend"
                 checked={spec.presentation.legend}
-                onChange={(event) =>
-                  update((s) => void (s.presentation.legend = event.currentTarget.checked))
+                onChange={({ currentTarget: { checked } }) =>
+                  update((s) => void (s.presentation.legend = checked))
                 }
               />
               {spec.presentation.legend && (

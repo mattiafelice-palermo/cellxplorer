@@ -1445,7 +1445,7 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
               <Switch
                 label="Stack current below voltage"
                 checked={cfg.stacked}
-                onChange={(event) => updateTime((next) => void (next.stacked = event.currentTarget.checked))}
+                onChange={({ currentTarget: { checked } }) => updateTime((next) => void (next.stacked = checked))}
               />
               {cfg.stacked && (
                 <>
@@ -1503,16 +1503,16 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
                   <Switch
                     label="Normalize capacity by g"
                     checked={cfg.derivative_specific}
-                    onChange={(event) =>
-                      updateTime((next) => void (next.derivative_specific = event.currentTarget.checked))
+                    onChange={({ currentTarget: { checked } }) =>
+                      updateTime((next) => void (next.derivative_specific = checked))
                     }
                   />
                   <Switch
                     label="Absolute discharge derivative"
                     checked={cfg.derivative_absolute_discharge}
-                    onChange={(event) =>
+                    onChange={({ currentTarget: { checked } }) =>
                       updateTime(
-                        (next) => void (next.derivative_absolute_discharge = event.currentTarget.checked)
+                        (next) => void (next.derivative_absolute_discharge = checked)
                       )
                     }
                   />
