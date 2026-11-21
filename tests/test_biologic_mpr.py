@@ -500,7 +500,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             ids = tuple(
                 column_id
                 for column_id in SUPPORTED_GCPL_COLUMN_IDS
-                if column_id != 7
+                if column_id != 4
             )
             path = _write_fixture(
                 Path(temp),

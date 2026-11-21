@@ -10,9 +10,9 @@ cycle summary. GCPL raw curves remain available when a source has only one activ
 summaries require both charge and discharge, and zero-current Rest/OCV rows are neutral. The
 verified GCPL contract includes explicit cycle identity, a bounded declared/observed-`Ns` loop
 reconstruction path, and storage-local cycle labels for deterministic non-repeating episodes,
-including a header-proven neutral setup/control preamble. Ambiguous restarts, branching, unresolved
-controls, contradictory directions, and unsupported layouts remain metadata-only until their cycle
-identity is independently verified.
+including a header-proven neutral setup/control preamble. Ambiguous loops retain verified measurements and step capacities with no complete cycles.
+Invalid capacity counters leave independently verified current and cycles available. Conflicting
+settings and data, instrument errors, and unsupported layouts still fail shared validation.
 Verified BioLogic MB layouts provide voltage/time and voltage/capacity, excluding entire
 frequency-identified EIS executions and preserving acquisition gaps. MB capacity uses measured
 increments inside ordinary operations; unassignable boundary intervals are omitted. Classic MB

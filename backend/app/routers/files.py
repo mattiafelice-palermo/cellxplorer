@@ -3733,6 +3733,8 @@ def _build_stitched_continuation_preview(
     if quantity == "voltage" and voltage_cycle_identity_available and "cycle" in merged.columns:
         full_cycle_ids = pd.to_numeric(merged["cycle"], errors="coerce").dropna()
         cycle_count: int | None = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
+    elif quantity == "voltage" and any(continuation_preview.has_unresolved_biologic_cycles(f) for f in prepared_frames):
+        cycle_count = None
     elif quantity != "voltage" and "cycle" in merged_cycles.columns and not merged_cycles.empty:
         full_cycle_ids = pd.to_numeric(merged_cycles["cycle"], errors="coerce").dropna()
         cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
@@ -3780,6 +3782,9 @@ def _build_stitched_continuation_preview(
             if "cycle" in full_segment_frame.columns
             else pd.Series(dtype="float64")
         )
+        if continuation_preview.has_unresolved_biologic_cycles(raw_frame):
+            global_cycles = global_cycles.iloc[:0]
+            local_labels = []
         if merged.attrs.get("cross_source_gcpl_cycle_ids"):
             global_cycles = global_cycles[global_cycles.gt(0)]
         if selected_quantity == "voltage":

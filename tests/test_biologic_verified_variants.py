@@ -72,8 +72,10 @@ class VerifiedVariantTests(unittest.TestCase):
         # current over the recorded interval. Counter equality alone is unsafe.
         v=self.discharge_rows(); v[4]["q_mAh"]=-.9000005; v[4]["raw_dq_mAh"]=-5e-7; v[5]["q_mAh"]=-.9000005; variants["contradictory physical magnitude"]=v
         for name, rows in variants.items():
-            with self.subTest(name=name), self.assertRaises(BiologicGcplError):
-                map_gcpl_to_canonical(self.document(rows, [{"current": 0.}, {"current": -1.}]))
+            with self.subTest(name=name):
+                frame = map_gcpl_to_canonical(self.document(rows, [{"current": 0.}, {"current": -1.}]))
+                self.assertTrue(frame["discharge_capacity_mah"].isna().all())
+                self.assertTrue(frame["current_ma"].notna().all())
 
     def test_delayed_transfer_after_replay_uses_original_physical_record_index(self):
         values = replay_rows()
@@ -110,8 +112,9 @@ class VerifiedVariantTests(unittest.TestCase):
         self.assertTrue(calc.per_cycle(frame).empty)
         self.assertTrue(np.isfinite(frame.voltage_v).all())
         bad=[row(0,0,3),row(1,0,3,q=.1,dq=.1)]
-        with self.assertRaises(BiologicGcplError):
-            map_gcpl_to_canonical(self.document(bad, [{"current":0.}]))
+        frame = map_gcpl_to_canonical(self.document(bad, [{"current":0.}]))
+        self.assertTrue(frame["charge_capacity_mah"].isna().all())
+        self.assertTrue(calc.per_cycle(frame).empty)
 
     def first_charge_rows(self):
         return [row(0,0,3),row(1,0,3),
@@ -130,11 +133,13 @@ class VerifiedVariantTests(unittest.TestCase):
         self.assertEqual(len(calc.per_cycle(frame)),1)
         for key, value in [("raw_q_minus_q0_mAh", .6), ("raw_dq_mAh", .3)]:
             bad=deepcopy(rows);bad[3][key]=value
-            with self.subTest(field=key), self.assertRaises(BiologicGcplError):
-                map_gcpl_to_canonical(self.document(bad,[{"current":0.},{"current":1.},{"current":-1.}]))
+            with self.subTest(field=key):
+                frame = map_gcpl_to_canonical(self.document(bad,[{"current":0.},{"current":1.},{"current":-1.}]))
+                self.assertTrue(frame["charge_capacity_mah"].isna().all())
+                self.assertEqual(len(calc.per_cycle(frame)), 1)
         bad=deepcopy(rows);bad[5]["raw_q_minus_q0_mAh"]+=.01
-        with self.assertRaises(BiologicGcplError):
-            map_gcpl_to_canonical(self.document(bad,[{"current":0.},{"current":1.},{"current":-1.}]))
+        frame = map_gcpl_to_canonical(self.document(bad,[{"current":0.},{"current":1.},{"current":-1.}]))
+        self.assertTrue(frame["charge_capacity_mah"].isna().all())
 
     def test_neutral_replay_carry_is_an_exact_endpoint_proof(self):
         earlier=loop(0,0)

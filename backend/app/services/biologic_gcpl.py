@@ -6,10 +6,9 @@ boundary: turning the supported GCPL record contract into the canonical
 CellXplorer cycling frame consumed by ``calc.py``, ``step_blocks.py`` and the
 cache layer.
 
-Only a registry-resolved GCPL layout from Specs 041.1 and 051 is accepted.  A source with an
-ambiguous control mode, direction, elapsed-time sequence, or capacity counter
-is rejected rather than being made to look like a plausible battery test.  A
-Sources without an explicit full-cycle field may still be mapped when the
+Only a registry-resolved GCPL layout from Specs 041.1 and 051 is accepted.  Row alignment, instrument errors and the
+acquisition clock are shared integrity checks. Current, step capacity and
+cycle assignments have separate evidence and diagnostics. Sources without an explicit full-cycle field may still be mapped when the
 decoded settings/execution establish either one non-repeating cycling episode
 or a deterministic repeated protocol loop. Cycle reconstruction remains
 source-local and fail-closed for ambiguous restarts, branches, and unresolved
@@ -32,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from . import canonical_cycling, protocol
+from .biologic_quantities import UNRESOLVED_CYCLE_SOURCE, record_limitations
 from .biologic_mpr import (
     MprDataBlock,
     MprDocument,
@@ -52,7 +52,7 @@ from .source_format_errors import (
 # active-to-active returns after an interrupted phase, without inventing rest.
 # gcpl17 omits only fully matched, adjacent replayed measurement blocks.
 # Older source caches must be re-inspected before receiving this identity.
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl20"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl21"
 
 # Spec 041.3's supported settings contract remains deliberately explicit. The
 # registry below separates source-family recognition from the common parameter
@@ -252,9 +252,7 @@ _CURRENT_TOLERANCE_MA = 1e-9
 _REQUIRED_RECORD_FIELDS = (
     "raw_sample_index",
     "elapsed_time_s",
-    "raw_dq_mAh",
     "raw_control_v_or_mA",
-    "raw_q_charge_discharge_mAh",
     "raw_half_cycle_index",
 )
 
@@ -269,6 +267,14 @@ class InvalidBiologicGcplError(BiologicGcplError, InvalidSourceFormatError):
 
 class UnsupportedBiologicGcplError(BiologicGcplError, UnsupportedSourceFormatError):
     """The MPR is outside the supported GCPL semantic contract."""
+
+
+class _AmbiguousExecutionBoundary(UnsupportedBiologicGcplError):
+    """Step attribution failed. Measured curves must break at these source positions."""
+
+    def __init__(self, message: str, positions: np.ndarray):
+        super().__init__(message)
+        self.positions = positions
 
 
 def _finite_setting(value: float) -> float | None:
@@ -1146,14 +1152,12 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
         protocol_warnings.append(
             "This BioLogic MPR has no decoded full-cycle field, but its declared protocol "
             f"is a candidate for {candidate_description}. Canonical cycling remains pending "
-            "until decoded rows verify the declared directions and deterministic execution; "
-            "sources that fail that proof remain metadata-only."
+            "until decoded rows verify the declared directions and cycle boundaries."
         )
     else:
         reason = str(cycle_candidate.get("reason") or "cycle structure is unresolved")
         protocol_warnings.append(
-            "BioLogic MPR metadata is readable, but canonical cycling rows remain unavailable "
-            "because logical cycle reconstruction is unresolved: " + reason + "."
+            "Voltage and current will be checked when the file is read. Cycle reconstruction is unresolved: " + reason + "."
         )
     capability_flags.update(
         {
@@ -1164,9 +1168,9 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
             # full parsing owns promotion or fail-closed downgrade.
             "cycling_rows": False,
             "canonical_cycling": False,
-            "canonical_cycling_pending": candidate,
+            "canonical_cycling_pending": True,
             "canonical_cycling_verified": False,
-            "metadata_only": not candidate,
+            "metadata_only": False,
             "single_direction_cycle_candidate": single_direction_candidate,
             "single_direction_cycle_verification": (
                 "pending" if single_direction_candidate else "unavailable"
@@ -1541,9 +1545,9 @@ def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
         return
     unexplained = np.asarray(ns_changed[1:], dtype=bool) & (ns[1:] == ns[:-1])
     if np.any(unexplained):
-        raise UnsupportedBiologicGcplError(
+        raise _AmbiguousExecutionBoundary(
             "GCPL Ns-change flag is ambiguous for a repeated Ns under the verified adapter "
-            "contract"
+            "contract", np.flatnonzero(unexplained) + 1,
         )
 
 
@@ -1565,7 +1569,7 @@ def _repeated_execution_ids(
         return None
     active_sequences = [item for item in settings.get("sequences", ())
                         if item.get("direction") in {"charge", "discharge"}]
-    if len(active_sequences) != 1 or _declared_loop_structure(settings) is not None:
+    if len(active_sequences) != 1:
         return None
     operation = active_sequences[0]
     if np.any(ns != int(operation["step_index"])) or np.any(~np.isin(mode, (MPR_MODE_GALVANOSTATIC, MPR_MODE_REST))):
@@ -1602,9 +1606,10 @@ def _repeated_execution_ids(
     reentry[starts[1:] - 1] = True
     if not np.array_equal(starts, flagged):
         if np.any(gaps[reentry] > cadence + cadence_tolerance):
-            raise UnsupportedBiologicGcplError(
+            raise _AmbiguousExecutionBoundary(
                 "Repeated GCPL acquisitions are missing unambiguous execution markers; "
-                "their charge/discharge phases cannot be assigned safely."
+                "their charge/discharge phases cannot be assigned safely.",
+                np.union1d(flagged, np.flatnonzero(gaps > cadence + cadence_tolerance) + 1),
             )
         return None
     if np.any(gaps[reentry] <= cadence + cadence_tolerance):
@@ -1612,7 +1617,10 @@ def _repeated_execution_ids(
     # A long hole inside an operation is not an independently identified
     # technique return. Do not silently connect or summarize such raw rows.
     if np.any(gaps[~reentry] > cadence + cadence_tolerance):
-        return None
+        raise _AmbiguousExecutionBoundary(
+            "GCPL acquisition has a clock gap inside an operation without a verified restart.",
+            np.union1d(flagged, np.flatnonzero(gaps > cadence + cadence_tolerance) + 1),
+        )
     if np.any(np.abs(current_ma[~active]) > _CURRENT_TOLERANCE_MA):
         return None
     labels = np.zeros(len(ns), dtype=np.int64)
@@ -1629,13 +1637,15 @@ def _validate_one_record_late_ns_changed_flags(
     if len(ns) <= 1:
         return
     flagged = np.flatnonzero(np.asarray(ns_changed, dtype=bool))
-    for index in flagged:
-        if index == 0:
-            continue
-        if index < 2 or ns[index] != ns[index - 1] or ns[index - 1] == ns[index - 2]:
-            raise UnsupportedBiologicGcplError(
-                "GCPL delayed Ns-change flag is not aligned with the preceding Ns transition"
-            )
+    flagged = flagged[flagged != 0]
+    invalid = flagged[
+        (flagged < 2) | (ns[flagged] != ns[flagged - 1]) | (ns[flagged - 1] == ns[flagged - 2])
+    ]
+    if len(invalid):
+        raise _AmbiguousExecutionBoundary(
+            "GCPL delayed Ns-change flag is not aligned with the preceding Ns transition",
+            np.union1d(invalid - 1, invalid),
+        )
 
 
 def _validate_latched_counter_increment_flag(
@@ -1969,25 +1979,15 @@ def _raw_current_ma(
                 "dedicated GCPL current is non-zero during a rest block"
             )
     else:
-        if np.any(mode == MPR_MODE_POTENTIOSTATIC):
-            raise UnsupportedBiologicGcplError(
-                "potentiostatic GCPL rows require an independently decoded measured-current field; "
-                "interval dq/time reconstruction is not part of the supported contract"
-            )
         raw_current = np.full(len(records), np.nan, dtype=np.float64)
         raw_current[mode == MPR_MODE_GALVANOSTATIC] = control[
             mode == MPR_MODE_GALVANOSTATIC
         ]
         raw_current[mode == MPR_MODE_REST] = 0.0
 
-    if not np.isfinite(raw_current).all():
-        if dedicated is not None:
-            raise InvalidBiologicGcplError(
-                "dedicated GCPL measured-current field contains non-finite values"
-            )
-        raise UnsupportedBiologicGcplError(
-            "supported GCPL records do not contain a usable current value for every row"
-        )
+    # A CV control is a voltage. Leave a gap wherever no finite measured
+    # current exists, while preserving independently recorded current elsewhere.
+    raw_current[~np.isfinite(raw_current)] = np.nan
     # The accepted BioLogic GCPL sign convention agrees with
     # CellXplorer: positive is charge and negative is discharge.  Keep the
     # explicit factor visible so a later adapter revision cannot silently
@@ -2336,15 +2336,15 @@ def _block_ranges(boundaries: np.ndarray) -> list[tuple[int, int]]:
     return [(int(start), int(end)) for start, end in zip(starts, ends)]
 
 
-def _direction_for_block(
-    current_ma: np.ndarray,
-    raw_capacity: np.ndarray,
-    raw_dq_mAh: np.ndarray,
-    start: int,
-    end: int,
-    *,
-    mode: np.ndarray,
+def _phase_direction(
+    current_ma: np.ndarray, mode: np.ndarray, records: np.ndarray, start: int, end: int,
 ) -> int:
+    """Resolve polarity from current or agreeing signed charge measurements.
+
+    When current is missing, a signed counter change and its independently
+    recorded increments must agree within the step. They establish polarity
+    only, never a substitute current or a full-cycle label.
+    """
     current = current_ma[start:end]
     positive = bool(np.any(current > _CURRENT_TOLERANCE_MA))
     negative = bool(np.any(current < -_CURRENT_TOLERANCE_MA))
@@ -2352,13 +2352,35 @@ def _direction_for_block(
         raise InvalidBiologicGcplError(
             f"GCPL executed block {start + 1}:{end} mixes charge and discharge direction"
         )
+    if not np.isfinite(current).all():
+        fields = _field_names(records)
+        if (end - start > 1 and not np.any(mode[start:end] == MPR_MODE_REST)
+                and {"raw_q_charge_discharge_mAh", "raw_dq_mAh"}.issubset(fields)):
+            increments = records["raw_dq_mAh"][start + 1:end]
+            deltas = np.diff(records["raw_q_charge_discharge_mAh"][start:end])
+            if (np.isfinite(increments).all() and np.isfinite(deltas).all()
+                    and np.allclose(deltas, increments, rtol=0, atol=_CAPACITY_TOLERANCE_MAH)):
+                if not negative and np.all(deltas >= 0) and np.any(deltas > _CAPACITY_TOLERANCE_MAH):
+                    return 1
+                if not positive and np.all(deltas <= 0) and np.any(deltas < -_CAPACITY_TOLERANCE_MAH):
+                    return -1
+        raise UnsupportedBiologicGcplError(
+            f"GCPL block {start + 1}:{end} lacks a measured current direction"
+        )
     if positive:
-        direction = 1
-    elif negative:
-        direction = -1
-    else:
-        direction = 0
+        return 1
+    if negative:
+        return -1
+    if np.all(mode[start:end] == MPR_MODE_REST):
+        return 0
+    raise InvalidBiologicGcplError(
+        f"GCPL active block {start + 1}:{end} has no independently resolvable current direction"
+    )
 
+
+def _validate_capacity_direction(
+    direction: int, raw_capacity: np.ndarray, raw_dq_mAh: np.ndarray, start: int, end: int,
+) -> None:
     if direction:
         capacity_delta = raw_capacity[end - 1] - raw_capacity[start]
         if end - start > 1 and abs(capacity_delta) <= _CAPACITY_TOLERANCE_MAH:
@@ -2376,19 +2398,13 @@ def _direction_for_block(
                 f"GCPL current and incremental-capacity directions disagree in block "
                 f"{start + 1}:{end}"
             )
-        return direction
-
-    if np.all(mode[start:end] == MPR_MODE_REST):
-        if np.ptp(raw_capacity[start:end]) > _CAPACITY_TOLERANCE_MAH or np.any(
-            np.abs(raw_dq_mAh[start:end]) > _CAPACITY_TOLERANCE_MAH
-        ):
-            raise InvalidBiologicGcplError(
-                f"GCPL rest block {start + 1}:{end} transfers capacity"
-            )
-        return 0
-    raise InvalidBiologicGcplError(
-        f"GCPL active block {start + 1}:{end} has no independently resolvable current direction"
-    )
+        return
+    if np.ptp(raw_capacity[start:end]) > _CAPACITY_TOLERANCE_MAH or np.any(
+        np.abs(raw_dq_mAh[start:end]) > _CAPACITY_TOLERANCE_MAH
+    ):
+        raise InvalidBiologicGcplError(
+            f"GCPL rest block {start + 1}:{end} transfers capacity"
+        )
 
 
 def _classify_block(mode: np.ndarray, direction: int, start: int, end: int) -> str:
@@ -2568,6 +2584,112 @@ def integrate_capacity_by_step(frame: pd.DataFrame) -> dict[int, float]:
     return out
 
 
+def _validated_step_capacities(
+    records: np.ndarray, declared_settings: Mapping[str, Any] | None, ns: np.ndarray,
+    mode: np.ndarray, current_ma: np.ndarray, boundaries: np.ndarray,
+    ranges: list[tuple[int, int]], directions: list[int],
+) -> tuple[GcplCapacityCounterProfile, np.ndarray, np.ndarray, dict[int, float], dict[int, float]]:
+    """Validate step-local capacity without using a full-cycle assignment."""
+    for name in ("raw_dq_mAh", "raw_q_charge_discharge_mAh"):
+        if name not in _field_names(records):
+            raise UnsupportedBiologicGcplError(f"GCPL capacity validation requires {name}")
+    raw_dq_mAh = _require_float_column(records, "raw_dq_mAh")
+    raw_capacity_id211 = _require_float_column(
+        records, "raw_q_charge_discharge_mAh"
+    )
+    capacity_counter_profile, raw_capacity, detected_unassigned_rest_residuals = (
+        _resolve_capacity_counter_profile(
+            records,
+            raw_capacity_id211=raw_capacity_id211,
+            raw_dq_mAh=raw_dq_mAh,
+            mode=mode,
+            current_ma=current_ma,
+            boundaries=boundaries,
+        )
+    )
+    capacity_boundary_policy = str(
+        (declared_settings or {}).get("capacity_boundary_policy") or "strict"
+    )
+    delayed_active_transfers, unassigned_rest_residuals = _validate_capacity_boundaries(
+        raw_capacity,
+        raw_dq_mAh,
+        boundaries,
+        ns=ns,
+        mode=mode,
+        verified_delayed_transfer_starts=_verified_neutral_boundary_transfers(
+            records, declared_settings, mode=mode, ns=ns, current_ma=current_ma,
+            raw_capacity=raw_capacity, raw_dq_mAh=raw_dq_mAh, boundaries=boundaries,
+        ),
+        allow_delayed_active_transfer=(
+            capacity_boundary_policy == "delayed_active_transfer"
+        ),
+        allow_unassigned_rest_residual=(
+            capacity_counter_profile.boundary_policy
+            == "unassigned_small_active_to_rest_residual"
+        ),
+    )
+    if unassigned_rest_residuals != detected_unassigned_rest_residuals:
+        raise UnsupportedBiologicGcplError(
+            "ID-13 capacity profile boundary evidence changed during validation"
+        )
+    capacity_for_mapping = raw_capacity
+    if capacity_counter_profile is _ID211_CAPACITY_COUNTER_PROFILE:
+        capacity_for_mapping = _repair_stale_counter_origins(
+            raw_capacity, raw_dq_mAh, _optional_column(records, "raw_q_minus_q0_mAh"),
+            mode, ranges,
+        )
+    dq_for_mapping = raw_dq_mAh
+    if delayed_active_transfers:
+        capacity_for_mapping = capacity_for_mapping.copy()
+        dq_for_mapping = raw_dq_mAh.copy()
+        for boundary, _delta in delayed_active_transfers.items():
+            capacity_for_mapping[boundary - 1] = raw_capacity[boundary]
+            dq_for_mapping[boundary] = 0.0
+    for direction, (start, end) in zip(directions, ranges, strict=True):
+        _validate_capacity_direction(direction, capacity_for_mapping, dq_for_mapping, start, end)
+    charge, discharge = _capacity_columns(capacity_for_mapping, directions, ranges)
+    return capacity_counter_profile, charge, discharge, unassigned_rest_residuals, delayed_active_transfers
+
+
+def _validated_cycle_labels(
+    cycle: np.ndarray | None, execution_ids: np.ndarray | None,
+    declared_settings: Mapping[str, Any] | None, declared_loop: dict[str, Any] | None,
+    ns: np.ndarray, ranges: list[tuple[int, int]], directions: list[int],
+) -> tuple[np.ndarray, str]:
+    """Resolve full-cycle provenance without using capacity counters."""
+    block_step_indices = [int(ns[start]) for start, _ in ranges]
+    if execution_ids is not None:
+        cycle = execution_ids
+        cycle_identity_source = "verified_repeated_executions"
+    elif cycle is None:
+        loop = declared_loop
+        if loop is None and declared_settings is not None:
+            loop = _infer_execution_loop_structure(
+                block_step_indices,
+                directions,
+                declared_settings,
+            )
+        if loop is not None:
+            cycle_by_block = _reconstruct_loop_cycles(
+                block_step_indices,
+                directions,
+                loop,
+            )
+            cycle_identity_source = "protocol_loop_reconstruction"
+        else:
+            cycle_by_block = _reconstruct_non_repeating_cycle(directions)
+            cycle_identity_source = "non_repeating_cycle_1"
+        cycle = np.concatenate(
+            [
+                np.full(end - start, cycle_number, dtype=np.int64)
+                for cycle_number, (start, end) in zip(cycle_by_block, ranges, strict=True)
+            ]
+        )
+    else:
+        cycle_identity_source = "explicit_full_cycle"
+    return cycle, cycle_identity_source
+
+
 def map_gcpl_to_canonical(
     source: Any,
     *,
@@ -2621,27 +2743,27 @@ def map_gcpl_to_canonical(
     total_time_s = _require_float_column(records, "elapsed_time_s")
     _validate_total_time(total_time_s)
     step_time = _step_time_column(records)
-    raw_dq_mAh = _require_float_column(records, "raw_dq_mAh")
-    raw_capacity_id211 = _require_float_column(
-        records, "raw_q_charge_discharge_mAh"
-    )
-    control = _require_float_column(records, "raw_control_v_or_mA")
+    control = _column(records, "raw_control_v_or_mA").astype(np.float64, copy=False)
     if np.any(_flag_column(records, flags, "error")):
         raise InvalidBiologicGcplError(
             "GCPL data contains a row with the BioLogic error flag set"
         )
     current_ma = _raw_current_ma(records, mode, control)
     direct_cycle = _optional_column(records, "raw_cycle_index")
-    cycle = _cycle_column(records) if direct_cycle is not None else None
-    declared_loop: dict[str, Any] | None = None
-    if direct_cycle is None and declared_settings is not None:
-        _validate_declared_execution_direction(
-            declared_settings,
-            ns,
-            mode,
-            current_ma,
-        )
-        declared_loop = _declared_loop_structure(declared_settings)
+    limitations: dict[str, str] = {}
+    if not np.isfinite(current_ma).all():
+        limitations["current"] = "Some rows have no independently verified measured-current value."
+    cycle = None
+    declared_loop = None
+    if declared_settings is not None and direct_cycle is None:
+        _validate_declared_execution_direction(declared_settings, ns, mode, current_ma)
+    try:
+        if direct_cycle is not None:
+            cycle = _cycle_column(records)
+        elif declared_settings is not None:
+            declared_loop = _declared_loop_structure(declared_settings)
+    except BiologicGcplError as exc:
+        limitations["cycles"] = str(exc)
     voltage_v, voltage_v_derived, working, counter, voltage_origin = _primary_voltage(
         records
     )
@@ -2661,32 +2783,40 @@ def map_gcpl_to_canonical(
 
     ns_changed = _flag_column(records, flags, "ns_changed")
     ns_change_policy = str((declared_settings or {}).get("ns_change_policy") or "strict")
-    execution_ids = (
-        _repeated_execution_ids(
-            declared_settings, ns, ns_changed, mode, current_ma, total_time_s,
-            control_changed=_flag_column(records, flags, "control_changed"), control=control,
-        )
-        if cycle is None and ns_change_policy == "strict" else None
-    )
-    if ns_change_policy == "one_record_late":
-        _validate_one_record_late_ns_changed_flags(ns, ns_changed)
-    elif execution_ids is None:
-        _validate_ns_changed_flags(ns, ns_changed)
-    counter_incremented = _flag_column(records, flags, "counter_incremented")
-    if np.any(counter_incremented):
-        counter_policy = str(
-            (declared_settings or {}).get("counter_increment_policy") or "reject"
-        )
-        if counter_policy != "latched_after_loop_wrap":
-            raise UnsupportedBiologicGcplError(
-                "GCPL counter-increment flag semantics are outside the verified adapter contract"
+    uncertain_boundaries = None
+    execution_ids = None
+    try:
+        if (direct_cycle is None and declared_loop is None and "cycles" not in limitations
+                and ns_change_policy == "strict"):
+            execution_ids = _repeated_execution_ids(
+                declared_settings, ns, ns_changed, mode, current_ma, total_time_s,
+                control_changed=_flag_column(records, flags, "control_changed"), control=control,
             )
-        _validate_latched_counter_increment_flag(
-            counter_incremented,
-            ns,
-            ns_changed,
-            declared_loop,
-        )
+        if ns_change_policy == "one_record_late":
+            _validate_one_record_late_ns_changed_flags(ns, ns_changed)
+        elif execution_ids is None:
+            _validate_ns_changed_flags(ns, ns_changed)
+    except _AmbiguousExecutionBoundary as exc:
+        limitations["capacity"] = limitations["cycles"] = str(exc)
+        uncertain_boundaries = exc.positions
+    counter_incremented = _flag_column(records, flags, "counter_incremented")
+    try:
+        if np.any(counter_incremented):
+            counter_policy = str(
+                (declared_settings or {}).get("counter_increment_policy") or "reject"
+            )
+            if counter_policy != "latched_after_loop_wrap":
+                raise UnsupportedBiologicGcplError(
+                    "GCPL counter-increment flag semantics are outside the verified adapter contract"
+                )
+            _validate_latched_counter_increment_flag(
+                counter_incremented,
+                ns,
+                ns_changed,
+                declared_loop,
+            )
+    except BiologicGcplError as exc:
+        limitations["cycles"] = str(exc)
     boundaries = _step_boundaries(
         ns=ns,
         half_cycle=half_cycle,
@@ -2697,107 +2827,76 @@ def map_gcpl_to_canonical(
     if execution_ids is not None:
         boundaries[1:] |= np.diff(execution_ids) != 0
     _validate_step_time_boundaries(step_time, boundaries)
-    capacity_counter_profile, raw_capacity, detected_unassigned_rest_residuals = (
-        _resolve_capacity_counter_profile(
-            records,
-            raw_capacity_id211=raw_capacity_id211,
-            raw_dq_mAh=raw_dq_mAh,
-            mode=mode,
-            current_ma=current_ma,
-            boundaries=boundaries,
-        )
-    )
-    capacity_boundary_policy = str(
-        (declared_settings or {}).get("capacity_boundary_policy") or "strict"
-    )
-    delayed_active_transfers, unassigned_rest_residuals = _validate_capacity_boundaries(
-        raw_capacity,
-        raw_dq_mAh,
-        boundaries,
-        ns=ns,
-        mode=mode,
-        verified_delayed_transfer_starts=_verified_neutral_boundary_transfers(
-            records, declared_settings, mode=mode, ns=ns, current_ma=current_ma,
-            raw_capacity=raw_capacity, raw_dq_mAh=raw_dq_mAh, boundaries=boundaries,
-        ),
-        allow_delayed_active_transfer=(
-            capacity_boundary_policy == "delayed_active_transfer"
-        ),
-        allow_unassigned_rest_residual=(
-            capacity_counter_profile.boundary_policy
-            == "unassigned_small_active_to_rest_residual"
-        ),
-    )
-    if unassigned_rest_residuals != detected_unassigned_rest_residuals:
-        raise UnsupportedBiologicGcplError(
-            "ID-13 capacity profile boundary evidence changed during validation"
-        )
     ranges = _block_ranges(boundaries)
-    capacity_for_mapping = raw_capacity
-    if capacity_counter_profile is _ID211_CAPACITY_COUNTER_PROFILE:
-        capacity_for_mapping = _repair_stale_counter_origins(
-            raw_capacity, raw_dq_mAh, _optional_column(records, "raw_q_minus_q0_mAh"),
-            mode, ranges,
-        )
-    dq_for_mapping = raw_dq_mAh
-    if delayed_active_transfers:
-        capacity_for_mapping = capacity_for_mapping.copy()
-        dq_for_mapping = raw_dq_mAh.copy()
-        for boundary, _delta in delayed_active_transfers.items():
-            capacity_for_mapping[boundary - 1] = raw_capacity[boundary]
-            dq_for_mapping[boundary] = 0.0
-    directions = [
-        _direction_for_block(
-            current_ma,
-            capacity_for_mapping,
-            dq_for_mapping,
-            start,
-            end,
-            mode=mode,
-        )
-        for start, end in ranges
-    ]
-    statuses = [
-        _classify_block(mode, direction, start, end)
-        for direction, (start, end) in zip(directions, ranges)
-    ]
-    block_step_indices = [int(ns[start]) for start, _ in ranges]
-    if execution_ids is not None:
-        cycle = execution_ids
-        cycle_identity_source = "verified_repeated_executions"
-    elif cycle is None:
-        loop = declared_loop
-        if loop is None and declared_settings is not None:
-            loop = _infer_execution_loop_structure(
-                block_step_indices,
-                directions,
-                declared_settings,
-            )
-        if loop is not None:
-            cycle_by_block = _reconstruct_loop_cycles(
-                block_step_indices,
-                directions,
-                loop,
-            )
-            cycle_identity_source = "protocol_loop_reconstruction"
+    declared_directions = {
+        int(sequence["step_index"]): sequence.get("direction")
+        for sequence in (declared_settings or {}).get("sequences", ())
+    }
+    directions = []
+    statuses = []
+    for start, end in ranges:
+        status = "Unverified"
+        try:
+            direction = _phase_direction(current_ma, mode, records, start, end)
+            if declared_directions and not np.isfinite(current_ma[start:end]).all():
+                expected_phase = {-1: "discharge", 0: "rest", 1: "charge"}[direction]
+                if declared_directions.get(int(ns[start])) != expected_phase:
+                    raise UnsupportedBiologicGcplError("Signed charge transfer disagrees with the declared phase.")
+        except BiologicGcplError as exc:
+            limitations.setdefault("phases", str(exc))
+            direction = 0
         else:
-            cycle_by_block = _reconstruct_non_repeating_cycle(directions)
-            cycle_identity_source = "non_repeating_cycle_1"
-        cycle = np.concatenate(
-            [
-                np.full(end - start, cycle_number, dtype=np.int64)
-                for cycle_number, (start, end) in zip(cycle_by_block, ranges, strict=True)
-            ]
-        )
-    else:
-        cycle_identity_source = "explicit_full_cycle"
+            try:
+                status = _classify_block(mode, direction, start, end)
+            except BiologicGcplError as exc:
+                limitations.setdefault("status", str(exc))
+        directions.append(direction)
+        statuses.append(status)
+
+    capacity_counter_profile = None
+    if "phases" in limitations:
+        limitations["capacity"] = limitations["phases"]
+        if cycle is None:
+            limitations.setdefault("cycles", limitations["phases"])
+    if "capacity" not in limitations:
+        try:
+            (capacity_counter_profile, charge_capacity, discharge_capacity,
+             unassigned_rest_residuals, delayed_active_transfers) = _validated_step_capacities(
+                records, declared_settings, ns, mode, current_ma, boundaries, ranges, directions,
+            )
+        except BiologicGcplError as exc:
+            limitations["capacity"] = str(exc)
+    if capacity_counter_profile is None:
+        charge_capacity = np.full(len(records), np.nan)
+        discharge_capacity = np.full(len(records), np.nan)
+        unassigned_rest_residuals = {}
+        delayed_active_transfers = {}
+        if execution_ids is not None:
+            # Reentry into the same operation requires unchanged counters across the gap.
+            limitations["cycles"] = "Repeated execution boundaries lack verified capacity continuity."
+            uncertain_boundaries = np.flatnonzero(np.diff(execution_ids)) + 1
+
+    if "cycles" not in limitations:
+        try:
+            cycle, cycle_identity_source = _validated_cycle_labels(
+                cycle, execution_ids, declared_settings, declared_loop, ns, ranges, directions
+            )
+        except BiologicGcplError as exc:
+            limitations["cycles"] = str(exc)
+    if "cycles" in limitations:
+        # The canonical frame requires a positive storage label for raw navigation.
+        # Only a verified assignment can contribute a scientific cycle summary.
+        cycle = np.ones(len(records), dtype=np.int64)
+        cycle_identity_source = UNRESOLVED_CYCLE_SOURCE
+        execution_ids = None
     # Keep every verified raw trajectory available for voltage/time plotting,
     # but only call a source-local cycle complete when active current includes
     # both charge and discharge. Rest/OCV blocks are neutral and cannot supply
     # either direction or advance cycle identity.
+    can_summarize = not {"cycles", "phases", "status"}.intersection(limitations)
     directions_by_cycle: dict[int, set[int]] = {}
     for (start, _end), direction in zip(ranges, directions, strict=True):
-        if direction:
+        if direction and can_summarize:
             directions_by_cycle.setdefault(int(cycle[start]), set()).add(int(direction))
     cycle_complete = np.fromiter(
         (
@@ -2806,9 +2905,6 @@ def map_gcpl_to_canonical(
         ),
         dtype=bool,
         count=len(cycle),
-    )
-    charge_capacity, discharge_capacity = _capacity_columns(
-        capacity_for_mapping, directions, ranges
     )
 
     step = np.empty(len(records), dtype=np.int64)
@@ -2858,8 +2954,8 @@ def map_gcpl_to_canonical(
     frame.attrs["biologic_gcpl"] = {
         "adapter_revision": BIOLOGIC_GCPL_ADAPTER_REVISION,
         "settings_profile": (declared_settings or {}).get("settings_profile"),
-        "capacity_counter_profile": capacity_counter_profile.profile_id,
-        "capacity_counter_field": capacity_counter_profile.counter_field,
+        "capacity_counter_profile": capacity_counter_profile.profile_id if capacity_counter_profile else None,
+        "capacity_counter_field": capacity_counter_profile.counter_field if capacity_counter_profile else None,
         "unassigned_rest_boundary_residuals_mah": [
             {
                 "record_index": int(boundary + 1),
@@ -2879,6 +2975,8 @@ def map_gcpl_to_canonical(
             if cycle_identity_source == "protocol_loop_reconstruction"
             else "verified source-local active/rest execution labels; full cycles require acquisition-proven opposite phases"
             if cycle_identity_source == "verified_repeated_executions"
+            else "storage label only; cycle identity is unresolved"
+            if cycle_identity_source == UNRESOLVED_CYCLE_SOURCE
             else "assigned source-local cycle 1 to one validated non-repeating cycling episode"
         ),
         "half_cycle_policy": "decoded_diagnostic_only",
@@ -2923,6 +3021,12 @@ def map_gcpl_to_canonical(
             skipped_replayed_blocks=list(recovery.skipped_blocks),
             parser_warnings=recovery.warnings(),
         )
+    record_limitations(frame, "GCPL", limitations)
+    if uncertain_boundaries is not None:
+        breaks = np.zeros(len(records), dtype=bool)
+        breaks[0] = True
+        breaks[uncertain_boundaries] = True
+        frame["mpr_acquisition_segment"] = breaks.cumsum()
     if delayed_active_transfers:
         frame.attrs["biologic_gcpl"]["delayed_active_boundary_transfers_mah"] = [
             {"record_index": int(frame["record_index"].iloc[boundary]), "delta_mah": float(delta)}

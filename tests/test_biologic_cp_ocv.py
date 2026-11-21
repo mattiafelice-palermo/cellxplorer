@@ -60,6 +60,26 @@ class BiologicCpOcvTests(unittest.TestCase):
         self.assertFalse(frame["cycle_complete"].any())
         self.assertTrue(calc.per_cycle(frame).empty)
 
+    def test_cp_counter_failure_preserves_polarity_cycles_and_current(self):
+        for bad_counter in ([0, np.nan, 1, 0], [0, -1, 1, 0]):
+            with self.subTest(counter=bad_counter):
+                records = cp_records([5, 5, -5, -5], bad_counter)
+                source = SimpleNamespace(vmp_data=SimpleNamespace(records=records, flags={}))
+                frame = biologic_cp_ocv.map_curve_to_canonical(source, technique_id=biologic_mpr.MPR_CP_TECHNIQUE_ID)
+                self.assertEqual(frame["current_ma"].tolist(), [5, 5, -5, -5])
+                self.assertTrue(frame["voltage_v"].notna().all())
+                cycles = calc.per_cycle(frame)
+                self.assertEqual(cycles["cycle"].tolist(), [1])
+                self.assertTrue(cycles["charge_capacity_mah"].isna().all())
+
+    def test_cp_missing_current_does_not_join_halves_across_a_gap(self):
+        records = cp_records([5, np.nan, -5, -5], [0, 1, 1, 0])
+        source = SimpleNamespace(vmp_data=SimpleNamespace(records=records, flags={}))
+        frame = biologic_cp_ocv.map_curve_to_canonical(source, technique_id=biologic_mpr.MPR_CP_TECHNIQUE_ID)
+        self.assertTrue(calc.per_cycle(frame).empty)
+        np.testing.assert_allclose(frame["current_ma"], [5, np.nan, -5, -5], equal_nan=True)
+        np.testing.assert_array_equal(frame["voltage_v"], records["raw_context_dependent_working_potential"])
+
     def test_ocv_voltage_time_rows_are_not_reported_as_cycles(self) -> None:
         dtype = np.dtype([
             ("elapsed_time_s", "<f8"),

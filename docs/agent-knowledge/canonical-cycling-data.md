@@ -258,12 +258,28 @@ bounded execution-evidenced loop for sources with no usable loop fields, or one 
 non-repeating active episode assigned source-local storage cycle 1. The execution-evidenced path requires
 decoded settings, one contiguous observed body, exactly one unique backward edge establishing
 `control_step -> loop_start_step`, a first body row at the inferred start, forward-only progression
-inside that body, and resolved charge/discharge semantics. Each completed loop iteration must
-contain decoded positive charge and negative discharge execution; a single-direction repeated loop,
-active preconditioning, an unresolved control, a contradictory direction, a second branch/restart,
-or an invalid backward edge remains metadata-only. A partial final loop prefix is allowed only when
-it is a valid continuation of the same loop and no missing phase is fabricated. This boundary is
-owned by the adapter and is not a BioLogic-specific branch in generic scientific services.
+inside that body, and resolved charge/discharge semantics. Each completed loop iteration needs
+evidence of charge and discharge. An ambiguous return, branch
+or invalid loop declaration leaves the measured trajectory available. Adapter `gcpl21` records
+`unresolved_biologic_cycles`, uses a positive storage label, and sets `cycle_complete=False`. Its
+Time/Capacity trace uses the recorded elapsed clock. The combined preview must respect this
+verdict even if the current changes sign several times.
+
+GCPL validates current, step-local capacity and cycle assignment separately after shared layout,
+settings, clock and instrument checks. A missing CV current stays null. Agreeing signed capacity
+increments and counter changes can establish polarity without estimating current. Unverified
+step attribution withholds step capacity and splits the trace at ambiguous execution boundaries.
+A failed capacity check sets both capacity columns to null and `capacity_verified=False`. The
+cycle summary can still report a verified cycle, with null capacities and efficiency. Per-quantity
+reasons travel with the raw frame and the cache's parser diagnostics. Test both directions of
+independence through registration, cached summaries and the actual Time/Capacity trace in
+`tests/test_biologic_closure.py`.
+
+CP and MB share the same quantity diagnostics and unavailable-capacity representation.
+CP resolves cycles from current polarity. MB excludes whole EIS executions before validating
+ordinary-operation counters and half-cycle pairing. A regressing MB half-cycle or conflicting
+polarities in a half-cycle suppresses cycle assignment while preserving measured curves and
+independently verified step capacities. Unknown impedance layouts still fail admission.
 
 A Rest block can interrupt the loop's final active sequence. Resuming the
 same programmed `Ns` changes the executed block and restores its current.

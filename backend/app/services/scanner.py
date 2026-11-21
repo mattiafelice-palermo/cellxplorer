@@ -1270,6 +1270,14 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             and (
                 parsing.source_uses_legacy_biologic_parser(existing)
                 or (
+                    existing.parse_status == "metadata_only"
+                    and existing.parser_version
+                    and existing.parser_version != parsing.current_parser_identity_for_source(existing)
+                    and not parsing.source_uses_retired_biologic_parser(existing)
+                    and not parsing.source_uses_pre_r8_biologic_parser(existing)
+                    and (existing.header_meta or {}).get("settings", {}).get("technique") == "GCPL"
+                )
+                or (
                     existing.parser_version is None
                     and parsing.source_requires_biologic_mpr_reinspection(existing)
                 )

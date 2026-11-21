@@ -147,11 +147,19 @@ def prepare_segmented_raw(
     return pd.concat(prepared, ignore_index=True)
 
 
+def has_unresolved_biologic_cycles(frame: pd.DataFrame) -> bool:
+    from .biologic_quantities import UNRESOLVED_CYCLE_SOURCE
+
+    return "measurement_type" in frame and frame["measurement_type"].eq(UNRESOLVED_CYCLE_SOURCE).any()
+
+
 def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
     """Return ordered raw rows with preview-only inferred cycles and provenance."""
 
     from . import biologic_gcpl_executions as executions
 
+    if any(has_unresolved_biologic_cycles(frame) for frame in source_frames):
+        raise ValueError("The BioLogic recording has unresolved cycles. Its measured time series is available.")
     summaries = [executions.pairing_summary_from_frame(frame) for frame in source_frames]
     if executions.eligible_pair_positions(summaries):
         # The acquisition-backed interpretation is scientific and shared with
@@ -259,7 +267,8 @@ def voltage_preview_from_raw(
             phase_values = phase_capacity(frame, phases)
             reset_ids = frame["cycle"].to_numpy() if "cycle" in frame.columns else None
             x_values = pd.Series(
-                consecutive_capacity_display(phase_values, phases, reset_ids=reset_ids),
+                consecutive_capacity_display(phase_values, phases, reset_ids=reset_ids,
+                                             capacity_verified=frame.get("capacity_verified")),
                 index=frame.index,
             )
         elif "capacity_mah" in frame.columns:
@@ -285,6 +294,8 @@ def voltage_preview_from_raw(
             "y": pd.to_numeric(frame["voltage_v"], errors="coerce"),
         }
     ).dropna()
+    if rows.empty:
+        return empty
     from . import biologic_gcpl_executions as executions
 
     if executions.is_repeated_frame(frame):
@@ -297,8 +308,6 @@ def voltage_preview_from_raw(
         rows["mpr_acquisition_segment"] = frame["mpr_acquisition_segment"]
         if "segment" in frame.columns:
             rows["segment"] = frame["segment"]
-    if rows.empty:
-        return empty
     if x_axis != "capacity" and not exploratory:
         rows = rows.sort_values("x", kind="stable")
     rows = rows.reset_index(drop=True)

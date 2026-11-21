@@ -28,7 +28,7 @@ from tests.biologic_mpr_fixture import write_cp_mpr
 
 
 LEGACY = 'bm:gcpl18cpocv1:r1'
-CURRENT_BASE = 'bm:gcpl20cpocv1:r1'
+CURRENT_BASE = 'bm:gcpl21cpocv1:r1'
 HEADER = {'settings': {'technique_id': 25}, 'data': {'field_offsets': {'raw_mean_counter_potential': 19}}}
 CHANNELS = ['voltage', 'working_potential', 'counter_potential']
 

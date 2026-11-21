@@ -134,6 +134,7 @@ class MprTechniqueLayoutProfile:
     technique_ids: frozenset[int]
     required_flag_ids: frozenset[int]
     required_base_ids: frozenset[int]
+    optional_capacity_ids: frozenset[int] = frozenset()
 
 
 MPR_RECORD_FIELD_NAMES = {
@@ -445,19 +446,19 @@ MPR_MB_TECHNIQUE_ID = 0x7F
 MPR_TECHNIQUE_LAYOUT_PROFILES = (
     MprTechniqueLayoutProfile(
         "MB", frozenset({MPR_MB_TECHNIQUE_ID}), _REQUIRED_FLAG_IDS,
-        frozenset({131, 4, 6, 8, 7, 13, 211, 212}),
+        frozenset({131, 4, 6, 8, 7, 13, 211, 212}), frozenset({7, 13, 211}),
     ),
     MprTechniqueLayoutProfile(
         "GCPL",
         MPR_GCPL_TECHNIQUE_IDS,
         _REQUIRED_FLAG_IDS,
-        _REQUIRED_BASE_ID_SET,
+        _REQUIRED_BASE_ID_SET, frozenset({7, 211}),
     ),
     MprTechniqueLayoutProfile(
         "CP",
         frozenset({MPR_CP_TECHNIQUE_ID}),
         _REQUIRED_FLAG_IDS,
-        frozenset({131, 4, 8, 20, 174, 178, 179, 185, 211, 212, 39}),
+        frozenset({131, 4, 8, 20, 174, 178, 179, 185, 211, 212, 39}), frozenset({211}),
     ),
     MprTechniqueLayoutProfile(
         "OCV",
@@ -497,6 +498,7 @@ def _resolve_column_layout(
     record_stride: int,
     required_flag_ids: frozenset[int] = _REQUIRED_FLAG_IDS,
     required_base_ids: frozenset[int] = _REQUIRED_BASE_ID_SET,
+    optional_capacity_ids: frozenset[int] = frozenset(),
     layout_name: str = "GCPL",
 ) -> _ResolvedMprLayout:
     """Resolve one declared column sequence without guessing unknown widths."""
@@ -589,10 +591,13 @@ def _resolve_column_layout(
         raise UnsupportedMprColumn(
             f"VMP data is missing required packed {layout_name} flag IDs: {missing_flags}"
         )
-    missing_bases = sorted(required_base_ids - seen_bases)
+    # Optional counters may be absent only when the entire row matches known widths.
+    missing_bases = required_base_ids - seen_bases
+    if not opaque_started:
+        missing_bases -= optional_capacity_ids
     if missing_bases:
         raise UnsupportedMprColumn(
-            f"VMP data is missing required {layout_name} base IDs: {missing_bases}"
+            f"VMP data is missing required {layout_name} base IDs: {sorted(missing_bases)}"
         )
 
     if opaque_started:
@@ -961,6 +966,7 @@ def _decode_vmp_data(
     decode_records: bool = True,
     required_flag_ids: frozenset[int] = _REQUIRED_FLAG_IDS,
     required_base_ids: frozenset[int] = _REQUIRED_BASE_ID_SET,
+    optional_capacity_ids: frozenset[int] = frozenset(),
     layout_name: str = "GCPL",
 ) -> MprDataBlock:
     payload = module.payload
@@ -1006,6 +1012,7 @@ def _decode_vmp_data(
             record_stride=record_stride,
             required_flag_ids=required_flag_ids,
             required_base_ids=required_base_ids,
+            optional_capacity_ids=optional_capacity_ids,
             layout_name=layout_name,
         )
         record_dtype = layout.record_dtype
@@ -1173,6 +1180,7 @@ def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
             decode_records=decode_records,
             required_flag_ids=layout_profile.required_flag_ids,
             required_base_ids=layout_profile.required_base_ids,
+            optional_capacity_ids=layout_profile.optional_capacity_ids,
             layout_name=layout_profile.name,
         )
         final_stat = query(file_handle.fileno())

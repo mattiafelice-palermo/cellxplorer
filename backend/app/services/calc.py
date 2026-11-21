@@ -302,6 +302,13 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
     chg_e = phase_total("charge_energy_mwh", chg_rows)
     dchg_e = phase_total("discharge_energy_mwh", dchg_rows)
     cv_time, cv_capacity, cv_events = _cv_charge_by_cycle(df, index)
+    if "capacity_verified" in df.columns:
+        # A cycle can have verified boundaries while its capacity counter is unavailable.
+        unavailable = df["capacity_verified"].eq(False).groupby(df["cycle"]).any().reindex(index)
+        chg_cap = np.where(unavailable, np.nan, chg_cap)
+        dchg_cap = np.where(unavailable, np.nan, dchg_cap)
+        cv_capacity = np.where(unavailable, np.nan, cv_capacity)
+
     with np.errstate(divide="ignore", invalid="ignore"):
         ce = np.where(chg_cap != 0, dchg_cap / chg_cap * 100.0, np.nan)
         ee = np.where(chg_e != 0, dchg_e / chg_e * 100.0, np.nan)

@@ -16,6 +16,7 @@ import pandas as pd
 
 from . import biologic_mpr, canonical_cycling
 from .biologic_gcpl import decode_gcpl_log, InvalidBiologicGcplError
+from .biologic_quantities import record_limitations
 
 BIOLOGIC_CP_OCV_ADAPTER_REVISION = 1
 # Keep the legacy family revision stable for unrelated techniques. Only CP
@@ -151,14 +152,27 @@ def map_curve_to_canonical(
     working = voltage
     if counter is not None:
         voltage = working - counter
-    current = _field(records, "raw_current_ma") if is_cp else np.zeros(len(records), dtype=np.float64)
+    limitations = {}
+    current = (np.asarray(records["raw_current_ma"], dtype=float).copy() if is_cp
+               else np.zeros(len(records), dtype=float))
+    missing_current = ~np.isfinite(current)
+    if missing_current.any():
+        current[missing_current] = np.nan
+        limitations["current"] = "Some measured current samples are unavailable."
+        limitations["cycles"] = limitations["capacity"] = "Charge/discharge polarity is incomplete."
     direction = _directional_state(current)
     cycle, complete = _cycle_labels(direction) if is_cp else (
         np.ones(len(records), dtype=np.int64),
         np.zeros(len(records), dtype=bool),
     )
 
-    q_mAh = _field(records, "raw_q_charge_discharge_mAh", required=False)
+    q_mAh = None
+    if is_cp:
+        if "raw_q_charge_discharge_mAh" in records.dtype.names:
+            q_mAh = np.asarray(records["raw_q_charge_discharge_mAh"], dtype=float)
+        if q_mAh is None or not np.isfinite(q_mAh).all():
+            limitations["capacity"] = "The recorded charge counter is missing or contains unavailable values."
+            q_mAh = None
     charge_capacity = np.zeros(len(records), dtype=np.float64)
     discharge_capacity = np.zeros(len(records), dtype=np.float64)
     step = np.zeros(len(records), dtype=np.int64)
@@ -177,7 +191,10 @@ def map_curve_to_canonical(
         if not is_cp or direction[start] == 0 or q_mAh is None:
             continue
         segment = direction[start]
-        transferred = np.maximum(segment * (q_mAh[start:end] - q_mAh[start]), 0.0)
+        signed_transfer = segment * (q_mAh[start:end] - q_mAh[start])
+        if (np.diff(signed_transfer) < -1e-9).any():
+            limitations["capacity"] = "The charge counter reverses within a measured phase."
+        transferred = np.maximum(signed_transfer, 0.0)
         if segment > 0:
             charge_capacity[start:end] = transferred
         else:
@@ -193,6 +210,7 @@ def map_curve_to_canonical(
     else:
         status[:] = "OCV"
 
+    status[missing_current] = "Unverified"
     frame_values: dict[str, Any] = {
         "record_index": np.arange(1, len(records) + 1, dtype=np.int64),
         "cycle": cycle,
@@ -231,6 +249,7 @@ def map_curve_to_canonical(
             ) from exc
 
     frame = pd.DataFrame(frame_values)
+    record_limitations(frame, "CP" if is_cp else "OCV", limitations)
     canonical_cycling.validate_raw_timeseries(frame)
     return frame
 

@@ -271,11 +271,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl20cpocv1",
+                "adapter_revision": "gcpl21cpocv1",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl20cpocv1:r1")
+        self.assertEqual(parsing.current_parser_identity_for_extension("mpr"), "bm:gcpl21cpocv1:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_technique_04_profile_maps_selector_signed_loop_to_canonical(self) -> None:
@@ -988,6 +988,20 @@ class BiologicGcplMappingTests(unittest.TestCase):
             "protocol_loop_reconstruction",
         )
 
+    def test_missing_capacity_columns_preserve_current_and_countable_cycles(self) -> None:
+        rows = _repeating_loop_rows()
+        columns = tuple(i for i in SUPPORTED_GCPL_COLUMN_IDS if i not in {7, 211})
+        with TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(Path(temp) / "without-counters.mpr", rows, column_ids=columns,
+                                  settings_payload=_repeating_loop_settings())
+            frame = parsing.parse_timeseries(path)
+        self.assertTrue(frame["current_ma"].notna().all())
+        self.assertTrue(frame["voltage_v"].notna().all())
+        self.assertTrue(frame["charge_capacity_mah"].isna().all())
+        cycles = calc.per_cycle(frame)
+        self.assertEqual(cycles["cycle"].tolist(), [1, 2, 3])
+        self.assertTrue(cycles["discharge_capacity_mah"].isna().all())
+
     def test_observed_loop_rejects_multiple_backward_edges(self) -> None:
         rows = [
             _row(0.0, ns=0, mode=MPR_MODE_REST, control=0.0, ns_changed=True),
@@ -1004,8 +1018,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 rows,
                 settings_payload=_observed_loop_settings(),
             )
-            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "more than one backward"):
-                parsing.parse_timeseries(path)
+            frame = parsing.parse_timeseries(path)
+            self.assertIn("more than one backward", frame.attrs["biologic_gcpl"]["quantity_limitations"]["cycles"])
+            self.assertFalse(frame["cycle_complete"].any())
+            self.assertTrue(calc.per_cycle(frame).empty)
 
     def test_observed_single_direction_restart_fails_closed(self) -> None:
         rows = [
@@ -1021,8 +1037,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 rows,
                 settings_payload=_observed_loop_settings(single_direction=True),
             )
-            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "both charge and discharge"):
-                parsing.parse_timeseries(path)
+            frame = parsing.parse_timeseries(path)
+            self.assertIn("both charge and discharge", frame.attrs["biologic_gcpl"]["quantity_limitations"]["cycles"])
+            self.assertFalse(frame["cycle_complete"].any())
+            self.assertTrue(calc.per_cycle(frame).empty)
 
     def test_loop_execution_rejects_a_backward_edge_other_than_declared_start(self) -> None:
         rows = [
@@ -1039,8 +1057,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 rows,
                 settings_payload=_repeating_loop_settings(),
             )
-            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "does not return"):
-                parsing.parse_timeseries(path)
+            frame = parsing.parse_timeseries(path)
+            self.assertIn("does not return", frame.attrs["biologic_gcpl"]["quantity_limitations"]["cycles"])
+            self.assertFalse(frame["cycle_complete"].any())
+            self.assertTrue(calc.per_cycle(frame).empty)
 
     def test_loop_execution_rejects_direction_contradicting_settings(self) -> None:
         rows = _repeating_loop_rows()
@@ -1067,8 +1087,9 @@ class BiologicGcplMappingTests(unittest.TestCase):
         with TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "single-direction-loop.mpr", rows, settings_payload=settings)
             capabilities = read_gcpl_header_metadata(path)["capabilities"]
-            self.assertTrue(capabilities["metadata_only"])
-            self.assertFalse(capabilities["canonical_cycling_pending"])
+            self.assertFalse(capabilities["metadata_only"])
+            self.assertTrue(capabilities["canonical_cycling_pending"])
+            self.assertFalse(capabilities["cycle_reconstruction_candidate"])
             with self.assertRaisesRegex(UnsupportedBiologicGcplError, "GCPL Ns"):
                 parsing.parse_timeseries(path)
 
@@ -1085,8 +1106,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, cycle=2, ns_changed=True),
             _row(1.0, cycle=1, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "regresses or resets"):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("regresses or resets", frame.attrs["biologic_gcpl"]["quantity_limitations"]["cycles"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
 
     def test_cycle_transition_starts_a_new_executed_step(self) -> None:
         rows = [
@@ -1123,24 +1146,32 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, ns_changed=True),
             _row(1.0, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("mixes charge and discharge", frame.attrs["biologic_gcpl"]["quantity_limitations"]["phases"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
+        self.assertIn("Unverified", frame["status"].tolist())
 
     def test_zero_current_active_block_fails_closed(self) -> None:
         rows = [
             _row(0.0, control=0.0, ns_changed=True),
             _row(1.0, control=0.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("no independently resolvable", frame.attrs["biologic_gcpl"]["quantity_limitations"]["phases"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
+        self.assertIn("Unverified", frame["status"].tolist())
 
     def test_capacity_transfer_during_rest_fails_closed(self) -> None:
         rows = [
             _row(0.0, mode=MPR_MODE_REST, control=0.0, ns_changed=True),
             _row(1.0, mode=MPR_MODE_REST, control=0.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("rest block", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_nonzero_dedicated_current_during_rest_is_invalid(self) -> None:
         rows = [
@@ -1166,16 +1197,20 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, control=3600.0, ns_changed=True),
             _row(1.0, control=3600.0, q_mAh=1.0, dq_mAh=-1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("incremental-capacity directions disagree", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_capacity_transfer_at_step_boundary_fails_closed(self) -> None:
         rows = [
             _row(0.0, ns=0, ns_changed=True),
             _row(1.0, ns=1, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("boundary", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_id13_capacity_variant_is_selected_from_counter_evidence(self) -> None:
         frame = map_gcpl_to_canonical(_id13_counter_records())
@@ -1201,8 +1236,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
         records = _id13_counter_records()
         records["raw_dq_mAh"][1] = -0.9
 
-        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "do not match the ID-7"):
-            map_gcpl_to_canonical(records)
+        frame = map_gcpl_to_canonical(records)
+        self.assertIn("do not match the ID-7", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_id13_active_increment_allows_binary_float_precision_residual(self) -> None:
         records = _id13_counter_records()
@@ -1218,8 +1255,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
     def test_id13_capacity_variant_rejects_large_rest_boundary_residual(self) -> None:
         records = _id13_counter_records(rest_residual_mAh=-1.1e-6)
 
-        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "unresolved active-to-Rest"):
-            map_gcpl_to_canonical(records)
+        frame = map_gcpl_to_canonical(records)
+        self.assertIn("unresolved active-to-Rest", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_id211_remains_preferred_when_it_carries_capacity(self) -> None:
         rows = [
@@ -1274,8 +1313,12 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, ns=0, ns_changed=True),
             _row(1.0, ns=0, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "Ns-change flag"):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("Ns-change flag", frame.attrs["biologic_gcpl"]["quantity_limitations"]["cycles"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(frame["charge_capacity_mah"].isna().all())
+        self.assertEqual(frame["mpr_acquisition_segment"].tolist(), [1, 2])
+        self.assertEqual(frame["current_ma"].tolist(), [3600.0, 3600.0])
 
     def test_nonfinite_dedicated_current_is_invalid_source_data(self) -> None:
         rows = [
@@ -1284,8 +1327,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
         ]
         records = _structured_records(rows, dedicated_current=True)
         records["raw_current_ma"][1] = np.nan
-        with self.assertRaises(InvalidBiologicGcplError):
-            map_gcpl_to_canonical(records)
+        frame = map_gcpl_to_canonical(records)
+        self.assertIn("no independently verified", frame.attrs["biologic_gcpl"]["quantity_limitations"]["current"])
+        np.testing.assert_allclose(frame["current_ma"], [3600.0, np.nan])
+        np.testing.assert_allclose(frame["charge_capacity_mah"], [0.0, 1.0])
 
     def test_reversed_cv_to_cc_control_history_fails_closed(self) -> None:
         rows = [
@@ -1306,8 +1351,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             ),
             _row(2.0, control=3600.0, q_mAh=2.0, dq_mAh=1.0, measured_current_ma=3600.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
-            _map_rows(rows, dedicated_current=True)
+        frame = _map_rows(rows, dedicated_current=True)
+        self.assertIn("unsupported control-mode chronology", frame.attrs["biologic_gcpl"]["quantity_limitations"]["status"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
+        self.assertIn("Unverified", frame["status"].tolist())
 
     def test_reentering_cc_after_cv_control_history_fails_closed(self) -> None:
         rows = [
@@ -1323,8 +1371,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             ),
             _row(3.0, control=3600.0, q_mAh=3.0, dq_mAh=1.0, measured_current_ma=3600.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
-            _map_rows(rows, dedicated_current=True)
+        frame = _map_rows(rows, dedicated_current=True)
+        self.assertIn("unsupported control-mode chronology", frame.attrs["biologic_gcpl"]["quantity_limitations"]["status"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
+        self.assertIn("Unverified", frame["status"].tolist())
 
     def test_capacity_counter_decrease_within_step_fails_closed(self) -> None:
         rows = [
@@ -1332,8 +1383,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(1.0, q_mAh=2.0, dq_mAh=2.0),
             _row(2.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("counter decreases", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_late_counter_reset_preserves_first_interval_in_both_directions(self) -> None:
         for sign in (1, -1):
@@ -1361,8 +1414,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
                 records["raw_q_charge_discharge_mAh"][4:] = np.array([-1, -3]) * sign
                 records["raw_q_minus_q0_mAh"][-1] += 0.1
-                with self.assertRaisesRegex(UnsupportedBiologicGcplError, "Q-Q0"):
-                    map_gcpl_to_canonical(records)
+                frame = map_gcpl_to_canonical(records)
+                self.assertIn("Q-Q0", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+                self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+                self.assertTrue(frame["current_ma"].notna().all())
 
     def test_capacity_counter_reset_to_baseline_within_step_fails_closed(self) -> None:
         rows = [
@@ -1370,16 +1425,20 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
             _row(2.0, q_mAh=0.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("no capacity transfer", frame.attrs["biologic_gcpl"]["quantity_limitations"]["capacity"])
+        self.assertTrue(frame[["charge_capacity_mah", "discharge_capacity_mah"]].isna().all().all())
+        self.assertTrue(frame["current_ma"].notna().all())
 
     def test_counter_increment_flag_is_not_assumed_irrelevant_to_cycle(self) -> None:
         rows = [
             _row(0.0, ns_changed=True, counter_incremented=True),
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "counter-increment"):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("counter-increment", frame.attrs["biologic_gcpl"]["quantity_limitations"]["cycles"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
 
     def test_dedicated_current_is_preserved_instead_of_using_control_setpoint(self) -> None:
         rows = [
@@ -1415,16 +1474,21 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 measured_current_ma=-3600.0,
             ),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
-            _map_rows(rows, dedicated_current=True)
+        frame = _map_rows(rows, dedicated_current=True)
+        self.assertIn("standalone BioLogic CV discharge", frame.attrs["biologic_gcpl"]["quantity_limitations"]["status"])
+        self.assertFalse(frame["cycle_complete"].any())
+        self.assertTrue(calc.per_cycle(frame).empty)
+        self.assertIn("Unverified", frame["status"].tolist())
 
     def test_potentiostatic_rows_require_measured_current(self) -> None:
         rows = [
             _row(0.0, mode=MPR_MODE_POTENTIOSTATIC, control=3.0, ns_changed=True),
             _row(1.0, mode=MPR_MODE_POTENTIOSTATIC, control=3.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "measured-current"):
-            _map_rows(rows)
+        frame = _map_rows(rows)
+        self.assertIn("no independently verified", frame.attrs["biologic_gcpl"]["quantity_limitations"]["current"])
+        self.assertTrue(frame["current_ma"].isna().all())
+        np.testing.assert_allclose(frame["charge_capacity_mah"], [0.0, 1.0])
 
     def test_nonzero_half_cycle_progression_is_diagnostic_only(self) -> None:
         rows = [

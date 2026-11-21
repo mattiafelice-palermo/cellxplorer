@@ -33,6 +33,7 @@ import pandas as pd
 
 from ..config import CACHE_DIR, CALC_VERSION
 from . import calc, canonical_cycling, parsing, time_capacity_derived
+from .biologic_quantities import UNRESOLVED_CYCLE_SOURCE
 from .scientific_cache_compatibility import compatible_calculation_versions
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
         "non_repeating_cycle_1",
         "verified_repeated_executions",
         "exploratory_unverified",
+        UNRESOLVED_CYCLE_SOURCE,
         "verified_cp_ocv_curve",
         "mb_half_cycle_pairs",
     }
@@ -539,6 +541,7 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "biologic_instrument_errors",
                 "biologic_mb_eis_exclusion",
                 "biologic_clock_regressions",
+                "biologic_quantity_unavailable",
             }
             and isinstance(item.get("message"), str)
         ):
@@ -599,6 +602,7 @@ def _write_parser_diagnostics(
                 "biologic_instrument_errors",
                 "biologic_mb_eis_exclusion",
                 "biologic_clock_regressions",
+                "biologic_quantity_unavailable",
             }
             or not isinstance(item.get("message"), str)
         ):

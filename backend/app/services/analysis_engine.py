@@ -2022,6 +2022,7 @@ def _time_capacity_display_x(
                 phases,
                 reset_ids=(raw["cycle"].to_numpy() if "cycle" in raw.columns else None),
                 initial_offset=origin_capacity if origin_capacity is not None else 0.0,
+                capacity_verified=raw.get("capacity_verified"),
             )
         if origin_time_s is not None:
             time_factor = (

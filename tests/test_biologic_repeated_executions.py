@@ -126,7 +126,9 @@ class RepeatedGcplTests(unittest.TestCase):
         cases["missing one return"] = deepcopy(base); cases["missing one return"][6]["ns_changed"] = False
         cases["missing all returns"] = deepcopy(base)
         for row in cases["missing all returns"][1:]: row["ns_changed"] = False
-        cases["hidden active gap"] = deepcopy(base); cases["hidden active gap"][1]["total_time_s"] = 35.0
+        cases["hidden active gap"] = deepcopy(base)
+        for row in cases["hidden active gap"][1:]:
+            row["total_time_s"] += 35.0
         cases["nonmonotonic"] = deepcopy(base); cases["nonmonotonic"][1]["total_time_s"] = -1.0
         cases["instrument error"] = deepcopy(base); cases["instrument error"][1]["error"] = True
         cases["wrong polarity"] = deepcopy(base); cases["wrong polarity"][1]["control"] = 60.0
@@ -134,8 +136,16 @@ class RepeatedGcplTests(unittest.TestCase):
         for label, rows in cases.items():
             with self.subTest(label=label):
                 path = write_repeated(self.root / f"negative-{len(label)}-{label.replace(' ', '-')}.mpr", -1, rows=rows)
-                with self.assertRaises((gcpl.UnsupportedBiologicGcplError, gcpl.InvalidBiologicGcplError)):
-                    parsing.parse_timeseries(path)
+                if label in {"nonmonotonic", "instrument error", "wrong polarity"}:
+                    with self.assertRaises(gcpl.BiologicGcplError):
+                        parsing.parse_timeseries(path)
+                    continue
+                frame = parsing.parse_timeseries(path)
+                self.assertTrue(frame["current_ma"].notna().all())
+                self.assertTrue(frame["discharge_capacity_mah"].isna().all())
+                self.assertFalse(frame["cycle_complete"].any())
+                self.assertIsNone(executions.summary_from_frame(frame))
+                self.assertEqual(len(frame), len(rows))
 
     def test_interrupted_active_phase_splits_steps_without_inventing_rest(self):
         rows = interrupted_rows()
@@ -172,8 +182,16 @@ class RepeatedGcplTests(unittest.TestCase):
         for label, rows in cases.items():
             with self.subTest(label=label):
                 path = write_repeated(self.root / (label.replace(" ", "-") + ".mpr"), -1, rows=rows)
-                with self.assertRaises((gcpl.UnsupportedBiologicGcplError, gcpl.InvalidBiologicGcplError)):
-                    parsing.parse_timeseries(path)
+                if label in {"changed direction", "instrument error", "unsupported mode", "time regression", "changed step"}:
+                    with self.assertRaises(gcpl.BiologicGcplError):
+                        parsing.parse_timeseries(path)
+                    continue
+                frame = parsing.parse_timeseries(path)
+                self.assertTrue(frame["current_ma"].notna().all())
+                self.assertTrue(frame["discharge_capacity_mah"].isna().all())
+                self.assertFalse(frame["cycle_complete"].any())
+                self.assertIsNone(executions.summary_from_frame(frame))
+                self.assertEqual(len(frame), len(rows))
 
     def test_pairing_rejects_wrong_identity_overlap_missing_phase_and_partial_projection(self):
         for field, value in (("device_serial", "other"), ("channel_serial", 999),

@@ -110,7 +110,7 @@ def _write_importable_biologic_mpr(path: Path) -> None:
     )
 
 
-def _write_metadata_only_biologic_mpr(path: Path) -> None:
+def _write_ambiguous_loop_mpr(path: Path) -> None:
     """Write an ambiguous repeating-shaped MPR that lacks a verified loop."""
     write_gcpl_mpr(
         path,
@@ -290,22 +290,26 @@ class ImportFlowTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "adapter defect"):
                     parsing.read_header_metadata(path)
 
-    def test_biologic_preview_is_unavailable_for_metadata_only_mpr(self):
-        with TemporaryDirectory() as tmp:
+    def test_ambiguous_gcpl_header_allows_voltage_preview_without_a_cycle_summary(self):
+        with TemporaryDirectory() as tmp, patch.object(files.cache, "CACHE_DIR", Path(tmp) / "cache"):
             path = Path(tmp) / "preview.mpr"
-            _write_metadata_only_biologic_mpr(path)
-            with patch.object(files.cache, "build_write_behind") as build:
-                preview, error = files.build_capacity_preview(
-                    path, file_hash="a" * 64
-                )
-
-        self.assertIsNone(preview)
-        self.assertIn("logical cycle reconstruction", error)
-        build.assert_not_called()
-        self.assertEqual(
-            parsing.current_parser_identity_for_extension("mpr"),
-            "bm:gcpl20cpocv1:r1",
-        )
+            _write_ambiguous_loop_mpr(path)
+            file_hash = parsing.compute_hash(path)
+            info = files.cache.build(file_hash, path)
+            preview, error = files.build_capacity_preview(path, file_hash=file_hash)
+            self.assertIsNone(error)
+            self.assertEqual(preview["x"], [])
+            result = files._build_stitched_continuation_preview(
+                [{"hash": file_hash, "filename": path.name, "source_key": path.name,
+                  "parser_version": info["parser_version"]}],
+                quantity="voltage", voltage_x_axis="time", cycle_start=None, cycle_end=None,
+            )
+            self.assertIsNone(result["cycle_count"])
+            segment = result["segments"][0]
+            self.assertEqual(segment["source_cycle_count"], 0)
+            self.assertIsNone(segment["global_cycle_start"])
+            self.assertEqual(segment["current_ma"], [1, -1, 1])
+            self.assertEqual(segment["x"], [0, 1, 2])
 
     def test_biologic_mpr_synthetic_preview_builds_without_mpt(self):
         """A verified single-direction MPR can build a preview without an MPT."""

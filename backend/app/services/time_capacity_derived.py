@@ -107,10 +107,13 @@ def phase_from_raw(frame: pd.DataFrame) -> list[str]:
         is_dchg = has_dchg.to_numpy() | (cur < 0)
         is_chg = ~is_dchg & (has_chg.to_numpy() | (cur > 0))
     phases = np.select([is_dchg, is_chg], ["discharge", "charge"], default="rest")
-    if "mpr_elapsed_time_s" in frame.columns:
-        unverified = pd.to_numeric(frame["mpr_elapsed_time_s"], errors="coerce").notna().to_numpy()
-        phases = phases.astype(object)
-        phases[unverified] = "unverified"
+    if "status" in frame.columns:
+        # The acquisition clock is also valid for GCPL measurements with
+        # known phase polarity and unresolved full-cycle boundaries.
+        unverified = frame["status"].eq("Unverified").fillna(False).to_numpy(dtype=bool)
+        if unverified.any():
+            phases = phases.astype(object)
+            phases[unverified] = "unverified"
     return phases.tolist()
 
 
@@ -171,6 +174,7 @@ def consecutive_capacity_display(
     *,
     reset_ids: list[object] | np.ndarray | None = None,
     initial_offset: float = 0.0,
+    capacity_verified: pd.Series | None = None,
 ) -> np.ndarray:
     """Concatenate capacity progress in acquisition order.
 
@@ -265,6 +269,9 @@ def consecutive_capacity_display(
     if active_phase is not None:
         offset = segment_last
 
+    if capacity_verified is not None:
+        # Neutral rows can hold a known endpoint only for a usable capacity counter.
+        output[capacity_verified.eq(False).fillna(False).to_numpy(dtype=bool)] = np.nan
     return output
 
 

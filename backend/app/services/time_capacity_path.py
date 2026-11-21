@@ -37,6 +37,7 @@ TIME_CAPACITY_OPTIONAL_COLUMNS: tuple[str, ...] = (
     "mpr_elapsed_time_s",
     "mpr_acquisition_segment",
     "biologic_mb_time_s",
+    "capacity_verified",
 )
 
 
@@ -308,7 +309,7 @@ def time_capacity_request_columns(
         needs_capacity = True
 
     if needs_capacity:
-        requested.extend(("charge_capacity_mah", "discharge_capacity_mah"))
+        requested.extend(("charge_capacity_mah", "discharge_capacity_mah", "capacity_verified"))
     return [
         column for column in time_capacity_raw_columns(available) if column in requested
     ]

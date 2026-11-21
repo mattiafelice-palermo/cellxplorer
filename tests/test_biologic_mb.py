@@ -22,7 +22,7 @@ from app.services import analysis_engine, biologic_mpr, cache, calc, parsing, sc
 from app.services.filesystem_cleanup import TemporaryDirectory
 
 
-def write_mb(path, rows, *, classic=False, frequency=True):
+def write_mb(path, rows, *, classic=False, frequency=True, omit_columns=()):
     # Storage definitions intentionally do not use the production registry/dtype.
     fields = [(131, "H", "ns", 0), (39, "H", "range", 115),
               (4, "d", "time", 0), (20, "f", "control", 0), (6, "f", "voltage", 3.5),
@@ -31,6 +31,7 @@ def write_mb(path, rows, *, classic=False, frequency=True):
     if frequency:
         fields += [(32, "f", "frequency", 0), (36, "f", "impedance", 0)]
     fields += [(467 if classic else 211, "d", "q", 0), (468, "I", "half", 0)]
+    fields = [field for field in fields if field[0] not in omit_columns]
     ids = [1, 2, 3, 21, 31, 65] + [f[0] for f in fields]
     raw = b"".join(struct.pack("<B", row.get("flags", 1)) + b"".join(
         struct.pack("<" + fmt, row.get(name, default)) for _, fmt, name, default in fields)
@@ -104,7 +105,7 @@ class BiologicMbTests(unittest.TestCase):
         self.assertTrue(calc.per_cycle(frame).empty)
         self.assertEqual(frame.charge_capacity_mah.tolist(), [0, 1])
 
-    def test_bad_science_is_rejected_in_both_modes_without_exposing_eis_fallback(self):
+    def test_independent_scientific_checks_in_both_modes_preserve_eis_exclusion(self):
         for name, mutate in [
             ("clock", lambda r: r[1].update(time=90)),
             ("error", lambda r: r[1].update(flags=9)),
@@ -119,8 +120,34 @@ class BiologicMbTests(unittest.TestCase):
             mutate(rows)
             path = write_mb(self.directory / f"{name}.mpr", rows)
             for mode in ("safe", "permissive"):
-                with self.subTest(name=name, mode=mode), self.assertRaises(parsing.SourceFormatError):
-                    parsing.parse_timeseries(path, read_mode=mode)
+                with self.subTest(name=name, mode=mode):
+                    if name in {"clock", "error", "nan"}:
+                        with self.assertRaises(parsing.SourceFormatError):
+                            parsing.parse_timeseries(path, read_mode=mode)
+                        continue
+                    frame = parsing.parse_timeseries(path, read_mode=mode)
+                    self.assertEqual(frame.record_index.tolist(), [1, 2, 6, 7, 8, 9])
+                    self.assertEqual(frame.mpr_acquisition_segment.tolist(), [1, 1, 2, 2, 2, 2])
+                    self.assertTrue(np.isfinite(frame["current_ma"]).all())
+                    if name == "half-regression":
+                        self.assertTrue(calc.per_cycle(frame).empty)
+                        self.assertEqual(frame["charge_capacity_mah"].max(), 1.)
+                    else:
+                        self.assertEqual(len(calc.per_cycle(frame)), 1)
+                        self.assertTrue(frame["charge_capacity_mah"].isna().all())
+
+    def test_missing_mb_counter_and_missing_current_preserve_recorded_curves(self):
+        rows = eis_rows()
+        path = write_mb(self.directory / "no-counters.mpr", rows, omit_columns=(7, 13, 211))
+        frame = parsing.parse_timeseries(path)
+        self.assertEqual(len(calc.per_cycle(frame)), 1)
+        self.assertTrue(frame["charge_capacity_mah"].isna().all())
+        rows[1]["current"] = np.nan
+        path = write_mb(self.directory / "no-current.mpr", rows)
+        frame = parsing.parse_timeseries(path)
+        self.assertTrue(calc.per_cycle(frame).empty)
+        self.assertEqual(frame["current_ma"].isna().tolist(), [False, True, False, False, False, False])
+        self.assertTrue(frame["voltage_v"].notna().all())
 
     def test_truncation_versions_and_classic_non_mb_fail_closed(self):
         for classic in (False, True):

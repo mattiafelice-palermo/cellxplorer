@@ -388,6 +388,15 @@ def record_source_interpretation(source: object, info: dict) -> None:
         target = header.get("raw") if isinstance(header.get("raw"), dict) else header
         target[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY] = biologic_cp_ocv.electrode_voltage_capabilities()
         source.header_meta = header
+    if info.get("cycle_identity_source") == biologic_gcpl.UNRESOLVED_CYCLE_SOURCE:
+        header = deepcopy(getattr(source, "header_meta", None) or {})
+        for container in _biologic_mpr_header_containers(header):
+            capabilities = container.get("capabilities")
+            if isinstance(capabilities, dict):
+                capabilities.update(cycle_identity_source=biologic_gcpl.UNRESOLVED_CYCLE_SOURCE,
+                                    cycle_reconstruction_verification="unavailable",
+                                    complete_cycles_inferred=False)
+        source.header_meta = header
     if source_read_mode(source) != "permissive":
         return
     header = deepcopy(getattr(source, "header_meta", None) or {})
@@ -668,6 +677,7 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
         "protocol_loop_reconstruction",
         "non_repeating_cycle_1",
         "verified_repeated_executions",
+        biologic_gcpl.UNRESOLVED_CYCLE_SOURCE,
     }
 )
 
@@ -1225,7 +1235,9 @@ def mark_biologic_mpr_canonical(
                     "verified" if single_direction_verified else "unavailable"
                 ),
                 "cycle_reconstruction_candidate": False,
-                "cycle_reconstruction_verification": "verified",
+                "cycle_reconstruction_verification": (
+                    "unavailable" if verified_source == biologic_gcpl.UNRESOLVED_CYCLE_SOURCE else "verified"
+                ),
                 "protocol_loop_cycle_candidate": False,
                 "non_repeating_cycle_candidate": False,
                 "cycle_identity_source": verified_source,
@@ -1284,7 +1296,9 @@ def mark_biologic_mpr_canonical(
                         "verified" if declared_single_direction_verified else "unavailable"
                     ),
                     "cycle_reconstruction_candidate": False,
-                    "cycle_reconstruction_verification": "verified",
+                    "cycle_reconstruction_verification": (
+                        "unavailable" if declared_verified_source == biologic_gcpl.UNRESOLVED_CYCLE_SOURCE else "verified"
+                    ),
                     "protocol_loop_cycle_candidate": False,
                     "non_repeating_cycle_candidate": False,
                     "cycle_identity_source": declared_verified_source,
@@ -1634,7 +1648,7 @@ def _parse_source_timeseries(path: str | Path, *, read_mode: str = "safe") -> pd
                         raise
                     from .biologic_mpr_exploratory import map_measurements
                     return map_measurements(document, exc)
-                frame.attrs.setdefault("biologic_gcpl", {})["cycle_source"] = "verified_cp_ocv_curve"
+                frame.attrs.setdefault("biologic_gcpl", {}).setdefault("cycle_source", "verified_cp_ocv_curve")
                 if read_mode == "permissive":
                     frame["mpr_read_mode"] = "permissive"
                     frame.attrs.setdefault("biologic_gcpl", {}).update(read_mode="permissive", scientific_interpretation="verified")
