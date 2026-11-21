@@ -78,7 +78,7 @@ class ReusableTimeCapacityTests(unittest.TestCase):
     def test_preparation_once_and_range_unit_resolution_tail_parity(self):
         candidates = []
         for start, end, points, unit in ((1, 20, 3000, "min"), (2, 21, 4000, "s"),
-                                         (29, 48, 4000, "h"), (31, 50, 3000, "min"),
+                                         (29, 48, 4000, "h"), (31, 50, 3000, "d"),
                                          (1, 50, 100, "min"), (55, 60, 4000, "min")):
             spec = deepcopy(self.spec)
             spec["computation"]["time_capacity"].update(cycle_start=start, cycle_end=end,

@@ -1307,9 +1307,11 @@ def _build_jobs(
                 else analysis_engine.time_capacity_origin_cycle(settings)
             )
             facts = time_capacity_path.consecutive_time_cycle_facts(plan)
-            if origin_cycle not in facts or any(cycle not in facts for cycle in requested_cycles):
+            display_origin_time_s = time_capacity_path.consecutive_time_origin(
+                plan, facts, origin_cycle, settings.get("time_reference", "selected_range"),
+            )
+            if display_origin_time_s is None or any(cycle not in facts for cycle in requested_cycles):
                 return None
-            display_origin_time_s = facts[origin_cycle][0]
             # Per-cycle prefixes also preserve elapsed gaps in sparse selections.
             time_cycle_starts = tuple((cycle, facts[cycle][0]) for cycle in requested_cycles)
         available = {

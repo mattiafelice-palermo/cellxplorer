@@ -1,5 +1,6 @@
 // Typed API client for the CellXplorer backend.
 import { addDebugEvent, describeRequestBody } from "./debug";
+import type { PlotTimeUnit } from "./plotTimeUnits";
 
 export class ApiError extends Error {
   status: number;
@@ -993,7 +994,7 @@ export interface ChargeabilityViewSpec {
     | "current_ma"
     | "current_ma_g"
     | "current_ma_cm2";
-  time_unit: "s" | "min" | "h";
+  time_unit: PlotTimeUnit;
 }
 
 export interface RateCapabilityFamilyPatternSpec {
@@ -1371,7 +1372,7 @@ export interface AnalysisSpec {
     };
     time_capacity?: {
       x_axis: "time" | "capacity_mah" | "capacity_mah_g" | "capacity_mah_cm2";
-      time_unit: "s" | "min" | "h";
+      time_unit: PlotTimeUnit;
       display_mode: "consecutive" | "overlap_reset" | "overlap_mirror";
       /** Missing on older saved plots: align each Cell at the selected range start. */
       time_reference?: "selected_range" | "test_start";

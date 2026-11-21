@@ -598,6 +598,20 @@ def should_include_display_only_rows(
     return bool(requested) and requested == all_complete
 
 
+def consecutive_time_origin(
+    plan: TimeCapacityStitchPlan, cycle_facts: dict[int, tuple[float, float]],
+    origin_cycle: int | None, time_reference: str,
+) -> float | None:
+    """Resolve the plotted zero in the same coordinates as the indexed raw clock."""
+    if not cycle_facts:
+        return None
+    if time_reference == "test_start":
+        # The first source can be a rest or a one-direction discharge before
+        # the first numbered cycle. Its first sample still starts the test.
+        return float(plan.sources[0].index["consecutive_time"]["first_raw_time_s"])
+    return cycle_facts[origin_cycle][0] if origin_cycle in cycle_facts else None
+
+
 def consecutive_time_cycle_facts(
     plan: TimeCapacityStitchPlan,
 ) -> dict[int, tuple[float, float]]:

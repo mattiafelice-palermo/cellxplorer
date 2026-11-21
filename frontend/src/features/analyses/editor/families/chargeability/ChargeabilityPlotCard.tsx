@@ -1,5 +1,6 @@
 import { referenceAxis, referenceUnits, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import { familyPlotViewSignature } from "../../policies/analysisFamilyRetention";
+import { PLOT_TIME_UNITS, secondsPerPlotTimeUnit } from "../../../../../plotTimeUnits";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import {
   Alert,
@@ -270,13 +271,9 @@ function yTitle(view: ChargeabilityViewSpec) {
   return "C-rate";
 }
 
-function timeFactor(unit: ChargeabilityViewSpec["time_unit"]) {
-  return unit === "h" ? 3600 : unit === "min" ? 60 : 1;
-}
-
 function xValues(match: ChargeabilityMatch, view: ChargeabilityViewSpec) {
   if (view.x_axis === "time") {
-    const factor = timeFactor(view.time_unit);
+    const factor = secondsPerPlotTimeUnit(view.time_unit);
     return match.x.time_s.map((value) => (value == null ? null : value / factor));
   }
   return match.x[view.x_axis];
@@ -647,11 +644,7 @@ export function ChargeabilitySettings({
             <Select
               label="Time unit"
               value={view.time_unit}
-              data={[
-                { value: "s", label: "Seconds" },
-                { value: "min", label: "Minutes" },
-                { value: "h", label: "Hours" },
-              ]}
+              data={PLOT_TIME_UNITS}
               onChange={(value) =>
                 value && patchView({ time_unit: value as ChargeabilityViewSpec["time_unit"] })
               }

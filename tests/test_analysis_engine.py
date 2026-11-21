@@ -2286,6 +2286,13 @@ class AnalysisEngineTests(unittest.TestCase):
                 self.assertIsNone(result["settings"]["cycle_end"])
         self.assertEqual(spec, original)
 
+    def test_days_preserve_measurements_before_the_cycle_origin(self):
+        raw = pd.DataFrame({"time_s": [0, 86400, 108000], "cycle": [0, 1, 1]})
+        settings = {"x_axis": "time", "display_mode": "consecutive", "time_unit": "d"}
+        x = engine._time_capacity_display_x(raw, ["rest", "charge", "rest"], None, None, None,
+                                            settings, origin_time_s=86400)
+        np.testing.assert_allclose(x, [-1, 0, 0.25])
+
     def test_cycle_aligned_and_continuous_time_for_unequal_cell_durations(self):
         slow_hash = hashlib.sha256(b"time-reference-slow-cell").hexdigest()
         slow_raw = synth_raw(5, 100, 0)

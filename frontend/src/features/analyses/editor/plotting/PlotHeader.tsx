@@ -22,7 +22,7 @@ import {
   IconPlus,
   IconTable,
 } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   type BackgroundJob,
@@ -146,6 +146,7 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
 export function PlotHeader({
   analysisTitle,
   plotName,
+  titleNotice,
   subtitle,
   explainer,
   onExport,
@@ -169,6 +170,7 @@ export function PlotHeader({
   analysisTitle?: string;
   tabName?: string;
   plotName: string;
+  titleNotice?: ReactNode;
   subtitle: string;
   quantityName?: string;
   xAxisName?: string;
@@ -307,6 +309,7 @@ export function PlotHeader({
           <Text fw={800} size="lg">
             {plotName}
           </Text>
+            {titleNotice}
           {edited ? (
             <Badge size="xs" variant="light" color="yellow">
               Edited

@@ -20,6 +20,7 @@ import zipfile
 import zlib
 
 import numpy as np
+from .time_capacity_derived import SECONDS_PER_PLOT_TIME_UNIT
 
 FORMAT_VERSION = 1
 MAX_ARRAY_BYTES = 32 * 1024 * 1024
@@ -253,7 +254,7 @@ def try_cell_result(job, request):
         cycles = arrays["cycle"][low:high]
         voltage = arrays["voltage_v"][low:high]
         current = arrays["current_ma"][low:high]
-        factor = 3600.0 if request.settings["time_unit"] == "h" else 60.0 if request.settings["time_unit"] == "min" else 1.0
+        factor = SECONDS_PER_PLOT_TIME_UNIT.get(request.settings["time_unit"], 1.0)
         display_x = arrays["time_s"][low:high] / factor - float(job.display_origin_time_s) / factor
         take = np.arange(high - low)
         if high - low > request.display_max_points_per_cell:

@@ -42,6 +42,12 @@ function timeCapacityOriginCycle(config: TimeCapacityQueryConfig): number | null
     : config.cycles.length > 0 ? Math.min(...config.cycles) : config.cycle_start ?? 1;
 }
 
+export function negativeTimeOriginCycle(config: TimeCapacityQueryConfig, minimumShown: number | undefined) {
+  if (config.view !== "voltage_current" || minimumShown === undefined || !(minimumShown < 0)
+      || config.time_reference === "test_start") return null;
+  return timeCapacityOriginCycle(config);
+}
+
 type TimeCapacityCompatibilitySpec = Pick<
   AnalysisSpec,
   "selection" | "protocol_segments" | "computation" | "presentation"

@@ -14,6 +14,7 @@ import {
   timeCapacityRetainedPanResult,
   timeCapacityScientificRequestSpec,
   timeCapacityUsesContinuousTime,
+  negativeTimeOriginCycle,
   timeCapacityEffectiveConfig,
   timeCapacityWithDisplayChoice,
   timeCapacityDisplayChoice,
@@ -78,6 +79,18 @@ function makeConfig(): TimeCapacityQueryConfig {
     voltage_channel: "voltage",
   };
 }
+
+test("negative measurement times explain the plotted cycle origin only in cycle-aligned time", () => {
+  const base = makeConfig();
+  assert.equal(negativeTimeOriginCycle(base, -1.27), 1);
+  assert.equal(negativeTimeOriginCycle({ ...base, cycle_start: 5 }, -1), 5);
+  assert.equal(negativeTimeOriginCycle({ ...base, cycles: [8, 3] }, -1), 3);
+  for (const minimum of [0, 1, undefined]) assert.equal(negativeTimeOriginCycle(base, minimum), null);
+  assert.equal(negativeTimeOriginCycle({ ...base, time_reference: "test_start" }, -1), null);
+  assert.equal(negativeTimeOriginCycle({ ...base, x_axis: "capacity_mah" }, -1), null);
+  assert.equal(negativeTimeOriginCycle({ ...base, display_mode: "overlap_mirror" }, -1), null);
+  assert.equal(negativeTimeOriginCycle({ ...base, view: "dqdv" }, -1), null);
+});
 
 function signature(
   spec: CompatibilitySpec = makeSpec(),

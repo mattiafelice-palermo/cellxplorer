@@ -15,6 +15,9 @@ import pandas as pd
 from . import calc
 
 
+SECONDS_PER_PLOT_TIME_UNIT = {"s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}
+
+
 PHASE_CODE_REST = 0
 PHASE_CODE_CHARGE = 1
 PHASE_CODE_DISCHARGE = 2

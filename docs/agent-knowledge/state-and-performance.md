@@ -812,6 +812,9 @@ each Cell starts its selected range at zero, and duration differences accumulate
 Explicit x-axis bounds remain relative to each new range, including when they show no data.
 `time_reference: test_start` is labelled **Continuous**: all cycles remain on the accumulated
 recorded-test-time axis, cycle navigation is unavailable, and the x-axis range selects time.
+For a chain beginning with OCV or an unpaired discharge, Continuous uses the first
+recorded sample as zero. Cycle-aligned uses the first selected cycle and retains
+earlier measurements at negative times when the full range includes those rows.
 Continuous requests ignore saved cycle bounds/explicit cycle selections without mutating them;
 switching back therefore restores the previous cycle selection. These references apply to the
 time axis of voltage/current plots; derivative, overlap, and capacity navigation keep their contracts.

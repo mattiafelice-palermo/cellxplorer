@@ -1,4 +1,6 @@
 import { withMprReadNotice } from "../../plotting/mprReadNotice";
+import { PLOT_TIME_UNITS, secondsPerPlotTimeUnit } from "../../../../../plotTimeUnits";
+import { NegativeTimeNotice } from "./NegativeTimeNotice";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import { referenceAxis, referenceUnits, withReferenceLines, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import {
@@ -69,6 +71,7 @@ import {
   timeCapacityScientificRequestSpec,
   timeCapacityDisplayChoice,
   timeCapacityUsesContinuousTime,
+  negativeTimeOriginCycle,
   timeCapacityWithDisplayChoice,
 } from "../../policies/timeCapacityQueryPolicy";
 import {
@@ -399,7 +402,7 @@ function timeCapacityX(trace: TimeCapacityTrace, spec: AnalysisSpec): { x: numbe
   } else if (cfg.x_axis === "capacity_mah") {
     raw = numeric(trace.capacity_mah);
   } else {
-    const factor = cfg.time_unit === "h" ? 3600 : cfg.time_unit === "min" ? 60 : 1;
+    const factor = secondsPerPlotTimeUnit(cfg.time_unit);
     raw = numeric(trace.time_s).map((value) => value / factor);
   }
 
@@ -1401,11 +1404,7 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
               {cfg.x_axis === "time" && (
                 <Select
                   label="Time unit"
-                  data={[
-                    { value: "s", label: "Seconds" },
-                    { value: "min", label: "Minutes" },
-                    { value: "h", label: "Hours" },
-                  ]}
+                  data={PLOT_TIME_UNITS}
                   value={cfg.time_unit}
                   onChange={(value) =>
                   value &&
@@ -3664,6 +3663,7 @@ function TimeCapacityPlotCardView({
           loaderProps={{ size: "sm" }}
         />
         <PlotHeader
+          titleNotice={<NegativeTimeNotice key={plotKey} cycle={active ? negativeTimeOriginCycle(renderCfg, visibleXAxisExtent?.[0]) : null} />}
           analysisTitle={analysisTitle}
           tabName="Time / capacity"
           plotName={plotName}

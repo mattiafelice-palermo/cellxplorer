@@ -1985,6 +1985,7 @@ def _time_capacity_display_x(
     origin_time_s: float | None = None,
     origin_capacity: float | None = None,
 ) -> np.ndarray:
+    factor = time_capacity_derived.SECONDS_PER_PLOT_TIME_UNIT.get(settings.get("time_unit"), 1.0)
     if settings["x_axis"] == "capacity_mah_g":
         values = capacity_g.copy() if capacity_g is not None else np.full(len(raw), np.nan)
     elif settings["x_axis"] == "capacity_mah_cm2":
@@ -1992,7 +1993,6 @@ def _time_capacity_display_x(
     elif settings["x_axis"] == "capacity_mah":
         values = capacity.copy() if capacity is not None else np.full(len(raw), np.nan)
     else:
-        factor = 3600.0 if settings["time_unit"] == "h" else 60.0 if settings["time_unit"] == "min" else 1.0
         values = (
             raw["time_s"].to_numpy(dtype="float64") / factor
             if "time_s" in raw.columns
@@ -2025,14 +2025,7 @@ def _time_capacity_display_x(
                 capacity_verified=raw.get("capacity_verified"),
             )
         if origin_time_s is not None:
-            time_factor = (
-                3600.0
-                if settings["time_unit"] == "h"
-                else 60.0
-                if settings["time_unit"] == "min"
-                else 1.0
-            )
-            return preserve_native(values - float(origin_time_s) / time_factor)
+            return preserve_native(values - float(origin_time_s) / factor)
         finite_mask = np.isfinite(values)
         if origin_cycle_start is not None and "cycle" in raw.columns:
             finite_mask &= raw["cycle"].to_numpy() >= int(origin_cycle_start)
@@ -4244,7 +4237,9 @@ def compute_time_capacity(
         canonical_time = settings["x_axis"] == "time" and settings["display_mode"] == "consecutive"
         time_facts = time_capacity_path.consecutive_time_cycle_facts(plan) if canonical_time else {}
         time_cycle_starts = {cycle: fact[0] for cycle, fact in time_facts.items()}
-        display_origin_time_s = time_cycle_starts.get(display_origin_cycle_start)
+        display_origin_time_s = time_capacity_path.consecutive_time_origin(
+            plan, time_facts, display_origin_cycle_start, settings.get("time_reference", "selected_range"),
+        )
         time_prepared_before_filter = False
         source_facts: dict[str, dict] | None = None
         indexed_path = plan.path in {"indexed", "missing"}
@@ -4476,7 +4471,9 @@ def compute_time_capacity(
             raw = raw.sort_values(_time_capacity_sort_columns(raw), kind="stable")
             raw = _continuous_time(raw)
             time_prepared_before_filter = True
-            origin_rows = raw.loc[raw["cycle"] >= int(display_origin_cycle_start or 1), "time_s"]
+            origin_rows = raw["time_s"]
+            if settings.get("time_reference") != "test_start":
+                origin_rows = origin_rows[raw["cycle"] >= int(display_origin_cycle_start or 1)]
             finite_origin = origin_rows[np.isfinite(origin_rows)]
             display_origin_time_s = float(finite_origin.iloc[0]) if len(finite_origin) else None
 

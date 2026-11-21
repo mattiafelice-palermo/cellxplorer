@@ -7,6 +7,11 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.12 - 2026-11-21
+
+- Cycle-aligned plots explain negative times beside the title. Time/capacity and Chargeability plots now offer Days.
+- Continuous time starts at the first measurement when rest or discharge recordings precede the first complete cycle.
+
 ## 0.29.0-alpha.11 - 2026-11-21
 
 - Newly imported cells receive a brief teal highlight when they appear in the Cell Database.

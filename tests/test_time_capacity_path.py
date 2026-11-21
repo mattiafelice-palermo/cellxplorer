@@ -248,6 +248,9 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertEqual(plan.sources[0].cycle_map, {})
         self.assertEqual(plan.sources[0].display_only_source_cycles, (1,))
         self.assertEqual(plan.sources[1].cycle_map, {7: 1})
+        facts = time_capacity_path.consecutive_time_cycle_facts(plan)
+        self.assertEqual(time_capacity_path.consecutive_time_origin(plan, facts, 1, "test_start"), 0)
+        self.assertEqual(time_capacity_path.consecutive_time_origin(plan, facts, 1, "selected_range"), 2)
         self.assertEqual(
             time_capacity_path.requested_global_cycles(
                 plan, explicit_cycles=[], cycle_start=1, cycle_end=None
