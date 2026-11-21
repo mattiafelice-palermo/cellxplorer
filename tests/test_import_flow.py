@@ -608,7 +608,34 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(job["kind"], "import_register")
         self.assertEqual(job["status"], "failed")
         self.assertIn("injected failure", job["error"])
+        self.assertFalse(job.get("created_cell_ids"))
         db.rollback.assert_called_once()
+        background_jobs.clear_jobs()
+
+    def test_registration_publishes_only_new_cell_ids_before_cache_handoff(self):
+        db = self.make_session()
+        existing = Cell(name="Existing")
+        db.add(Test(cell=existing, name="internal"))
+        db.commit()
+        job_id = background_jobs.create_job(kind="import_register", title="Import", description="", total=2)
+        with TemporaryDirectory() as tmp:
+            paths = [Path(tmp) / "A.mpr", Path(tmp) / "B.xlsx"]
+            _write_importable_biologic_mpr(paths[0])
+            _write_importable_neware_workbook(paths[1])
+            request = files.ImportCellsRequest(cells=[
+                files.ImportCellDraft(staged_name=p.name, source_path=str(p), filename=p.name, cell_name=p.stem)
+                for p in paths
+            ])
+            def inspect_handoff(*args):
+                job = background_jobs.get_job(job_id)
+                self.assertTrue(job["registration_committed"])
+                self.assertEqual(job["created_cell_ids"], [c.id for c in db.query(Cell).filter(
+                    Cell.id != existing.id).order_by(Cell.id)])
+                self.assertEqual(len(job["created_cell_ids"]), 2)
+                return {}
+            with patch.object(files, "start_import_cache_jobs", side_effect=inspect_handoff):
+                files._create_imported_cells_impl(request, db, job_id=job_id)
+        db.close()
         background_jobs.clear_jobs()
 
     def test_post_commit_registration_failure_cannot_unlock_duplicate_retry(self):

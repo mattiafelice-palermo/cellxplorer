@@ -2055,6 +2055,7 @@ export interface BackgroundJob {
   description: string;
   status: "running" | "paused" | "completed" | "failed";
   registration_committed?: boolean;
+  created_cell_ids?: number[];
   cache_handoff_complete?: boolean;
   cache_job_id?: number | null;
   total: number;

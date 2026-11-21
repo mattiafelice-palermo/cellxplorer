@@ -10,3 +10,22 @@
 .row:hover .actions {
   background: var(--table-highlight-on-hover-color, light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5)));
 }
+
+.row[data-import-highlight] > td:not(.actions) { position: relative; }
+.row[data-import-highlight] > td::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: light-dark(var(--mantine-color-teal-7), var(--mantine-color-teal-4));
+  animation: importedCell 4s ease-out both;
+}
+
+@keyframes importedCell {
+  0%, 45% { opacity: 0.19; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row[data-import-highlight] > td::after { animation-timing-function: step-end; }
+}

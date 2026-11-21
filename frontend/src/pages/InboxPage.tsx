@@ -60,6 +60,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useSearchParams } from "react-router-dom";
+import { importedCellHighlightKey, queueImportedCells, type ImportedCellHighlight } from "../importedCellHighlight";
 
 import {
   ActiveMaterialPresetSettings,
@@ -1533,6 +1534,11 @@ function ImportModal({
     handoffStarted.current = true;
     setClosingBranch(registrationUi.showDone ? "done" : "continue");
     setHandoffPending(true);
+    const created = registerProgress.data?.created_cell_ids;
+    if (registrationCommitted && created?.length) {
+      qc.setQueryData<ImportedCellHighlight>(importedCellHighlightKey, previous =>
+        queueImportedCells(previous, created, Date.now()));
+    }
     // The registration job exposes its commit boundary before the modal can
     // be detached. Start the active-library refreshes after that boundary, but
     // do not make the modal wait for them: the query cache remains available
@@ -1557,7 +1563,7 @@ function ImportModal({
           error: error instanceof Error ? error.message : String(error),
         });
       });
-  }, [handoffPending, qc, onSaved, registrationUi.showDone]);
+  }, [handoffPending, qc, onSaved, registrationUi.showDone, registrationCommitted, registerProgress.data?.created_cell_ids]);
 
   useEffect(() => {
     if (!registrationAccepted || !registerProgress.data) return;
@@ -1648,7 +1654,7 @@ function ImportModal({
     <>
       <ImportModalShell
         opened={opened}
-        onClose={handleClose}
+        onClose={registrationAccepted && registrationCommitted ? continueInBackground : handleClose}
         closeDisabled={effectiveRegistrationUi.closeLocked}
         title="Import cells"
         step={3}

@@ -5318,7 +5318,7 @@ def _create_imported_cells_impl_raw(
             submission.error = None
     db.commit()
     if job_id is not None:
-        background_jobs.update_job(job_id, registration_committed=True)
+        background_jobs.update_job(job_id, registration_committed=True, created_cell_ids=created_cell_ids)
     if job_id is not None:
         for draft_index in range(len(req.cells)):
             background_jobs.record_result(

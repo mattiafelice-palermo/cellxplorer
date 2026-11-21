@@ -1,5 +1,6 @@
 import { CellMassInput } from "../components/CellMassInput";
 import cellTableClasses from "./LibraryPage.module.css";
+import { useImportedCellHighlight } from "./useImportedCellHighlight";
 import { StickyTableScrollArea } from "../components/StickyTableScrollArea";
 import { ColumnResizeHandle, useColumnWidths } from "../components/ColumnResizeHandle";
 import {
@@ -1215,6 +1216,7 @@ export function LibraryPage() {
   );
   const cellPageCount = Math.max(1, Math.ceil(filteredSortedRows.length / cellPageSize));
   const safeCellPage = Math.min(cellPage, cellPageCount);
+  const cellTableBody = useImportedCellHighlight(filteredSortedRows, safeCellPage, cellPageSize, setCellPage);
   const pageStart = (safeCellPage - 1) * cellPageSize;
   const pageRows = filteredSortedRows.slice(pageStart, pageStart + cellPageSize);
   const pageCells = pageRows.map((row) => row.cell);
@@ -1728,7 +1730,7 @@ export function LibraryPage() {
                   <Table.Th className={cellTableClasses.actionsHeader}>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
-              <Table.Tbody>
+              <Table.Tbody ref={cellTableBody}>
                 {pageCells.length === 0 ? (
                   <Table.Tr>
                     <Table.Td colSpan={11}>
@@ -1745,6 +1747,9 @@ export function LibraryPage() {
                     key={cell.id}
                     className={cellTableClasses.row}
                     data-cell-row-id={cell.id}
+                    onAnimationEnd={(event) => {
+                      if (event.nativeEvent.pseudoElement === "::after") delete event.currentTarget.dataset.importHighlight;
+                    }}
                     tabIndex={0}
                     bg={
                       selectedCellIds.has(cell.id)

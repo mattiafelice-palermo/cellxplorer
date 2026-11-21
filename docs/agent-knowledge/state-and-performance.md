@@ -47,6 +47,11 @@ item ready and complete ready counts. Completed jobs can contain failures,
 stale results or missing sources; they are not automatically successful.
 Unknown or failed preparation retains manual return after the commit boundary.
 
+The registration job publishes `created_cell_ids` with its commit marker. The
+import dialog hands those IDs to the Cell Database when it closes. Use that
+batch identity for row feedback because a library refresh can also finish
+sorting, filtering, or updating an existing cell.
+
 ## Input events and deferred React updates
 
 Capture an input's `event.currentTarget.value` in the change handler before

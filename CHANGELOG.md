@@ -7,6 +7,10 @@ user-facing impact.
 Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
 Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
 
+## 0.29.0-alpha.11 - 2026-11-21
+
+- Newly imported cells receive a brief teal highlight when they appear in the Cell Database.
+
 ## 0.29.0-alpha.10 - 2026-11-21
 
 - Fixed an analysis page crash when switching stacked current on or off. The same fix covers related plot controls.
