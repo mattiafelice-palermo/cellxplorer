@@ -10,6 +10,13 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.21 - 2026-11-23
+
+### New features
+
+- Folder imports on network shares use concurrent inspection and report progress through discovery, verification and registration. Cancel stops pending work and interrupts long file reads.
+- Enable source monitoring and automatic updates by default for libraries without an explicit preference. The new release cards demonstrate Maccor imports, analysis controls and the import workflow.
+
 ## 0.29.0-alpha.20 - 2026-11-22
 
 ### New features

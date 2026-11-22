@@ -43,10 +43,10 @@ export const RELEASE_CARDS = [
   {
     id: "maccor",
     category: "New cycler format",
-    title: "Maccor text and native binary imports",
+    title: "Maccor channel files and record exports",
     description:
-      "Import Maccor tab-separated .txt exports and native 4608 numbered channel files (.001–.999) with signed current, voltage, capacity, and complete-cycle summaries.",
-    location: "Load cells → Maccor .txt or .001–.999",
+      "Open native 4608 channel files and Maccor text, CSV, or Excel exports. Plot recorded voltage and current, and inspect capacity and complete cycles when the file contains them.",
+    location: "Load cells → Maccor .001–.999, .txt, .csv, or .xlsx",
   },
   {
     id: "analysis",
