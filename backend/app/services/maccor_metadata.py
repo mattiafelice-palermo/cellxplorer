@@ -44,7 +44,7 @@ def _common(values: list[float | None]) -> float | None:
     return first if all(v is not None and math.isclose(v, first, rel_tol=1e-7) for v in values) else None
 
 
-def _active_mass_mg(fields: dict) -> float | None:
+def _labelled_masses_mg(fields: dict) -> list[float | None]:
     entries = list(fields.items())
     for label in ("Comment", "Description"):
         # An explicit assignment can also be entered in a startup note.
@@ -55,31 +55,40 @@ def _active_mass_mg(fields: dict) -> float | None:
     masses = []
     for key, value in entries:
         label = _MASS_KEY.fullmatch(str(key).strip())
-        if not label:
+        if not label or value is None or not str(value).strip():
             continue
         parsed = _VALUE.fullmatch(str(value).strip())
         if not parsed:
-            return None
+            return [None]
         units = {u.casefold() for u in (*label.groups(), parsed[2]) if u}
         number = _positive(parsed[1])
         if len(units) != 1 or number is None:
-            return None
+            return [None]
         mass = number * _TO_MG[units.pop()]
         masses.append(mass if math.isfinite(mass) and mass > 0 else None)
-    return _common(masses)
+    return masses
 
 
 def normalization(fields: dict) -> dict:
-    """Keep the unitless SCap independent of a labelled, unit-bearing active mass."""
+    """Prefer labelled active mass. Otherwise interpret a common, positive SCap as grams."""
     sections = fields.get("Sections")
     if not isinstance(sections, list) or not sections or not all(isinstance(s, dict) for s in sections):
         sections = [fields]
     factors = []
+    labelled = []
     for section in sections:
+        labelled.extend(_labelled_masses_mg(section))
         value = str(section.get("SCap", "")).strip()
         factors.append(_positive(value) if re.fullmatch(_NUMBER, value) else None)
-    return {"active_mass_mg": _common([_active_mass_mg(s) for s in sections]),
-            "maccor_scap": _common(factors)}
+    scap = _common(factors)
+    mass_mg = _common(labelled)
+    from_scap = False
+    if not labelled and scap is not None:
+        converted = scap * _TO_MG["g"]
+        if math.isfinite(converted):
+            mass_mg = converted
+            from_scap = True
+    return {"active_mass_mg": mass_mg, "maccor_scap": scap, "maccor_mass_from_scap": from_scap}
 
 
 def with_normalization(metadata: dict) -> dict:

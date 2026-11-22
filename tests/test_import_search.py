@@ -135,6 +135,17 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(result, {"stop.003": ("pending", "pending"), "data.xlsx": ("recognized", "pending"),
                                   "neware.xlsx": ("recognized", "ready")})
 
+    def test_upgrade_refreshes_only_previously_missing_maccor_masses(self):
+        items = [fact(r"C:\cycling\missing.060"), fact(r"C:\cycling\labelled.txt"), fact(r"C:\cycling\neware.xlsx")]
+        items[0].update(extension=".NNN", supplier="Maccor")
+        items[1].update(supplier="Maccor", metadata={"active_mass_mg": 12})
+        self.catalog.apply_batch("root", "one", items)
+        with self.catalog.connect() as db:
+            db.execute("PRAGMA user_version=6")
+        with Catalog(self.catalog.path).connect() as db:
+            states = dict(db.execute("SELECT name, metadata_state FROM entries"))
+        self.assertEqual(states, {"missing.060": "pending", "labelled.txt": "ready", "neware.xlsx": "ready"})
+
     def test_upgrade_retries_old_mpr_and_workbook_exclusions_once(self):
         items = [fact("C:\\cycling\\old-mb.mpr"), fact("C:\\cycling\\known.mpr"),
                  fact("C:\\cycling\\known.ndax"), fact("C:\\cycling\\unsupported.xlsx")]

@@ -9,6 +9,12 @@ The Alpha.18–22 entries describe the changes made at each development checkpoi
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.23 - 2026-11-23
+
+### New features
+
+- Maccor imports use SCap in grams as the default active-material mass when the source has no labelled mass. You can change the mass during import or in Cell editing, then restore the source default. Existing library records with stored SCap values gain the same default.
+
 ## 0.29.0-alpha.22 - 2026-11-23
 
 ### New features

@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 import struct
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from openpyxl import Workbook
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db import Base
 from backend.app.models import Cell, Test, TestFile
-from backend.app.routers import library
+from backend.app.routers import files, library
 from backend.app.routers.files import _ensure_import_source_admitted, _inspect_import_path
 from backend.app.services import (
     analysis_engine, cache, calc, exploratory_plotting, import_file_hints, import_inspection, import_search_worker,
@@ -69,16 +70,29 @@ class MaccorRecordFormatTests(unittest.TestCase):
             ({"Description": "Active material mass = 750 µg"}, .75),
             ({"Description": "Active mass: 12 mg/cm2"}, None),
             ({"Comment": "Previous active mass: 12 mg"}, None),
-            ({"Electrode weight": "12 mg", "C Rate": 12, "SCap": ".012"}, None),
+            ({"Electrode weight": "9 mg", "C Rate": 3, "SCap": ".012"}, 12),
+            ({"SCap": "0,0149768", "Active mass [mg]": ""}, 14.9768),
+            ({"SCap": "1e308"}, None),
+            ({"SCap": ".012", "Comment": "Active mass: 7 mg"}, 7),
+            ({"SCap": ".012", "Active mass": "7 mg", "Description": "Active weight: 2 mg"}, None),
+            ({"SCap": ".012", "Active mass": "7 mg/cm2"}, None),
+            ({"Sections": [{"SCap": ".012"}, {"SCap": ".012"}]}, 12),
+            ({"Sections": [{"SCap": ".012"}, {}]}, None),
+            ({"Sections": [{"Active mass": "8 mg"}, {"SCap": ".012"}]}, 8),
             ({"Active mass": "12", "Comment": "Cell mass: 12 mg"}, None),
             ({"Active mass [mg]": "12 g"}, None),
             ({"Active mass": "2 g", "Active material mass": "12 mg"}, None),
             ({"Active mass": "1e500 g"}, None),
         ):
             with self.subTest(fields=fields):
-                self.assertEqual(maccor_metadata.normalization(fields)["active_mass_mg"], expected)
+                mass = maccor_metadata.normalization(fields)["active_mass_mg"]
+                if expected is None:
+                    self.assertIsNone(mass)
+                else:
+                    self.assertAlmostEqual(mass, expected)
         for invalid in (0, -1, float("nan"), "1e501", "12 mAh/g", None):
-            self.assertIsNone(maccor_metadata.normalization({"SCap": invalid})["maccor_scap"])
+            self.assertEqual(maccor_metadata.normalization({"SCap": invalid}),
+                             {"maccor_scap": None, "active_mass_mg": None, "maccor_mass_from_scap": False})
 
     def test_mass_flows_through_staging_existing_source_upgrade_and_cycle_normalization(self):
         engine = create_engine("sqlite://")
@@ -90,6 +104,7 @@ class MaccorRecordFormatTests(unittest.TestCase):
         with Session(engine) as db:
             preview = _inspect_import_path(p, db)
             self.assertEqual((preview["active_mass_mg"], preview["maccor_scap"]), (12.5, .014977))
+            self.assertFalse(preview["maccor_mass_from_scap"])
             source = scanner.ingest_path(db, p, parse_now=True)
             cell = Cell(name="Mass normalization")
             db.add(TestFile(test=Test(cell=cell, name="internal"), file=source, position=0))
@@ -110,14 +125,54 @@ class MaccorRecordFormatTests(unittest.TestCase):
             library.update_cell(cell.id, library.CellUpdate(active_mass_mg_override=None), db)
             self.assertEqual(analysis_engine.cell_active_mass_mg(cell), 12.5)
 
-    def test_native_startup_fields_are_distinct_and_unitless(self):
+    def test_scap_default_and_import_override_flow_into_cell_editing_and_calculations(self):
+        engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+        Base.metadata.create_all(engine)
+        with Session(engine) as db, patch.object(files, "start_import_cache_jobs", return_value={}):
+            for index, override in enumerate((None, 16.0)):
+                path = self.root / f"cell{index}.txt"
+                content = export_text().replace("Tester\t", f"SCap\t0.0125\r\nComment\tCell {index}\r\nTester\t")
+                path.write_bytes(content.encode("cp1252"))
+                preview = _inspect_import_path(path, db)
+                self.assertTrue(preview["maccor_mass_from_scap"])
+                self.assertEqual(preview["active_mass_mg"], 12.5)
+                draft = files.ImportCellDraft(cell_name=path.stem, filename=path.name, source_path=str(path),
+                                              staged_name=preview["staged_name"], inspection=preview["inspection"],
+                                              metadata=preview["metadata"], active_mass_mg_override=override)
+                result = files._create_imported_cells_impl(files.ImportCellsRequest(cells=[draft]), db=db)
+                cell = db.get(Cell, result["created"][0]["cell_id"])
+                detail = library.get_cell(cell.id, db)
+                self.assertTrue(detail["sources"][0]["maccor_mass_from_scap"])
+                self.assertEqual(detail["scientific_metadata"]["active_mass_mg"]["override_value"], override)
+                self.assertNotIn("active_material_mg", detail["metadata"])
+                self.assertEqual(analysis_engine.cell_active_mass_mg(cell), override or 12.5)
+                cycles = calc.per_cycle(parsing.parse_timeseries(path))
+                for edit, effective in ((10, 10), (None, 12.5)):
+                    library.update_cell(cell.id, library.CellUpdate(active_mass_mg_override=edit), db)
+                    resolved_mass = analysis_engine.cell_active_mass_mg(cell)
+                    self.assertEqual(resolved_mass, effective)
+                    derived, _ = analysis_engine.add_derived_columns(cycles, {}, resolved_mass)
+                    self.assertAlmostEqual(derived.discharge_capacity_mah_g.iloc[0], 2 / (effective / 1000))
+                source = cell.tests[0].file_links[0].file
+                self.assertEqual(source.active_mass_mg, 12.5)
+                if override is not None:
+                    library.update_cell(cell.id, library.CellUpdate(active_mass_mg_override=override), db)
+                    path.write_bytes(content.replace("SCap\t0.0125", "SCap\t0.0145").encode("cp1252"))
+                    scanner.update_source_from_path(db, source)
+                    self.assertEqual(analysis_engine.cell_active_mass_mg(cell), override)
+                    library.update_cell(cell.id, library.CellUpdate(active_mass_mg_override=None), db)
+                    self.assertEqual(analysis_engine.cell_active_mass_mg(cell), 14.5)
+
+    def test_native_startup_scap_defaults_to_grams_independently_of_c_rate(self):
         p = self.root / "cell.003"
         data = bytearray(channel_file())
         struct.pack_into("<ff", data, 50, .0149768, 14.9768)
         p.write_bytes(data)
         meta = parsing.read_header_metadata(p)
         self.assertAlmostEqual(meta["maccor_scap"], .0149768)
-        self.assertIsNone(meta["active_mass_mg"])
+        self.assertTrue(meta["maccor_mass_from_scap"])
+        self.assertAlmostEqual(meta["active_mass_mg"], 14.9768, places=5)
         self.assertAlmostEqual(meta["raw"]["Maccor"]["C Rate"], 14.9768, places=5)
 
     def test_dot_channel_and_numbered_text_use_their_own_reader_identities(self):
@@ -243,6 +298,7 @@ class MaccorRecordFormatTests(unittest.TestCase):
         p.write_bytes(data)
         meta = parsing.read_header_metadata(p)
         self.assertIsNone(meta["maccor_scap"])
+        self.assertIsNone(meta["active_mass_mg"])
         np.testing.assert_allclose([s["SCap"] for s in meta["raw"]["Maccor"]["Sections"]], [.012, .017])
         raw = parsing.parse_timeseries(p)
         self.assertEqual(raw.record_index.tolist(), [1, 2, 4, 5])

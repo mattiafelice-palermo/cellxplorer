@@ -10,6 +10,7 @@ from .versions import (
     v0004_cell_folder_watch,
     v0005_folder_watch_multi_format,
     v0006_cell_data_update,
+    v0007_maccor_scap_mass,
 )
 
 
@@ -47,6 +48,11 @@ REVISIONS = (
         module=v0005_folder_watch_multi_format,
     ),
     MigrationRevision(revision=v0006_cell_data_update.revision, down_revision=v0006_cell_data_update.down_revision, module=v0006_cell_data_update),
+    MigrationRevision(
+        revision=v0007_maccor_scap_mass.revision,
+        down_revision=v0007_maccor_scap_mass.down_revision,
+        module=v0007_maccor_scap_mass,
+    ),
 )
 
 CURRENT_SCHEMA_REVISION = REVISIONS[-1].revision

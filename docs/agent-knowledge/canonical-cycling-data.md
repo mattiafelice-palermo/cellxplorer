@@ -812,12 +812,20 @@ can disagree, even within the same recording.
 
 `maccor_metadata.py` accepts an explicitly labelled active mass with a
 positive finite value and mass unit in the label or value. Import uses mg
-for the source default. An unlabelled SCap is unitless in these formats.
-Show a common positive SCap in import review and Cell editing so the user can
-select its meaning and unit. That choice uses the existing Cell mass override.
-Keep zero values, conflicting section values, C Rate and masses embedded in
-filenames out of automatic normalization. Older registered Maccor sources
-refresh their startup metadata during scientific cache preparation.
+for the source default. When no active mass is labelled, CellXplorer treats a
+common positive `SCap` as grams and converts it to mg. The header retains the
+recorded value and the normalization metadata identifies the origin of the
+default. A conflicting or invalid labelled mass blocks the fallback. Missing
+or inconsistent `SCap` values across linked sections cannot supply a mass.
+The import and Cell-edit controls can override the default or restore it.
+An inferred SCap mass belongs on `SourceFile`. Copying it into the legacy
+Cell mass would mask a later header change after the override is cleared.
+`C Rate` and values embedded in filenames are independent of this calculation.
+
+Revision 0007 fills missing source masses from existing library headers, even
+when the original file is offline. It preserves Cell overrides. Older sources
+with incomplete startup metadata still refresh their headers during scientific
+cache preparation. The per-source raw and cycle caches contain absolute units.
 
 ## BioLogic mass selection
 

@@ -14,7 +14,7 @@ from ..config import APP_DATA_DIR
 from .source_extensions import MACCOR_CHANNEL_FORMAT
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 METADATA_VERSION = 2
 
 FORMATS = (".ndax", ".mpr", ".xlsx", ".txt", ".csv", MACCOR_CHANNEL_FORMAT)
@@ -156,6 +156,10 @@ class Catalog:
                 db.execute("""UPDATE entries SET metadata_state='pending', metadata_version=0
                               WHERE supplier='Maccor' AND extension IN ('.txt', '.csv', '.xlsx')
                               AND recognition='recognized' AND metadata_state='ready'""")
+            if version < 7:
+                db.execute("""UPDATE entries SET metadata_state='pending', metadata_version=0
+                              WHERE supplier='Maccor' AND recognition='recognized' AND metadata_state='ready'
+                              AND json_extract(metadata_json, '$.active_mass_mg') IS NULL""")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

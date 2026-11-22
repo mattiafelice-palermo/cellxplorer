@@ -11,9 +11,10 @@ verified 5 A and 50 A profiles, flat loops, recorded cycle advances, and linked
 subroutines and restarts. Time-series exports with only voltage, current and
 elapsed time supply measured curves. Complete-cycle summaries require recorded
 charge and discharge intervals with usable capacity data.
-Maccor imports read labelled active-material masses automatically. If a file
-supplies a unitless `SCap`, its mass menu lets you use the value in grams or
-milligrams for that Cell.
+Maccor imports use an explicitly labelled active-material mass first. When the
+file has no labelled mass, CellXplorer treats a positive `SCap` as grams and
+converts it to mg. You can override the mass during import or in Cell editing.
+Clearing the override restores the source default.
 Verified GCPL runs provide cycling data; CP and OCV provide voltage curves.
 Supported MB layouts provide voltage/time and voltage/capacity with EIS operations
 excluded and visible gaps across omissions. MB capacity omits boundary intervals

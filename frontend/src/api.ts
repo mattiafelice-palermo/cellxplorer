@@ -671,6 +671,7 @@ export type CellSource = Omit<SourceFile, "test_id" | "test_name"> & {
   tracked_tail: boolean;
   recorded_masses?: RecordedMass[];
   maccor_scap?: number | null;
+  maccor_mass_from_scap?: boolean;
 };
 
 export interface CellDetail extends CellSummary {
@@ -2199,6 +2200,7 @@ export interface Meta {
 export interface ImportPreview extends MprReadPresentation {
   recorded_masses?: RecordedMass[];
   maccor_scap?: number | null;
+  maccor_mass_from_scap?: boolean;
   first_measurement?: string | null;
   last_measurement?: string | null;
   instrument_serial?: string | null;

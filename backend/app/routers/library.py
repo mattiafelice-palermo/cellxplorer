@@ -1420,7 +1420,9 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
         if link.file.ext == "mpr":
             source["recorded_masses"] = parsing.recorded_biologic_masses(link.file.header_meta)
         elif (fields := maccor_metadata.stored_fields(link.file)) is not None:
-            source["maccor_scap"] = maccor_metadata.normalization(fields)["maccor_scap"]
+            values = maccor_metadata.normalization(fields)
+            source["maccor_scap"] = values["maccor_scap"]
+            source["maccor_mass_from_scap"] = values["maccor_mass_from_scap"]
         source["position"] = position
         source["tracked_tail"] = position == len(links)
         d["sources"].append(source)

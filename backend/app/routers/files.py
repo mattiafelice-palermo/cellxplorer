@@ -231,7 +231,7 @@ def _inspect_import_path(
             "channel": _bounded_staged_text_or_none(meta.get("channel")),
             "start_time": _bounded_staged_text_or_none(meta.get("start_time")),
             **mpr_facts,
-            **({"maccor_scap": meta["maccor_scap"]} if meta.get("maccor_scap") is not None else {}),
+            **{key: meta[key] for key in ("maccor_scap", "maccor_mass_from_scap") if meta.get(key) is not None},
             "active_mass_mg": meta.get("active_mass_mg"),
             "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
             "nda_version": _bounded_staged_text_or_none(meta.get("nda_version")),
@@ -572,6 +572,10 @@ def cell_metadata_from_header(meta: dict, draft_metadata: dict[str, str] | None 
         v = str(value).strip()
         if k and v:
             metadata[k] = v
+    # The import form echoes the preview. Keep an inferred SCap mass on the
+    # source so a later change to its header also changes the Cell default.
+    if meta.get("maccor_mass_from_scap") and metadata.get("active_material_mg") == str(meta["active_mass_mg"]):
+        del metadata["active_material_mg"]
     return metadata
 
 

@@ -7,6 +7,7 @@ type MassSource = {
   active_mass_mg?: number | null;
   recorded_masses?: RecordedMass[];
   maccor_scap?: number | null;
+  maccor_mass_from_scap?: boolean;
 };
 
 export function CellMassInput({ sources, ...input }: NumberInputProps & { sources: MassSource[] }) {
@@ -15,8 +16,8 @@ export function CellMassInput({ sources, ...input }: NumberInputProps & { source
     return <NumberInput {...input} />;
   }
   const source = sources.length === 1 ? sources[0] : undefined;
-  const description = source?.maccor_scap != null && source.active_mass_mg == null
-    ? "Recorded SCap " + Number(source.maccor_scap.toPrecision(7)) + " (unit unspecified)"
+  const description = source?.maccor_mass_from_scap && source.maccor_scap != null && source.active_mass_mg != null
+    ? `Source default ${Number(source.active_mass_mg.toPrecision(7))} mg from SCap (${Number(source.maccor_scap.toPrecision(7))} g)`
     : input.description;
   return (
     <Stack gap={4}>
@@ -43,7 +44,9 @@ export function CellMassInput({ sources, ...input }: NumberInputProps & { source
                 );
               })}
               {source.maccor_scap != null && <>
-                <Menu.Label>SCap · {Number(source.maccor_scap.toPrecision(7))} (unit unspecified)</Menu.Label>
+                <Menu.Label>
+                  Recorded SCap · {Number(source.maccor_scap.toPrecision(7))}{source.maccor_mass_from_scap ? " g (source default)" : ""}
+                </Menu.Label>
                 {(["g", "mg"] as const).map((unit) => {
                   const massMg = source.maccor_scap! * (unit === "g" ? 1000 : 1);
                   return Number.isFinite(massMg) && (

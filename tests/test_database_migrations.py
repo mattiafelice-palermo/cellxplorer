@@ -9,6 +9,7 @@ from contextlib import closing
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
@@ -211,6 +212,47 @@ class DatabaseMigrationTests(unittest.TestCase):
             extensions, source_formats = rows[0]
             self.assertEqual(json.loads(extensions), ["mpr"])
             self.assertEqual(json.loads(source_formats), ["biologic_mpr"])
+
+    def test_0007_resolves_offline_maccor_masses_and_preserves_cell_overrides(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, engine = self.make_database(root)
+            Base.metadata.create_all(engine)
+            fields = {"SCap": .0125, "C Rate": .003}
+            header = {"Maccor": fields, "maccor_normalization": {"active_mass_mg": None, "maccor_scap": .0125}}
+            cases = [
+                ("offline.060", header, None, 12.5),
+                ("labelled.txt", {"Maccor": {**fields, "Active mass [mg]": 6}}, 6, 6),
+                ("conflict.061", {"Maccor": {"Sections": [fields, {"SCap": 1}]}}, None, None),
+                ("earlier.txt", {"Maccor": fields}, None, 12.5),
+                ("unrelated.ndax", {"SCap": .004}, None, None),
+            ]
+            with Session(engine) as db:
+                cell = models.Cell(name="Offline cell")
+                cell.metadata_entries.append(models.CellMetadata(key="override.active_mass_mg", value="8.5"))
+                for i, (name, raw, previous, _) in enumerate(cases):
+                    sf = models.SourceFile(hash=f"{i:064x}", path=str(root / name), filename=name, size=256,
+                                           ext=name.split(".")[-1], header_meta=raw, active_mass_mg=previous,
+                                           location_status="offline", parse_status="parsed")
+                    db.add(sf)
+                    if i == 0:
+                        db.add(models.TestFile(test=models.Test(cell=cell, name="internal"), file=sf, position=0))
+                db.commit()
+            with engine.begin() as connection:
+                connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY NOT NULL)")
+                connection.exec_driver_sql("INSERT INTO alembic_version VALUES ('0006')")
+            status = migrate_database(engine, path, backup_dir=root / "backups")
+            self.assertTrue(status.compatible, status)
+            with Session(engine) as db:
+                sources = db.query(models.SourceFile).order_by(models.SourceFile.id).all()
+                self.assertEqual([s.active_mass_mg for s in sources], [row[3] for row in cases])
+                self.assertEqual(sources[0].header_meta["Maccor"], fields)
+                self.assertTrue(sources[0].header_meta["maccor_normalization"]["maccor_mass_from_scap"])
+                self.assertEqual(sources[3].header_meta, {"Maccor": fields})
+                self.assertEqual(db.query(models.CellMetadata).one().value, "8.5")
+                self.assertEqual(sources[0].test_link.test.cell.name, "Offline cell")
+                self.assertTrue(all(s.location_status == "offline" and s.parse_status == "parsed" for s in sources))
+            engine.dispose()
 
     def test_unversioned_cellxplorer_database_is_backed_up_and_stamped(self):
         with TemporaryDirectory() as directory:
