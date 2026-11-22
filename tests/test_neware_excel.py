@@ -1936,7 +1936,7 @@ class NewareExcelParserTests(unittest.TestCase):
         excel_read.assert_called_once()
         self.assertEqual(result.loc[0, "cycle"], 1)
         with self.assertRaises(parsing.UnsupportedSourceFormatError):
-            parsing.parse_timeseries("source.csv")
+            parsing.parse_timeseries("source.unknown")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
         self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 8)

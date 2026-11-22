@@ -1293,7 +1293,7 @@ def _downsample_indices(
 def time_capacity_boundary_sample_rows(raw: pd.DataFrame, source_boundaries: np.ndarray) -> np.ndarray:
     """Retain both sides of explicit boundaries before display decimation."""
     boundaries = np.asarray(source_boundaries, dtype="int64")
-    if "mpr_acquisition_segment" in raw.columns:
+    if ("mpr_acquisition_segment" in raw or "acquisition_segment" in raw):
         from . import exploratory_plotting
         boundaries = np.union1d(boundaries, exploratory_plotting.break_before(raw))
     boundaries = boundaries[(boundaries > 0) & (boundaries < len(raw))]
@@ -1317,7 +1317,7 @@ def time_capacity_sampling_metadata(
     if row_indices is not None and window_break_rows is not None:
         positions = np.searchsorted(row_indices, window_break_rows)
         breaks = np.unique(positions[(positions > 0) & (positions < len(row_indices))]).tolist()
-    if raw is not None and "mpr_acquisition_segment" in raw.columns:
+    if raw is not None and ("mpr_acquisition_segment" in raw or "acquisition_segment" in raw):
         from . import exploratory_plotting
         breaks = sorted(set(breaks).union(exploratory_plotting.break_before(raw)))
     return {
@@ -2210,7 +2210,7 @@ def _derivative_curve(
                 | (segments[1:] != segments[:-1])
                 | (phase_arr[1:] != phase_arr[:-1])
             )
-            if "mpr_acquisition_segment" in frame.columns:
+            if ("mpr_acquisition_segment" in frame or "acquisition_segment" in frame):
                 from . import exploratory_plotting
                 breaks = exploratory_plotting.break_before(frame)
                 changed[np.asarray(breaks, dtype=int) - 1] = True

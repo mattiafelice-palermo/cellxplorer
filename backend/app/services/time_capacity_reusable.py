@@ -63,7 +63,7 @@ def artifact_key(job, request) -> str | None:
     index = source.index
     # This compact representation has no acquisition-break array. Keep MB
     # and exploratory recordings on the indexed path that preserves gaps.
-    if "mpr_acquisition_segment" in index.get("raw_column_names", ()):
+    if {"mpr_acquisition_segment", "acquisition_segment"}.intersection(index.get("raw_column_names", ())):
         return None
     # The reusable artifact predates display-only curve rows. Keep those sources
     # on the indexed reader, which preserves their uncounted row markers.

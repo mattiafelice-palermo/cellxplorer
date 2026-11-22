@@ -422,6 +422,7 @@ export function ImportFilesystemPickerModal({
     if (
       entry.kind !== "file"
       || !/\.xlsx$/i.test(entry.path)
+      || headerHints.get(entry.path)?.source_format === "Maccor Excel"
       || headerHints.get(entry.path)?.compatible === false
       || selectedPreviewPath === entry.path
       || previewCollapsed
@@ -467,11 +468,11 @@ export function ImportFilesystemPickerModal({
     },
     enabled: opened && mode === "files" && !previewCollapsed && selectedPreviewEntry?.kind === "file"
       && !selectedPreviewHeaderError && !selectedSourceRejection
-      && (!/\.(ndax|xlsx)$/i.test(selectedPreviewEntry.path) || quickPreviewGateReleased)
+      && (selectedHeaderHint?.source_format === "Maccor Excel" || !/\.(ndax|xlsx)$/i.test(selectedPreviewEntry.path) || quickPreviewGateReleased)
       // Excel's quick preview is display-only; defer the full inspection until
       // the user includes the file. An explicitly previewed workbook whose
       // quick plot failed also gets a full check, rather than spinning forever.
-      && (!/\.xlsx$/i.test(selectedPreviewEntry.path)
+      && (selectedHeaderHint?.source_format === "Maccor Excel" || !/\.xlsx$/i.test(selectedPreviewEntry.path)
         || selected.has(selectedPreviewEntry.path)
         || quickPreviewFallbackKey === selectedPreviewFallbackKey),
     staleTime: Infinity,
@@ -1333,7 +1334,7 @@ export function ImportFilesystemPickerModal({
       step={mode === "files" ? 1 : undefined}
       titleInfo={mode === "folder"
         ? folderPurpose === "search" ? "Index this folder and its subfolders for fast file search. This does not import any files." : "Choose the folder to monitor. The watcher checks source files directly in this folder."
-        : "Select Neware (.nda, .ndax, structured .xlsx), BioLogic GCPL, CP, OCV or MB (.mpr), or Maccor text (.txt) and binary channel files (.001–.999). Click a folder row to open it or use its checkbox to select the folder."}
+        : "Select Neware (.nda, .ndax, structured .xlsx), BioLogic GCPL, CP, OCV or MB (.mpr), or Maccor record exports (.txt, .csv, structured .xlsx) and binary channel files (.001–.999). Click a folder row to open it or use its checkbox to select the folder."}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       fill={mode === "files"}
       actions={
@@ -1763,6 +1764,7 @@ export function ImportFilesystemPickerModal({
                             key={`${selectedPreviewEntry.path}\u0000${readabilityRefreshEpoch}\u0000${selectedReadMode}`}
                             source={previewMatchesSelection ? selectedPreviewQuery.data! : null}
                             quickSourcePath={selectedPreviewEntry.path}
+                            sourceFormatHint={selectedHeaderHint?.source_format}
                             quickSourceVersion={selectedPreviewVersion}
                             onQuickPreviewSettled={markQuickPreviewSettled}
                             onSourceRejected={rejectSource}

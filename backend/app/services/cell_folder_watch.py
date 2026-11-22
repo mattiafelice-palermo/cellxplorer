@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..models import CellFolderWatch, CellFolderWatchCandidate, SourceFile, Test, TestFile
 from . import import_inspection, parsing
-from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
+from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 
 DEFAULT_PATTERN = "*"
 DEFAULT_ORDERING = "timestamp_filename_hash"
@@ -81,7 +81,7 @@ def normalize_extensions(value: object) -> list[str]:
 
 
 def _matches_extension(path: Path, extensions: list[str]) -> bool:
-    suffix = path.suffix.lower()
+    suffix = source_suffix(path)
     return suffix.lstrip(".") in extensions or extension_key(suffix).lstrip(".") in extensions
 
 

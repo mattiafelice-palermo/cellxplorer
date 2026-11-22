@@ -4,7 +4,7 @@
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
 inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data,
-plus Maccor tab-separated `.txt` exports, verified Maccor 4608 numbered channel files,
+plus Maccor record exports in text, CSV and structured Excel, verified Maccor 4608 numbered channel files,
 and BioLogic GCPL-family `.mpr` sources. Verified BioLogic CP and OCV variants provide voltage
 curves; CP may infer complete cycles from charge/discharge polarity pairs, while OCV contributes no
 cycle summary. GCPL raw curves remain available when a source has only one active direction; cycle
@@ -172,6 +172,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/biologic_cp_ocv.py`: CP/OCV voltage-curve adapter with current-polarity cycle inference
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/maccor_text.py` and `maccor_binary.py`: bounded Maccor text and native 4608 readers
+- `backend/app/services/maccor_records.py`: Maccor Rec#/Cyc# text, CSV and Data worksheet reader
 - `backend/app/services/maccor_cycling.py`: shared Maccor direction, counters and cycle completeness
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/time_capacity_derived.py`: shared exact phase/capacity transforms and prepared-row contract (Spec 050.6)
@@ -228,7 +229,8 @@ Cellxplorer/
 │           ├── exploratory_plotting.py Native exploratory clocks and acquisition discontinuities
 │           ├── biologic_cp_ocv.py BioLogic CP/OCV voltage curves and polarity cycle inference
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
-│           ├── maccor_text.py      Maccor tab-separated record export reader
+│           ├── maccor_text.py      Maccor tab-separated record and reduced time-curve reader
+│           ├── maccor_records.py   Maccor Rec#/Cyc# record and workbook reader
 │           ├── maccor_binary.py    Maccor 4608 channel header and 264-byte record decoder
 │           ├── maccor_cycling.py   Shared Maccor canonical record mapping
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)

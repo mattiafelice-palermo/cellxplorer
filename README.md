@@ -5,12 +5,12 @@ revisiting battery-cycling data. Built per [SPEC.md](spec.md) around the
 open-source **NewareNDA** parser for Neware sources and an independently
 authored BioLogic `.mpr` reader. The same Cell/source workflow imports Neware
 `.nda`, `.ndax`, structured Neware Excel `.xlsx`, BioLogic GCPL, CP, OCV and MB
-`.mpr`, Maccor tab-separated `.txt` exports, and native Maccor 4608 numbered
-channel files such as `.060`. The binary reader supports the verified 264-byte
-record layout and charge-first cycling loops. It reads the native file directly.
-The supported Maccor text layout uses `Cycle C`, `Md`, `ES`, Ah, Wh, A, V and
-day-first `DPT Time` timestamps. The reader checks the numeric time units against
-the timestamps. Partial cycles remain available in voltage and current plots.
+`.mpr`, Maccor cycling exports (`.txt`, `.csv`, structured `.xlsx`), and native
+Maccor 4608 numbered channel files such as `.060`. The native reader supports
+verified 5 A and 50 A profiles, flat loops, recorded cycle advances, and linked
+subroutines and restarts. Time-series exports with only voltage, current and
+elapsed time supply measured curves. Complete-cycle summaries require recorded
+charge and discharge intervals with usable capacity data.
 Verified GCPL runs provide cycling data; CP and OCV provide voltage curves.
 Supported MB layouts provide voltage/time and voltage/capacity with EIS operations
 excluded and visible gaps across omissions. MB capacity omits boundary intervals

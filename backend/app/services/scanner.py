@@ -1236,10 +1236,11 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing:
         parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
-        target_ext = path.suffix.casefold().lstrip(".")
-        target_family = parsing.source_parser_family(path)
-        registered_family = parsing.source_parser_family(existing.path or existing.ext or "")
-        persisted_family = parsing.source_parser_family(existing.ext or existing.path or "")
+        target_ext = parsing.source_suffix(path).lstrip(".")
+        header = existing.header_meta
+        target_family = parsing.source_parser_family(path, header_meta=header)
+        registered_family = parsing.source_parser_family(existing.path or existing.ext or "", header_meta=header)
+        persisted_family = parsing.source_parser_family(existing.ext or existing.path or "", header_meta=header)
         if (
             target_family is None
             or registered_family is None
@@ -1309,7 +1310,7 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
         path=str(path),
         filename=path.name,
         size=fingerprint.size,
-        ext=path.suffix.lower().lstrip("."),
+        ext=parsing.source_suffix(path).lstrip("."),
         observed_size=fingerprint.size,
         observed_mtime_ns=fingerprint.mtime_ns,
         last_source_check_at=datetime.now(timezone.utc),
@@ -1324,7 +1325,7 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
         header_meta=meta.get("raw") or None,
         location_status="online",
         parser_version=(
-            parsing.current_parser_identity_for_extension(path.suffix)
+            parsing.current_parser_identity_for_extension(parsing.source_suffix(path), header_meta=meta)
             if metadata_only
             else None
         ),
@@ -1460,7 +1461,7 @@ def update_source_from_path(db: Session, sf: SourceFile, *, update_batch_key: st
     sf.observed_mtime_ns = fingerprint.mtime_ns
     sf.observed_size = fingerprint.size
     sf.last_source_check_at = datetime.now(timezone.utc)
-    sf.ext = p.suffix.lower().lstrip(".")
+    sf.ext = parsing.source_suffix(p).lstrip(".")
     sf.nda_version = meta.get("nda_version")
     sf.device_info = meta.get("device_info")
     sf.channel = meta.get("channel")
@@ -1564,7 +1565,7 @@ def update_source_from_path_if_stable(
     sf.hash = new_hash
     sf.filename = p.name
     sf.size = expected_size
-    sf.ext = p.suffix.lower().lstrip(".")
+    sf.ext = parsing.source_suffix(p).lstrip(".")
     sf.observed_size = expected_size
     sf.observed_mtime_ns = expected_mtime_ns
     sf.last_source_check_at = datetime.now(timezone.utc)

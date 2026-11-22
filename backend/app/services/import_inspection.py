@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..models import Cell, SourceFile, Test, TestFile
 from .lazy_module import LazyModule
 from .process_priority import process_pool_executor
+from .source_extensions import source_suffix
 
 
 def _load_parsing():
@@ -317,7 +318,7 @@ def inspect_file(
         filename=filename,
         size=fingerprint.size,
         mtime_ns=fingerprint.mtime_ns,
-        ext=path.suffix.lower().lstrip("."),
+        ext=source_suffix(path).lstrip("."),
         hash=fingerprint.hash,
         metadata=metadata,
     )

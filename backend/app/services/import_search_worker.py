@@ -10,18 +10,18 @@ from pathlib import Path
 import stat as stat_module
 import time
 
-from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
+from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 from .import_search_transport import BatchSpool
 from .import_search_diagnostics import trace
 from .import_search_catalog import METADATA_FIELDS, METADATA_VERSION, path_key
 
 
 def _initial_recognition(extension: str) -> str:
-    return "pending" if extension in {".xlsx", ".txt", MACCOR_CHANNEL_FORMAT} else "recognized"
+    return "pending" if extension in {".xlsx", ".txt", ".csv", MACCOR_CHANNEL_FORMAT} else "recognized"
 
 
 def _supplier(extension: str) -> str:
-    return {".mpr": "BioLogic", ".txt": "Maccor", MACCOR_CHANNEL_FORMAT: "Maccor"}.get(extension, "Neware")
+    return {".mpr": "BioLogic", ".txt": "Maccor", ".csv": "Maccor", MACCOR_CHANNEL_FORMAT: "Maccor"}.get(extension, "Neware")
 
 
 def file_created_at(value):
@@ -52,7 +52,7 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
     fact["metadata_version"] = 0
     try:
         header = None
-        if fact["extension"] in {".txt", MACCOR_CHANNEL_FORMAT}:
+        if fact["extension"] in {".txt", ".csv", MACCOR_CHANNEL_FORMAT}:
             header = parsing.read_header_metadata(fact["path"])
             if header.get("error_kind") in {"invalid", "unsupported"}:
                 fact.update(recognition="unsupported", metadata_state="unavailable")
@@ -60,7 +60,8 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
                 raise OSError(header["error"])
         elif fact["extension"] == ".xlsx":
             try:
-                neware_excel.validate_supported_workbook(fact["path"])
+                if parsing.workbook_format(fact["path"]) == parsing.FORMAT_MACCOR_EXCEL:
+                    fact["supplier"] = "Maccor"
             except neware_excel.UnsupportedNewareExcelError:
                 fact.update(recognition="unsupported", metadata_state="unavailable")
         if fact["recognition"] != "unsupported":
@@ -153,7 +154,7 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
                             if entry.is_dir(follow_symlinks=False):
                                 stack.append(entry.path)
                                 continue
-                            extension = extension_key(Path(entry.name).suffix)
+                            extension = extension_key(source_suffix(entry.name))
                             if extension not in config["formats"] or not entry.is_file(follow_symlinks=False):
                                 continue
                             relative = os.path.relpath(entry.path, root["path"])
@@ -169,7 +170,7 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
                                 old["recognition"] == "unsupported" and old["metadata_version"] == METADATA_VERSION or
                                 not config["metadata_enabled"] or old["metadata_version"] == METADATA_VERSION and old["metadata_state"] == "ready"
                             ):
-                                fact.update(recognition=old["recognition"], metadata_state=old["metadata_state"],
+                                fact.update(recognition=old["recognition"], metadata_state=old["metadata_state"], supplier=old["supplier"],
                                             metadata=json.loads(old["metadata_json"]), metadata_version=old["metadata_version"])
                             batch.append(fact)
                             discovered += 1
@@ -253,7 +254,7 @@ def scan_changes(root: dict, config: dict, catalog_path: str, spool_path: str) -
         return True
 
     def stable_fact(path, value, observed=None):
-        extension = extension_key(Path(path).suffix)
+        extension = extension_key(source_suffix(path))
         if extension not in config["formats"]:
             return None
         # Wait for two equal size/mtime samples; recheck after header extraction too.
@@ -368,7 +369,7 @@ def scan_changes(root: dict, config: dict, catalog_path: str, spool_path: str) -
                             continue
                         if entry.is_dir(follow_symlinks=False):
                             stack.append(entry.path)
-                        elif entry.is_file(follow_symlinks=False) and extension_key(Path(entry.name).suffix) in config["formats"]:
+                        elif entry.is_file(follow_symlinks=False) and extension_key(source_suffix(entry.name)) in config["formats"]:
                             pending_files.append((entry.path, value, time.monotonic()))
                             if len(pending_files) >= 128:
                                 flush_files()

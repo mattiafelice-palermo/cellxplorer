@@ -95,12 +95,12 @@ class IdentityGrammarTests(unittest.TestCase):
         )
 
     def test_unrecognized_extension_returns_none_cheaply(self):
-        self.assertIsNone(parsing.current_parser_identity_for_extension(".csv"))
+        self.assertIsNone(parsing.current_parser_identity_for_extension(".unknown"))
         self.assertIsNone(parsing.current_parser_identity_for_extension(None))
 
     def test_unrecognized_extension_raises_on_content_aware_path(self):
         with self.assertRaises(parsing.UnsupportedSourceFormatError):
-            parsing.parser_identity("a.csv")
+            parsing.parser_identity("a.unknown")
 
 
 def _minimal_frame():

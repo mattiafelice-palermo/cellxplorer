@@ -104,7 +104,7 @@ class ParsingReExportTests(unittest.TestCase):
 
     def test_parsing_raised_instance_is_a_source_format_error(self):
         with self.assertRaises(SourceFormatError):
-            parsing.parse_timeseries("source.csv")
+            parsing.parse_timeseries("source.unknown")
 
 
 class NewareExcelRebaseTests(unittest.TestCase):

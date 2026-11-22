@@ -18,7 +18,7 @@ from typing import Callable, Literal
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 from ..services import import_inspection
 from ..services import import_file_hints
-from ..services.source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
+from ..services.source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -2233,7 +2233,7 @@ def _create_import_scan_job(file_paths: list[str], folder_paths: list[str], toke
 
 def _classify_screened_hint(item: dict, hint: dict[str, object]) -> tuple[dict | None, dict | None]:
     """Classify a source header, using permissive-by-default for BioLogic."""
-    ext = extension_key(Path(str(item.get("filename") or item["path"])).suffix)
+    ext = extension_key(source_suffix(item.get("filename") or item["path"]))
     if ext == ".mpr":
         permissive_error = hint.get("permissive_error")
         if permissive_error:
@@ -2388,8 +2388,8 @@ def _screen_import_source_candidates(
             )
             continue
 
-        ext = extension_key(Path(filename).suffix)
-        if ext in {".xlsx", ".mpr", ".txt", MACCOR_CHANNEL_FORMAT}:
+        ext = extension_key(source_suffix(filename))
+        if ext in {".xlsx", ".mpr", ".txt", ".csv", MACCOR_CHANNEL_FORMAT}:
             to_screen.append((index, item))
             continue
 
@@ -3123,7 +3123,7 @@ def _continuation_staged_source(
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
     source["expected_parser_version"] = parsing.current_parser_identity_for_extension(
-        source_path.suffix, read_mode=draft.read_mode, header_meta=meta)
+        source_suffix(source_path), read_mode=draft.read_mode, header_meta=meta)
     source["hash"] = file_hash
     source["metadata_only"] = parsing.source_metadata_only(meta)
     source["canonical_cycling_pending"] = parsing.source_metadata_cycling_pending(meta)
@@ -4432,13 +4432,13 @@ def _build_stitched_continuation_preview(
 def _ensure_import_source_admitted(source_path: Path, filename: str) -> str:
     """Enforce the central extension policy at final registration."""
 
-    actual_suffix = source_path.suffix.casefold()
+    actual_suffix = source_suffix(source_path)
     if not parsing.source_filename_allowed(source_path.name):
         raise HTTPException(
             400,
             f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {source_path.name}",
         )
-    presented_suffix = Path(filename or source_path.name).suffix.casefold()
+    presented_suffix = source_suffix(filename or source_path.name)
     if presented_suffix != actual_suffix:
         raise HTTPException(
             409,

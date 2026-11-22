@@ -304,12 +304,12 @@ def voltage_preview_from_raw(
         rows["_execution"] = pd.to_numeric(frame[identity_column], errors="coerce")
     if "current_ma" in frame.columns:
         rows["current_ma"] = pd.to_numeric(frame["current_ma"], errors="coerce")
-    exploratory = "mpr_acquisition_segment" in frame.columns
-    if exploratory:
-        rows["mpr_acquisition_segment"] = frame["mpr_acquisition_segment"]
+    segments = [key for key in ("mpr_acquisition_segment", "acquisition_segment") if key in frame]
+    if segments:
+        rows[segments] = frame.loc[rows.index, segments]
         if "segment" in frame.columns:
             rows["segment"] = frame["segment"]
-    if x_axis != "capacity" and not exploratory:
+    if x_axis != "capacity" and not segments:
         rows = rows.sort_values("x", kind="stable")
     rows = rows.reset_index(drop=True)
     if max_points is not None and max_points > 0 and len(rows) > max_points:
@@ -327,7 +327,7 @@ def voltage_preview_from_raw(
     return {
         "x": [float(value) for value in rows["x"]],
         "y": [float(value) for value in rows["y"]],
-        **({"display_break_before": sorted(breaks)} if exploratory or "_execution" in rows.columns else {}),
+        **({"display_break_before": sorted(breaks)} if segments or "_execution" in rows.columns else {}),
         **({"current_ma": [None if pd.isna(value) else float(value) for value in rows["current_ma"]]} if "current_ma" in rows.columns else {}),
         "quantity": "voltage",
         "label": "Voltage (V)",
