@@ -319,7 +319,7 @@ export function ContinuationManagementPanel({
     try {
       let paths = filePaths;
       if (folderPaths.length) {
-        const listed = await post<ImportFolderSelectionResult>("/api/imports/list-sources", { file_paths: filePaths, folder_paths: folderPaths });
+        const listed = await post<ImportFolderSelectionResult>("/api/imports/list-sources", { file_paths: filePaths, folder_paths: folderPaths, screen_sources: true });
         paths = listed.files.map((file) => file.path).filter((path): path is string => Boolean(path));
       }
       const inspected = await inspectPathsWithReadModes(paths, readModes, (group, read_mode) => post<ImportInspectResult>("/api/imports/inspect-paths", { paths: group, read_mode }));

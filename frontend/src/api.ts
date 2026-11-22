@@ -134,7 +134,7 @@ async function requestBlob(url: string, options?: RequestInit): Promise<Blob> {
   return res.blob();
 }
 
-export const get = <T>(url: string) => request<T>(url);
+export const get = <T>(url: string, options?: Pick<RequestInit, "signal">) => request<T>(url, options);
 export const post = <T>(url: string, body?: unknown, options?: Pick<RequestInit, "signal">) =>
   request<T>(url, {
     method: "POST",
@@ -2116,7 +2116,7 @@ export interface BackgroundJob {
   transition_pending?: boolean;
   token?: string | null;
   stage?: "scan" | "inspect" | "register" | string;
-  phase?: "sampling" | "starting_workers" | "reading" | "finalizing" | "completed" | string;
+  phase?: "sampling" | "starting_workers" | "reading" | "finalizing" | "completed" | "screening" | string;
   phase_current?: number;
   phase_total?: number;
   phase_detail?: string | null;
@@ -2292,10 +2292,25 @@ export interface ImportFolderFile {
   };
 }
 
+export interface ImportSkippedFile {
+  path: string;
+  relative_path: string;
+  filename: string;
+  reason: "registered" | "unsupported";
+  detail?: string | null;
+}
+
+export interface ImportSkippedSummary {
+  registered: number;
+  unsupported: number;
+  items: ImportSkippedFile[];
+}
+
 export interface ImportFolderSelectionResult {
   root_path: string | null;
   root_name: string | null;
   files: ImportFolderFile[];
+  skipped?: ImportSkippedSummary;
 }
 
 export interface ImportBrowseEntry extends MprReadPresentation {
@@ -2320,6 +2335,12 @@ export interface ImportQuickAccessItem {
   section: "quick" | "pinned" | "recent";
   pinned: boolean;
   available: boolean;
+}
+
+export interface ImportNavigationResult {
+  items: ImportQuickAccessItem[];
+  roots: { path: string; name: string }[];
+  default_path?: string | null;
 }
 
 export interface ImportPreviewResult {

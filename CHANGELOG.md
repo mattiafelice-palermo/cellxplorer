@@ -10,6 +10,19 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.16 - 2026-11-22
+
+### New features
+
+- Show an inline notice on cycle-aligned Time / capacity plots when selected cells only have data in earlier cycles outside the current view, with a one-click action to jump to their cycle range.
+- Screen folder imports upfront across multiple CPU cores with a determinate progress bar, automatically opening readable BioLogic .mpr recordings in Permissive mode by default and summarizing skipped unsupported or already-imported files.
+
+### Bug fixes
+
+- Reduce the Windows installer size by ~37% (from ~87 MB to ~55 MB) at full scientific parity by switching NSIS packaging to solid LZMA compression, converting setup illustrations to WebP, and excluding unused Tcl/Tk, watchfiles and redundant fastexcel binaries from the packaged backend.
+- Fix an occasional race where clicking Load cells for the first time did not open the import dialog until clicked a second time.
+- Keep local drives and quick-access folders visible and navigable in the Load cells browser when a remembered network path is offline or unreachable, and speed up network-folder browsing by eliminating redundant per-file filesystem probes.
+
 ## 0.29.0-alpha.15 - 2026-11-22
 
 ### New features

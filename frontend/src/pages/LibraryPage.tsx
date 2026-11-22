@@ -91,6 +91,13 @@ import {
   sourceUpdateCellId,
 } from "../features/analyses/workspace/analysisQueryCache";
 
+import {
+  consumeLazyImportAction,
+  lazyImportLauncherInitialState,
+  triggerLazyImportAction,
+  type LazyImportLauncherAction,
+} from "../lazyImportLauncherPolicy";
+
 const CellDetailTabs = lazy(() =>
   import("../components/CellDetailTabs").then((module) => ({ default: module.CellDetailTabs })),
 );
@@ -103,6 +110,47 @@ const LazyImportCellsLauncherImpl = lazy(() =>
   import("./InboxPage").then((module) => ({ default: module.ImportCellsLauncher })),
 );
 
+function ImportCellsLauncherButton({
+  open,
+  openIndexedSearch,
+  loading,
+  pendingAction,
+  onConsumePendingAction,
+  openCellImportRef,
+  openIndexedSearchRef,
+}: {
+  open: () => void;
+  openIndexedSearch: () => void;
+  loading: boolean;
+  pendingAction: LazyImportLauncherAction | null;
+  onConsumePendingAction: () => void;
+  openCellImportRef: React.MutableRefObject<(() => void) | null>;
+  openIndexedSearchRef: React.MutableRefObject<(() => void) | null>;
+}) {
+  const openRef = useRef(open);
+  const openIndexedRef = useRef(openIndexedSearch);
+  useEffect(() => {
+    openRef.current = open;
+    openIndexedRef.current = openIndexedSearch;
+    openCellImportRef.current = () => openRef.current();
+    openIndexedSearchRef.current = () => openIndexedRef.current();
+  }, [open, openIndexedSearch, openCellImportRef, openIndexedSearchRef]);
+
+  useEffect(() => {
+    if (pendingAction === null) return;
+    onConsumePendingAction();
+    // Run after Suspense commits so speculative renders cannot lose the initial click.
+    if (pendingAction === "indexed") openIndexedRef.current();
+    else openRef.current();
+  }, [pendingAction, onConsumePendingAction]);
+
+  return (
+    <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
+      Load cells
+    </Button>
+  );
+}
+
 function LazyImportCellsLauncher({
   targetFolderId,
   onSaved,
@@ -114,19 +162,20 @@ function LazyImportCellsLauncher({
   openCellImportRef: React.MutableRefObject<(() => void) | null>;
   openIndexedSearchRef: React.MutableRefObject<(() => void) | null>;
 }) {
-  const [mounted, setMounted] = useState(false);
-  const pendingAction = useRef<"open" | "indexed" | null>(null);
-  const trigger = useCallback((action: "open" | "indexed") => {
-    pendingAction.current = action;
-    setMounted(true);
+  const [launcherState, setLauncherState] = useState(lazyImportLauncherInitialState);
+  const trigger = useCallback((action: LazyImportLauncherAction) => {
+    setLauncherState((current) => triggerLazyImportAction(current, action));
+  }, []);
+  const consumePendingAction = useCallback(() => {
+    setLauncherState(consumeLazyImportAction);
   }, []);
   useEffect(() => {
-    if (!mounted) {
+    if (!launcherState.mounted) {
       openCellImportRef.current = () => trigger("open");
       openIndexedSearchRef.current = () => trigger("indexed");
     }
-  }, [mounted, openCellImportRef, openIndexedSearchRef, trigger]);
-  if (!mounted) {
+  }, [launcherState.mounted, openCellImportRef, openIndexedSearchRef, trigger]);
+  if (!launcherState.mounted) {
     return (
       <Button size="sm" leftSection={<IconUpload size={15} />} onClick={() => trigger("open")}>
         Load cells
@@ -142,20 +191,17 @@ function LazyImportCellsLauncher({
       }
     >
       <LazyImportCellsLauncherImpl targetFolderId={targetFolderId} onSaved={onSaved}>
-        {({ open, openIndexedSearch, loading }) => {
-          openCellImportRef.current = open;
-          openIndexedSearchRef.current = openIndexedSearch;
-          const pending = pendingAction.current;
-          if (pending) {
-            pendingAction.current = null;
-            queueMicrotask(pending === "indexed" ? openIndexedSearch : open);
-          }
-          return (
-            <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
-              Load cells
-            </Button>
-          );
-        }}
+        {({ open, openIndexedSearch, loading }) => (
+          <ImportCellsLauncherButton
+            open={open}
+            openIndexedSearch={openIndexedSearch}
+            loading={loading}
+            pendingAction={launcherState.pendingAction}
+            onConsumePendingAction={consumePendingAction}
+            openCellImportRef={openCellImportRef}
+            openIndexedSearchRef={openIndexedSearchRef}
+          />
+        )}
       </LazyImportCellsLauncherImpl>
     </Suspense>
   );

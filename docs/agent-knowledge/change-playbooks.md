@@ -45,23 +45,12 @@ package. Distribution metadata and licences remain present.
 duplicates. `verify_packaged_science.py` forces IANA resource lookup, verifies the
 archive origin, and compares every zone across historical/DST dates and folds
 alongside the existing lossless scientific checks. A source-only ZIP probe is not
-frozen acceptance. Tcl has a separate timezone collection and loader; the Python
-archive does not replace it. Re-inventory fresh outputs rather than diagnosing
-current releases from an old staging tree.
-
-Tcl's separate `tzdata.tcl` container holds byte-verified, individually compressed
-scripts. `tcl_timezone_archive.py` accepts only the fingerprinted complete clock
-loader and replaces its resource call, preserving its security guard and errors.
-Aliases execute in the original loader scope; scripts are decoded in memory and
-never extracted. Tcl's messages, encoding tables and Tk resources remain loose.
-UTC is built into Tcl: use a named zone such as Paris to exercise its lazy loader.
-Newer Windows Python builders use Tcl/Tk 9 with DLL-embedded zipfs archives and no
-loose `clock.tcl`. Preserve those DLLs instead; `tcl-resources.json` records their
-verified hashes. Enumerate zones through Tcl's `glob` API, not Python filesystem
-paths: `//zipfs:/...` is not a native UNC directory. The packer requires positive
-PyInstaller zipfs detection plus exact source/bundle DLL bytes before accepting
-that layout. Main preflight installs runtime requirements only, so hook unit
-tests must stub PyInstaller/PE readers rather than require packaging tools there.
+frozen acceptance. Unused runtime bloat — Tcl/Tk (`tkinter`, `_tcl_data`, `_tk_data`),
+`watchfiles`, and `fastexcel` (redundant with `python-calamine` and `openpyxl`) — is
+explicitly excluded in `package.json` and rejected by `audit_backend_bundle.py --validate`.
+Python's `tzdata.zip` is the sole packaged timezone archive. Main preflight installs runtime
+requirements only, so hook unit tests must stub PyInstaller/PE readers rather than require
+packaging tools there.
 
 PyArrow's custom hook excludes only Flight, Substrait and upstream C++ tests.
 Filter both binary collection and data collection: Windows DLLs can enter through

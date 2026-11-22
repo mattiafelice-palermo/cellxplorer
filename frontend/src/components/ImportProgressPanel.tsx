@@ -52,7 +52,11 @@ export function ImportProgressPanel({
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text size="xs" fw={600}>{importProgressCountLabel(stage, job)}</Text>
             {stage === "scan" && job && (
-              <Text size="xs" c="dimmed">{job.discovered_files ?? 0} files found</Text>
+              <Text size="xs" c="dimmed">
+                {job.phase === "screening" && job.phase_detail
+                  ? job.phase_detail
+                  : `${job.discovered_files ?? 0} files found`}
+              </Text>
             )}
           </Group>
           {current && (

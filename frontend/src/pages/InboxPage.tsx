@@ -1,5 +1,5 @@
 import { CellMassInput } from "../components/CellMassInput";
-import { inspectPathsWithReadModes, type MprReadModes } from "../mprReadMode";
+import { inspectPathsWithReadModes, mprReadModeForPath, type MprReadModes } from "../mprReadMode";
 import {
   Alert,
   Badge,
@@ -67,6 +67,7 @@ import {
   ElectrodeAreaPresetSettings,
   ImportFolderFile,
   ImportFolderSelectionResult,
+  ImportSkippedSummary,
   ImportPreview,
   ImportInspectResult,
   ImportFolderWatchDraft,
@@ -131,6 +132,7 @@ import {
 } from "../importPreviewPolicy";
 import {
   countNewImportableInspectionFiles,
+  formatSkippedFolderSourcesSummary,
   importInspectionCandidateMatchesSearch,
   importInspectionFailurePathSet,
   importSelectableInspectionPaths,
@@ -355,6 +357,7 @@ function FolderImportSelectionModal({
   rootName,
   candidates,
   initialSelectedPaths,
+  skipped,
   failures,
   loading,
   progress,
@@ -366,6 +369,7 @@ function FolderImportSelectionModal({
   rootName: string;
   candidates: FolderImportCandidate[];
   initialSelectedPaths: string[] | null;
+  skipped?: ImportSkippedSummary | null;
   failures: ImportInspectionFailure[];
   loading: boolean;
   progress?: ReactNode;
@@ -378,6 +382,7 @@ function FolderImportSelectionModal({
   const [lastSelected, setLastSelected] = useState<string | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [rootsExpanded, setRootsExpanded] = useState(false);
+  const [skippedExpanded, setSkippedExpanded] = useState(false);
   const [treeScrollTop, setTreeScrollTop] = useState(0);
   const selectionSession = useRef<{
     opened: boolean;
@@ -439,11 +444,15 @@ function FolderImportSelectionModal({
   }, [isFailed, selected, tree]);
   const focusedCandidate =
     candidates.find((candidate) => folderCandidateKey(candidate) === focusedKey) ?? null;
+  const focusedReadMode = focusedCandidate?.path
+    ? mprReadModeForPath(focusedCandidate.path)
+    : "safe";
   const previewQuery = useQuery({
-    queryKey: ["folder-import-preview", focusedCandidate?.path],
+    queryKey: ["folder-import-preview", focusedCandidate?.path, focusedReadMode],
     queryFn: async ({ signal }) => {
       const result = await post<ImportInspectResult>("/api/imports/inspect-paths", {
         paths: [focusedCandidate?.path],
+        read_mode: focusedReadMode,
       }, { signal });
       if (result.files[0]) return result.files[0];
       throw new Error(result.failures[0]?.error ?? "This file could not be inspected for preview.");
@@ -474,6 +483,7 @@ function FolderImportSelectionModal({
     const firstPreviewable = candidates.find((candidate) => !isFailed(candidate));
     setFocusedKey(firstPreviewable ? folderCandidateKey(firstPreviewable) : null);
     setRootsExpanded(false);
+    setSkippedExpanded(false);
     setTreeScrollTop(0);
   }, [candidates, initialSelectedPaths, isFailed, opened]);
 
@@ -603,6 +613,10 @@ function FolderImportSelectionModal({
     [selectionSummary.fileCount, selectionSummary.totalBytes],
   );
   const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : [];
+  const skippedSummaryText = useMemo(
+    () => formatSkippedFolderSourcesSummary(skipped),
+    [skipped],
+  );
   return (
     <ImportModalShell
       opened={opened}
@@ -647,6 +661,66 @@ function FolderImportSelectionModal({
       }
     >
       <Stack gap="sm" style={{ height: "100%", minHeight: 0 }}>
+        {skippedSummaryText && skipped && (
+          <Paper withBorder p="xs" style={{ flex: "none" }}>
+            <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+              <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                <IconInfoCircle size={15} color="var(--mantine-color-blue-6)" style={{ flex: "none" }} />
+                <Text size="xs" fw={600} truncate>
+                  {skippedSummaryText}
+                </Text>
+              </Group>
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                style={{ flex: "none" }}
+                rightSection={skippedExpanded ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
+                onClick={() => setSkippedExpanded((current) => !current)}
+                aria-expanded={skippedExpanded}
+              >
+                {skippedExpanded ? "Hide details" : "Show details"}
+              </Button>
+            </Group>
+            <Collapse in={skippedExpanded}>
+              <Box mt="xs" style={{ maxHeight: 140, overflowY: "auto" }}>
+                <Stack gap={4}>
+                  {skipped.items.map((item) => (
+                    <Group
+                      key={`${item.reason}:${item.path}`}
+                      justify="space-between"
+                      gap="xs"
+                      wrap="nowrap"
+                      style={{ minWidth: 0 }}
+                    >
+                      <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                        <Tooltip label={item.path} withArrow>
+                          <Text size="xs" fw={500} truncate style={{ flex: "0 1 auto", maxWidth: "40%", minWidth: 0 }}>
+                            {item.relative_path || item.filename}
+                          </Text>
+                        </Tooltip>
+                        {item.detail && (
+                          <Tooltip label={item.detail} multiline w={320} withArrow>
+                            <Text size="xs" c="dimmed" truncate style={{ flex: 1, minWidth: 0 }}>
+                              {item.detail}
+                            </Text>
+                          </Tooltip>
+                        )}
+                      </Group>
+                      <Badge
+                        size="xs"
+                        variant="light"
+                        color={item.reason === "registered" ? "gray" : "orange"}
+                        style={{ flex: "none" }}
+                      >
+                        {item.reason === "registered" ? "Already imported" : "Unsupported"}
+                      </Badge>
+                    </Group>
+                  ))}
+                </Stack>
+              </Box>
+            </Collapse>
+          </Paper>
+        )}
         <Group justify="space-between">
           <TextInput
             placeholder="Search paths"
@@ -2659,6 +2733,7 @@ export function ImportCellsLauncher({
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
   const [folderSelectedPaths, setFolderSelectedPaths] = useState<string[] | null>(null);
+  const [folderSkipped, setFolderSkipped] = useState<ImportSkippedSummary | null>(null);
   const [inspectionFailures, setInspectionFailures] = useState<ImportInspectionFailure[]>([]);
   const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
@@ -2747,14 +2822,19 @@ export function ImportCellsLauncher({
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
+        screen_sources: folderPaths.length > 0,
       }).then((result) => ({ result, append, folderPaths, readModes })),
     onSuccess: ({ result, append, folderPaths, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
+        setFolderSkipped(null);
         if (folderPaths.length > 0) {
-          setNoImportableCounts({ registered: null, rejected: 0 });
+          setNoImportableCounts({
+            registered: result.skipped?.registered ?? null,
+            rejected: result.skipped?.unsupported ?? 0,
+          });
           setSourcePickerOpen(false);
         } else {
           notifications.show({ message: "No supported cycler files were found.", color: "gray" });
@@ -2780,6 +2860,7 @@ export function ImportCellsLauncher({
       setFolderRootName("Selected sources");
       setFolderCandidates(candidates);
       setFolderSelectedPaths(null);
+      setFolderSkipped(result.skipped ?? null);
       setSourcePickerOpen(false);
       setFolderModalOpen(true);
     },
@@ -2802,6 +2883,7 @@ export function ImportCellsLauncher({
   };
 
   const continueSourceSelection = ({ filePaths, folderPaths, readModes }: ImportSourceSelection) => {
+    setFolderSkipped(null);
     setSourceSelection({ filePaths, folderPaths, readModes });
     const jobToken = newImportJobToken();
     setProgressStage("scan");
@@ -2811,10 +2893,11 @@ export function ImportCellsLauncher({
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
     setFolderSelectedPaths(selected.map((candidate) => candidate.path ?? ""));
-    setSourceSelection({
+    setSourceSelection((current) => ({
       filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
       folderPaths: [],
-    });
+      readModes: current?.readModes,
+    }));
     const jobToken = newImportJobToken();
     inspectionStartedAt.current = Date.now();
     setProgressStage("inspect");
@@ -2859,6 +2942,7 @@ export function ImportCellsLauncher({
         rootName={folderRootName}
         candidates={folderCandidates}
         initialSelectedPaths={folderSelectedPaths}
+        skipped={folderSkipped}
         failures={inspectionFailures}
         loading={inspectPaths.isPending}
         progress={progressStage === "inspect" ? (
@@ -2869,17 +2953,20 @@ export function ImportCellsLauncher({
           />
         ) : undefined}
         onBack={(selected) => {
-          setSourceSelection({
+          setSourceSelection((current) => ({
             filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
             folderPaths: [],
-          });
+            readModes: current?.readModes,
+          }));
           setSourcePickerKey((current) => current + 1);
           setFolderModalOpen(false);
+          setFolderSkipped(null);
           setInspectionFailures([]);
           setSourcePickerOpen(true);
         }}
         onClose={() => {
           setFolderModalOpen(false);
+          setFolderSkipped(null);
           setInspectionFailures([]);
         }}
         onConfirm={confirmFolderSelection}
@@ -2961,6 +3048,7 @@ export function InboxPage() {
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
   const [folderSelectedPaths, setFolderSelectedPaths] = useState<string[] | null>(null);
+  const [folderSkipped, setFolderSkipped] = useState<ImportSkippedSummary | null>(null);
   const [inspectionFailures, setInspectionFailures] = useState<ImportInspectionFailure[]>([]);
   const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
@@ -3060,14 +3148,19 @@ export function InboxPage() {
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
+        screen_sources: folderPaths.length > 0,
       }).then((result) => ({ result, append, folderPaths, readModes })),
     onSuccess: ({ result, append, folderPaths, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
+        setFolderSkipped(null);
         if (folderPaths.length > 0) {
-          setNoImportableCounts({ registered: null, rejected: 0 });
+          setNoImportableCounts({
+            registered: result.skipped?.registered ?? null,
+            rejected: result.skipped?.unsupported ?? 0,
+          });
           setSourcePickerOpen(false);
         } else {
           notifications.show({ message: "No supported cycler files were found.", color: "gray" });
@@ -3092,6 +3185,7 @@ export function InboxPage() {
       setFolderRootName("Selected sources");
       setFolderCandidates(candidates);
       setFolderSelectedPaths(null);
+      setFolderSkipped(result.skipped ?? null);
       setSourcePickerOpen(false);
       setFolderModalOpen(true);
     },
@@ -3114,6 +3208,7 @@ export function InboxPage() {
   };
 
   const continueSourceSelection = ({ filePaths, folderPaths, readModes }: ImportSourceSelection) => {
+    setFolderSkipped(null);
     setSourceSelection({ filePaths, folderPaths, readModes });
     const jobToken = newImportJobToken();
     setProgressStage("scan");
@@ -3123,10 +3218,11 @@ export function InboxPage() {
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
     setFolderSelectedPaths(selected.map((candidate) => candidate.path ?? ""));
-    setSourceSelection({
+    setSourceSelection((current) => ({
       filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
       folderPaths: [],
-    });
+      readModes: current?.readModes,
+    }));
     const jobToken = newImportJobToken();
     inspectionStartedAt.current = Date.now();
     setProgressStage("inspect");
@@ -3180,6 +3276,7 @@ export function InboxPage() {
         rootName={folderRootName}
         candidates={folderCandidates}
         initialSelectedPaths={folderSelectedPaths}
+        skipped={folderSkipped}
         failures={inspectionFailures}
         loading={inspectPaths.isPending}
         progress={progressStage === "inspect" ? (
@@ -3190,17 +3287,20 @@ export function InboxPage() {
           />
         ) : undefined}
         onBack={(selected) => {
-          setSourceSelection({
+          setSourceSelection((current) => ({
             filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
             folderPaths: [],
-          });
+            readModes: current?.readModes,
+          }));
           setSourcePickerKey((current) => current + 1);
           setFolderModalOpen(false);
+          setFolderSkipped(null);
           setInspectionFailures([]);
           setSourcePickerOpen(true);
         }}
         onClose={() => {
           setFolderModalOpen(false);
+          setFolderSkipped(null);
           setInspectionFailures([]);
         }}
         onConfirm={confirmFolderSelection}

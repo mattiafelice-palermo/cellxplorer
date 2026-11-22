@@ -2,6 +2,11 @@ import { postTimeCapacity, supportsDayCoordinates } from "../../../../../api";
 import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { PLOT_TIME_UNITS, secondsPerPlotTimeUnit } from "../../../../../plotTimeUnits";
 import { NegativeTimeNotice } from "./NegativeTimeNotice";
+import { OutOfWindowCellsNotice } from "./OutOfWindowCellsNotice";
+import {
+  computeTimeCapacityOutOfWindowNotice,
+  type SelectedCellCycleSummary,
+} from "./timeCapacityOutOfWindowNoticePolicy";
 import { usePlotFamilyActivity, usePlotFamilyQuerySettled } from "../../plotting/plotFamilyActivity";
 import { referenceAxis, referenceUnits, withReferenceLines, applyReferenceLabelMoves } from "../../plotting/plotReferenceLines";
 import {
@@ -1590,6 +1595,7 @@ function TimeCapacityPlotCardView({
   updatePlotLabel = "Update",
   active: activeProp = true,
   maxAvailableCycle: programmedMaximum,
+  selectedCellCycles,
   isVirginNavigation = false,
   navigationResetKey,
 }: {
@@ -1615,6 +1621,7 @@ function TimeCapacityPlotCardView({
   /** The parent keeps this expensive card mounted after first visit. */
   active?: boolean;
   maxAvailableCycle: number | null;
+  selectedCellCycles?: readonly SelectedCellCycleSummary[];
   isVirginNavigation?: boolean;
   navigationResetKey?: string | number;
 }) {
@@ -3106,8 +3113,8 @@ function TimeCapacityPlotCardView({
     timeResult.isFetching,
     timeResult.isPlaceholderData,
   ]);
-  const commitCycleRange = useCallback(
-    (range: TimeCapacityCycleRange) => {
+  const applyCommittedCycleRange = useCallback(
+    (range: TimeCapacityCycleRange, clearSpecificCycles = false) => {
       resetPlotViewportForNavigation(false);
       if (panActiveRef.current) {
         panSettlingWindowRef.current = { ...range };
@@ -3121,12 +3128,17 @@ function TimeCapacityPlotCardView({
       scheduleCommittedNavigationRange(range);
       update((s) => {
         const next = timeCapacityConfig(s);
+        if (clearSpecificCycles) next.cycles = [];
         next.cycle_start = range.start;
         next.cycle_end = range.end;
         s.computation.time_capacity = next;
       });
     },
     [resetPlotViewportForNavigation, scheduleCommittedNavigationRange, update],
+  );
+  const commitCycleRange = useCallback(
+    (range: TimeCapacityCycleRange) => applyCommittedCycleRange(range, false),
+    [applyCommittedCycleRange],
   );
   const commitSpecificCycles = useCallback(
     (cycles: number[]) => {
@@ -3146,6 +3158,10 @@ function TimeCapacityPlotCardView({
       });
     },
     [cfg.cycles, resetPlotViewportForNavigation, update],
+  );
+  const jumpToEarlierCycles = useCallback(
+    (range: TimeCapacityCycleRange) => applyCommittedCycleRange(range, true),
+    [applyCommittedCycleRange],
   );
   const prepareRefinementReveal = (generation: string) => {
     if (refinementRevealedGenerationRef.current === generation || refinementRevealPendingRef.current === generation) return;
@@ -3661,6 +3677,39 @@ function TimeCapacityPlotCardView({
      [currentResult, renderSpec, selectedVoltageUnavailable],
    );
 
+  const outOfWindowNotice = useMemo(
+    () =>
+      computeTimeCapacityOutOfWindowNotice({
+        spec: renderSpec,
+        config: renderCfg,
+        selectedCellCycles,
+        viewportCycleRange: plotViewportCycleRange,
+        maxAvailableCycle,
+        result: currentResult,
+      }),
+    [
+      currentResult,
+      maxAvailableCycle,
+      plotViewportCycleRange,
+      renderCfg,
+      renderSpec,
+      selectedCellCycles,
+    ],
+  );
+  const negativeCycle = active ? negativeTimeOriginCycle(renderCfg, visibleXAxisExtent?.[0]) : null;
+  const activeOutOfWindow = active && !loadingWithoutResult ? outOfWindowNotice : null;
+  const titleNotice =
+    negativeCycle === null && activeOutOfWindow === null ? null : (
+      <Group gap={6} wrap="nowrap">
+        <NegativeTimeNotice key={`${plotKey}:neg`} cycle={negativeCycle} />
+        <OutOfWindowCellsNotice
+          key={`${plotKey}:oow`}
+          info={activeOutOfWindow}
+          onJumpToRange={jumpToEarlierCycles}
+        />
+      </Group>
+    );
+
   return (
     <Group align="stretch" wrap="nowrap">
       <Paper
@@ -3676,7 +3725,7 @@ function TimeCapacityPlotCardView({
           loaderProps={{ size: "sm" }}
         />
         <PlotHeader
-          titleNotice={<NegativeTimeNotice key={plotKey} cycle={active ? negativeTimeOriginCycle(renderCfg, visibleXAxisExtent?.[0]) : null} />}
+          titleNotice={titleNotice}
           analysisTitle={analysisTitle}
           tabName="Time / capacity"
           plotName={plotName}

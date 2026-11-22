@@ -72,8 +72,24 @@ test("mixed import success names canonical sources with conditional preparation 
   );
 });
 
-test("scan is indeterminate and active jobs never show early 100 percent", () => {
+test("scan is indeterminate during discovery and determinate during compatibility screening", () => {
   assert.equal(importProgressMode("scan", job()), "indeterminate");
+  assert.equal(
+    importProgressMode("scan", job({ phase: "screening", phase_current: 2, phase_total: 5 })),
+    "determinate",
+  );
+  assert.equal(
+    importJobPollInterval(job({ phase: "screening", phase_current: 2, phase_total: 5 })),
+    250,
+  );
+  assert.deepEqual(
+    importProgressCount(job({ phase: "screening", phase_current: 3, phase_total: 8, completed: 0, total: 1 })),
+    { current: 3, total: 8 },
+  );
+  assert.equal(
+    importProgressCountLabel("scan", job({ phase: "screening", phase_current: 3, phase_total: 8 })),
+    "Checking compatibility 3 of 8 files",
+  );
   assert.equal(importProgressMode("inspect", null), "indeterminate");
   assert.equal(importProgressPercent(job({ completed: 10, total: 10 })), 99);
   assert.equal(importProgressPercent(job({ completed: 10, total: 10, status: "completed" })), 100);

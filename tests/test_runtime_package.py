@@ -33,8 +33,8 @@ class RuntimePackageTests(unittest.TestCase):
         command = json.loads((ROOT / "package.json").read_text())["scripts"]["build:backend"]
         argv = shlex.split(command.split(" && ")[0])
         excluded = {argv[i+1] for i,value in enumerate(argv) if value == "--exclude-module"}
-        self.assertTrue({"setuptools","distutils","_distutils_hack"}.issubset(excluded))
-        self.assertTrue(excluded.isdisjoint({"app","numpy","pandas","pyarrow","NewareNDA","alembic","sqlalchemy","tkinter","tzdata"}))
+        self.assertTrue({"setuptools","distutils","_distutils_hack","tkinter","_tkinter","watchfiles","fastexcel"}.issubset(excluded))
+        self.assertTrue(excluded.isdisjoint({"app","numpy","pandas","pyarrow","NewareNDA","alembic","sqlalchemy","tzdata"}))
         self.assertIn("--onedir",argv)
         self.assertNotIn("--optimize",argv)
         self.assertEqual(argv[-1],"packaging/backend_entry.py")
@@ -42,9 +42,9 @@ class RuntimePackageTests(unittest.TestCase):
         self.assertTrue(command.endswith("&& python packaging/timezone_archive.py dist/cellxplorer-backend"))
 
     def _bundle(self, root: Path) -> None:
-        for name in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js", "_internal/_tkinter.pyd",
+        for name in ["cellxplorer-backend.exe", "_internal/app/assets/plotly.min.js",
                      "_internal/pyarrow/lib.pyd", "_internal/pyarrow/arrow.dll", "_internal/numpy/native.pyd",
-                     "_internal/pandas/native.pyd", "_internal/tzdata.zip", "_internal/_tcl_data/tzdata.tcl"]:
+                     "_internal/pandas/native.pyd", "_internal/tzdata.zip"]:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"test fixture")
@@ -56,14 +56,16 @@ class RuntimePackageTests(unittest.TestCase):
             report = inventory(root)
             validate(report)
             self.assertEqual(report, inventory(root))
-            self.assertEqual(report["files"], 9)
-            self.assertEqual(report["bytes"], 9 * len(b"test fixture"))
+            self.assertEqual(report["files"], 7)
+            self.assertEqual(report["bytes"], 7 * len(b"test fixture"))
             self.assertEqual(report["inventory"][0]["sha256"], hashlib.sha256(b"test fixture").hexdigest())
 
     def test_sdk_and_accidental_optional_dependencies_are_rejected(self):
         for unwanted in ["_internal/pyarrow/libarrow.lib", "_internal/pyarrow/include/arrow.h", "_internal/pyarrow/tests/data/sample.parquet", "_internal/scipy/native.pyd",
                          "_internal/setuptools/build.py", "_internal/distutils/compiler.py", "_internal/_distutils_hack/__init__.py",
-                         "_internal/_tcl_data/tzdata/UTC", "_internal/pyarrow/arrow_flight.dll",
+                         "_internal/_tkinter.pyd", "_internal/tcl86t.dll", "_internal/_tcl_data/tzdata/UTC",
+                         "_internal/fastexcel/_fastexcel.pyd", "_internal/watchfiles/_rust_notify.pyd",
+                         "_internal/pyarrow/arrow_flight.dll",
                          "_internal/pyarrow/arrow_python_flight.dll", "_internal/pyarrow/arrow_substrait.dll",
                          "_internal/pyarrow/_flight.cp314-win_amd64.pyd", "_internal/pyarrow/_substrait.cp314-win_amd64.pyd",
                          "_internal/pyarrow/_pyarrow_cpp_tests.cp314-win_amd64.pyd"]:
@@ -80,8 +82,8 @@ class RuntimePackageTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             self._bundle(root)
-            (root / "_internal/_tkinter.pyd").unlink()
-            with self.assertRaisesRegex(ValueError, "_tkinter"):
+            (root / "_internal/app/assets/plotly.min.js").unlink()
+            with self.assertRaisesRegex(ValueError, "plotly.min.js"):
                 validate(inventory(root))
 
     def test_runtime_verification_refuses_a_non_disposable_data_root_before_import(self):

@@ -92,9 +92,6 @@ def verify() -> None:
     import pyarrow.json as arrow_json
     import pyarrow.fs as fs
     import pyarrow.parquet.encryption
-    import tkinter
-    from tkinter import filedialog
-    from tcl_timezone_probe import signature as tcl_timezone_signature
     from app.services import calc, parsing
 
     # This mode is deliberately restricted to a script-created disposable root.
@@ -154,13 +151,10 @@ def verify() -> None:
         raise AssertionError('Arrow JSON failed')
     if fs.LocalFileSystem().get_file_info(str(orc_path)).size <= 0:
         raise AssertionError('Arrow local filesystem failed')
-    tcl = tkinter.Tcl().eval("info patchlevel")
-    if not callable(filedialog.askopenfilenames):
-        raise AssertionError("Native file picker module missing")
     asset = (Path(sys._MEIPASS) / "app/assets/plotly.min.js") if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1] / "backend/app/assets/plotly.min.js"
     plotly = asset.read_bytes()
     if len(plotly) < 10000:
         raise AssertionError("Portable-report Plotly runtime missing")
     zones = {zone: datetime(2026, 7, 1, tzinfo=ZoneInfo(zone)).utcoffset().total_seconds() for zone in ["UTC", "Europe/Paris", "Atlantic/Canary", "Asia/Tokyo"]}
-    result = {"sources": sources, "arrow_codecs": codec_support, "tcl": tcl, "tcl_timezone_signature": tcl_timezone_signature(), "zones": zones, "timezone_signature": timezone_signature(), "plotly_sha256": hashlib.sha256(plotly).hexdigest()}
+    result = {"sources": sources, "arrow_codecs": codec_support, "zones": zones, "timezone_signature": timezone_signature(), "plotly_sha256": hashlib.sha256(plotly).hexdigest()}
     (root / "runtime-verification.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")

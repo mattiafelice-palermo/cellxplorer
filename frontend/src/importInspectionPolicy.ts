@@ -1,4 +1,4 @@
-import type { ImportPreview } from "./api";
+import type { ImportPreview, ImportSkippedSummary } from "./api";
 
 export type ImportInspectionFailure = {
   path: string;
@@ -84,4 +84,21 @@ export function importInspectionCandidateMatchesSearch(
   if (!normalized) return true;
   return filename.toLocaleLowerCase().includes(normalized)
     || relativePath.toLocaleLowerCase().includes(normalized);
+}
+
+export function formatSkippedFolderSourcesSummary(
+  skipped: Pick<ImportSkippedSummary, "registered" | "unsupported"> | null | undefined,
+): string | null {
+  if (!skipped) return null;
+  const registered = Math.max(0, Math.floor(skipped.registered || 0));
+  const unsupported = Math.max(0, Math.floor(skipped.unsupported || 0));
+  const total = registered + unsupported;
+  if (total === 0) return null;
+  if (registered > 0 && unsupported > 0) {
+    return `Skipped ${total} file${total === 1 ? "" : "s"} (${unsupported} unsupported, ${registered} already imported)`;
+  }
+  if (unsupported > 0) {
+    return `Skipped ${unsupported} unsupported file${unsupported === 1 ? "" : "s"}`;
+  }
+  return `Skipped ${registered} already-imported file${registered === 1 ? "" : "s"}`;
 }

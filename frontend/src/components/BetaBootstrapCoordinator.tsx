@@ -751,7 +751,7 @@ export function BetaBootstrapCoordinator({
             {isAlpha ? (
               <SimpleGrid spacing="sm" w="100%" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))" }}>
                 {stableInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/copy-stable.png" alt="Stable library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Image src="/setup/copy-stable.webp" alt="Stable library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
                   <Text size="xs" fw={700} ta="center">Stable → Alpha</Text>
                   <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Stable stays unchanged.</Text>
                   <Button
@@ -783,7 +783,7 @@ export function BetaBootstrapCoordinator({
                   ) : null}
                 </Stack></Paper> : null}
                 {betaInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/copy-beta.png" alt="Beta library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Image src="/setup/copy-beta.webp" alt="Beta library copied into a separate Alpha library" w={88} h={88} mx="auto" fit="contain" />
                   <Text size="xs" fw={700} ta="center">Beta → Alpha</Text>
                   <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Beta stays unchanged.</Text>
                   <Button
@@ -815,7 +815,7 @@ export function BetaBootstrapCoordinator({
                   ) : null}
                 </Stack></Paper> : null}
                 <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/keep-alpha.png" alt="Keep the current Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Image src="/setup/keep-alpha.webp" alt="Keep the current Alpha library" w={88} h={88} mx="auto" fit="contain" />
                   <Text size="xs" fw={700} ta="center">Current Alpha</Text>
                   <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Keep your Alpha cells, analyses and settings.</Text>
                   <Button px="sm" onClick={() => void runUseCurrent()} disabled={busy}>
@@ -823,7 +823,7 @@ export function BetaBootstrapCoordinator({
                   </Button>
                 </Stack></Paper>
                 <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/start-empty.png" alt="An empty Alpha library" w={88} h={88} mx="auto" fit="contain" />
+                  <Image src="/setup/start-empty.webp" alt="An empty Alpha library" w={88} h={88} mx="auto" fit="contain" />
                   <Text size="xs" fw={700} ta="center">Empty Alpha</Text>
                   <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Replace Alpha with a blank library. Confirmation required.</Text>
                 <Button color="red" variant="light" onClick={() => {
@@ -838,7 +838,7 @@ export function BetaBootstrapCoordinator({
             ) : (
               <SimpleGrid spacing="sm" w="100%" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))" }}>
                 <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src={hasExistingBeta ? "/setup/keep-beta.png" : "/setup/empty-beta.png"} alt={hasExistingBeta ? "Keep the current Beta library" : "An empty Beta library"} w={88} h={88} mx="auto" fit="contain" />
+                  <Image src={hasExistingBeta ? "/setup/keep-beta.webp" : "/setup/empty-beta.webp"} alt={hasExistingBeta ? "Keep the current Beta library" : "An empty Beta library"} w={88} h={88} mx="auto" fit="contain" />
                   <Text size="xs" fw={700} ta="center">{hasExistingBeta ? "Current Beta" : "Empty Beta"}</Text>
                   <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>{hasExistingBeta ? "Keep your Beta cells, analyses and settings." : "Open a clean, independent Beta library."}</Text>
                 <Button variant="default" onClick={() => void runUseCurrent()} disabled={busy}>
@@ -846,7 +846,7 @@ export function BetaBootstrapCoordinator({
                 </Button>
                 </Stack></Paper>
                 {stableInstalled && !outstandingToken ? <Paper withBorder p="sm"><Stack gap="xs" h="100%">
-                  <Image src="/setup/copy-stable-to-beta.png" alt="Stable library copied into a separate Beta library" w={88} h={88} mx="auto" fit="contain" />
+                  <Image src="/setup/copy-stable-to-beta.webp" alt="Stable library copied into a separate Beta library" w={88} h={88} mx="auto" fit="contain" />
                   <Text size="xs" fw={700} ta="center">Stable → Beta</Text>
                   <Text size="xs" c="dimmed" ta="center" style={{ flex: 1 }}>Copy a separate snapshot. Stable stays unchanged.</Text>
                 <Button

@@ -7,7 +7,9 @@ record-sheet contract; optional workbook metadata is left to inspection.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
+import stat as stat_module
 from typing import Any
 
 from .lazy_module import LazyModule
@@ -24,6 +26,22 @@ parsing = LazyModule(_load_parsing)
 
 MAX_HINT_PATHS = 512
 MAX_HINT_WORKERS = 4
+SCREEN_PROCESS_POOL_THRESHOLD = 24
+MAX_SCREEN_WORKERS = 8
+
+
+def screening_worker_count(total_files: int, *, multiprocessing: bool) -> int:
+    """Choose a bounded worker count for folder compatibility screening."""
+    if total_files <= 1:
+        return 1
+    cpus = os.cpu_count() or (2 if multiprocessing else 4)
+    limit = max(2, cpus - 1) if multiprocessing else max(2, cpus)
+    return min(MAX_SCREEN_WORKERS, limit, total_files)
+
+
+def screen_source_candidate(path_string: str) -> dict[str, object]:
+    """Top-level picklable header-only compatibility check for worker pools."""
+    return inspect_header_hint(path_string)
 
 
 def _cycle_count_hint(metadata: dict[str, Any]) -> int | None:
@@ -92,7 +110,7 @@ def inspect_header_hint(
                 _check_permissive_header(path, result)
             return result
         before = path.stat()
-        if not path.is_file() or not parsing.source_filename_allowed(path.name):
+        if not stat_module.S_ISREG(before.st_mode) or not parsing.source_filename_allowed(path.name):
             raise ValueError("File is no longer a supported source.")
         ext = path.suffix.casefold()
         if ext == ".xlsx":

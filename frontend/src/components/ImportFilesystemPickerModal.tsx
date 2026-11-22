@@ -69,6 +69,7 @@ import {
   type MprReadMode,
   ImportBrowseEntry,
   ImportBrowseResult,
+  ImportNavigationResult,
   ImportQuickAccessItem,
   ImportInspectResult,
   ImportPreview,
@@ -357,11 +358,18 @@ export function ImportFilesystemPickerModal({
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", finish, { once: true });
   };
+  const navigationQuery = useQuery({
+    queryKey: ["import-filesystem-navigation"],
+    queryFn: ({ signal }) => get<ImportNavigationResult>("/api/imports/quick-access", { signal }),
+    enabled: opened,
+    staleTime: 30_000,
+  });
   const browseQuery = useQuery({
     queryKey: ["import-filesystem", requestedPath],
-    queryFn: () => post<ImportBrowseResult>("/api/imports/browse", { path: requestedPath }),
+    queryFn: ({ signal }) => post<ImportBrowseResult>("/api/imports/browse", { path: requestedPath }, { signal }),
     enabled: opened,
     placeholderData: (previous) => previous,
+    retry: false,
   });
   // React Query can drop placeholder data after an error; keep the last usable listing visible for path recovery.
   const browseData = browseQuery.isError
@@ -482,11 +490,18 @@ export function ImportFilesystemPickerModal({
   const pinnedMutation = useMutation({
     mutationFn: (paths: string[]) =>
       put<{ items: ImportQuickAccessItem[] }>("/api/imports/quick-access/pinned", { paths }),
-    onSuccess: () => void browseQuery.refetch(),
+    onSuccess: () => {
+      void browseQuery.refetch();
+      void navigationQuery.refetch();
+    },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
   const headerHintMutation = useMutation({
-    mutationFn: ({ paths }: { paths: string[]; generation: number }) => post<{ files: ImportHeaderHint[] }>("/api/imports/header-hints", { paths }),
+    mutationFn: ({ paths, knownSizes }: { paths: string[]; knownSizes?: Record<string, number>; generation: number }) =>
+      post<{ files: ImportHeaderHint[] }>("/api/imports/header-hints", {
+        paths,
+        ...(knownSizes && Object.keys(knownSizes).length > 0 ? { known_sizes: knownSizes } : {}),
+      }),
     onSuccess: ({ files }, variables) => {
       if (variables.generation !== headerHintGeneration.current) return;
       setHeaderHints((current) => {
@@ -1039,9 +1054,16 @@ export function ImportFilesystemPickerModal({
     // Resolve those staged paths independently so Continue never waits on an unrelated listing.
     const batch = [...new Set([...unresolvedSelection, ...directoryBatch])].slice(0, 24);
     if (!batch.length) return;
+    const knownSizes: Record<string, number> = {};
+    for (const path of batch) {
+      const entry = knownSourceEntries.current.get(importSourcePathKey(path));
+      if (entry && typeof entry.size === "number" && Number.isFinite(entry.size) && entry.size >= 0) {
+        knownSizes[path] = entry.size;
+      }
+    }
     batch.forEach((path) => headerHintInFlight.current.add(path));
     const generation = headerHintGeneration.current;
-    submitHeaderHints({ paths: batch, generation }, {
+    submitHeaderHints({ paths: batch, knownSizes, generation }, {
       onSettled: (_result, error) => {
         if (generation !== headerHintGeneration.current) return;
         batch.forEach((path) => {
@@ -1065,7 +1087,8 @@ export function ImportFilesystemPickerModal({
     displayedEntries,
     selectedEntries,
   ]);
-  const quickAccess = browseData?.quick_access ?? [];
+  const quickAccess = browseData?.quick_access ?? navigationQuery.data?.items ?? [];
+  const browseRoots = browseData?.roots ?? navigationQuery.data?.roots ?? [];
   const breadcrumbs = parseImportPathBreadcrumbs(
     browseData?.current_path ?? pathInput,
   );
@@ -1394,7 +1417,7 @@ export function ImportFilesystemPickerModal({
                 })}
                 <Stack gap={3}>
                   <Text size="sm" fw={700} c="dimmed">This PC</Text>
-                  {(browseData?.roots ?? []).map((root) => <Button key={root.path} variant="subtle" color={browseData?.current_path === root.path ? "var(--mantine-primary-color-6)" : undefined} size="compact-sm" leftSection={root.name === "Home" ? <IconHome size={15} /> : <IconFolder size={15} />} justify="flex-start" onClick={() => navigate(root.path)} title={root.name}>{root.name}</Button>)}
+                  {browseRoots.map((root) => <Button key={root.path} variant="subtle" color={browseData?.current_path === root.path ? "var(--mantine-primary-color-6)" : undefined} size="compact-sm" leftSection={root.name === "Home" ? <IconHome size={15} /> : <IconFolder size={15} />} justify="flex-start" onClick={() => navigate(root.path)} title={root.name}>{root.name}</Button>)}
                 </Stack>
                 </Stack>
               </Box>
@@ -1560,7 +1583,7 @@ export function ImportFilesystemPickerModal({
                 setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (!hints.has(file.path) && next.has(file.path) && file.recognition === "recognized" && !/\.mpr$/i.test(file.path)) hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, cells: file.cells, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
               }} /></Box>}
-              {!indexedScope && (browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : mode === "folder" ? <ScrollArea h={IMPORT_BROWSER_VIEWPORT_HEIGHT} offsetScrollbars style={{ opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" }}><Stack gap={2} p="xs">{displayedEntries.filter((entry) => entry.kind === "folder").map((entry) => <Button key={entry.path} variant="subtle" justify="flex-start" leftSection={<IconFolder size={16} />} onClick={() => navigate(entry.path)}><Text size="sm" truncate title={entry.path}>{entry.name}</Text></Button>)}{!displayedEntries.some((entry) => entry.kind === "folder") && <Text size="sm" c="dimmed" p="sm">{folderPurpose === "search" ? "No subfolders here. You can index the current folder." : "No subfolders here. You can use the current folder."}</Text>}</Stack></ScrollArea> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%", opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" } : { opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" }} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
+              {!indexedScope && (browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%" maw={520} icon={<IconAlertTriangle size={16} />} title="This folder couldn't be opened"><Stack gap="xs"><Text size="sm">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Text>{requestedPath && <Text size="xs" c="dimmed" truncate title={requestedPath}>{requestedPath}</Text>}<Group gap="xs"><Button size="compact-sm" variant="default" leftSection={<IconHome size={14} />} onClick={() => navigate(navigationQuery.data?.default_path ?? null)}>Open default folder</Button><Button size="compact-sm" variant="subtle" leftSection={<IconRefresh size={14} />} onClick={() => void browseQuery.refetch()}>Retry</Button></Group></Stack></Alert></Center> : mode === "folder" ? <ScrollArea h={IMPORT_BROWSER_VIEWPORT_HEIGHT} offsetScrollbars style={{ opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" }}><Stack gap={2} p="xs">{displayedEntries.filter((entry) => entry.kind === "folder").map((entry) => <Button key={entry.path} variant="subtle" justify="flex-start" leftSection={<IconFolder size={16} />} onClick={() => navigate(entry.path)}><Text size="sm" truncate title={entry.path}>{entry.name}</Text></Button>)}{!displayedEntries.some((entry) => entry.kind === "folder") && <Text size="sm" c="dimmed" p="sm">{folderPurpose === "search" ? "No subfolders here. You can index the current folder." : "No subfolders here. You can use the current folder."}</Text>}</Stack></ScrollArea> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%", opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" } : { opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" }} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
                   <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
                   {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}

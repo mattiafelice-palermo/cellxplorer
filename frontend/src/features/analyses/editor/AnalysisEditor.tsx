@@ -220,6 +220,7 @@ import {
   timeCapacityTracesForResult,
 } from "./families/time-capacity/TimeCapacityPlotCard";
 import { selectedTimeCapacityCycleMax } from "./families/time-capacity/timeCapacityCycleNavigationPolicy";
+import { selectTimeCapacityCellCycleSummaries } from "./families/time-capacity/timeCapacityOutOfWindowNoticePolicy";
 import { voltageChannelSelectionLabel } from "./policies/voltageChannelPolicy";
 import { parserSourceBreakdown } from "./policies/parserProvenancePolicy";
 import {
@@ -4140,6 +4141,15 @@ function AnalysisEditorView({
       ),
     [cellsQuery.data, groupsQuery.data, spec?.selection.entries],
   );
+  const selectedTimeCapacityCells = useMemo(
+    () =>
+      selectTimeCapacityCellCycleSummaries(
+        spec?.selection.entries,
+        cellsQuery.data,
+        groupsQuery.data,
+      ),
+    [cellsQuery.data, groupsQuery.data, spec?.selection.entries],
+  );
 
   useEffect(() => {
     if (activeTab === "time_capacity") setTimeCapacityVisited(true);
@@ -5917,6 +5927,7 @@ function AnalysisEditorView({
                   spec={familySpec("time_capacity")}
                   update={familyUpdate("time_capacity")}
                   maxAvailableCycle={maxAvailableTimeCapacityCycle}
+                  selectedCellCycles={selectedTimeCapacityCells}
                   isVirginNavigation={
                     !preparingFamily("time_capacity") && timeCapacityVirginNavigation && activeSavedPlotId === null
                   }

@@ -127,6 +127,16 @@ class ImportFileHintTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             import_file_hints.inspect_header_hints([str(index) for index in range(import_file_hints.MAX_HINT_PATHS + 1)])
 
+    def test_inspect_header_hint_reuses_before_stat_without_calling_is_file(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "cell.ndax"
+            path.write_bytes(b"neware")
+            with patch.object(Path, "is_file", side_effect=AssertionError("redundant is_file stat called")), \
+                 patch.object(import_file_hints.parsing, "read_header_metadata", return_value={"cycle_count": 5}):
+                result = import_file_hints.inspect_header_hint(str(path))
+        self.assertEqual(result["cycle_count"], 5)
+        self.assertIsNone(result["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -164,4 +174,16 @@ class ImportedCellOwnershipTests(unittest.TestCase):
                 self.assertEqual(result[3]["cells"], [])
                 cell.name = "Renamed again"; db.commit()
                 self.assertEqual(inspect_import_header_hints(ImportHeaderHintsRequest(paths=list(map(str, paths))), db)["files"][0]["cells"][0]["name"], "Renamed again")
+
+            # Known sizes skip synchronous per-path stat/resolve calls before spawning hints.
+            known_sizes = {str(path): path.stat().st_size for path in paths}
+            with patch.object(Path, "stat", side_effect=AssertionError("route pre-loop called Path.stat")), \
+                 patch.object(Path, "resolve", side_effect=AssertionError("route pre-loop called Path.resolve")), \
+                 patch.object(import_file_hints, "inspect_header_hints", side_effect=hints):
+                fast_result = inspect_import_header_hints(
+                    ImportHeaderHintsRequest(paths=list(map(str, paths)), known_sizes=known_sizes),
+                    db,
+                )["files"]
+            self.assertTrue(fast_result[0]["registered"])
+            self.assertTrue(fast_result[2]["registered"])
         engine.dispose()

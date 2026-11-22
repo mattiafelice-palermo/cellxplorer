@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   countNewImportableInspectionFiles,
+  formatSkippedFolderSourcesSummary,
   importInspectionCandidateMatchesSearch,
   importInspectionFailurePathSet,
   mergeImportInspectionFailures,
@@ -59,5 +60,22 @@ test("a retry removes only failed selected rows and preserves intentional desele
       [{ path: "C:/data/second.xlsx", filename: "second.xlsx", error: "Unreadable" }],
     ),
     ["C:/data/first.xlsx"],
+  );
+});
+
+test("skipped folder screening summary formats zero, single, and mixed skip counts", () => {
+  assert.equal(formatSkippedFolderSourcesSummary(null), null);
+  assert.equal(formatSkippedFolderSourcesSummary({ registered: 0, unsupported: 0 }), null);
+  assert.equal(
+    formatSkippedFolderSourcesSummary({ registered: 0, unsupported: 1 }),
+    "Skipped 1 unsupported file",
+  );
+  assert.equal(
+    formatSkippedFolderSourcesSummary({ registered: 2, unsupported: 0 }),
+    "Skipped 2 already-imported files",
+  );
+  assert.equal(
+    formatSkippedFolderSourcesSummary({ registered: 2, unsupported: 3 }),
+    "Skipped 5 files (3 unsupported, 2 already imported)",
   );
 });

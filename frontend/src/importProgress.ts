@@ -7,6 +7,7 @@ export type ImportProgressPhase =
   | "starting_workers"
   | "reading"
   | "finalizing"
+  | "screening"
   | "completed";
 
 export function importJobPollInterval(
@@ -17,7 +18,7 @@ export function importJobPollInterval(
   // has not created the job yet; stopping here strands the modal at "Working".
   if (job === null || job?.status === "running") {
     const phase = job?.phase;
-    return phase === "sampling" || phase === "starting_workers" || phase === "finalizing"
+    return phase === "sampling" || phase === "starting_workers" || phase === "finalizing" || phase === "screening"
       ? 250
       : 500;
   }
@@ -113,7 +114,7 @@ export function importStageTitle(stage: ImportProgressStage): string {
 
 export function importStageExplanation(stage: ImportProgressStage): string {
   return {
-    scan: "Finding supported cycler files and reading their sizes. File identity is not opened yet.",
+    scan: "Finding supported cycler files, reading their sizes, and checking compatibility.",
     inspect: "Reading one file first to choose serial or multiprocessing, then checking file identity and source metadata.",
     register: "Validating the reviewed drafts and committing the Cell registration as one transaction.",
   }[stage];
@@ -123,7 +124,10 @@ export function importProgressMode(
   stage: ImportProgressStage,
   job: BackgroundJob | null | undefined,
 ): ImportProgressMode {
-  if (stage === "scan" || !job || job.total <= 0) return "indeterminate";
+  if (stage === "scan") {
+    return job?.phase === "screening" && (job.phase_total ?? 0) > 0 ? "determinate" : "indeterminate";
+  }
+  if (!job || job.total <= 0) return "indeterminate";
   return "determinate";
 }
 
@@ -155,7 +159,8 @@ export function importProgressCount(
   if (job.status === "completed") {
     return { current: Math.max(0, job.total), total: Math.max(0, job.total) };
   }
-  const phaseIsCounted = job.phase === "validation" || job.phase === "registration";
+  const phaseIsCounted =
+    job.phase === "validation" || job.phase === "registration" || job.phase === "screening";
   const phaseTotal = Number(job.phase_total);
   const phaseCurrent = Number(job.phase_current);
   if (phaseIsCounted && Number.isFinite(phaseTotal) && phaseTotal > 0 && Number.isFinite(phaseCurrent)) {
@@ -253,6 +258,10 @@ export function importProgressCountLabel(
 ): string {
   if (!job) return "Working…";
   if (stage === "scan") {
+    if (job.phase === "screening") {
+      const count = importProgressCount(job);
+      return `Checking compatibility ${count.current} of ${count.total} file${count.total === 1 ? "" : "s"}`;
+    }
     const current = job.status === "completed" ? job.total : Math.min(job.total, job.completed + 1);
     return `Scanning ${current} of ${job.total} selected location${job.total === 1 ? "" : "s"}`;
   }

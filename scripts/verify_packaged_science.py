@@ -61,9 +61,9 @@ def main() -> None:
         actual = run([str(args.sidecar.resolve())], root, environment)
         if actual != expected:
             differing = sorted(key for key in actual.keys() | expected.keys() if actual.get(key) != expected.get(key))
-            raise AssertionError(f"Frozen scientific/Parquet/asset/timezone/file-picker result differs from source: {differing}")
-        print("PASS: actual frozen Neware NDAX/Excel and BioLogic raw/cycle parity, Parquet/zstd, NumPy/Arrow compute, CSV, Tcl/file-picker import, timezone and portable-report asset parity")
-        print(f"Tcl zones: {actual['tcl_timezone_signature']['zones']}; Arrow codecs: {actual['arrow_codecs']}")
+            raise AssertionError(f"Frozen scientific/Parquet/asset/timezone result differs from source: {differing}")
+        print("PASS: actual frozen Neware NDAX/Excel and BioLogic raw/cycle parity, Parquet/zstd, NumPy/Arrow compute, CSV, timezone and portable-report asset parity")
+        print(f"Zones: {actual['timezone_signature']['zones']}; Arrow codecs: {actual['arrow_codecs']}")
 
 
 if __name__ == "__main__":

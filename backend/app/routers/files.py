@@ -1698,6 +1698,7 @@ class ImportPathInspectRequest(BaseModel):
 
 class ImportHeaderHintsRequest(BaseModel):
     paths: list[str] = Field(default_factory=list, max_length=import_file_hints.MAX_HINT_PATHS)
+    known_sizes: dict[str, int] | None = None
 
 
 class ContinuationInspectSourceRequest(BaseModel):
@@ -1737,6 +1738,7 @@ class ImportSourceListRequest(BaseModel):
     file_paths: list[str] = []
     folder_paths: list[str] = []
     job_token: str | None = Field(default=None, max_length=100)
+    screen_sources: bool = False
 
 
 class ImportBrowseRequest(BaseModel):
@@ -1789,6 +1791,56 @@ def _normalized_unique_paths(paths: list[str], require_existing: bool = False) -
     return normalized
 
 
+def _windows_drive_type(drive_root: str) -> int | None:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        return int(ctypes.windll.kernel32.GetDriveTypeW(str(drive_root)))
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def _windows_logical_drive_letters() -> list[str] | None:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        mask = int(ctypes.windll.kernel32.GetLogicalDrives())
+    except (OSError, AttributeError, ValueError):
+        return None
+    if mask <= 0:
+        return None
+    return [
+        letter
+        for index, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        if mask & (1 << index)
+    ]
+
+
+def _is_likely_network_path(path: Path) -> bool:
+    raw = str(path)
+    if raw.startswith(("\\\\", "//")):
+        if os.name == "nt" and len(raw) >= 6 and raw[1:4] in ("\\?\\", "\\.\\", "//?/", "//./"):
+            if raw[4:8].upper() == "UNC\\":
+                return True
+            drive_root = raw[4:7]
+            return len(drive_root) == 3 and drive_root[1] == ":" and _windows_drive_type(drive_root) == 4
+        return True
+    if os.name == "nt":
+        drive = path.drive
+        if len(drive) == 2 and drive[1] == ":":
+            return _windows_drive_type(f"{drive}\\") == 4
+    return False
+
+
+def _default_import_directory() -> Path:
+    default_path = Path.home() / "Documents"
+    return default_path if default_path.is_dir() else Path.home()
+
+
 def _quick_access_entry(
     path: Path,
     label: str,
@@ -1796,12 +1848,17 @@ def _quick_access_entry(
     *,
     pinned: bool = False,
 ) -> dict:
+    available = (
+        True
+        if _is_likely_network_path(path)
+        else (path.is_dir() and os.access(path, os.R_OK))
+    )
     return {
         "path": str(path),
         "label": label,
         "section": section,
         "pinned": pinned,
-        "available": path.is_dir() and os.access(path, os.R_OK),
+        "available": available,
     }
 
 
@@ -1873,7 +1930,14 @@ def import_browse_roots() -> list[dict[str, str]]:
     roots: list[dict[str, str]] = []
     seen: set[str] = set()
 
-    def add_root(path: Path, name: str) -> None:
+    def add_root(path: Path, name: str, *, skip_probe: bool = False) -> None:
+        if skip_probe:
+            key = os.path.normcase(os.path.abspath(str(path)))
+            if key in seen:
+                return
+            seen.add(key)
+            roots.append({"path": str(path), "name": name})
+            return
         try:
             resolved = path.expanduser().resolve()
         except OSError:
@@ -1886,30 +1950,34 @@ def import_browse_roots() -> list[dict[str, str]]:
 
     add_root(Path.home(), "Home")
     if os.name == "nt":
-        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            drive = Path(f"{letter}:\\")
-            if drive.exists():
-                add_root(drive, f"{letter}:")
+        letters = _windows_logical_drive_letters()
+        if letters is not None:
+            for letter in letters:
+                drive_root = f"{letter}:\\"
+                drive_type = _windows_drive_type(drive_root)
+                # Skip blocking probes on fixed, remote (mapped SMB), and RAM drives.
+                if drive_type in (3, 4, 6):
+                    add_root(Path(drive_root), f"{letter}:", skip_probe=True)
+                else:
+                    drive = Path(drive_root)
+                    if drive.exists():
+                        add_root(drive, f"{letter}:")
+        else:
+            for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                drive = Path(f"{letter}:\\")
+                if drive.exists():
+                    add_root(drive, f"{letter}:")
     else:
         add_root(Path("/"), "/")
     return roots
 
 
 def browse_import_directory(path: str | None = None, db: Session | None = None) -> dict:
-    default_path = Path.home() / "Documents"
-    requested = (
-        Path(path).expanduser()
-        if path
-        else default_path if default_path.is_dir() else Path.home()
-    )
+    requested = Path(path).expanduser() if path else _default_import_directory()
     try:
         current = requested.resolve()
     except OSError as exc:
         raise HTTPException(400, f"Could not resolve directory: {exc}") from exc
-    if not current.exists():
-        raise HTTPException(404, f"Directory is missing: {current}")
-    if not current.is_dir():
-        raise HTTPException(400, f"Not a directory: {current}")
 
     entries: list[dict] = []
     try:
@@ -1927,7 +1995,7 @@ def browse_import_directory(path: str | None = None, db: Session | None = None) 
                     continue
                 entries.append(
                     {
-                        "path": str(Path(entry.path).resolve()),
+                        "path": entry.path,
                         "name": entry.name,
                         "kind": kind,
                         "size": stat.st_size if kind == "file" else None,
@@ -1937,9 +2005,18 @@ def browse_import_directory(path: str | None = None, db: Session | None = None) 
                         ).isoformat(),
                     }
                 )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Directory is missing: {current}") from exc
+    except NotADirectoryError as exc:
+        raise HTTPException(400, f"Not a directory: {current}") from exc
     except PermissionError as exc:
         raise HTTPException(403, f"Directory cannot be opened: {current}") from exc
     except OSError as exc:
+        if not _is_likely_network_path(current):
+            if not current.exists():
+                raise HTTPException(404, f"Directory is missing: {current}") from exc
+            if not current.is_dir():
+                raise HTTPException(400, f"Not a directory: {current}") from exc
         raise HTTPException(422, f"Directory could not be read: {exc}") from exc
 
     entries.sort(key=lambda item: (item["kind"] != "folder", item["name"].casefold()))
@@ -2035,11 +2112,227 @@ def _create_import_scan_job(file_paths: list[str], folder_paths: list[str], toke
     )
 
 
+def _classify_screened_hint(item: dict, hint: dict[str, object]) -> tuple[dict | None, dict | None]:
+    """Classify one screened .mpr/.xlsx candidate using permissive-by-default for .mpr."""
+    ext = Path(str(item.get("filename") or item["path"])).suffix.casefold()
+    if ext == ".mpr":
+        permissive_error = hint.get("permissive_error")
+        if permissive_error:
+            return None, {
+                "path": str(item["path"]),
+                "relative_path": str(item["relative_path"]),
+                "filename": str(item["filename"]),
+                "reason": "unsupported",
+                "detail": str(permissive_error),
+            }
+        kept = {**item, "read_mode": "permissive"}
+        if hint.get("technique"):
+            kept["technique"] = hint["technique"]
+        return kept, None
+
+    if hint.get("compatible") is False:
+        detail = hint.get("error") or "Unsupported Neware Excel workbook."
+        return None, {
+            "path": str(item["path"]),
+            "relative_path": str(item["relative_path"]),
+            "filename": str(item["filename"]),
+            "reason": "unsupported",
+            "detail": str(detail),
+        }
+    return dict(item), None
+
+
+def _run_screen_hint_pool(
+    to_screen: list[tuple[int, dict]],
+    *,
+    job_id: int | None,
+    pre_kept_count: int,
+    pre_skipped_count: int,
+    use_process_pool: bool,
+) -> dict[int, tuple[dict | None, dict | None]]:
+    outcomes: dict[int, tuple[dict | None, dict | None]] = {}
+    worker_count = import_file_hints.screening_worker_count(
+        len(to_screen),
+        multiprocessing=use_process_pool,
+    )
+    pool = (
+        process_pool_executor(worker_count)
+        if use_process_pool
+        else ThreadPoolExecutor(max_workers=worker_count)
+    )
+    checked = 0
+    kept_screened = 0
+    skipped_screened = 0
+    with pool:
+        future_map = {
+            pool.submit(import_file_hints.screen_source_candidate, str(item["path"])): (index, item)
+            for index, item in to_screen
+        }
+        for future in as_completed(future_map):
+            index, item = future_map[future]
+            try:
+                hint = future.result()
+            except Exception:
+                hint = {}
+            kept_item, skipped_item = _classify_screened_hint(item, hint)
+            outcomes[index] = (kept_item, skipped_item)
+            checked += 1
+            if kept_item is not None:
+                kept_screened += 1
+            else:
+                skipped_screened += 1
+            if job_id is not None:
+                kept_total = pre_kept_count + kept_screened
+                skipped_total = pre_skipped_count + skipped_screened
+                background_jobs.update_job(
+                    job_id,
+                    phase="screening",
+                    phase_current=checked,
+                    phase_total=len(to_screen),
+                    progress_percent=min(99, int(checked * 100 / len(to_screen))),
+                    phase_detail=f"{kept_total} supported · {skipped_total} skipped",
+                    current_item_label=str(item.get("filename") or ""),
+                )
+    return outcomes
+
+
+def _screen_import_source_candidates(
+    files: list[dict],
+    *,
+    db: Session | None = None,
+    job_id: int | None = None,
+) -> tuple[list[dict], dict]:
+    """Screen discovered folder files upfront using cheap DB and header checks."""
+    if not files:
+        return [], {"registered": 0, "unsupported": 0, "items": []}
+
+    registered_keys: set[str] = set()
+    from ..services.import_search_catalog import path_key
+    from ..services import source_readability
+
+    if db is not None:
+        requested_keys = sorted({path_key(str(item["path"])) for item in files if item.get("path")})
+        for start in range(0, len(requested_keys), 500):
+            chunk = requested_keys[start : start + 500]
+            rows = (
+                db.query(SourceFile.path)
+                .filter(func.lower(SourceFile.path).in_(chunk))
+                .all()
+            )
+            registered_keys.update(path_key(row[0]) for row in rows if row[0])
+
+    results: list[tuple[dict | None, dict | None]] = [(None, None)] * len(files)
+    to_screen: list[tuple[int, dict]] = []
+    pre_kept_count = 0
+    registered_count = 0
+    pre_unsupported_count = 0
+
+    for index, item in enumerate(files):
+        raw_path = str(item.get("path") or "")
+        relative_path = str(item.get("relative_path") or item.get("filename") or "")
+        filename = str(item.get("filename") or Path(raw_path).name)
+        if raw_path and path_key(raw_path) in registered_keys:
+            registered_count += 1
+            results[index] = (
+                None,
+                {
+                    "path": raw_path,
+                    "relative_path": relative_path,
+                    "filename": filename,
+                    "reason": "registered",
+                    "detail": "Already imported in the cell library.",
+                },
+            )
+            continue
+
+        ext = Path(filename).suffix.casefold()
+        if ext in {".xlsx", ".mpr"}:
+            to_screen.append((index, item))
+            continue
+
+        rejection = source_readability.known_rejection(raw_path) if raw_path else None
+        if rejection is not None:
+            pre_unsupported_count += 1
+            results[index] = (
+                None,
+                {
+                    "path": raw_path,
+                    "relative_path": relative_path,
+                    "filename": filename,
+                    "reason": "unsupported",
+                    "detail": rejection.error,
+                },
+            )
+            continue
+
+        pre_kept_count += 1
+        results[index] = (dict(item), None)
+
+    if to_screen:
+        pre_skipped_count = registered_count + pre_unsupported_count
+        if job_id is not None:
+            background_jobs.update_job(
+                job_id,
+                phase="screening",
+                phase_current=0,
+                phase_total=len(to_screen),
+                progress_percent=0,
+                phase_detail=f"{pre_kept_count} supported · {pre_skipped_count} skipped",
+                current_item_label=f"Checking {len(to_screen)} files for compatibility",
+            )
+        use_process_pool = (
+            len(to_screen) >= import_file_hints.SCREEN_PROCESS_POOL_THRESHOLD
+            and (os.cpu_count() or 1) >= 2
+        )
+        try:
+            screened = _run_screen_hint_pool(
+                to_screen,
+                job_id=job_id,
+                pre_kept_count=pre_kept_count,
+                pre_skipped_count=pre_skipped_count,
+                use_process_pool=use_process_pool,
+            )
+        except (OSError, RuntimeError, PermissionError):
+            if not use_process_pool:
+                raise
+            screened = _run_screen_hint_pool(
+                to_screen,
+                job_id=job_id,
+                pre_kept_count=pre_kept_count,
+                pre_skipped_count=pre_skipped_count,
+                use_process_pool=False,
+            )
+        for index, outcome in screened.items():
+            results[index] = outcome
+
+    kept_files: list[dict] = []
+    skipped_items: list[dict] = []
+    total_registered = 0
+    total_unsupported = 0
+    for kept_item, skipped_item in results:
+        if kept_item is not None:
+            kept_files.append(kept_item)
+        elif skipped_item is not None:
+            skipped_items.append(skipped_item)
+            if skipped_item["reason"] == "registered":
+                total_registered += 1
+            else:
+                total_unsupported += 1
+
+    return kept_files, {
+        "registered": total_registered,
+        "unsupported": total_unsupported,
+        "items": skipped_items,
+    }
+
+
 def list_import_sources(
     file_paths: list[str],
     folder_paths: list[str],
     *,
     job_id: int | None = None,
+    db: Session | None = None,
+    screen_sources: bool = False,
 ) -> dict:
     files: list[dict] = []
     seen: set[str] = set()
@@ -2138,6 +2431,14 @@ def list_import_sources(
                 discovered_files=discovered_files,
                 total_bytes=total_bytes,
             )
+    if screen_sources:
+        files, skipped = _screen_import_source_candidates(files, db=db, job_id=job_id)
+        return {
+            "root_path": None,
+            "root_name": "Selected sources",
+            "files": files,
+            "skipped": skipped,
+        }
     return {
         "root_path": None,
         "root_name": "Selected sources",
@@ -4677,14 +4978,21 @@ def inspect_cell_continuation_sources(
 
 
 @router.post("/imports/list-sources")
-def list_import_source_paths(req: ImportSourceListRequest):
+def list_import_source_paths(req: ImportSourceListRequest, db: Session = Depends(get_db)):
+    session = db if isinstance(db, Session) else None
     job_id = (
         _create_import_scan_job(req.file_paths, req.folder_paths, req.job_token)
         if req.job_token
         else None
     )
     try:
-        result = list_import_sources(req.file_paths, req.folder_paths, job_id=job_id)
+        result = list_import_sources(
+            req.file_paths,
+            req.folder_paths,
+            job_id=job_id,
+            db=session,
+            screen_sources=req.screen_sources,
+        )
         if job_id is not None:
             background_jobs.update_job(job_id, status="completed", completed=background_jobs.get_job(job_id)["total"])
         return result
@@ -4706,8 +5014,13 @@ def inspect_import_header_hints(
 ):
     """Return optional file metadata without delaying the import browser."""
     try:
-        candidate_sizes = set()
+        known_sizes = req.known_sizes or {}
+        candidate_sizes: set[int] = set()
         for value in req.paths:
+            known_size = known_sizes.get(value)
+            if isinstance(known_size, int) and not isinstance(known_size, bool) and known_size >= 0:
+                candidate_sizes.add(known_size)
+                continue
             try:
                 candidate_sizes.add(Path(value).expanduser().stat().st_size)
             except OSError:
@@ -4715,7 +5028,7 @@ def inspect_import_header_hints(
         # Scalar bulk lookup: never materialize SourceFile.header_meta or walk a
         # Cell graph. Hashes are supplied by the existing bounded hint inspection.
         from ..services.import_search_catalog import path_key
-        requested = {path_key(str(Path(path).expanduser().resolve())) for path in req.paths}
+        requested = {path_key(os.path.abspath(os.path.expanduser(path))) for path in req.paths}
         from sqlalchemy import or_
         rows = (db.query(SourceFile.size, SourceFile.hash, SourceFile.path, Cell.id, Cell.name)
             .outerjoin(TestFile, TestFile.file_id == SourceFile.id)
@@ -4748,7 +5061,11 @@ def inspect_import_header_hints(
 
 @router.get("/imports/quick-access")
 def get_import_quick_access(db: Session = Depends(get_db)):
-    return {"items": import_quick_access(db)}
+    return {
+        "items": import_quick_access(db),
+        "roots": import_browse_roots(),
+        "default_path": str(_default_import_directory()),
+    }
 
 
 @router.put("/imports/quick-access/pinned")
@@ -4760,61 +5077,6 @@ def update_import_pinned_folders(
     _set_path_setting(db, IMPORT_PINNED_FOLDERS_KEY, paths)
     db.commit()
     return {"items": import_quick_access(db)}
-
-
-@router.post("/imports/pick-files")
-def pick_import_files(db: Session = Depends(get_db)):
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except Exception as exc:
-        raise HTTPException(500, f"Native file picker is not available: {exc}") from exc
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        selected = filedialog.askopenfilenames(
-            title="Select cycler source files",
-            filetypes=[
-                ("Supported cycling files", parsing.SUPPORTED_SOURCE_GLOB),
-                (
-                    "BioLogic GCPL-family files",
-                    parsing.source_glob(parsing.FORMAT_BIOLOGIC_MPR),
-                ),
-                (
-                    "Neware files",
-                    parsing.source_glob(
-                        parsing.FORMAT_NEWARE_BINARY,
-                        parsing.FORMAT_NEWARE_EXCEL,
-                    ),
-                ),
-                ("All files", "*.*"),
-            ],
-        )
-    finally:
-        root.destroy()
-    return {"files": [_inspect_import_path(Path(path), db) for path in selected]}
-
-
-@router.post("/imports/pick-folder")
-def pick_import_folder():
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except Exception as exc:
-        raise HTTPException(500, f"Native folder picker is not available: {exc}") from exc
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        selected = filedialog.askdirectory(title="Select a folder containing cycler source files")
-    finally:
-        root.destroy()
-    if not selected:
-        return {"root_path": None, "root_name": None, "files": []}
-    return list_import_folder_files(Path(selected))
 
 
 @router.post("/imports/preview")

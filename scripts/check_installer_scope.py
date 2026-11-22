@@ -83,7 +83,7 @@ def compile_template(channel: str, output: Path) -> Path:
     icon_root = "icons" if channel == "stable" else f"icons-{channel}"
     # A compiler-only placeholder payload. Never execute this setup artifact.
     payload = output / "fixture-payload.exe"; payload.write_bytes(b"Compiler fixture only")
-    values.update(product_name=product, bundle_id=identifier, install_mode="currentUser", compression="zlib",
+    values.update(product_name=product, bundle_id=identifier, install_mode="currentUser", compression="lzma",
         version=conf["version"], main_binary_path=str(payload), out_file=str(output / f"{channel}-compile-only.exe"),
         installer_icon=str(ROOT / f"src-tauri/{icon_root}/icon.ico"), uninstaller_icon=str(ROOT / f"src-tauri/{icon_root}/icon.ico"),
         signed_plugins_path="", installer_hooks=str(ROOT / "src-tauri/nsis-hooks.nsh"),

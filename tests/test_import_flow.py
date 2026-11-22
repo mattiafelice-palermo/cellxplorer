@@ -504,6 +504,116 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIsNone(job["current_item_id"])
         background_jobs.clear_jobs()
 
+    def test_source_listing_screens_unsupported_xlsx_peis_and_registered_while_keeping_permissive_mpr(self):
+        from tests.biologic_mpr_fixture import encode_gcpl_settings, write_gcpl_mpr
+
+        background_jobs.clear_jobs()
+        db = self.make_session()
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mixed"
+            root.mkdir()
+            valid_nda = root / "valid_cell.nda"
+            valid_nda.write_bytes(b"nda-data")
+            registered_ndax = root / "already_imported.ndax"
+            registered_ndax.write_bytes(b"ndax-data")
+            wb = Workbook()
+            wb.active["A1"] = "Random spreadsheet"
+            wb.save(root / "notes.xlsx")
+            peis_mpr = write_gcpl_mpr(root / "impedance_peis.mpr", [{}], settings_payload=b"\x1d")
+            permissive_mpr = write_gcpl_mpr(
+                root / "exploratory_only.mpr",
+                [{}],
+                settings_payload=encode_gcpl_settings([{}]),
+            )
+
+            cell = Cell(name="Existing Cell")
+            test_row = Test(cell=cell, name="internal")
+            sf = SourceFile(
+                hash="d" * 64,
+                path=str(registered_ndax.resolve()),
+                filename=registered_ndax.name,
+                size=8,
+                ext="ndax",
+            )
+            db.add_all([test_row, sf])
+            db.flush()
+            db.add(TestFile(test_id=test_row.id, file_id=sf.id, position=0))
+            db.commit()
+
+            def fake_screen(path_string: str) -> dict:
+                target = Path(path_string)
+                if target.name == "exploratory_only.mpr":
+                    return {
+                        "path": path_string,
+                        "source_format": "BioLogic EC-Lab",
+                        "supplier": "BioLogic",
+                        "technique": "CP",
+                        "cycle_count": None,
+                        "compatible": False,
+                        "registered": False,
+                        "error": "Unresolved program",
+                        "source_error_kind": "unsupported",
+                    }
+                return files.import_file_hints.inspect_header_hint(path_string)
+
+            with patch.object(files.import_file_hints, "screen_source_candidate", side_effect=fake_screen):
+                result = files.list_import_source_paths(
+                    files.ImportSourceListRequest(
+                        folder_paths=[str(root)],
+                        job_token="screen-test",
+                        screen_sources=True,
+                    ),
+                    db=db,
+                )
+
+        kept_names = [item["filename"] for item in result["files"]]
+        self.assertEqual(kept_names, ["exploratory_only.mpr", "valid_cell.nda"])
+        self.assertEqual(result["files"][0]["read_mode"], "permissive")
+        self.assertEqual(result["skipped"]["registered"], 1)
+        self.assertEqual(result["skipped"]["unsupported"], 2)
+        self.assertEqual(len(result["skipped"]["items"]), 3)
+        skipped_by_name = {item["filename"]: item for item in result["skipped"]["items"]}
+        self.assertEqual(skipped_by_name["already_imported.ndax"]["reason"], "registered")
+        self.assertEqual(skipped_by_name["notes.xlsx"]["reason"], "unsupported")
+        self.assertEqual(skipped_by_name["impedance_peis.mpr"]["reason"], "unsupported")
+
+        job = background_jobs.find_by_token("screen-test")
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["phase"], "screening")
+        self.assertEqual(job["phase_total"], 3)
+        self.assertEqual(job["phase_current"], 3)
+        background_jobs.clear_jobs()
+        db.close()
+
+    def test_source_screening_uses_process_pool_above_threshold_with_thread_fallback(self):
+        items = [
+            {
+                "path": f"C:/data/file_{i:02d}.xlsx",
+                "relative_path": f"file_{i:02d}.xlsx",
+                "filename": f"file_{i:02d}.xlsx",
+            }
+            for i in range(files.import_file_hints.SCREEN_PROCESS_POOL_THRESHOLD)
+        ]
+        pool_calls: list[int] = []
+
+        def fake_process_pool(max_workers: int):
+            pool_calls.append(max_workers)
+            raise PermissionError("spawn blocked")
+
+        with patch("os.cpu_count", return_value=8), \
+             patch.object(files, "process_pool_executor", side_effect=fake_process_pool), \
+             patch.object(
+                 files.import_file_hints,
+                 "screen_source_candidate",
+                 side_effect=lambda p: {"path": p, "compatible": Path(p).stem.endswith("00")},
+             ):
+            kept, skipped = files._screen_import_source_candidates(items)
+
+        self.assertEqual(len(pool_calls), 1)
+        self.assertGreaterEqual(pool_calls[0], 2)
+        self.assertEqual([entry["filename"] for entry in kept], ["file_00.xlsx"])
+        self.assertEqual(skipped["unsupported"], len(items) - 1)
+
     def test_inspection_job_reports_file_and_byte_progress(self):
         background_jobs.clear_jobs()
         preview = {"staged_name": "x", "size": 12, "filename": "x.ndax"}
@@ -1752,6 +1862,69 @@ class ImportFlowTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result["parent_path"], str(root.resolve().parent))
+
+    def test_import_directory_browser_avoids_per_entry_resolve_and_handles_missing_and_file_paths(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for idx in range(15):
+                (root / f"folder_{idx:02d}").mkdir()
+                (root / f"cell_{idx:02d}.ndax").write_bytes(b"cell")
+            regular_file = root / "single.ndax"
+            regular_file.write_bytes(b"single")
+
+            resolved_targets: list[str] = []
+            original_resolve = Path.resolve
+
+            def tracking_resolve(self_path, *args, **kwargs):
+                resolved_targets.append(str(self_path))
+                return original_resolve(self_path, *args, **kwargs)
+
+            with patch.object(Path, "resolve", tracking_resolve):
+                result = files.browse_import_directory(str(root))
+
+            self.assertEqual(len(result["entries"]), 31)
+            root_str = str(root.resolve())
+            self.assertFalse(
+                any(
+                    target.startswith(root_str) and target != root_str and target != str(root)
+                    for target in resolved_targets
+                )
+            )
+
+            with self.assertRaises(HTTPException) as missing_exc:
+                files.browse_import_directory(str(root / "does-not-exist"))
+            self.assertEqual(missing_exc.exception.status_code, 404)
+
+            with self.assertRaises(HTTPException) as file_exc:
+                files.browse_import_directory(str(regular_file))
+            self.assertEqual(file_exc.exception.status_code, 400)
+
+    def test_quick_access_skips_network_probes_and_exposes_roots_and_default_path(self):
+        unc_path = Path(r"\\offline-nas\cycler-share\data")
+        with patch.object(Path, "is_dir", side_effect=AssertionError("is_dir probed network path")), \
+             patch("os.access", side_effect=AssertionError("os.access probed network path")):
+            entry = files._quick_access_entry(unc_path, "data", "recent")
+        self.assertTrue(entry["available"])
+        self.assertEqual(entry["path"], str(unc_path))
+
+        with patch("os.name", "nt"), \
+             patch.object(files, "_windows_logical_drive_letters", return_value=["C", "Z"]), \
+             patch.object(files, "_windows_drive_type", side_effect=lambda root: 4 if root.startswith("Z:") else 3), \
+             patch.object(Path, "exists", side_effect=AssertionError("exists probed remote drive")), \
+             patch.object(Path, "home", return_value=Path(tempfile.gettempdir())):
+            roots = files.import_browse_roots()
+        self.assertIn({"path": "Z:\\", "name": "Z:"}, roots)
+        self.assertIn({"path": "C:\\", "name": "C:"}, roots)
+
+        db = self.make_session()
+        try:
+            payload = files.get_import_quick_access(db=db)
+        finally:
+            db.close()
+        self.assertIn("items", payload)
+        self.assertIn("roots", payload)
+        self.assertIn("default_path", payload)
+        self.assertTrue(payload["default_path"])
 
     def test_quick_access_pins_and_recent_folders_are_persistent(self):
         db = self.make_session()
