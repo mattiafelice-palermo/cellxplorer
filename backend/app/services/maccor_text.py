@@ -14,7 +14,7 @@ from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-ADAPTER_REVISION = 1
+ADAPTER_REVISION = 2
 _HEADER_BYTES = 64 * 1024
 _REQUIRED = (
     "Rec", "Cycle P", "Cycle C", "Step", "TestTime", "StepTime", "Cap. [Ah]",

@@ -18,27 +18,51 @@ from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-ADAPTER_REVISION = 1
+ADAPTER_REVISION = 2
 _PREFIX_BYTES = 416
 _HEADER_LIMIT = 4 * 1024 * 1024
 _ADC_MAX = 65535
 _RECORD = np.dtype({
-    "names": ["date", "channel", "mode", "end_status", "reserved", "step", "current", "voltage",
+    "names": ["date", "channel", "mode", "end_status", "program_field", "step", "current", "voltage",
               "test_ticks", "step_ticks", "capacity", "energy", "record", "range_code"],
     "formats": ["<f8", "u1", "u1", "u1", "<u4", "u1", "<u2", "<u2",
                 "<u8", "<u8", "<u8", "<u8", "<u4", "<u2"],
     "offsets": [0, 8, 9, 10, 11, 15, 16, 18, 21, 29, 37, 45, 230, 234],
     "itemsize": 264,
 })
-_MODE = {1: "C", 2: "D", 4: "R", 29: "SBw"}
+_MODE = {1: "C", 2: "D", 4: "R", 29: "SBw", 30: "Stop", 31: "O"}
 _PROGRAM_MODE = {"Charge": "C", "Dischrge": "D", "Rest": "R"}
+_CHARGE_RANGES = (0xFFFF, 0xEEEE, 0xDDDD, 0xCCCC)
+_DISCHARGE_RANGES = (0xBBBB, 0xAAAA, 0x9999, 0x8888)
+
+
+@dataclass(frozen=True)
+class _Program:
+    steps: tuple[str, ...]
+    first_direction: str | None
+    # (previous, next) one-based recorded steps -> crossed AdvCycle instructions.
+    # Step zero is the start of the procedure. Do/Loop/AdvCycle emit no rows.
+    transitions: dict[tuple[int, int], int]
+
+    @property
+    def explicit(self) -> bool:
+        return "AdvCycle" in self.steps
+
+    @property
+    def cycle_basis(self) -> str:
+        if self.explicit:
+            return "Recorded program cycle checked against executed AdvCycle transitions"
+        if not {"Charge", "Dischrge"}.issubset(self.steps):
+            return "Single recording group without a charge/discharge pair"
+        first = "charge" if self.first_direction == "C" else "discharge"
+        return f"Inferred from the return to {first} after the opposite direction"
 
 
 @dataclass(frozen=True)
 class _Header:
     channel: int  # zero-based in both the channel descriptor and the records
-    step_types: tuple[str, ...]
-    current_ranges: tuple[float, float]
+    program: _Program
+    current_ranges: tuple[float, ...]
     voltage_min: float
     voltage_max: float
     metadata: dict
@@ -51,7 +75,50 @@ def _dates(serial_days: np.ndarray) -> np.ndarray:
     return np.datetime64("1899-12-30", "ms") + ticks
 
 
-def _program_steps(data: bytes, declared_count: int) -> tuple[str, ...]:
+def _cycle_program(steps: tuple[str, ...]) -> _Program:
+    if steps[-1] != "End" or "End" in steps[:-1]:
+        raise UnsupportedSourceFormatError("Maccor cycle program requires one final End step.")
+    first = next((_PROGRAM_MODE[kind] for kind in steps if kind in ("Charge", "Dischrge")), None)
+    loop_starts = {}
+    opened = None
+    for index, kind in enumerate(steps):
+        if kind.startswith("Do "):
+            if opened is not None:
+                raise UnsupportedSourceFormatError("Nested Maccor cycle programs are unsupported.")
+            opened = index
+        elif kind.startswith("Loop "):
+            if opened is None or steps[opened][-1] != kind[-1]:
+                raise UnsupportedSourceFormatError("Mismatched loop in Maccor cycle program.")
+            body = "".join(_PROGRAM_MODE[k] for k in steps[opened + 1:index] if k in ("Charge", "Dischrge"))
+            pattern = "C+D+" if first == "C" else "D+C+"
+            if not re.fullmatch(pattern, body):
+                raise UnsupportedSourceFormatError("Unsupported phase order in Maccor cycle program.")
+            loop_starts[index] = opened + 1
+            opened = None
+    if opened is not None:
+        raise UnsupportedSourceFormatError("Unclosed loop in Maccor cycle program.")
+
+    recorded = [i + 1 for i, kind in enumerate(steps) if kind in _PROGRAM_MODE]
+    if not recorded:
+        raise UnsupportedSourceFormatError("Maccor cycle program contains no measurement steps.")
+    transitions = {}
+    for previous in [0, *recorded]:
+        pending = [(previous, 0)]
+        while pending:
+            index, advances = pending.pop()
+            kind = steps[index]
+            if kind in _PROGRAM_MODE or kind == "End":
+                edge = (previous, index + 1)
+                if transitions.setdefault(edge, advances) != advances:
+                    raise UnsupportedSourceFormatError("Ambiguous AdvCycle path in Maccor cycle program.")
+            else:
+                if index in loop_starts:
+                    pending.append((loop_starts[index], advances))
+                pending.append((index + 1, advances + (kind == "AdvCycle")))
+    return _Program(steps, first, transitions)
+
+
+def _program_steps(data: bytes, declared_count: int) -> _Program:
     if (not data.startswith(b"<?xml") or b'progid="Maccor Procedure File"' not in data[:160]
             or b"<!" in data or b"\x00" in data):
         raise UnsupportedSourceFormatError("Expected an embedded Maccor test procedure.")
@@ -66,18 +133,12 @@ def _program_steps(data: bytes, declared_count: int) -> tuple[str, ...]:
     if len(steps) != declared_count - 1 or not steps:
         raise InvalidSourceFormatError("Maccor binary and XML procedure step counts disagree.")
     for index, (node, kind) in enumerate(zip(nodes, steps)):
-        if kind not in _PROGRAM_MODE and kind != "End" and not re.fullmatch(r"(?:Do|Loop) [1-4]", kind):
+        if kind not in _PROGRAM_MODE and kind not in ("End", "AdvCycle") and not re.fullmatch(r"(?:Do|Loop) [1-4]", kind):
             raise UnsupportedSourceFormatError(f"Unsupported Maccor procedure step type: {kind[:32]}.")
         for target in node.findall("Ends/EndEntry/Step"):
             if (target.text or "").strip().lstrip("0") != str(index + 2):
                 raise UnsupportedSourceFormatError("Maccor procedure uses an unverified step jump.")
-    # Cycle C is computed by the export. Only infer it for observed program
-    # shapes: each flat loop contains one charge phase followed by one discharge.
-    # Rest steps do not change direction. Multiple charge steps can share a phase.
-    symbols = "".join(_PROGRAM_MODE.get(kind, kind) for kind in steps if kind != "Rest")
-    if not re.fullmatch(r"(?:Do ([1-4])C+D+Loop \1)+End", symbols):
-        raise UnsupportedSourceFormatError("Unsupported Maccor cycle program; expected charge-first cycling loops.")
-    return steps
+    return _cycle_program(steps)
 
 
 def _read_header(stream: BinaryIO) -> _Header:
@@ -110,7 +171,7 @@ def _read_header(stream: BinaryIO) -> _Header:
     if seed[8] != channel or any(seed[9:]):
         raise InvalidSourceFormatError("Maccor setup record does not match its channel descriptor.")
     started = _dates(np.frombuffer(seed, dtype="<f8", count=1))[0]
-    steps = _program_steps(header[procedure:procedure_end], step_count)
+    program = _program_steps(header[procedure:procedure_end], step_count)
 
     # The paired export establishes the bipolar voltage and unsigned current
     # conversion for this hardware profile. Other range tables need evidence.
@@ -128,8 +189,8 @@ def _read_header(stream: BinaryIO) -> _Header:
     procedure_name, suffix, description = name_fields.partition(".000")
     fields = {"Tester": device, "Model": "4608", "Channel": channel + 1,
               "Procedure": procedure_name + suffix if suffix else None,
-              "Description": description if suffix else None, "Step types": list(steps),
-              "Cycle basis": "Inferred from charge following discharge in charge-first cycling loops",
+              "Description": description if suffix else None, "Step types": list(program.steps),
+              "Cycle basis": program.cycle_basis,
               "Current full scale [A]": current_max, "Current range gains": list(gains),
               "Voltage range [V]": [vmin, vmax]}
     declared = build_declared_protocol([], warnings=["Full Maccor procedure settings are unavailable for protocol analysis."])
@@ -139,7 +200,7 @@ def _read_header(stream: BinaryIO) -> _Header:
         "start_time": str(started), "voltage_capabilities": voltage_capabilities(),
         "protocol_warnings": declared["warnings"],
     }
-    return _Header(channel, steps, (current_max / gains[0], current_max / gains[1]), vmin, vmax, metadata)
+    return _Header(channel, program, tuple(current_max / gain for gain in gains), vmin, vmax, metadata)
 
 
 def read_header_metadata(path: str | Path) -> dict:
@@ -148,40 +209,86 @@ def read_header_metadata(path: str | Path) -> dict:
 
 
 def _decode(rows: np.ndarray, header: _Header) -> pd.DataFrame:
-    if rows["reserved"].any():
+    field = rows["program_field"]
+    if not header.program.explicit and not np.isin(field, (0, 0x03000000)).all():
         raise UnsupportedSourceFormatError("Unsupported Maccor record layout before the step field.")
     mode = pd.Series(rows["mode"]).map(_MODE)
     if mode.isna().any():
         raise UnsupportedSourceFormatError("Unsupported Maccor binary operating mode.")
     step = rows["step"].astype("int64")
-    if (rows["channel"] != header.channel).any() or (step >= len(header.step_types)).any():
+    if (rows["channel"] != header.channel).any() or (step >= len(header.program.steps)).any():
         raise InvalidSourceFormatError("Maccor record channel or step contradicts the header.")
-    expected_mode = pd.Series(np.asarray(header.step_types)[step]).map(_PROGRAM_MODE)
+    kinds = pd.Series(np.asarray(header.program.steps)[step])
+    expected_mode = kinds.map(_PROGRAM_MODE)
     standby = mode.eq("SBw")
-    if (mode.ne(expected_mode) & ~standby).any() or (standby & ~expected_mode.isin(("C", "D"))).any():
+    valid_mode = (mode.eq(expected_mode) | (standby & expected_mode.isin(("C", "D")))
+                  | (mode.eq("O") & kinds.eq("End")) | (mode.eq("Stop") & expected_mode.notna()))
+    if not valid_mode.all():
         raise InvalidSourceFormatError("Maccor record mode contradicts the programmed step.")
 
     charge, discharge = mode.eq("C"), mode.eq("D")
     flags = rows["range_code"]
-    if ((charge & ~np.isin(flags, (0xEEEE, 0xFFFF))).any() or (discharge & (flags != 0xAAAA)).any()
+    if ((charge & ~np.isin(flags, _CHARGE_RANGES)).any() or (discharge & ~np.isin(flags, _DISCHARGE_RANGES)).any()
             or (standby & (flags != 0x2222)).any()):
         raise UnsupportedSourceFormatError("Unsupported active Maccor current range code.")
     if (mode.eq("R") & (rows["current"] != 0)).any():
         raise InvalidSourceFormatError("Maccor rest record has a nonzero current count.")
-    finest, middle = header.current_ranges
-    current = rows["current"] * np.where(flags == 0xFFFF, finest, middle) / _ADC_MAX
+    scales = dict(zip(_CHARGE_RANGES, header.current_ranges))
+    scales.update(zip(_DISCHARGE_RANGES, header.current_ranges))
+    current = rows["current"] * pd.Series(flags).map(scales) / _ADC_MAX
     voltage_span = (header.voltage_max - header.voltage_min) / _ADC_MAX
     # Accumulators always use the finest current range and centisecond ticks,
     # even if the instantaneous ADC range changes during a step.
-    ah_per_count = finest / (_ADC_MAX * 100 * 3600)
+    ah_per_count = header.current_ranges[0] / (_ADC_MAX * 100 * 3600)
     return pd.DataFrame({
         "Rec": rows["record"].astype("int64"), "Step": step + 1, "Md": mode, "ES": rows["end_status"],
         "TestTime": rows["test_ticks"] / 6000.0, "StepTime": rows["step_ticks"] / 6000.0,
         "Current [A]": np.where(charge | discharge, current, 0.0),
         "Voltage [V]": header.voltage_min + rows["voltage"] * voltage_span,
         "Cap. [Ah]": rows["capacity"] * ah_per_count, "Ener. [Wh]": rows["energy"] * (ah_per_count * voltage_span),
-        "DPT Time": _dates(rows["date"]),
+        "DPT Time": _dates(rows["date"]), "Program field": field,
     })
+
+
+def _assign_cycles(table: pd.DataFrame, program: _Program) -> None:
+    step = table["Step"]
+    previous = step.shift(fill_value=0)
+    changed = step.ne(previous)
+    field = table["Program field"].astype("int64")
+    if program.explicit and (field.diff().ne(0) & ~changed).any():
+        raise InvalidSourceFormatError("Maccor program counter changed within a recorded step.")
+    # Validate each distinct edge once, including transitions across read chunks.
+    edges = pd.DataFrame({"previous": previous[changed], "step": step[changed]})
+    if program.explicit:
+        edges["advance"] = field.diff().fillna(field).loc[changed]
+    loop_spans = [(lo, hi) for hi, lo in program.transitions if lo < hi]
+    for edge in edges.drop_duplicates().itertuples(index=False):
+        expected = program.transitions.get((edge.previous, edge.step))
+        if expected is None:
+            # A programmed measurement step may have no recorded samples.
+            # Polarity inference only uses observed phases. A backward move
+            # still requires both step numbers to belong to the same flat loop.
+            if not program.explicit and (edge.step > edge.previous or any(
+                    lo <= edge.step <= edge.previous <= hi for lo, hi in loop_spans)):
+                continue
+            raise InvalidSourceFormatError("Recorded Maccor step transition contradicts the procedure.")
+        if program.explicit and edge.advance != expected:
+            raise InvalidSourceFormatError("Maccor program counter contradicts the executed AdvCycle instructions.")
+    active = table["Md"].where(table["Md"].isin(("C", "D")))
+    if program.explicit:
+        if (active.notna() & field.eq(0)).any():
+            raise UnsupportedSourceFormatError("Unsupported active preamble before the first Maccor AdvCycle.")
+        table["Cycle P"] = field
+        # The neutral preamble belongs to the first plotted group. Keep its
+        # original zero in Cycle P. Never add a second advance on polarity.
+        table["Cycle C"] = field.clip(lower=1)
+    else:
+        measured = active.dropna()
+        if not measured.empty and measured.iloc[0] != program.first_direction:
+            raise UnsupportedSourceFormatError("First recorded Maccor direction disagrees with the cycle program.")
+        direction = active.ffill()
+        opposite = "D" if program.first_direction == "C" else "C"
+        table["Cycle C"] = 1 + (direction.eq(program.first_direction) & direction.shift().eq(opposite)).cumsum()
 
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
@@ -204,9 +311,5 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise OSError("Maccor source changed while reading records.")
     table = pd.concat(chunks, ignore_index=True)
-    active = table["Md"].where(table["Md"].isin(("C", "D"))).ffill()
-    measured_modes = active.dropna()
-    if not measured_modes.empty and measured_modes.iloc[0] != "C":
-        raise UnsupportedSourceFormatError("Maccor binary cycle interpretation requires a charge-first recording.")
-    table["Cycle C"] = 1 + (active.eq("C") & active.shift().eq("D")).cumsum()
+    _assign_cycles(table, header.program)
     return canonical_records(table, verify_minute_units=False)

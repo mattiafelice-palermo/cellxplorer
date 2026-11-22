@@ -10,6 +10,12 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.19 - 2026-11-22
+
+### New features
+
+- Read Maccor 4608 rest and one-direction tests, linear cycling sequences, discharge-first loops, and programs with explicit cycle advances. Preserve partial measurements in plots.
+
 ## 0.29.0-alpha.18 - 2026-11-22
 
 ### New features

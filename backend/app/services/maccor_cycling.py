@@ -15,16 +15,38 @@ def _validate_records(table: pd.DataFrame) -> None:
     if (table["Rec"].iloc[0] < 1 or table["Rec"].diff().iloc[1:].ne(1).any()
             or table["Cycle C"].lt(1).any() or table["Cycle C"].diff().lt(0).any()):
         raise InvalidSourceFormatError("Expected consecutive Maccor records and ordered Cycle C labels.")
-    if "Cycle P" in table and table["Cycle P"].ne(0).any():
-        raise UnsupportedSourceFormatError("Maccor exports with an active Cycle P counter are unsupported.")
+    if "Cycle P" in table and table["Cycle P"].diff().lt(0).any():
+        raise UnsupportedSourceFormatError("Unsupported decreasing Maccor program-cycle counter.")
     if (table[["TestTime", "StepTime", "Current [A]", "Cap. [Ah]", "Ener. [Wh]"]] < 0).any().any():
         raise InvalidSourceFormatError("Expected nonnegative Maccor times and unsigned current, Ah and Wh.")
     if table["TestTime"].diff().lt(0).any():
         raise InvalidSourceFormatError("Maccor TestTime decreases in acquisition order.")
-    if not table["Md"].isin(("C", "D", "R", "SBw")).all():
+    if not table["Md"].isin(("C", "D", "R", "SBw", "O", "Stop")).all():
         raise UnsupportedSourceFormatError("Unsupported Maccor operating mode.")
-    if not table["ES"].isin((0, 1, 4, 5, *_STEP_END, 195)).all():
+    if not table["ES"].isin((0, 1, 4, 5, *_STEP_END, 136, 192, 193, 195, 199)).all():
         raise UnsupportedSourceFormatError("Unsupported Maccor end status.")
+
+
+def _measurement_records(table: pd.DataFrame) -> pd.DataFrame:
+    mode, es = table["Md"], table["ES"]
+    if not (mode.eq("O").eq(es.eq(193)).all() and mode.eq("Stop").eq(es.eq(192)).all()):
+        raise InvalidSourceFormatError("Maccor terminal mode and status disagree.")
+    terminal = mode.isin(("O", "Stop"))
+    if not terminal.any():
+        return table
+    if len(table) < 2 or terminal.iloc[:-1].any():
+        raise UnsupportedSourceFormatError("Expected a Maccor terminal control record only at the end.")
+    last, prior = table.iloc[-1], table.iloc[-2]
+    if last["Md"] == "O":
+        valid = last["Step"] > prior["Step"] and last["Current [A]"] == 0
+    else:
+        valid = ("Program field" in table and last["Step"] == prior["Step"]
+                 and last["StepTime"] >= prior["StepTime"])
+    if not valid:
+        raise InvalidSourceFormatError("Maccor terminal record contradicts the preceding execution.")
+    # These controls can retain ADCs and accumulated Ah/Wh from the preceding
+    # operation. They are not another sample of the active or resting phase.
+    return table.iloc[:-1]
 
 
 def _check_clocks(table: pd.DataFrame, step: pd.Series) -> None:
@@ -47,6 +69,7 @@ def _check_clocks(table: pd.DataFrame, step: pd.Series) -> None:
 def canonical_records(table: pd.DataFrame, *, verify_minute_units: bool) -> pd.DataFrame:
     """Map ordered magnitudes and counters to the CellXplorer cycling contract."""
     _validate_records(table)
+    table = _measurement_records(table)
     cycle, program, mode, es = (table[name] for name in ("Cycle C", "Step", "Md", "ES"))
     standby = mode.eq("SBw")
     neutral = standby | mode.eq("R")
@@ -67,6 +90,13 @@ def canonical_records(table: pd.DataFrame, *, verify_minute_units: bool) -> pd.D
         if (standby & ~witnessed).any():
             raise UnsupportedSourceFormatError("Maccor standby is outside a verified continuing step.")
     direction = mode.where(~standby, mode.shift())
+    # Additional observed transitions end an active step (136) or a rest
+    # (199). Only credit the endpoint when a different recorded step follows.
+    extra_end = es.isin((136, 199))
+    witnessed_end = (program.shift(-1).notna() & program.ne(program.shift(-1))
+                     & ((es.eq(136) & mode.isin(("C", "D"))) | (es.eq(199) & mode.eq("R"))))
+    if (extra_end & ~witnessed_end).any():
+        raise UnsupportedSourceFormatError("Unwitnessed Maccor end-status transition.")
     boundary = (~same_program | direction.ne(direction.shift())
                 | table["StepTime"].diff().lt(0) | es.shift().isin(_STEP_END))
     step = boundary.cumsum()
@@ -82,6 +112,10 @@ def canonical_records(table: pd.DataFrame, *, verify_minute_units: bool) -> pd.D
         "timestamp": table["DPT Time"], "current_ma": signed_current, "voltage_v": table["Voltage [V]"],
         "maccor_mode": mode, "maccor_end_status": es, "cv_mode_known": False,
     })
+    if "Cycle P" in table:
+        raw["maccor_program_cycle"] = table["Cycle P"]
+    if "Program field" in table:
+        raw["maccor_program_field"] = table["Program field"]
     if standby.any():
         # Zero current at this record does not reset the measured step counter.
         raw["maccor_standby_phase"] = direction.where(standby).map({"C": "charge", "D": "discharge"})
@@ -100,11 +134,16 @@ def canonical_records(table: pd.DataFrame, *, verify_minute_units: bool) -> pd.D
         raw[f"discharge_{quantity}"] = span.where(discharge, 0.0)
 
     ends = es.groupby(step, sort=False)
-    closed = ends.first().eq(0) & ends.last().isin(_STEP_END)
+    closed = ends.first().eq(0) & (es.isin(_STEP_END) | witnessed_end).groupby(step, sort=False).last()
     incomplete = (~neutral & ~step.map(closed)).groupby(cycle).any()
     measured = table["Current [A]"].gt(0)
     paired = (charge & measured).groupby(cycle).any() & (discharge & measured).groupby(cycle).any()
-    complete = paired & ~incomplete
+    # Two endpoint records at the same tick with identical counters cannot
+    # establish a delivered capacity. Keep an observed zero over a real interval.
+    elapsed = table["StepTime"] - table["StepTime"].groupby(step, sort=False).transform("first")
+    interval = elapsed.gt(0) | raw["charge_capacity_mah"].gt(0) | raw["discharge_capacity_mah"].gt(0)
+    sampled = (charge & interval).groupby(cycle).any() & (discharge & interval).groupby(cycle).any()
+    complete = paired & ~incomplete & sampled
     if table["Rec"].iloc[0] != 1:
         complete.iloc[0] = False
     raw["cycle_complete"] = cycle.map(complete)

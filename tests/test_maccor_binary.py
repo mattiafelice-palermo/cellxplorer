@@ -17,8 +17,32 @@ from backend.app.services.filesystem_cleanup import TemporaryDirectory
 from backend.app.services.source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-def channel_file() -> bytes:
-    steps = ("Rest", "Do 1", "Charge", "Charge", "Dischrge", "Loop 1", "End")
+CYCLING_STEPS = ("Rest", "Do 1", "Charge", "Charge", "Dischrge", "Loop 1", "End")
+# Zero-based step, mode, status, range, current ADC, step ticks, Ah units, Wh units.
+# The two consecutive charge steps deliberately share a counter.
+CYCLING_RECORDS = [
+    (0, 4, 0,   0x3333, 0, 0, 0, 0),
+    (0, 4, 129, 0xBBBB, 0, 100, 0, 0),
+    (2, 1, 0,   0xEEEE, 65535, 0, 0, 0),
+    (2, 1, 133, 0xEEEE, 65535, 100, 2, 3),
+    (3, 1, 0,   0xFFFF, 65535, 0, 2, 3),
+    (3, 1, 132, 0xFFFF, 65535, 100, 3, 4),
+    (4, 2, 0,   0xAAAA, 65535, 0, 0, 0),
+    (4, 29, 195, 0x2222, 4321, 100, 1, 1),
+    (4, 2, 0,   0xAAAA, 65535, 100, 1, 1),
+    (4, 2, 129, 0xAAAA, 65535, 200, 2, 2),
+    (2, 1, 0,   0xEEEE, 65535, 0, 0, 0),
+]
+
+
+def operation(step, mode, scale, end=133):
+    current = 0 if mode == 4 else 65535
+    increment = int(mode != 4)
+    return [(step, mode, 0, scale, current, 0, 0, 0),
+            (step, mode, end, scale, current, 100, increment, increment)]
+
+
+def channel_file(steps=CYCLING_STEPS, records=CYCLING_RECORDS, fields=None) -> bytes:
     xml = ('<?xml version="1.0"?><?maccor-application progid="Maccor Procedure File"?>'
            '<MaccorTestProcedure><header><FileFormatVersion><BTVersion>11</BTVersion>'
            '</FileFormatVersion></header><ProcSteps>' +
@@ -47,27 +71,13 @@ def channel_file() -> bytes:
     header[-len(tester):] = tester
     setup = bytearray(264)
     struct.pack_into('<dB', setup, 0, 46000.5, 2)
-    # Step numbers in these records are zero-based. Capacity and energy are
-    # deliberately carried between the two consecutive charge steps.
-    records = [
-        # step, mode, status, range, current ADC, step ticks, Ah units, Wh units
-        (0, 4, 0,   0x3333, 0, 0, 0, 0),
-        (0, 4, 129, 0xBBBB, 0, 100, 0, 0),
-        (2, 1, 0,   0xEEEE, 65535, 0, 0, 0),
-        (2, 1, 133, 0xEEEE, 65535, 100, 2, 3),
-        (3, 1, 0,   0xFFFF, 65535, 0, 2, 3),
-        (3, 1, 132, 0xFFFF, 65535, 100, 3, 4),
-        (4, 2, 0,   0xAAAA, 65535, 0, 0, 0),
-        (4, 29, 195, 0x2222, 4321, 100, 1, 1),
-        (4, 2, 0,   0xAAAA, 65535, 100, 1, 1),
-        (4, 2, 129, 0xAAAA, 65535, 200, 2, 2),
-        (2, 1, 0,   0xEEEE, 65535, 0, 0, 0),
-    ]
     output = header + setup
     unit = 65535 * 100 * 3600
     for rec, (step, mode, end, scale, current, clock, cap, energy) in enumerate(records, 1):
         row = bytearray(264)
         struct.pack_into('<dBBB', row, 0, 46000.5 + rec / 86400, 2, mode, end)
+        if fields is not None:
+            struct.pack_into('<I', row, 11, fields[rec - 1])
         struct.pack_into('<BHH', row, 15, step, current, 0 if mode == 2 else 65535)
         struct.pack_into('<QQQQ', row, 21, rec * 100, clock, cap * unit, energy * unit * 65535)
         struct.pack_into('<IH', row, 230, rec, scale)
@@ -162,3 +172,68 @@ class MaccorBinaryTests(unittest.TestCase):
             self.path.write_bytes(contents)
             with self.assertRaisesRegex(InvalidSourceFormatError, "truncated"):
                 parsing.parse_timeseries(self.path)
+
+    def test_linear_rest_and_single_direction_recordings_keep_only_measurements(self):
+        rest = operation(0, 4, 0xBBBB, end=129)
+        stop = (0, 30, 192, 0x3333, 0, 110, 0, 0)
+        for steps, records, current in (
+            (("Rest", "End"), [*rest, stop], [0, 0]),
+            (("Rest", "Charge", "End"), rest + operation(1, 1, 0xCCCC), [0, 0, 5000, 5000]),
+            (("Dischrge", "End"), operation(0, 2, 0x8888), [-5000, -5000]),
+        ):
+            with self.subTest(steps=steps):
+                self.path.write_bytes(channel_file(steps, records, [0x03000000] * len(records)))
+                raw = parsing.parse_timeseries(self.path)
+                np.testing.assert_allclose(raw.current_ma, current)
+                self.assertTrue(raw.cycle.eq(1).all())
+                self.assertFalse(raw.cycle_complete.any())
+                self.assertTrue(raw.maccor_program_field.eq(0x03000000).all())
+        # A stop in the middle of the source must never trim the rest of the file.
+        self.path.write_bytes(channel_file(("Rest", "End"), rest + [stop] + rest))
+        with self.assertRaisesRegex(UnsupportedSourceFormatError, "only at the end"):
+            parsing.parse_timeseries(self.path)
+
+    def test_discharge_first_and_linear_preamble_pair_only_observed_phases(self):
+        preamble = operation(0, 2, 0xBBBB) + operation(1, 1, 0xFFFF, end=136)
+        rest = operation(3, 4, 0xBBBB, end=199)
+        pair = operation(4, 2, 0x9999) + operation(5, 1, 0xDDDD)
+        steps = ("Dischrge", "Charge", "Do 2", "Rest", "Dischrge", "Charge", "Loop 2", "End")
+        self.path.write_bytes(channel_file(steps, preamble + rest + pair + rest + pair[:1]))
+        raw = parsing.parse_timeseries(self.path)
+        self.assertEqual(raw.cycle.tolist(), [1] * 6 + [2] * 6 + [3])
+        self.assertEqual(raw.cycle_complete.tolist(), [True] * 12 + [False])
+        np.testing.assert_allclose(raw.current_ma.iloc[[0, 2, 6, 8]], [-.15, .15, -150, 150])
+        # Some steps may emit no samples. Earlier charge-first files retain their labels.
+        self.path.write_bytes(channel_file(CYCLING_STEPS, CYCLING_RECORDS[2:4] + CYCLING_RECORDS[6:]))
+        self.assertEqual(parsing.parse_timeseries(self.path).cycle.tolist(), [1] * 6 + [2])
+
+    def test_advcycle_is_checked_at_the_executed_control_edge(self):
+        steps = ("Rest", "Do 1", "AdvCycle", "Charge", "Dischrge", "Loop 1", "End")
+        rest = operation(0, 4, 0xBBBB, end=129)
+        pair = operation(3, 1, 0xDDDD) + operation(4, 2, 0x9999)
+        end = (6, 31, 193, 0x1111, 65535, 100, 1, 1)
+        rows = rest + pair + pair + [end]
+        fields = [0, 0] + [1] * 4 + [2] * 5
+        self.path.write_bytes(channel_file(steps, rows, fields))
+        raw = parsing.parse_timeseries(self.path)
+        self.assertEqual(raw.cycle.tolist(), [1] * 6 + [2] * 4)
+        self.assertEqual(raw.maccor_program_cycle.tolist(), fields[:-1])
+        self.assertTrue(raw.cycle_complete.all())
+        self.assertIn("AdvCycle", parsing.read_header_metadata(self.path)["raw"]["Maccor"]["Cycle basis"])
+        for bad in (fields[:6] + [1] * 5, fields[:6] + [3] * 5, [0, 0, 1, 2] + fields[4:]):
+            self.path.write_bytes(channel_file(steps, rows, bad))
+            with self.assertRaisesRegex(InvalidSourceFormatError, "program counter"):
+                parsing.parse_timeseries(self.path)
+        self.path.write_bytes(channel_file(steps, rest + pair[2:], [0, 0, 1, 1]))
+        with self.assertRaisesRegex(InvalidSourceFormatError, "step transition"):
+            parsing.parse_timeseries(self.path)
+
+    def test_identical_short_pulse_endpoints_cannot_establish_delivered_capacity(self):
+        steps = ("Charge", "Dischrge", "End")
+        rows = [(i, mode, es, code, 1000, 3, 1, 1)
+                for i, mode, code in [(0, 1, 0xDDDD), (1, 2, 0x9999)] for es in (0, 133)]
+        self.path.write_bytes(channel_file(steps, rows))
+        raw = parsing.parse_timeseries(self.path)
+        self.assertEqual(len(raw), 4)
+        self.assertFalse(raw.cycle_complete.any())
+        self.assertTrue(raw[["charge_capacity_mah", "discharge_capacity_mah"]].eq(0).all().all())

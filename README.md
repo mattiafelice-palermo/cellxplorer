@@ -7,7 +7,9 @@ authored BioLogic `.mpr` reader. The same Cell/source workflow imports Neware
 `.nda`, `.ndax`, structured Neware Excel `.xlsx`, BioLogic GCPL, CP, OCV and MB
 `.mpr`, Maccor tab-separated `.txt` exports, and native Maccor 4608 numbered
 channel files such as `.060`. The binary reader supports the verified 264-byte
-record layout and charge-first cycling loops. It reads the native file directly.
+layout for rest/OCV recordings, one-direction tests, linear sequences and
+charge-first or discharge-first flat cycling loops. It checks recorded
+program-cycle advances against the embedded `AdvCycle` instructions.
 The supported Maccor text layout uses `Cycle C`, `Md`, `ES`, Ah, Wh, A, V and
 day-first `DPT Time` timestamps. The reader checks the numeric time units against
 the timestamps. Partial cycles remain available in voltage and current plots.

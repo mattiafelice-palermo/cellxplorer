@@ -40,12 +40,13 @@ RECORDS = [
 ]
 
 
-def export_text(records=RECORDS):
+def export_text(records=RECORDS, program_cycles=None):
     lines = ["Name:\tsynthetic.060", "Channel:\t2", "Tester\tMaccor #1", "Procedure\tTest.000",
              "Description\tEssai mesuré", "Started\t14/11/2026 12:00:00", "", COLUMNS, ""]
     for rec, row in enumerate(records, 1):
         stamp = datetime(2026, 11, 14, 12) + timedelta(minutes=row[2])
-        values = [rec, 0, *row, stamp.strftime("%d/%m/%Y %H:%M:%S"), 0]
+        program_cycle = 0 if program_cycles is None else program_cycles[rec - 1]
+        values = [rec, program_cycle, *row, stamp.strftime("%d/%m/%Y %H:%M:%S"), 0]
         lines.append("\t".join(map(str, values)) + "\t")
     return "\r\n".join(lines) + "\r\n"
 
@@ -55,6 +56,24 @@ class MaccorTextTests(unittest.TestCase):
         directory = self.enterContext(TemporaryDirectory())
         self.path = Path(directory) / "record.TXT"
         self.path.write_bytes(export_text().encode("cp1252"))
+
+    def test_program_counter_and_final_off_control_preserve_exported_cycle_c(self):
+        terminal = (3, 6, 7, 1, .001, .0001, 0, -.1, "O", 193)
+        rows = [*RECORDS, terminal]
+        counters = [0, 0] + [1] * 8 + [2] * 5
+        self.path.write_bytes(export_text(rows, counters).encode("cp1252"))
+        raw = parsing.parse_timeseries(self.path)
+        self.assertEqual(raw.cycle.tolist(), [record[0] for record in RECORDS])
+        self.assertEqual(raw.maccor_program_cycle.tolist(), counters[:-1])
+        self.assertEqual(calc.per_cycle(raw).cycle.tolist(), [1])
+        for bad, message in (
+            (export_text(rows, counters[:-1] + [0]), "decreasing"),
+            (export_text(rows + [terminal]), "only at the end"),
+            (export_text([*RECORDS, (*terminal[:-1], 192)]), "terminal mode and status"),
+        ):
+            self.path.write_bytes(bad.encode("cp1252"))
+            with self.assertRaisesRegex(parsing.SourceFormatError, message):
+                parsing.parse_timeseries(self.path)
 
     def test_bounded_recognition_metadata_and_generic_text_exclusion(self):
         notes = self.path.with_name("notes.txt")

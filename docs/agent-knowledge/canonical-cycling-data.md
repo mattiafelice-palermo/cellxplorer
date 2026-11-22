@@ -694,7 +694,8 @@ Ah, Wh, A and V units. Generic text is common in discovery roots. Check the
 header before registration and before treating a search hit as recognized,
 including when optional index metadata is disabled.
 
-- Use the recorded `Cycle C` labels and the programmed `Step` number. Signs come
+- Use the recorded `Cycle C` labels and the programmed `Step` number. Preserve
+  the separate `Cycle P` counter as `maccor_program_cycle`. Signs come
   from `Md`. The current field is a magnitude, and voltage retains its recorded sign.
   `C` and `D` establish direction only. CV metrics are unknown and the procedure
   name supplies no declared protocol conditions.
@@ -713,11 +714,15 @@ including when optional index metadata is disabled.
   changes since the first record of each execution. Adjacent charge steps can
   carry the same counter. Shared cycle calculations sum within-step spans.
   Energy follows the reported Wh counter. The reader does not derive it from voltage.
-- Complete summaries require measured current in both directions and bounded
-  active executions. The verified start status is 0 and the verified terminal
-  statuses are 129, 132 and 133. A final ongoing discharge, or a final cycle
-  with only charge, remains present in raw plots. `VARn` channels retain their
-  recorded values without assigning a physical unit to them.
+- Complete summaries require measured current, bounded active executions and a
+  sampled interval in each direction. Duplicate endpoints at one tick with
+  identical Ah counters provide no observed transfer interval. The verified
+  start status is 0 and the verified terminal statuses are 129, 132 and 133.
+  Status 136 on an active step and 199 on rest require a witnessed transition
+  to a different step. Partial cycles remain available in raw plots. A single
+  final Off control (`O`, status 193) can carry the preceding counters. It is
+  excluded from measurement rows. `VARn` channels retain their recorded values
+  without assigning a physical unit to them.
 
 ## Maccor 4608 binary channel files
 
@@ -731,19 +736,39 @@ physical suffix is retained on the source. Indexed search groups channels
 under `.NNN` and checks their headers even with metadata indexing disabled.
 
 The verified profile has a bipolar −5 to +5 V voltage ADC and a 5 A current
-descriptor. The observed measurement ranges are 0.15 mA and 5 mA. The active
-range flags govern instantaneous current. Ah and Wh accumulators use the finest
+descriptor. Its four current ranges are 0.15, 5, 150 and 5,000 mA. In ascending
+order, the charge flags are FFFF, EEEE, DDDD and CCCC. The corresponding
+discharge flags are BBBB, AAAA, 9999 and 8888. Cross-check the range ratio
+against within-step accumulator increments and the redundant integer at byte
+236 on steady-current records. Ah and Wh accumulators use the finest
 current range across a range change. Test and step clocks count centiseconds.
 The floating-point acquisition date is in local days since 1899-12-30. Standby
 can carry the previous current ADC count while the exported current is zero.
 Its status, enclosing direction and advancing counters have distinct meanings.
 
-The text export supplies `Cycle C`. The native reader infers the same labels
-for verified charge-first loops from discharge-to-charge transitions, leaving
-intervening rests in the preceding cycle. Both readers use `maccor_cycling.py`
-for executed steps, measured counter spans and complete-cycle eligibility.
-The binary source header records the cycle basis. Auxiliary VAR channels, full
-procedure settings and CV classification have no verified binary mapping.
+The binary source header records its cycle basis. Without `AdvCycle`, the
+reader infers a new label when the observed current direction returns to the
+first programmed direction after its opposite. Intervening rests stay in the
+preceding group. Linear programs can precede flat loops. Each loop must have
+one consecutive group of charge steps and one of discharge steps, in a
+consistent order. Rest-only and one-direction files retain a single raw group
+with zero complete cycles.
+
+With `AdvCycle`, the word at bytes 11–14 must match the number of advances
+crossed between recorded steps. Check the first record, loop backs, forward
+exits and counter stability inside a step. Keep the zero counter on a neutral
+preamble and include those rows in plotted group one. The recorded counter
+supplies subsequent group labels. Without `AdvCycle`, the observed field
+patterns `00 00 00 00` and `00 00 00 03` are preserved as opaque provenance.
+Subroutines, nonsequential end-condition targets and nested loops require
+separate verification.
+
+Native mode 31/status 193 on the final End step and mode 30/status 192 on
+the interrupted step are terminal controls. Validate the final position,
+channel, step and status before excluding the control from scientific rows.
+Both readers use `maccor_cycling.py` for executed steps, measured spans and
+complete-cycle eligibility. Auxiliary VAR channels, full procedure settings
+and CV classification have no verified binary mapping.
 
 Run `python scripts/verify_maccor_binary_pair.py channel.060 export.txt` on a
 matched pair. The verifier checks every core record after Parquet reload,
