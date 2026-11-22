@@ -93,6 +93,39 @@ fn native_restart_preserves_windows_argv_and_uses_own_directory_not_cwd() {
 }
 
 #[test]
+fn native_restart_strips_hidden_startup_flag_while_preserving_other_args() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::copy(HELPER, dir.path().join("helper.exe")).unwrap();
+    fs::copy(
+        env!("CARGO_BIN_EXE_installer-argv-console-fixture"),
+        dir.path().join("cellxplorer.exe"),
+    )
+    .unwrap();
+    let output = dir.path().join("argv-hidden.json");
+    let values = vec![
+        output.to_str().unwrap(),
+        "--hidden",
+        "portable.html",
+        "--hidden",
+    ];
+    let hex: String = serde_json::to_vec(&values)
+        .unwrap()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let status = Command::new(dir.path().join("helper.exe"))
+        .args(["--restart", &hex])
+        .current_dir(std::env::temp_dir())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    wait_file(&output);
+    let received: serde_json::Value = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(received["args"], serde_json::json!(["portable.html"]));
+    assert_eq!(received["console"], false);
+}
+
+#[test]
 fn helper_has_gui_subsystem_and_rejects_invalid_requests() {
     let bytes = fs::read(HELPER).unwrap();
     let pe = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;

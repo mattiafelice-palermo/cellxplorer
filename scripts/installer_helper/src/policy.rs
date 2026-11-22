@@ -53,6 +53,16 @@ pub fn decode_arguments(hex: &str) -> Result<Vec<String>, String> {
     Ok(arguments)
 }
 
+/// Updating is an interactive user action; strip startup-only `--hidden`
+/// flags forwarded by older app versions so the updated app always restarts
+/// visibly in the foreground.
+pub fn filter_restart_arguments(arguments: Vec<String>) -> Vec<String> {
+    arguments
+        .into_iter()
+        .filter(|arg| arg != "--hidden")
+        .collect()
+}
+
 pub fn normalize(path: &str) -> String {
     // Win32 preserves non-ASCII whitespace in directory names. Never trim it:
     // "App\u{a0}" and "App" can be distinct installation-owned directories.
@@ -237,5 +247,17 @@ mod tests {
         assert!(observe(&mut quiet, false, INTERVAL * 9).unwrap());
         assert!(observe(&mut quiet, true, TIMEOUT).is_err());
         assert!(observe(&mut quiet, false, TIMEOUT).is_err());
+    }
+    #[test]
+    fn filter_restart_arguments_strips_hidden_flag() {
+        assert_eq!(
+            filter_restart_arguments(vec![
+                "--hidden".into(),
+                "Unicode €".into(),
+                "--hidden".into(),
+                "/CXALLUSERS".into(),
+            ]),
+            vec!["Unicode €".to_string(), "/CXALLUSERS".to_string()]
+        );
     }
 }

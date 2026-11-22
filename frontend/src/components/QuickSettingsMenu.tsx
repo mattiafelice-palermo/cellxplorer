@@ -1,5 +1,7 @@
 import {
+  ActionIcon,
   Anchor,
+  Badge,
   Box,
   Modal,
   Button,
@@ -8,9 +10,11 @@ import {
   Indicator,
   Loader,
   Menu,
+  Popover,
   SegmentedControl,
   Stack,
   Text,
+  ThemeIcon,
   useMantineColorScheme,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
@@ -24,6 +28,7 @@ import {
   IconPower,
   IconRefresh,
   IconSparkles,
+  IconX,
 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
@@ -34,6 +39,9 @@ import {
   getUpdateMenuLabel,
   isUpdateMenuDisabled,
   isUpdateMenuLoading,
+  readDismissedUpdateBubbleVersion,
+  shouldShowUpdateBubble,
+  writeDismissedUpdateBubbleVersion,
 } from "../appUpdater";
 import { isTauriApp } from "../downloads";
 import { useOptionalAppUpdate } from "./AppUpdateCoordinator";
@@ -75,7 +83,17 @@ function confirmDestructiveReload(
   });
 }
 
-export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug?: () => void; onOpenWhatsNew?: () => void }) {
+export function QuickSettingsMenu({
+  onOpenDebug,
+  onOpenWhatsNew,
+  onOpenUpdateSettings,
+  suppressUpdateBubble = false,
+}: {
+  onOpenDebug?: () => void;
+  onOpenWhatsNew?: () => void;
+  onOpenUpdateSettings?: () => void;
+  suppressUpdateBubble?: boolean;
+}) {
   const queryClient = useQueryClient();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const tauri = isTauriApp();
@@ -89,6 +107,41 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [dismissedBubbleVersion, setDismissedBubbleVersion] = useState<string | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : readDismissedUpdateBubbleVersion(window.localStorage),
+  );
+  const dismissUpdateBubble = (version: string) => {
+    setDismissedBubbleVersion(version);
+    if (typeof window !== "undefined") {
+      writeDismissedUpdateBubbleVersion(window.localStorage, version);
+    }
+  };
+  const availableRelease =
+    appUpdate?.state.status === "available" ? appUpdate.state.release : null;
+
+  useEffect(() => {
+    if (
+      appUpdate?.modalOpen &&
+      availableRelease &&
+      dismissedBubbleVersion !== availableRelease.version
+    ) {
+      dismissUpdateBubble(availableRelease.version);
+    }
+  }, [appUpdate?.modalOpen, availableRelease, dismissedBubbleVersion]);
+
+  const showUpdateBubble = Boolean(
+    appUpdate &&
+      shouldShowUpdateBubble({
+        state: appUpdate.state,
+        updateUiEnabled: appUpdate.updateUiEnabled,
+        modalOpen: appUpdate.modalOpen,
+        menuOpen,
+        suppressed: suppressUpdateBubble || aboutOpen,
+        dismissedVersion: dismissedBubbleVersion,
+      }),
+  );
 
   const pause = useQuery({
     queryKey: PAUSE_QUERY_KEY,
@@ -176,13 +229,29 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
         <Button variant="default" onClick={() => setAboutOpen(false)}>Close</Button>
       </Stack>
     </Modal>
-    <Menu
-      shadow="md"
-      width={320}
+    <Popover
+      opened={showUpdateBubble}
+      onClose={() => undefined}
       position="bottom-end"
-      opened={menuOpen}
-      onChange={setMenuOpen}
+      arrowPosition="center"
+      withArrow
+      arrowSize={10}
+      shadow="md"
+      width={360}
+      withinPortal
+      transitionProps={{ duration: 160 }}
+      closeOnClickOutside={false}
+      closeOnEscape={false}
     >
+      <Popover.Target>
+        <Box style={{ display: "inline-flex" }}>
+          <Menu
+            shadow="md"
+            width={320}
+            position="bottom-end"
+            opened={menuOpen}
+            onChange={setMenuOpen}
+          >
       <Menu.Target>
         <Indicator
           color={brandColor}
@@ -342,6 +411,83 @@ export function QuickSettingsMenu({ onOpenDebug, onOpenWhatsNew }: { onOpenDebug
         ) : null}
       </Menu.Dropdown>
     </Menu>
+        </Box>
+      </Popover.Target>
+      {availableRelease ? (
+        <Popover.Dropdown maw="calc(100vw - 24px)" p="sm">
+          <Group gap="xs" wrap="nowrap" align="flex-start" role="status" aria-live="polite">
+            <ThemeIcon
+              variant="light"
+              color={brandColor}
+              size="sm"
+              radius="sm"
+              mt={2}
+              style={{ flexShrink: 0 }}
+            >
+              <IconDownload size={14} stroke={1.75} />
+            </ThemeIcon>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <Group gap={6} wrap="wrap" align="center">
+                <Text size="sm" fw={600}>
+                  Update available
+                </Text>
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={brandColor}
+                  style={{ flexShrink: 0 }}
+                >
+                  v{availableRelease.version}
+                </Badge>
+              </Group>
+              <Text size="xs" c="dimmed" mt={4}>
+                A new version of {APP_BRANDING.productName} is ready.{" "}
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="xs"
+                  fw={600}
+                  c={brandColor}
+                  onClick={() => {
+                    dismissUpdateBubble(availableRelease.version);
+                    appUpdate?.openUpdateModal();
+                  }}
+                >
+                  Click here
+                </Anchor>{" "}
+                to see the changes and install it, or open{" "}
+                {onOpenUpdateSettings ? (
+                  <Anchor
+                    component="button"
+                    type="button"
+                    size="xs"
+                    fw={500}
+                    onClick={() => {
+                      dismissUpdateBubble(availableRelease.version);
+                      onOpenUpdateSettings();
+                    }}
+                  >
+                    Settings → App updates
+                  </Anchor>
+                ) : (
+                  "Settings → App updates"
+                )}{" "}
+                or this menu anytime.
+              </Text>
+            </div>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="Dismiss update message"
+              onClick={() => dismissUpdateBubble(availableRelease.version)}
+            >
+              <IconX size={14} />
+            </ActionIcon>
+          </Group>
+        </Popover.Dropdown>
+      ) : null}
+    </Popover>
     </>
   );
 }

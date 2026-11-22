@@ -15,7 +15,6 @@ import {
   Code,
   Divider,
   Group,
-  HoverCard,
   Loader,
   Menu,
   Modal,
@@ -56,7 +55,7 @@ import {
   IconUpload,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -75,7 +74,6 @@ import {
   SourceFile,
   Tree,
 } from "../api";
-import { CellDetailTabs } from "../components/CellDetailTabs";
 import { AddScientificPresetButton } from "../components/AddScientificPresetButton";
 import { CellHoverCard } from "../components/CellSamplePopovers";
 import { CellLibraryColumnMenu } from "../components/CellLibraryColumnMenu";
@@ -86,20 +84,89 @@ import {
 } from "../components/DestructiveImpactModal";
 import { FolderTree } from "../components/FolderTree";
 import { PlaceInFoldersModal } from "../components/PlaceInFoldersModal";
-import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { nominalCapacityFromMass } from "../scientificMetadata";
 import {
   invalidateAnalysisQueries,
   invalidateSourceScientificQueries,
   sourceUpdateCellId,
 } from "../features/analyses/workspace/analysisQueryCache";
-import { ImportCellsLauncher } from "./InboxPage";
+
+const CellDetailTabs = lazy(() =>
+  import("../components/CellDetailTabs").then((module) => ({ default: module.CellDetailTabs })),
+);
+const ReplicatePreviewPanel = lazy(() =>
+  import("../components/ReplicatePreviewPanel").then((module) => ({
+    default: module.ReplicatePreviewPanel,
+  })),
+);
+const LazyImportCellsLauncherImpl = lazy(() =>
+  import("./InboxPage").then((module) => ({ default: module.ImportCellsLauncher })),
+);
+
+function LazyImportCellsLauncher({
+  targetFolderId,
+  onSaved,
+  openCellImportRef,
+  openIndexedSearchRef,
+}: {
+  targetFolderId: number | null;
+  onSaved: () => void;
+  openCellImportRef: React.MutableRefObject<(() => void) | null>;
+  openIndexedSearchRef: React.MutableRefObject<(() => void) | null>;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const pendingAction = useRef<"open" | "indexed" | null>(null);
+  const trigger = useCallback((action: "open" | "indexed") => {
+    pendingAction.current = action;
+    setMounted(true);
+  }, []);
+  useEffect(() => {
+    if (!mounted) {
+      openCellImportRef.current = () => trigger("open");
+      openIndexedSearchRef.current = () => trigger("indexed");
+    }
+  }, [mounted, openCellImportRef, openIndexedSearchRef, trigger]);
+  if (!mounted) {
+    return (
+      <Button size="sm" leftSection={<IconUpload size={15} />} onClick={() => trigger("open")}>
+        Load cells
+      </Button>
+    );
+  }
+  return (
+    <Suspense
+      fallback={
+        <Button size="sm" leftSection={<IconUpload size={15} />} loading>
+          Load cells
+        </Button>
+      }
+    >
+      <LazyImportCellsLauncherImpl targetFolderId={targetFolderId} onSaved={onSaved}>
+        {({ open, openIndexedSearch, loading }) => {
+          openCellImportRef.current = open;
+          openIndexedSearchRef.current = openIndexedSearch;
+          const pending = pendingAction.current;
+          if (pending) {
+            pendingAction.current = null;
+            queueMicrotask(pending === "indexed" ? openIndexedSearch : open);
+          }
+          return (
+            <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
+              Load cells
+            </Button>
+          );
+        }}
+      </LazyImportCellsLauncherImpl>
+    </Suspense>
+  );
+}
 import {
   buildCellLibraryRows,
   DEFAULT_CELL_LIBRARY_SORT,
   EMPTY_CELL_LIBRARY_FILTERS,
   cellLibraryStatuses,
   processCellLibraryRows,
+  type CellLibraryColumn,
   type CellLibraryFilters,
   type CellLibrarySort,
   type CellLibraryStatus,
@@ -246,6 +313,32 @@ function ReplicateMembershipCell({
       </Text>
     );
   }
+  const target = (
+    <UnstyledButton
+      aria-label={`${count} replicate group${count === 1 ? "" : "s"}`}
+      aria-expanded={opened}
+      aria-haspopup="dialog"
+      style={{ display: "block", width: "100%", textAlign: "right" }}
+      onMouseEnter={() => setOpened(true)}
+      onMouseLeave={() => setOpened(false)}
+      onFocus={() => setOpened(true)}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setOpened((current) => !current);
+        }
+        if (event.key === "Escape") {
+          setOpened(false);
+        }
+      }}
+    >
+      <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
+        {count}
+      </Text>
+    </UnstyledButton>
+  );
+  if (!opened) return target;
   return (
     <Popover
       opened={opened}
@@ -256,31 +349,7 @@ function ReplicateMembershipCell({
       withinPortal
       trapFocus={false}
     >
-      <Popover.Target>
-        <UnstyledButton
-          aria-label={`${count} replicate group${count === 1 ? "" : "s"}`}
-          aria-expanded={opened}
-          aria-haspopup="dialog"
-          style={{ display: "block", width: "100%", textAlign: "right" }}
-          onMouseEnter={() => setOpened(true)}
-          onMouseLeave={() => setOpened(false)}
-          onFocus={() => setOpened(true)}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              setOpened((current) => !current);
-            }
-            if (event.key === "Escape") {
-              setOpened(false);
-            }
-          }}
-        >
-          <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
-            {count}
-          </Text>
-        </UnstyledButton>
-      </Popover.Target>
+      <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown
         onMouseEnter={() => setOpened(true)}
         onMouseLeave={() => setOpened(false)}
@@ -437,6 +506,526 @@ const LIBRARY_CELL_TABLE_COL_WIDTHS = {
   updated: 160,
   actions: 132,
 } as const;
+
+const EMPTY_REPLICATE_GROUPS: ReplicateGroupSummary[] = [];
+
+type LibraryCellRowActions = {
+  toggleCellSelection: (cellId: number, range?: boolean) => void;
+  extendCellSelectionWithArrow: (currentCellId: number, direction: -1 | 1) => boolean;
+  openCell: (cellId: number) => void;
+  startEditingCell: (cell: CellSummary) => void;
+  confirmRemove: (cell: CellSummary) => void;
+};
+
+const LibraryCellRow = memo(function LibraryCellRow({
+  cell,
+  groups,
+  selected,
+  replicateLoading,
+  replicateFailed,
+  removingPending,
+  actionsRef,
+}: {
+  cell: CellSummary;
+  groups: ReplicateGroupSummary[];
+  selected: boolean;
+  replicateLoading: boolean;
+  replicateFailed: boolean;
+  removingPending: boolean;
+  actionsRef: React.MutableRefObject<LibraryCellRowActions>;
+}) {
+  return (
+    <Table.Tr
+      className={cellTableClasses.row}
+      data-cell-row-id={cell.id}
+      onAnimationEnd={(event) => {
+        if (event.nativeEvent.pseudoElement === "::after") delete event.currentTarget.dataset.importHighlight;
+      }}
+      tabIndex={0}
+      bg={
+        selected
+          ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
+          : undefined
+      }
+      onClick={(event) => {
+        event.currentTarget.focus({ preventScroll: true });
+        actionsRef.current.toggleCellSelection(cell.id, event.shiftKey);
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.target !== event.currentTarget ||
+          !event.shiftKey ||
+          (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        if (
+          actionsRef.current.extendCellSelectionWithArrow(
+            cell.id,
+            event.key === "ArrowUp" ? -1 : 1,
+          )
+        ) {
+          event.preventDefault();
+        }
+      }}
+      style={{ cursor: "pointer" }}
+    >
+      <Table.Td>
+        <Checkbox
+          aria-label={`Select ${cell.name}`}
+          checked={selected}
+          onClick={(event) => {
+            event.stopPropagation();
+            event.currentTarget
+              .closest<HTMLTableRowElement>("tr")
+              ?.focus({ preventScroll: true });
+          }}
+          onChange={(event) =>
+            actionsRef.current.toggleCellSelection(cell.id, (event.nativeEvent as MouseEvent).shiftKey)
+          }
+        />
+      </Table.Td>
+      <Table.Td>
+        <CellHoverCard cell={cell} result={undefined}>
+          <UnstyledButton
+            aria-label={`Open ${cell.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              actionsRef.current.openCell(cell.id);
+            }}
+            style={{
+              display: "block",
+              width: "100%",
+              minWidth: 0,
+              textAlign: "left",
+              cursor: "pointer",
+            }}
+          >
+            <Text fw={700} lineClamp={1}>
+              {cell.name}
+            </Text>
+            {cell.description && (
+              <Text size="xs" c={selected ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} lineClamp={1}>
+                {cell.description}
+              </Text>
+            )}
+          </UnstyledButton>
+        </CellHoverCard>
+      </Table.Td>
+      <Table.Td>
+        <ReplicateMembershipCell
+          groups={groups}
+          loading={replicateLoading}
+          failed={replicateFailed}
+        />
+      </Table.Td>
+      <Table.Td ta="right">{cell.total_cycles}</Table.Td>
+      <Table.Td ta="right">
+        <SpecificCapacityValue
+          value={cell.max_specific_discharge_capacity_mah_g}
+          pending={cell.has_summary_pending || cell.has_parsing}
+          failed={cell.has_summary_error}
+        />
+      </Table.Td>
+      <Table.Td ta="right">
+        <CapacityValue
+          value={cell.total_charge_capacity_mah}
+          pending={cell.has_summary_pending || cell.has_parsing}
+          failed={cell.has_summary_error}
+        />
+      </Table.Td>
+      <Table.Td ta="right">
+        <CapacityValue
+          value={cell.total_discharge_capacity_mah}
+          pending={cell.has_summary_pending || cell.has_parsing}
+          failed={cell.has_summary_error}
+        />
+      </Table.Td>
+      <Table.Td style={{ whiteSpace: "nowrap" }}>
+        <CellStatusBadges cell={cell} />
+      </Table.Td>
+      <Table.Td>
+        <Text size="xs" c="dimmed">
+          {formatDate(cell.created_at)}
+        </Text>
+      </Table.Td>
+      <Table.Td><Text size="xs" c="dimmed">{cell.last_data_update_at ? new Date(cell.last_data_update_at + (/Z$|[+-]\d\d:\d\d$/.test(cell.last_data_update_at) ? "" : "Z")).toLocaleString() : "—"}</Text></Table.Td>
+      <Table.Td className={cellTableClasses.actions} style={{ backgroundColor: selected
+        ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined }}>
+        <Group
+          gap="xs"
+          justify="end"
+          wrap="nowrap"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <ActionIcon
+            variant="default"
+            title="Edit cell details"
+            aria-label={`Edit ${cell.name}`}
+            onClick={() => actionsRef.current.startEditingCell(cell)}
+          >
+            <IconPencil size={15} />
+          </ActionIcon>
+          <ActionIcon
+            variant="default"
+            title="Open"
+            aria-label={`Open ${cell.name}`}
+            onClick={() => actionsRef.current.openCell(cell.id)}
+          >
+            <IconEye size={15} />
+          </ActionIcon>
+          <ActionIcon
+            variant="subtle"
+            color="red"
+            title="Remove"
+            aria-label={`Remove ${cell.name}`}
+            loading={removingPending}
+            onClick={() => actionsRef.current.confirmRemove(cell)}
+          >
+            <IconTrash size={14} />
+          </ActionIcon>
+        </Group>
+      </Table.Td>
+    </Table.Tr>
+  );
+});
+
+type CellTableWidthKey = keyof typeof LIBRARY_CELL_TABLE_COL_WIDTHS;
+
+type CellTableHeaderActions = {
+  setFilters: React.Dispatch<React.SetStateAction<CellLibraryFilters>>;
+  setSort: (column: CellLibraryColumn, direction: SortDirection) => void;
+  resizeColumn: (name: CellTableWidthKey, width: number) => void;
+};
+
+const CellTableColumnHeaders = memo(function CellTableColumnHeaders({
+  cellWidths,
+  cellSort,
+  cellFilters,
+  replicateFiltersEnabled,
+  replicateFiltersFailed,
+  actionsRef,
+}: {
+  cellWidths: Record<CellTableWidthKey, number>;
+  cellSort: CellLibrarySort;
+  cellFilters: CellLibraryFilters;
+  replicateFiltersEnabled: boolean;
+  replicateFiltersFailed: boolean;
+  actionsRef: React.MutableRefObject<CellTableHeaderActions>;
+}) {
+  const setFilters = useCallback<React.Dispatch<React.SetStateAction<CellLibraryFilters>>>(
+    (value) => actionsRef.current.setFilters(value),
+    [actionsRef],
+  );
+  const setSort = useCallback(
+    (column: CellLibraryColumn, direction: SortDirection) =>
+      actionsRef.current.setSort(column, direction),
+    [actionsRef],
+  );
+  return (
+    <>
+      <Table.Th pos="relative">
+        <CellLibraryColumnMenu
+          column="cell"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+        />
+        <ColumnResizeHandle label="Cell" width={cellWidths.cell} onResize={(value) => actionsRef.current.resizeColumn("cell", value)} />
+      </Table.Th>
+      <Table.Th pos="relative" ta="right">
+        <CellLibraryColumnMenu
+          column="replicates"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+          align="right"
+        />
+        <ColumnResizeHandle label="Replicates" width={cellWidths.replicates} onResize={(value) => actionsRef.current.resizeColumn("replicates", value)} />
+      </Table.Th>
+      <Table.Th pos="relative" ta="right">
+        <CellLibraryColumnMenu
+          column="cycles"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+          align="right"
+        />
+        <ColumnResizeHandle label="Cycles" width={cellWidths.cycles} onResize={(value) => actionsRef.current.resizeColumn("cycles", value)} />
+      </Table.Th>
+      <Table.Th pos="relative" ta="right">
+        <CellLibraryColumnMenu
+          column="maxSpecificDischarge"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+          align="right"
+        />
+        <ColumnResizeHandle label="Max specific discharge" width={cellWidths.maxSpecific} onResize={(value) => actionsRef.current.resizeColumn("maxSpecific", value)} />
+      </Table.Th>
+      <Table.Th pos="relative" ta="right">
+        <CellLibraryColumnMenu
+          column="totalCharge"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+          align="right"
+        />
+        <ColumnResizeHandle label="Total charge" width={cellWidths.charge} onResize={(value) => actionsRef.current.resizeColumn("charge", value)} />
+      </Table.Th>
+      <Table.Th pos="relative" ta="right">
+        <CellLibraryColumnMenu
+          column="totalDischarge"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+          align="right"
+        />
+        <ColumnResizeHandle label="Total discharge" width={cellWidths.discharge} onResize={(value) => actionsRef.current.resizeColumn("discharge", value)} />
+      </Table.Th>
+      <Table.Th pos="relative" style={{ whiteSpace: "nowrap" }}>
+        <Group gap={4} wrap="nowrap" justify="space-between">
+          <CellLibraryColumnMenu
+            column="status"
+            sort={cellSort}
+            filters={cellFilters}
+            setFilters={setFilters}
+            setSort={setSort}
+            replicateFiltersEnabled={replicateFiltersEnabled}
+            replicateFiltersFailed={replicateFiltersFailed}
+          />
+          <StatusHeaderHelp />
+        </Group>
+        <ColumnResizeHandle label="Status" width={cellWidths.status} onResize={(value) => actionsRef.current.resizeColumn("status", value)} />
+      </Table.Th>
+      <Table.Th pos="relative">
+        <CellLibraryColumnMenu
+          column="created"
+          sort={cellSort}
+          filters={cellFilters}
+          setFilters={setFilters}
+          setSort={setSort}
+          replicateFiltersEnabled={replicateFiltersEnabled}
+          replicateFiltersFailed={replicateFiltersFailed}
+        />
+        <ColumnResizeHandle label="Created" width={cellWidths.created} onResize={(value) => actionsRef.current.resizeColumn("created", value)} />
+      </Table.Th>
+      <Table.Th pos="relative">
+        Last update
+        <ColumnResizeHandle label="Last update" width={cellWidths.updated} onResize={(value) => actionsRef.current.resizeColumn("updated", value)} />
+      </Table.Th>
+      <Table.Th className={cellTableClasses.actionsHeader}>Actions</Table.Th>
+    </>
+  );
+});
+
+type ReplicateGroupWidths = {
+  name: number;
+  cells: number;
+  charge: number;
+  discharge: number;
+  created: number;
+  actions: number;
+};
+
+type ReplicateGroupsSectionActions = {
+  setSelectedGroupIds: React.Dispatch<React.SetStateAction<Set<number>>>;
+  setReplicateSearch: (value: string) => void;
+  resizeGroupColumn: (name: keyof ReplicateGroupWidths, width: number) => void;
+  confirmUngroup: (groupIds: number[]) => void;
+  startEditingGroup: (group: ReplicateGroupSummary) => void;
+  openPreviewGroup: (groupId: number) => void;
+};
+
+const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
+  groups,
+  selectedGroupIds,
+  replicateSearch,
+  groupWidths,
+  ungroupPending,
+  actionsRef,
+}: {
+  groups: ReplicateGroupSummary[];
+  selectedGroupIds: Set<number>;
+  replicateSearch: string;
+  groupWidths: ReplicateGroupWidths;
+  ungroupPending: boolean;
+  actionsRef: React.MutableRefObject<ReplicateGroupsSectionActions>;
+}) {
+  return (
+    <Stack gap="xs" mt="xl">
+      <Group justify="space-between" align="center" style={LIBRARY_STICKY_BAR_STYLE}>
+        <Group gap={6}>
+          <IconLayersIntersect size={16} color="var(--mantine-primary-color-6)" />
+          <Title order={4}>Replicate groups</Title>
+        </Group>
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="subtle"
+            color="red"
+            leftSection={<IconUnlink size={14} />}
+            disabled={selectedGroupIds.size === 0}
+            loading={ungroupPending}
+            onClick={() => actionsRef.current.confirmUngroup([...selectedGroupIds])}
+          >
+            Separate selected{selectedGroupIds.size > 0 ? ` (${selectedGroupIds.size})` : ""}
+          </Button>
+          <TextInput
+            size="xs"
+            leftSection={<IconSearch size={14} />}
+            placeholder="Search replicates"
+            value={replicateSearch}
+            onChange={(event) => actionsRef.current.setReplicateSearch(event.currentTarget.value)}
+          />
+        </Group>
+      </Group>
+      <Paper withBorder p="sm">
+        <ScrollArea type="auto" offsetScrollbars="x">
+          <Table highlightOnHover style={{ tableLayout: "fixed", width: 36 + Object.values(groupWidths).reduce((a, b) => a + b, 0) }}>
+            <colgroup>
+              <col style={{ width: 36 }} />
+              {Object.values(groupWidths).map((width, i) => <col key={i} style={{ width }} />)}
+            </colgroup>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={36}>
+                  <Checkbox
+                    size="xs"
+                    aria-label="Select all replicate groups"
+                    checked={
+                      groups.length > 0 &&
+                      groups.every((g) => selectedGroupIds.has(g.id))
+                    }
+                    indeterminate={
+                      selectedGroupIds.size > 0 &&
+                      !groups.every((g) => selectedGroupIds.has(g.id))
+                    }
+                    onChange={(event) =>
+                      actionsRef.current.setSelectedGroupIds(
+                        event.currentTarget.checked
+                          ? new Set(groups.map((g) => g.id))
+                          : new Set()
+                      )
+                    }
+                  />
+                </Table.Th>
+                <Table.Th pos="relative">Replicate group<ColumnResizeHandle label="Replicate group" width={groupWidths.name} onResize={(value) => actionsRef.current.resizeGroupColumn("name", value)} /></Table.Th>
+                <Table.Th pos="relative">Cells<ColumnResizeHandle label="Cells" width={groupWidths.cells} onResize={(value) => actionsRef.current.resizeGroupColumn("cells", value)} /></Table.Th>
+                <Table.Th pos="relative">Avg charge<ColumnResizeHandle label="Avg charge" width={groupWidths.charge} onResize={(value) => actionsRef.current.resizeGroupColumn("charge", value)} /></Table.Th>
+                <Table.Th pos="relative">Avg discharge<ColumnResizeHandle label="Avg discharge" width={groupWidths.discharge} onResize={(value) => actionsRef.current.resizeGroupColumn("discharge", value)} /></Table.Th>
+                <Table.Th pos="relative">Created<ColumnResizeHandle label="Created" width={groupWidths.created} onResize={(value) => actionsRef.current.resizeGroupColumn("created", value)} /></Table.Th>
+                <Table.Th>Actions</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {groups.map((group) => (
+                <Table.Tr key={group.id}>
+                  <Table.Td>
+                    <Checkbox
+                      size="xs"
+                      aria-label={`Select ${group.name}`}
+                      checked={selectedGroupIds.has(group.id)}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        actionsRef.current.setSelectedGroupIds((current) => {
+                          const next = new Set(current);
+                          if (checked) next.add(group.id);
+                          else next.delete(group.id);
+                          return next;
+                        });
+                      }}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <div>
+                      <Text fw={700}>{group.name}</Text>
+                      {group.description && (
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {group.description}
+                        </Text>
+                      )}
+                    </div>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{group.cells.map((cell) => cell.name).join(", ")}</Text>
+                  </Table.Td>
+                  <Table.Td>{formatCapacity(group.average_total_charge_capacity_mah)}</Table.Td>
+                  <Table.Td>{formatCapacity(group.average_total_discharge_capacity_mah)}</Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {formatDate(group.created_at)}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" justify="end">
+                      <Button
+                        size="xs"
+                        variant="default"
+                        leftSection={<IconPencil size={14} />}
+                        onClick={() => actionsRef.current.startEditingGroup(group)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="default"
+                        leftSection={<IconEye size={14} />}
+                        onClick={() => actionsRef.current.openPreviewGroup(group.id)}
+                      >
+                        Preview
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="red"
+                        leftSection={<IconUnlink size={14} />}
+                        loading={ungroupPending}
+                        onClick={() => actionsRef.current.confirmUngroup([group.id])}
+                      >
+                        Separate
+                      </Button>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+              {groups.length === 0 && (
+                <Table.Tr>
+                  <Table.Td colSpan={7}>
+                    <Text size="sm" c="dimmed">
+                      No replicate groups match this search.
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Paper>
+    </Stack>
+  );
+});
 
 export function LibraryPage() {
   const { widths: cellWidths, resize: resizeCellColumn } = useColumnWidths("cellxplorer.cell-columns.v1", LIBRARY_CELL_TABLE_COL_WIDTHS);
@@ -1361,6 +1950,55 @@ export function LibraryPage() {
     return true;
   };
 
+  const rowActionsRef = useRef<LibraryCellRowActions>({
+    toggleCellSelection,
+    extendCellSelectionWithArrow,
+    openCell: (cellId) => {
+      setMetadataOpen(false);
+      setSelectedId(cellId);
+    },
+    startEditingCell,
+    confirmRemove,
+  });
+  rowActionsRef.current = {
+    toggleCellSelection,
+    extendCellSelectionWithArrow,
+    openCell: (cellId) => {
+      setMetadataOpen(false);
+      setSelectedId(cellId);
+    },
+    startEditingCell,
+    confirmRemove,
+  };
+
+  const headerActionsRef = useRef<CellTableHeaderActions>({
+    setFilters: setCellFilters,
+    setSort: setCellSort,
+    resizeColumn: resizeCellColumn,
+  });
+  headerActionsRef.current = {
+    setFilters: setCellFilters,
+    setSort: setCellSort,
+    resizeColumn: resizeCellColumn,
+  };
+
+  const groupActionsRef = useRef<ReplicateGroupsSectionActions>({
+    setSelectedGroupIds,
+    setReplicateSearch,
+    resizeGroupColumn,
+    confirmUngroup,
+    startEditingGroup,
+    openPreviewGroup: setPreviewGroupId,
+  });
+  groupActionsRef.current = {
+    setSelectedGroupIds,
+    setReplicateSearch,
+    resizeGroupColumn,
+    confirmUngroup,
+    startEditingGroup,
+    openPreviewGroup: setPreviewGroupId,
+  };
+
   return (
     <Stack>
       <Group justify="space-between" align="end">
@@ -1385,22 +2023,16 @@ export function LibraryPage() {
             onChange={(event) => setSearchInput(event.currentTarget.value)}
           />
           <Group ml="auto" justify="flex-end" gap="xs" wrap="wrap">
-          <ImportCellsLauncher
+          <LazyImportCellsLauncher
             targetFolderId={null}
             onSaved={() => {
               qc.invalidateQueries({ queryKey: ["cells"] });
               qc.invalidateQueries({ queryKey: ["replicate-groups"] });
               qc.invalidateQueries({ queryKey: ["tree"] });
             }}
-          >
-            {({ open, openIndexedSearch, loading }) => {
-              openCellImportRef.current = open;
-              openIndexedSearchRef.current = openIndexedSearch;
-              return <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
-                Load cells
-              </Button>;
-            }}
-          </ImportCellsLauncher>
+            openCellImportRef={openCellImportRef}
+            openIndexedSearchRef={openIndexedSearchRef}
+          />
           <Menu withinPortal position="bottom-start" width="target">
             <Menu.Target>
               <Box component="span" display="inline-block">
@@ -1630,104 +2262,14 @@ export function LibraryPage() {
                       }}
                     />
                   </Table.Th>
-                  <Table.Th pos="relative">
-                    <CellLibraryColumnMenu
-                      column="cell"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                    />
-                  <ColumnResizeHandle label="Cell" width={cellWidths.cell} onResize={value => resizeCellColumn("cell", value)} /></Table.Th>
-                  <Table.Th pos="relative" ta="right">
-                    <CellLibraryColumnMenu
-                      column="replicates"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                      align="right"
-                    />
-                  <ColumnResizeHandle label="Replicates" width={cellWidths.replicates} onResize={value => resizeCellColumn("replicates", value)} /></Table.Th>
-                  <Table.Th pos="relative" ta="right">
-                    <CellLibraryColumnMenu
-                      column="cycles"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                      align="right"
-                    />
-                  <ColumnResizeHandle label="Cycles" width={cellWidths.cycles} onResize={value => resizeCellColumn("cycles", value)} /></Table.Th>
-                  <Table.Th pos="relative" ta="right">
-                    <CellLibraryColumnMenu
-                      column="maxSpecificDischarge"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                      align="right"
-                    />
-                  <ColumnResizeHandle label="Max specific discharge" width={cellWidths.maxSpecific} onResize={value => resizeCellColumn("maxSpecific", value)} /></Table.Th>
-                  <Table.Th pos="relative" ta="right">
-                    <CellLibraryColumnMenu
-                      column="totalCharge"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                      align="right"
-                    />
-                  <ColumnResizeHandle label="Total charge" width={cellWidths.charge} onResize={value => resizeCellColumn("charge", value)} /></Table.Th>
-                  <Table.Th pos="relative" ta="right">
-                    <CellLibraryColumnMenu
-                      column="totalDischarge"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                      align="right"
-                    />
-                  <ColumnResizeHandle label="Total discharge" width={cellWidths.discharge} onResize={value => resizeCellColumn("discharge", value)} /></Table.Th>
-                  <Table.Th pos="relative" style={{ whiteSpace: "nowrap" }}>
-                    <Group gap={4} wrap="nowrap" justify="space-between">
-                      <CellLibraryColumnMenu
-                        column="status"
-                        sort={cellSort}
-                        filters={cellFilters}
-                        setFilters={setCellFilters}
-                        setSort={setCellSort}
-                        replicateFiltersEnabled={replicateFiltersEnabled}
-                        replicateFiltersFailed={replicateFiltersFailed}
-                      />
-                      <StatusHeaderHelp />
-                    </Group>
-                  <ColumnResizeHandle label="Status" width={cellWidths.status} onResize={value => resizeCellColumn("status", value)} /></Table.Th>
-                  <Table.Th pos="relative">
-                    <CellLibraryColumnMenu
-                      column="created"
-                      sort={cellSort}
-                      filters={cellFilters}
-                      setFilters={setCellFilters}
-                      setSort={setCellSort}
-                      replicateFiltersEnabled={replicateFiltersEnabled}
-                      replicateFiltersFailed={replicateFiltersFailed}
-                    />
-                  <ColumnResizeHandle label="Created" width={cellWidths.created} onResize={value => resizeCellColumn("created", value)} /></Table.Th>
-                  <Table.Th pos="relative">Last update<ColumnResizeHandle label="Last update" width={cellWidths.updated} onResize={value => resizeCellColumn("updated", value)} /></Table.Th>
-                  <Table.Th className={cellTableClasses.actionsHeader}>Actions</Table.Th>
+                  <CellTableColumnHeaders
+                    cellWidths={cellWidths}
+                    cellSort={cellSort}
+                    cellFilters={cellFilters}
+                    replicateFiltersEnabled={replicateFiltersEnabled}
+                    replicateFiltersFailed={replicateFiltersFailed}
+                    actionsRef={headerActionsRef}
+                  />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody ref={cellTableBody}>
@@ -1740,174 +2282,18 @@ export function LibraryPage() {
                     </Table.Td>
                   </Table.Tr>
                 ) : (
-                pageCells.map((cell) => {
-                  const cellGroups = groupsByCellId.get(cell.id) ?? [];
-                  return (
-                  <Table.Tr
+                pageCells.map((cell) => (
+                  <LibraryCellRow
                     key={cell.id}
-                    className={cellTableClasses.row}
-                    data-cell-row-id={cell.id}
-                    onAnimationEnd={(event) => {
-                      if (event.nativeEvent.pseudoElement === "::after") delete event.currentTarget.dataset.importHighlight;
-                    }}
-                    tabIndex={0}
-                    bg={
-                      selectedCellIds.has(cell.id)
-                        ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
-                        : undefined
-                    }
-                    onClick={(event) => {
-                      event.currentTarget.focus({ preventScroll: true });
-                      toggleCellSelection(cell.id, event.shiftKey);
-                    }}
-                    onKeyDown={(event) => {
-                      if (
-                        event.target !== event.currentTarget ||
-                        !event.shiftKey ||
-                        (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
-                        event.ctrlKey ||
-                        event.metaKey ||
-                        event.altKey
-                      ) {
-                        return;
-                      }
-                      if (
-                        extendCellSelectionWithArrow(
-                          cell.id,
-                          event.key === "ArrowUp" ? -1 : 1,
-                        )
-                      ) {
-                        event.preventDefault();
-                      }
-                    }}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <Table.Td>
-                      <Checkbox
-                        aria-label={`Select ${cell.name}`}
-                        checked={selectedCellIds.has(cell.id)}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          event.currentTarget
-                            .closest<HTMLTableRowElement>("tr")
-                            ?.focus({ preventScroll: true });
-                        }}
-                        onChange={(event) =>
-                          toggleCellSelection(cell.id, (event.nativeEvent as MouseEvent).shiftKey)
-                        }
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      <CellHoverCard cell={cell} result={undefined}>
-                        <UnstyledButton
-                          aria-label={`Open ${cell.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setMetadataOpen(false);
-                            setSelectedId(cell.id);
-                          }}
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            minWidth: 0,
-                            textAlign: "left",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <Text fw={700} lineClamp={1}>
-                            {cell.name}
-                          </Text>
-                          {cell.description && (
-                            <Text size="xs" c={selectedCellIds.has(cell.id) ? "light-dark(var(--mantine-color-black), var(--mantine-color-white))" : "dimmed"} lineClamp={1}>
-                              {cell.description}
-                            </Text>
-                          )}
-                        </UnstyledButton>
-                      </CellHoverCard>
-                    </Table.Td>
-                    <Table.Td>
-                      <ReplicateMembershipCell
-                        groups={cellGroups}
-                        loading={replicateGroups.isLoading}
-                        failed={replicateGroups.isError}
-                      />
-                    </Table.Td>
-                    <Table.Td ta="right">{cell.total_cycles}</Table.Td>
-                    <Table.Td ta="right">
-                      <SpecificCapacityValue
-                        value={cell.max_specific_discharge_capacity_mah_g}
-                        pending={cell.has_summary_pending || cell.has_parsing}
-                        failed={cell.has_summary_error}
-                      />
-                    </Table.Td>
-                    <Table.Td ta="right">
-                      <CapacityValue
-                        value={cell.total_charge_capacity_mah}
-                        pending={cell.has_summary_pending || cell.has_parsing}
-                        failed={cell.has_summary_error}
-                      />
-                    </Table.Td>
-                    <Table.Td ta="right">
-                      <CapacityValue
-                        value={cell.total_discharge_capacity_mah}
-                        pending={cell.has_summary_pending || cell.has_parsing}
-                        failed={cell.has_summary_error}
-                      />
-                    </Table.Td>
-                    <Table.Td style={{ whiteSpace: "nowrap" }}>
-                      <CellStatusBadges cell={cell} />
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
-                        {formatDate(cell.created_at)}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td><Text size="xs" c="dimmed">{cell.last_data_update_at ? new Date(cell.last_data_update_at + (/Z$|[+-]\d\d:\d\d$/.test(cell.last_data_update_at) ? "" : "Z")).toLocaleString() : "—"}</Text></Table.Td>
-                    <Table.Td className={cellTableClasses.actions} style={{ backgroundColor: selectedCellIds.has(cell.id)
-                      ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined }}>
-                      <Group
-                        gap="xs"
-                        justify="end"
-                        wrap="nowrap"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                      <Tooltip label="Edit cell details">
-                        <ActionIcon
-                          variant="default"
-                          aria-label={`Edit ${cell.name}`}
-                          onClick={() => startEditingCell(cell)}
-                        >
-                          <IconPencil size={15} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Open">
-                        <ActionIcon
-                          variant="default"
-                          aria-label={`Open ${cell.name}`}
-                          onClick={() => {
-                            setMetadataOpen(false);
-                            setSelectedId(cell.id);
-                          }}
-                        >
-                          <IconEye size={15} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Remove">
-                        <ActionIcon
-                          variant="subtle"
-                          color="red"
-                          aria-label={`Remove ${cell.name}`}
-                          loading={removeCell.isPending || removeCells.isPending}
-                          onClick={() => confirmRemove(cell)}
-                        >
-                          <IconTrash size={14} />
-                        </ActionIcon>
-                      </Tooltip>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                );
-                })
+                    cell={cell}
+                    groups={groupsByCellId.get(cell.id) ?? EMPTY_REPLICATE_GROUPS}
+                    selected={selectedCellIds.has(cell.id)}
+                    replicateLoading={replicateGroups.isLoading}
+                    replicateFailed={replicateGroups.isError}
+                    removingPending={removeCell.isPending || removeCells.isPending}
+                    actionsRef={rowActionsRef}
+                  />
+                ))
                 )}
               </Table.Tbody>
               <Table.Tfoot>
@@ -1970,172 +2356,39 @@ export function LibraryPage() {
       </Stack>
       </Stack>
 
-      {((replicateGroups.data?.length ?? 0) > 0 || replicateSearch) && (
-        <Stack gap="xs" mt="xl">
-          <Group justify="space-between" align="center" style={LIBRARY_STICKY_BAR_STYLE}>
-            <Group gap={6}>
-              <IconLayersIntersect size={16} color="var(--mantine-primary-color-6)" />
-              <Title order={4}>Replicate groups</Title>
-            </Group>
-            <Group gap="xs">
-              <Button
-                size="xs"
-                variant="subtle"
-                color="red"
-                leftSection={<IconUnlink size={14} />}
-                disabled={selectedGroupIds.size === 0}
-                loading={ungroupReplicates.isPending}
-                onClick={() => confirmUngroup([...selectedGroupIds])}
-              >
-                Separate selected{selectedGroupIds.size > 0 ? ` (${selectedGroupIds.size})` : ""}
-              </Button>
-              <TextInput
-                size="xs"
-                leftSection={<IconSearch size={14} />}
-                placeholder="Search replicates"
-                value={replicateSearch}
-                onChange={(event) => setReplicateSearch(event.currentTarget.value)}
-              />
-            </Group>
-          </Group>
-          <Paper withBorder p="sm">
-          <ScrollArea type="auto" offsetScrollbars="x">
-            <Table highlightOnHover style={{ tableLayout: "fixed", width: 36 + Object.values(groupWidths).reduce((a,b) => a+b,0) }}>
-              <colgroup><col style={{width:36}} />{Object.values(groupWidths).map((width,i) => <col key={i} style={{width}} />)}</colgroup>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th w={36}>
-                    <Checkbox
-                      size="xs"
-                      aria-label="Select all replicate groups"
-                      checked={
-                        (filteredReplicateGroups.data ?? []).length > 0 &&
-                        (filteredReplicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
-                      }
-                      indeterminate={
-                        selectedGroupIds.size > 0 &&
-                        !(filteredReplicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
-                      }
-                      onChange={(event) =>
-                        setSelectedGroupIds(
-                          event.currentTarget.checked
-                            ? new Set((filteredReplicateGroups.data ?? []).map((g) => g.id))
-                            : new Set()
-                        )
-                      }
-                    />
-                  </Table.Th>
-                  <Table.Th pos="relative">Replicate group<ColumnResizeHandle label="Replicate group" width={groupWidths.name} onResize={value => resizeGroupColumn("name", value)} /></Table.Th>
-                  <Table.Th pos="relative">Cells<ColumnResizeHandle label="Cells" width={groupWidths.cells} onResize={value => resizeGroupColumn("cells", value)} /></Table.Th>
-                  <Table.Th pos="relative">Avg charge<ColumnResizeHandle label="Avg charge" width={groupWidths.charge} onResize={value => resizeGroupColumn("charge", value)} /></Table.Th>
-                  <Table.Th pos="relative">Avg discharge<ColumnResizeHandle label="Avg discharge" width={groupWidths.discharge} onResize={value => resizeGroupColumn("discharge", value)} /></Table.Th>
-                  <Table.Th pos="relative">Created<ColumnResizeHandle label="Created" width={groupWidths.created} onResize={value => resizeGroupColumn("created", value)} /></Table.Th>
-                  <Table.Th>Actions</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {(filteredReplicateGroups.data ?? []).map((group) => (
-                  <Table.Tr key={group.id}>
-                    <Table.Td>
-                      <Checkbox
-                        size="xs"
-                        aria-label={`Select ${group.name}`}
-                        checked={selectedGroupIds.has(group.id)}
-                        onChange={(event) =>
-                          setSelectedGroupIds((current) => {
-                            const next = new Set(current);
-                            if (event.currentTarget.checked) next.add(group.id);
-                            else next.delete(group.id);
-                            return next;
-                          })
-                        }
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      <div>
-                        <Text fw={700}>{group.name}</Text>
-                        {group.description && (
-                          <Text size="xs" c="dimmed" lineClamp={1}>
-                            {group.description}
-                          </Text>
-                        )}
-                      </div>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm">{group.cells.map((cell) => cell.name).join(", ")}</Text>
-                    </Table.Td>
-                    <Table.Td>{formatCapacity(group.average_total_charge_capacity_mah)}</Table.Td>
-                    <Table.Td>{formatCapacity(group.average_total_discharge_capacity_mah)}</Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
-                        {formatDate(group.created_at)}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap="xs" justify="end">
-                        <Button
-                          size="xs"
-                          variant="default"
-                          leftSection={<IconPencil size={14} />}
-                          onClick={() => startEditingGroup(group)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="default"
-                          leftSection={<IconEye size={14} />}
-                          onClick={() => setPreviewGroupId(group.id)}
-                        >
-                          Preview
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          color="red"
-                          leftSection={<IconUnlink size={14} />}
-                          loading={ungroupReplicates.isPending}
-                          onClick={() => confirmUngroup([group.id])}
-                        >
-                          Separate
-                        </Button>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-                {(filteredReplicateGroups.data ?? []).length === 0 && (
-                  <Table.Tr>
-                    <Table.Td colSpan={7}>
-                      <Text size="sm" c="dimmed">
-                        No replicate groups match this search.
-                      </Text>
-                    </Table.Td>
-                  </Table.Tr>
-                )}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-          </Paper>
-        </Stack>
-      )}
+      {((replicateGroups.data?.length ?? 0) > 0 || replicateSearch) ? (
+        <ReplicateGroupsSection
+          groups={filteredReplicateGroups.data ?? EMPTY_REPLICATE_GROUPS}
+          selectedGroupIds={selectedGroupIds}
+          replicateSearch={replicateSearch}
+          groupWidths={groupWidths}
+          ungroupPending={ungroupReplicates.isPending}
+          actionsRef={groupActionsRef}
+        />
+      ) : null}
 
-      <PlaceInFoldersModal
-        opened={placeCellsOpen}
-        onClose={() => setPlaceCellsOpen(false)}
-        cellIds={selectedIds}
-        title={`Place ${selectedIds.length} cell${selectedIds.length === 1 ? "" : "s"} in folders`}
-        onPlaceAsReplicate={(folderIds) => {
-          setPlaceCellsOpen(false);
-          openCreateReplicateDialog(folderIds, true);
-        }}
-      />
-      <PlaceInFoldersModal
-        opened={placeCellOpen}
-        onClose={() => setPlaceCellOpen(false)}
-        cellIds={selectedId !== null ? [selectedId] : []}
-        title={`Place ${detail.data?.name ?? "cell"} in folders`}
-      />
+      {placeCellsOpen ? (
+        <PlaceInFoldersModal
+          opened={placeCellsOpen}
+          onClose={() => setPlaceCellsOpen(false)}
+          cellIds={selectedIds}
+          title={`Place ${selectedIds.length} cell${selectedIds.length === 1 ? "" : "s"} in folders`}
+          onPlaceAsReplicate={(folderIds) => {
+            setPlaceCellsOpen(false);
+            openCreateReplicateDialog(folderIds, true);
+          }}
+        />
+      ) : null}
+      {placeCellOpen ? (
+        <PlaceInFoldersModal
+          opened={placeCellOpen}
+          onClose={() => setPlaceCellOpen(false)}
+          cellIds={selectedId !== null ? [selectedId] : []}
+          title={`Place ${detail.data?.name ?? "cell"} in folders`}
+        />
+      ) : null}
 
+      {groupDialogOpen ? (
       <Modal
         opened={groupDialogOpen}
         onClose={() => setGroupDialogOpen(false)}
@@ -2235,7 +2488,9 @@ export function LibraryPage() {
           </Button>
         </Stack>
       </Modal>
+      ) : null}
 
+      {addToGroupDialogOpen ? (
       <Modal
         opened={addToGroupDialogOpen}
         onClose={() => setAddToGroupDialogOpen(false)}
@@ -2278,7 +2533,9 @@ export function LibraryPage() {
           </Button>
         </Stack>
       </Modal>
+      ) : null}
 
+      {editingGroup !== null ? (
       <Modal
         opened={editingGroup !== null}
         onClose={() => setEditingGroup(null)}
@@ -2337,19 +2594,25 @@ export function LibraryPage() {
           </Group>
         </Stack>
       </Modal>
+      ) : null}
 
+      {previewGroupId !== null ? (
       <Modal
         opened={previewGroupId !== null}
         onClose={() => setPreviewGroupId(null)}
         title={previewGroup?.name ?? "Replicate group"}
         size="xl"
       >
-        <ReplicatePreviewPanel
-          title={previewGroup?.name ?? "Replicate group"}
-          preview={replicatePreview.data}
-        />
+        <Suspense fallback={<Center h={240}><Loader /></Center>}>
+          <ReplicatePreviewPanel
+            title={previewGroup?.name ?? "Replicate group"}
+            preview={replicatePreview.data}
+          />
+        </Suspense>
       </Modal>
+      ) : null}
 
+      {selectedId !== null ? (
       <Modal
         opened={selectedId !== null}
         onClose={() => {
@@ -2624,34 +2887,38 @@ export function LibraryPage() {
               detail.data.description && <Alert color="gray">{detail.data.description}</Alert>
             )}
 
-            <CellDetailTabs
-              initialTab={cellDetailsTab}
-              initialSourceId={cellDetailsSourceId}
-              cell={detail.data}
-              onUpdateFile={(file) => updateSource.mutate(file)}
-              updating={updateSource.isPending}
-              onContinuationChanged={() => {
-                qc.invalidateQueries({ queryKey: ["cell", selectedId] });
-                qc.invalidateQueries({ queryKey: ["cells"] });
-                qc.invalidateQueries({ queryKey: ["tree"] });
-                qc.invalidateQueries({ queryKey: ["files"] });
-                qc.invalidateQueries({ queryKey: ["analyses"] });
-                qc.invalidateQueries({ queryKey: ["activity"] });
-                qc.invalidateQueries({ queryKey: ["background-jobs"] });
-              }}
-            />
+            <Suspense fallback={<Center h={240}><Loader /></Center>}>
+              <CellDetailTabs
+                initialTab={cellDetailsTab}
+                initialSourceId={cellDetailsSourceId}
+                cell={detail.data}
+                onUpdateFile={(file) => updateSource.mutate(file)}
+                updating={updateSource.isPending}
+                onContinuationChanged={() => {
+                  qc.invalidateQueries({ queryKey: ["cell", selectedId] });
+                  qc.invalidateQueries({ queryKey: ["cells"] });
+                  qc.invalidateQueries({ queryKey: ["tree"] });
+                  qc.invalidateQueries({ queryKey: ["files"] });
+                  qc.invalidateQueries({ queryKey: ["analyses"] });
+                  qc.invalidateQueries({ queryKey: ["activity"] });
+                  qc.invalidateQueries({ queryKey: ["background-jobs"] });
+                }}
+              />
+            </Suspense>
           </Stack>
         ) : null}
       </Modal>
+      ) : null}
 
+      {impactRequest !== null ? (
       <DestructiveImpactModal
         opened={impactRequest !== null}
         onClose={() => setImpactRequest(null)}
-        title={impactRequest?.title ?? ""}
-        confirmLabel={impactRequest?.confirmLabel ?? "Confirm"}
-        plainMessage={impactRequest?.plainMessage ?? ""}
-        cellIds={impactRequest?.cellIds ?? []}
-        groupIds={impactRequest?.groupIds ?? []}
+        title={impactRequest.title}
+        confirmLabel={impactRequest.confirmLabel}
+        plainMessage={impactRequest.plainMessage}
+        cellIds={impactRequest.cellIds}
+        groupIds={impactRequest.groupIds}
         onConfirm={(options) => {
           const request = impactRequest;
           setImpactRequest(null);
@@ -2661,6 +2928,7 @@ export function LibraryPage() {
           );
         }}
       />
+      ) : null}
     </Stack>
   );
 }

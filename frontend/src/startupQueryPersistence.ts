@@ -10,7 +10,8 @@ import type { DatabaseStatus } from "./api";
 
 const STORAGE_KEY = "cellxplorer-startup-query-snapshot";
 const FORMAT_VERSION = 1;
-const WRITE_DELAY_MS = 200;
+const WRITE_DELAY_MS = 1500;
+const IDLE_WRITE_TIMEOUT_MS = 4000;
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -76,6 +77,8 @@ export class StartupQueryPersistence {
   private schemaRevision: string | null = null;
   private unsubscribe: (() => void) | null = null;
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleHandle: number | null = null;
+  private lastFlushedSignature: string | null = null;
   private pageHideHandler: (() => void) | null = null;
 
   constructor(storage: StorageLike | null) {
@@ -126,10 +129,9 @@ export class StartupQueryPersistence {
 
   flush(queryClient: QueryClient): void {
     if (!this.storage || !this.databaseInstanceId) return;
-    if (this.writeTimer) {
-      clearTimeout(this.writeTimer);
-      this.writeTimer = null;
-    }
+    this.cancelPendingWrite();
+    const signature = this.queryStateSignature(queryClient);
+    if (signature === this.lastFlushedSignature) return;
     const snapshot: StartupSnapshot = {
       formatVersion: FORMAT_VERSION,
       databaseInstanceId: this.databaseInstanceId,
@@ -143,6 +145,7 @@ export class StartupQueryPersistence {
     try {
       this.storage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
       this.snapshot = snapshot;
+      this.lastFlushedSignature = signature;
     } catch {
       // Storage can be unavailable or full. The live query cache still works.
     }
@@ -151,18 +154,53 @@ export class StartupQueryPersistence {
   stop(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
-    if (this.writeTimer) clearTimeout(this.writeTimer);
-    this.writeTimer = null;
+    this.cancelPendingWrite();
     if (typeof window !== "undefined" && this.pageHideHandler) {
       window.removeEventListener("pagehide", this.pageHideHandler);
     }
     this.pageHideHandler = null;
   }
 
+  private queryStateSignature(queryClient: QueryClient): string {
+    const parts = STARTUP_QUERY_KEYS.map((key) => {
+      const state = queryClient.getQueryState(key);
+      return state?.status === "success" ? `${state.dataUpdatedAt}` : "none";
+    });
+    return `${this.databaseInstanceId ?? ""}|${this.schemaRevision ?? ""}|${parts.join(",")}`;
+  }
+
+  private cancelPendingWrite(): void {
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+    }
+    if (
+      this.idleHandle !== null &&
+      typeof window !== "undefined" &&
+      "cancelIdleCallback" in window
+    ) {
+      window.cancelIdleCallback(this.idleHandle);
+      this.idleHandle = null;
+    }
+  }
+
   private scheduleWrite(queryClient: QueryClient, delay = WRITE_DELAY_MS): void {
     if (!this.databaseInstanceId) return;
-    if (this.writeTimer) clearTimeout(this.writeTimer);
-    this.writeTimer = setTimeout(() => this.flush(queryClient), delay);
+    this.cancelPendingWrite();
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null;
+      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+        this.idleHandle = window.requestIdleCallback(
+          () => {
+            this.idleHandle = null;
+            this.flush(queryClient);
+          },
+          { timeout: IDLE_WRITE_TIMEOUT_MS },
+        );
+      } else {
+        this.flush(queryClient);
+      }
+    }, delay);
   }
 
   private clearStoredSnapshot(): void {
@@ -172,6 +210,7 @@ export class StartupQueryPersistence {
       // A blocked storage API should not prevent live database loading.
     }
     this.snapshot = null;
+    this.lastFlushedSignature = null;
   }
 }
 

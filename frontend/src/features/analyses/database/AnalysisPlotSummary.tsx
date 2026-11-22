@@ -1,13 +1,13 @@
 import {
   Box,
   Group,
-  HoverCard,
+  Popover,
   Stack,
   Text,
   UnstyledButton,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError, get, type AnalysisSavedPlotSummary } from "../../../api";
 import { normalizeCachedPlotThumbnailResponse } from "../editor/policies/plotThumbnailResponsePolicy";
@@ -103,6 +103,9 @@ function CachedPlotThumbnail({
   );
 }
 
+const PLOT_HOVER_OPEN_DELAY_MS = 160;
+const PLOT_HOVER_CLOSE_DELAY_MS = 120;
+
 /**
  * Shared saved-plot count and hover preview used by the Analysis Database and
  * Projects explorer. Keep the two surfaces on this component so their plot
@@ -117,26 +120,72 @@ export function AnalysisPlotSummary<T extends AnalysisPlotPreviewSource>({
 }) {
   const plots = analysis.saved_plots ?? [];
   const count = plots.length;
+  const [opened, setOpened] = useState(false);
   const [hoveredPlotId, setHoveredPlotId] = useState(plots[0]?.id ?? null);
-  const hoveredPlot = plots.find((plot) => plot.id === hoveredPlotId) ?? plots[0];
+  const timerRef = useRef<number | null>(null);
+
+  const clearTimer = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  useEffect(() => clearTimer, []);
+
   if (!count) return <Text size="sm" c="dimmed">No plots</Text>;
+
+  const scheduleOpen = () => {
+    clearTimer();
+    if (opened) return;
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setOpened(true);
+    }, PLOT_HOVER_OPEN_DELAY_MS);
+  };
+
+  const cancelClose = () => {
+    clearTimer();
+  };
+
+  const scheduleClose = () => {
+    clearTimer();
+    if (!opened) return;
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setOpened(false);
+    }, PLOT_HOVER_CLOSE_DELAY_MS);
+  };
+
+  const targetButton = (
+    <UnstyledButton
+      onClick={(event) => event.stopPropagation()}
+      onMouseEnter={opened ? cancelClose : scheduleOpen}
+      onMouseLeave={opened ? scheduleClose : clearTimer}
+      onFocus={scheduleOpen}
+      onBlur={scheduleClose}
+    >
+      <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
+        {count} plot{count === 1 ? "" : "s"}
+      </Text>
+    </UnstyledButton>
+  );
+
+  if (!opened) return targetButton;
+
+  const hoveredPlot = plots.find((plot) => plot.id === hoveredPlotId) ?? plots[0];
   return (
-    <HoverCard
+    <Popover
+      opened={opened}
+      onChange={setOpened}
       width={760}
       shadow="md"
       position="right"
-      openDelay={160}
-      closeDelay={120}
       withinPortal
+      trapFocus={false}
     >
-      <HoverCard.Target>
-        <UnstyledButton onClick={(event) => event.stopPropagation()}>
-          <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
-            {count} plot{count === 1 ? "" : "s"}
-          </Text>
-        </UnstyledButton>
-      </HoverCard.Target>
-      <HoverCard.Dropdown>
+      <Popover.Target>{targetButton}</Popover.Target>
+      <Popover.Dropdown onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
         <Group align="stretch" gap="md" wrap="nowrap">
           <Stack gap={4} w={330} mah={330} style={{ overflowY: "auto" }}>
             {plots.map((plot) => (
@@ -186,7 +235,7 @@ export function AnalysisPlotSummary<T extends AnalysisPlotPreviewSource>({
             <Text size="xs" c="dimmed" mt={6} truncate>{hoveredPlot?.name}</Text>
           </Box>
         </Group>
-      </HoverCard.Dropdown>
-    </HoverCard>
+      </Popover.Dropdown>
+    </Popover>
   );
 }

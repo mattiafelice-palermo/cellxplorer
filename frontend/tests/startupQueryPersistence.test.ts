@@ -83,3 +83,34 @@ test("startup summaries restore only for the same database and schema", () => {
   });
   assert.equal(restoredClient.getQueryData(["cells", ""]), undefined);
 });
+
+test("startup snapshot skips redundant serialization when query timestamps are unchanged", () => {
+  let writes = 0;
+  const storage = {
+    values: new Map<string, string>(),
+    getItem(key: string) {
+      return this.values.get(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      writes += 1;
+      this.values.set(key, value);
+    },
+    removeItem(key: string) {
+      this.values.delete(key);
+    },
+  };
+  const client = new QueryClient();
+  client.setQueryData(["cells", ""], [{ id: 1, name: "Cell A" }]);
+  const persistence = new StartupQueryPersistence(storage);
+  persistence.reconcile(client, status);
+  persistence.flush(client);
+  persistence.flush(client);
+  assert.equal(writes, 1);
+
+  client.setQueryData(["cells", ""], [{ id: 1, name: "Cell A" }, { id: 2, name: "Cell B" }], {
+    updatedAt: Date.now() + 1000,
+  });
+  persistence.flush(client);
+  assert.equal(writes, 2);
+  persistence.stop();
+});

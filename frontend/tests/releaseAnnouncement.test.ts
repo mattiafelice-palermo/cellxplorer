@@ -40,7 +40,12 @@ function coordinator(options: { setup?: boolean; update?: boolean; ready?: boole
   let timer: (() => void) | undefined, observer: (() => void) | undefined;
   const component = compile("../src/components/WhatsNewCoordinator.tsx", {
     "react/jsx-runtime": { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }) },
-    react: { useRef: (current: any) => ({ current }), useEffect: (effect: () => void) => effect() },
+    react: {
+      useRef: (current: any) => ({ current }),
+      useEffect: (effect: () => void) => effect(),
+      lazy: () => "ReleaseIntroduction",
+      Suspense: "Suspense",
+    },
     "@mantine/core": new Proxy({}, { get: (_, name) => name }), "@mantine/hooks": { useReducedMotion: () => true },
     "@tanstack/react-query": { useQuery: () => ({ data: { setupState: options.setup === false ? "choice" : "complete", needsChoice: options.setup === false, blockingReason: null } }) },
     "../api": { get: () => { throw Error("No backend calls"); } },
@@ -69,8 +74,11 @@ test("automatic announcement waits for setup and other dialogs and stays one-tim
 test("coordinator mounts the release tour only when open; every close path records dismissal", () => {
   assert.equal(coordinator().tree.props.children, false);
   const app = coordinator({ opened: true });
-  assert.equal(app.tree.props.children.type, "ReleaseIntroduction");
+  const tour = app.tree.props.children.type === "Suspense"
+    ? app.tree.props.children.props.children
+    : app.tree.props.children;
+  assert.equal(tour.type, "ReleaseIntroduction");
   app.tree.props.onClose();
-  app.tree.props.children.props.onChooseFolders();
+  tour.props.onChooseFolders();
   assert.deepEqual(app.counts(), { opens: 0, closes: 2, searches: 1, marked: 2 });
 });

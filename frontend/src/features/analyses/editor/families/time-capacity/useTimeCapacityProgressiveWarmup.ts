@@ -26,6 +26,7 @@ export function useTimeCapacityProgressiveWarmup(options: {
   const latest = useRef(options);
   latest.current = options;
   const lastActivity = useRef(Date.now());
+  const wakeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let pointerHeld = false;
@@ -33,8 +34,23 @@ export function useTimeCapacityProgressiveWarmup(options: {
     let running = false;
     let progress: { identity: string; done: boolean } | null = null;
     let failure = "";
+    let timer: number | null = null;
     const owner = Symbol("navigation-preparation");
     let details = { ...EMPTY_WARMUP_DEBUG };
+    const clearTimer = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const schedule = (delayMs: number) => {
+      if (disposed) return;
+      clearTimer();
+      timer = window.setTimeout(() => {
+        timer = null;
+        pump();
+      }, delayMs);
+    };
     const report = (state: WarmupDebug["state"], reason: string) => {
       if (disposed) return;
       const current = latest.current;
@@ -44,9 +60,14 @@ export function useTimeCapacityProgressiveWarmup(options: {
         inFlight: running, running: running ? 1 : 0,
       });
     };
-    const markActive = () => { lastActivity.current = Date.now(); };
-    const down = () => { pointerHeld = true; markActive(); };
-    const up = () => { pointerHeld = false; markActive(); };
+    const markActive = () => {
+      lastActivity.current = Date.now();
+      if (!progress?.done && !failure && !running && latest.current.active) {
+        pump();
+      }
+    };
+    const down = () => { pointerHeld = true; lastActivity.current = Date.now(); clearTimer(); };
+    const up = () => { pointerHeld = false; lastActivity.current = Date.now(); pump(); };
     WARMUP_INTERACTION_EVENTS.forEach(event =>
       window.addEventListener(event, markActive, { capture: true, passive: true }));
     window.addEventListener("pointerdown", down, true);
@@ -54,9 +75,16 @@ export function useTimeCapacityProgressiveWarmup(options: {
     window.addEventListener("pointercancel", up, true);
     window.addEventListener("blur", up, true);
     document.addEventListener("visibilitychange", up);
+    const unsubscribeCache = queryClient.getQueryCache().subscribe(() => {
+      if (!disposed && !progress?.done && !failure && !running && latest.current.active) {
+        if (timer === null) schedule(150);
+      }
+    });
     const pump = () => {
       if (disposed) return;
+      clearTimer();
       const current = latest.current;
+      const foregroundBlocked = current.blocked || current.foregroundBusy();
       const blocked = !current.active ? "Time/Capacity plot is not active." :
         document.visibilityState !== "visible" ? "Window is hidden." :
         !current.spec.selection.entries.length ? "No samples selected." :
@@ -65,11 +93,23 @@ export function useTimeCapacityProgressiveWarmup(options: {
         !current.enabled ? "Waiting for a successful, current plot result." :
         !current.sourceIdentity ? "Waiting for source identity." :
         pointerHeld ? "Pointer or slider gesture is still held." :
-        current.blocked || current.foregroundBusy() ? "Foreground plot work is active." : "");
-      if (blocked) { report("Paused", blocked); return; }
+        foregroundBlocked ? "Foreground plot work is active." : "");
+      if (blocked) {
+        report("Paused", blocked);
+        // Only poll while waiting on an in-flight foreground callback;
+        // inactive, hidden, pointer-held, and prop-gated states wake reactively.
+        if (foregroundBlocked && current.active && document.visibilityState === "visible" && !pointerHeld) {
+          schedule(300);
+        }
+        return;
+      }
       if (queryClient.isFetching({ predicate: query => query.meta?.cacheOnly !== true &&
         /^(time-capacity|compute|dcir|chargeability|rate-capability|steps)$/.test(String(query.queryKey[0]))
-      })) { report("Paused", "A foreground scientific query is running."); return; }
+      })) {
+        report("Paused", "A foreground scientific query is running.");
+        schedule(300);
+        return;
+      }
       const body = timeCapacityPreparationBody(current.spec, current.config);
       const identity = JSON.stringify({
         analysis: current.analysisId, plot: current.plotIdentity,
@@ -79,7 +119,7 @@ export function useTimeCapacityProgressiveWarmup(options: {
         progress = { identity, done: false };
         details = { ...EMPTY_WARMUP_DEBUG };
         failure = "";
-        markActive();
+        lastActivity.current = Date.now();
       }
       if (failure) { report("Error", failure); return; }
       if (progress.done) {
@@ -88,10 +128,15 @@ export function useTimeCapacityProgressiveWarmup(options: {
           : "Reusable Cell data is ready. Navigation assembles windows on demand.");
         return;
       }
-      if (!navigationWarmupCanAdmit(Date.now(), lastActivity.current, preparationSlot.running > 0)) {
+      const now = Date.now();
+      if (!navigationWarmupCanAdmit(now, lastActivity.current, preparationSlot.running > 0)) {
         report(running ? "Running" : "Waiting", preparationSlot.running
           ? "Finishing the admitted Cell-preparation batch."
           : "Waiting for 1.5 seconds without explicit interaction.");
+        const remainingMs = preparationSlot.running > 0
+          ? 250
+          : Math.max(50, 1500 - (now - lastActivity.current));
+        schedule(remainingMs);
         return;
       }
       const release = preparationSlot.acquire()!;
@@ -125,11 +170,14 @@ export function useTimeCapacityProgressiveWarmup(options: {
         }
       })();
     };
-    const timer = window.setInterval(pump, 100);
+    wakeRef.current = pump;
+    pump();
     return () => {
       disposed = true;
+      wakeRef.current = null;
       removeWarmupDebug(owner);
-      window.clearInterval(timer);
+      clearTimer();
+      unsubscribeCache();
       WARMUP_INTERACTION_EVENTS.forEach(event => window.removeEventListener(event, markActive, true));
       window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("pointerup", up, true);
@@ -138,4 +186,18 @@ export function useTimeCapacityProgressiveWarmup(options: {
       document.removeEventListener("visibilitychange", up);
     };
   }, [queryClient]);
+
+  useEffect(() => {
+    wakeRef.current?.();
+  }, [
+    options.active,
+    options.analysisId,
+    options.blocked,
+    options.config,
+    options.enabled,
+    options.maximum,
+    options.plotIdentity,
+    options.sourceIdentity,
+    options.spec,
+  ]);
 }

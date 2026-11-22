@@ -1,6 +1,8 @@
 import type { AppChannel } from "./appChannel";
 
 export const UPDATE_NOTIFIED_VERSION_KEY = "cellxplorer-update-notified-version";
+export const UPDATE_BUBBLE_DISMISSED_VERSION_KEY =
+  "cellxplorer-update-bubble-dismissed-version";
 export const UPDATE_PREFERENCES_KEY = "cellxplorer-update-preferences";
 export const UPDATE_PREFERENCES_CHANGED_EVENT = "cellxplorer-update-preferences-changed";
 export const UPDATE_LAST_CHECKED_AT_KEY = "cellxplorer-update-last-checked-at";
@@ -708,6 +710,48 @@ export function writeNotifiedVersion(
   version: string,
 ): void {
   storage.setItem(UPDATE_NOTIFIED_VERSION_KEY, version);
+}
+
+export function readDismissedUpdateBubbleVersion(
+  storage: Pick<Storage, "getItem">,
+): string | null {
+  try {
+    const raw = storage.getItem(UPDATE_BUBBLE_DISMISSED_VERSION_KEY);
+    const trimmed = raw?.trim();
+    return trimmed ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDismissedUpdateBubbleVersion(
+  storage: Pick<Storage, "setItem">,
+  version: string,
+): void {
+  try {
+    storage.setItem(UPDATE_BUBBLE_DISMISSED_VERSION_KEY, version);
+  } catch {
+    /* Optional UI dismissal state. */
+  }
+}
+
+/**
+ * Show an anchored header reminder beneath the power menu when a remote update
+ * is ready, until the user inspects or dismisses that version.
+ */
+export function shouldShowUpdateBubble(options: {
+  state: AppUpdateState;
+  updateUiEnabled: boolean;
+  modalOpen: boolean;
+  menuOpen: boolean;
+  suppressed: boolean;
+  dismissedVersion: string | null;
+}): boolean {
+  if (!options.updateUiEnabled) return false;
+  if (options.modalOpen || options.menuOpen || options.suppressed) return false;
+  if (options.state.status !== "available") return false;
+  if (options.state.release.localInstaller) return false;
+  return options.dismissedVersion !== options.state.release.version;
 }
 
 export async function showMainWindowForUpdateTauri(): Promise<void> {

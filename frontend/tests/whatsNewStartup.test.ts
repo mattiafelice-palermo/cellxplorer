@@ -14,7 +14,12 @@ function harness() {
   const jsx = (type: any, props: any) => ({ type, props });
   const modules: Record<string, any> = {
     "react/jsx-runtime": { jsx, jsxs: jsx },
-    react: { useRef: () => shown, useEffect: (effect: () => any) => { cleanup = effect(); } },
+    react: {
+      useRef: () => shown,
+      useEffect: (effect: () => any) => { cleanup = effect(); },
+      lazy: () => "ReleaseIntroduction",
+      Suspense: "Suspense",
+    },
     "@mantine/core": new Proxy({}, { get: (_, key) => key }),
     "@mantine/hooks": { useReducedMotion: () => true },
     "@tanstack/react-query": { useQuery: () => ({ data: status }) },

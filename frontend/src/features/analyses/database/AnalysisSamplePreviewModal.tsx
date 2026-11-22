@@ -1,10 +1,18 @@
 import { Alert, Center, Loader, Modal } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
+import { lazy, Suspense } from "react";
 
 import type { CellDetail, ReplicateGroupPreview } from "../../../api";
 import { get } from "../../../api";
-import { CellDetailTabs } from "../../../components/CellDetailTabs";
-import { ReplicatePreviewPanel } from "../../../components/ReplicatePreviewPanel";
+
+const CellDetailTabs = lazy(() =>
+  import("../../../components/CellDetailTabs").then((module) => ({ default: module.CellDetailTabs })),
+);
+const ReplicatePreviewPanel = lazy(() =>
+  import("../../../components/ReplicatePreviewPanel").then((module) => ({
+    default: module.ReplicatePreviewPanel,
+  })),
+);
 
 export type AnalysisSamplePreview = {
   kind: "cell" | "replicate";
@@ -44,9 +52,13 @@ export function AnalysisSamplePreviewModal({
       ) : activeQuery.isError ? (
         <Alert color="red">Could not load this preview.</Alert>
       ) : selection?.kind === "cell" && cell.data ? (
-        <CellDetailTabs cell={cell.data} />
+        <Suspense fallback={<Center h={300}><Loader /></Center>}>
+          <CellDetailTabs cell={cell.data} />
+        </Suspense>
       ) : selection?.kind === "replicate" ? (
-        <ReplicatePreviewPanel title={selection.name} preview={replicate.data} />
+        <Suspense fallback={<Center h={300}><Loader /></Center>}>
+          <ReplicatePreviewPanel title={selection.name} preview={replicate.data} />
+        </Suspense>
       ) : null}
     </Modal>
   );

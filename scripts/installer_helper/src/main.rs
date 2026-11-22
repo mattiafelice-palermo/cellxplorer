@@ -10,7 +10,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [mode, hex] if mode == "--restart" => {
-            let arguments = policy::decode_arguments(hex)?;
+            let arguments = policy::filter_restart_arguments(policy::decode_arguments(hex)?);
             // The user token is supplied by NSIS RunAsUser. Neither the executable
             // nor the working directory can be chosen through untrusted argv.
             let helper = std::env::current_exe().map_err(|e| e.to_string())?;

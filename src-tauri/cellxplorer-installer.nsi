@@ -1655,6 +1655,9 @@ Function .onInstSuccess
   ${OrIf} ${Silent}
     ${GetOptions} $CMDLINE "/R" $R0
     ${IfNot} ${Errors}
+      ; Allow the relaunched application to claim Windows foreground focus as the
+      ; passive installer closes (ASFW_ANY = -1).
+      System::Call 'user32::AllowSetForegroundWindow(i -1)'
       ${If} $CxRestartArgs != ""
         ; An opaque argv array cannot inject NSIS options. RunAsUser restores
         ; the original standard desktop token after a machine update.

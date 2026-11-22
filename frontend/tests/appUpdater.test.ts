@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   DEFAULT_APP_UPDATE_PREFERENCES,
   UPDATE_LAST_CHECKED_AT_KEY,
+  UPDATE_BUBBLE_DISMISSED_VERSION_KEY,
   UPDATE_NOTIFIED_VERSION_KEY,
   UPDATE_NOTIFICATION_KIND,
   UPDATE_NOTIFICATION_TAG,
@@ -35,6 +36,7 @@ import {
   buildReleaseNoteBlocks,
   failurePhaseForLocalUpdatePhase,
   explainUpdateCheckFailure,
+  readDismissedUpdateBubbleVersion,
   readLastUpdateCheckedAt,
   readNotifiedVersion,
   renderReleaseNotes,
@@ -42,9 +44,11 @@ import {
   resolveUpdateDiscoveryFeedback,
   shouldNotifyForVersion,
   shouldPersistUpdateBadge,
+  shouldShowUpdateBubble,
   shouldShowUpdateUi,
   shouldSkipAutomaticCheck,
   saveAppUpdatePreferences,
+  writeDismissedUpdateBubbleVersion,
   writeLastUpdateCheckedAt,
   writeNotifiedVersion,
 } from "../src/appUpdater.ts";
@@ -741,4 +745,108 @@ test("notification activation accepts only exact tag/kind and trimmed version", 
 test("install-phase failures stay install even if React state lags", () => {
   assert.equal(failurePhaseForLocalUpdatePhase("download"), "download");
   assert.equal(failurePhaseForLocalUpdatePhase("install"), "install");
+});
+
+test("update power-button bubble shows for remote available updates until dismissed for that version", () => {
+  const storage = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      storage.set(key, value);
+    },
+  };
+
+  assert.equal(readDismissedUpdateBubbleVersion(mockStorage), null);
+
+  const release15 = mockRelease("0.29.0-alpha.15");
+  const release16 = mockRelease("0.29.0-alpha.16");
+
+  assert.equal(
+    shouldShowUpdateBubble({
+      state: { status: "available", release: release15 },
+      updateUiEnabled: true,
+      modalOpen: false,
+      menuOpen: false,
+      suppressed: false,
+      dismissedVersion: readDismissedUpdateBubbleVersion(mockStorage),
+    }),
+    true,
+  );
+
+  for (const overrides of [
+    { updateUiEnabled: false },
+    { modalOpen: true },
+    { menuOpen: true },
+    { suppressed: true },
+    { state: { status: "idle" as const } },
+    { state: { status: "checking" as const, source: "automatic" as const } },
+    {
+      state: {
+        status: "downloading" as const,
+        release: release15,
+        downloadedBytes: 100,
+        totalBytes: 1000,
+      },
+    },
+    { state: { status: "launching" as const, release: release15 } },
+    {
+      state: {
+        status: "error" as const,
+        phase: "download" as const,
+        message: "network error",
+        release: release15,
+      },
+    },
+    {
+      state: {
+        status: "available" as const,
+        release: { ...release15, localInstaller: true },
+      },
+    },
+  ]) {
+    assert.equal(
+      shouldShowUpdateBubble({
+        state: { status: "available", release: release15 },
+        updateUiEnabled: true,
+        modalOpen: false,
+        menuOpen: false,
+        suppressed: false,
+        dismissedVersion: null,
+        ...overrides,
+      }),
+      false,
+    );
+  }
+
+  writeDismissedUpdateBubbleVersion(mockStorage, release15.version);
+  assert.equal(
+    storage.get(UPDATE_BUBBLE_DISMISSED_VERSION_KEY),
+    release15.version,
+  );
+  assert.equal(readDismissedUpdateBubbleVersion(mockStorage), release15.version);
+
+  assert.equal(
+    shouldShowUpdateBubble({
+      state: { status: "available", release: release15 },
+      updateUiEnabled: true,
+      modalOpen: false,
+      menuOpen: false,
+      suppressed: false,
+      dismissedVersion: readDismissedUpdateBubbleVersion(mockStorage),
+    }),
+    false,
+  );
+
+  // Newer release should automatically re-surface the bubble.
+  assert.equal(
+    shouldShowUpdateBubble({
+      state: { status: "available", release: release16 },
+      updateUiEnabled: true,
+      modalOpen: false,
+      menuOpen: false,
+      suppressed: false,
+      dismissedVersion: readDismissedUpdateBubbleVersion(mockStorage),
+    }),
+    true,
+  );
 });

@@ -1786,3 +1786,33 @@ and OCV drafts read the two elapsed-time fields from the verified record layout.
 Keep this out of folder browsing. The combined preview must carry each draft's
 read mode in both its request and its query key because prepared raw data is
 keyed by the corresponding parser identity.
+
+## Frontend startup, polling isolation, and table lightness (Spec 113)
+
+Keep `plotly.min` and `AnalysisEditor` out of `dist/index.html` modulepreloads:
+lazy-load secondary routes, `AnalysisEditor`, preview panels (`CellDetailTabs`,
+`ReplicatePreviewPanel`, `AnalysisCacheWarmupRenderer`), `ImportCellsLauncher`,
+and `ReleaseIntroduction`; keep `frontend/src/useDelayedFlag.ts` free of Plotly
+imports; and preserve idle plus sidebar-hover `prefetchAnalysisEditor()` so
+opening analyses remains instantaneous without slowing cold boot or `/analyses`
+database browsing.
+
+Keep `#cx-boot-splash` inline and zero-JS in `frontend/index.html` so slow
+WebView2 launches paint progress on frame 1 before React mounts.
+
+Keep `backgroundJobs` and `sourceCheckJob` polling isolated inside
+`BackgroundActivityController.tsx`; never move high-frequency `refetchInterval`
+queries back into `App.tsx`, where every tick cascades through the active route.
+
+Keep dense Cell and Analysis table rows (`LibraryCellRow`), headers
+(`CellTableColumnHeaders`), secondary sections (`ReplicateGroupsSection`), hover
+popovers (`CellHoverCard`, `ReplicateMembershipCell`, `AnalysisPlotSummary`),
+and closed modals memoized, lazy-mounted, or gated; keep `AnalysisDatabaseTable`
+paginated (`25 / 50 / 100`, persisted in `cellxplorer-analysis-page-size`) and
+column resizing on `ColumnResizeHandle` rather than persisting widths on every
+`pointermove`.
+
+Keep `useTimeCapacityProgressiveWarmup` event-driven (never restore a permanent
+`setInterval`), `startupQueryPersistence` idle-scheduled and
+`dataUpdatedAt`-deduplicated, and slow folder-navigation feedback gated behind
+`useDelayedFlag(180, 280)` so fast local folder switches never flash spinners.

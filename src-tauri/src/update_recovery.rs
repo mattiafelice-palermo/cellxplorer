@@ -34,6 +34,24 @@ pub fn recovery_arguments(
     Ok(command)
 }
 
+/// Updating is an interactive foreground action. Never carry startup-only
+/// `--hidden` or internal relaunch helper arguments into the restarted app.
+pub fn filter_restart_args(args: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut filtered = Vec::new();
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--hidden" {
+            continue;
+        }
+        if arg == "--relaunch-after-pid" {
+            let _ = iter.next();
+            continue;
+        }
+        filtered.push(arg);
+    }
+    filtered
+}
+
 #[cfg(windows)]
 mod windows {
     use super::*;
@@ -412,7 +430,7 @@ mod windows {
         if actual != bytes {
             return Err("The staged installer changed. Download the update again.".into());
         }
-        let args = std::env::args().skip(1).collect::<Vec<_>>();
+        let args = filter_restart_args(std::env::args().skip(1));
         use sha2::Digest;
         let hash = format!("{:x}", sha2::Sha256::digest(bytes));
         let parameters = recovery_arguments(
@@ -608,5 +626,46 @@ mod tests {
             &[]
         )
         .is_err());
+    }
+
+    #[test]
+    fn filter_restart_args_strips_hidden_and_relaunch_flags_but_preserves_other_args() {
+        let filtered = filter_restart_args([
+            "--hidden".to_string(),
+            "--relaunch-after-pid".to_string(),
+            "4242".to_string(),
+            "custom-arg".to_string(),
+            "Unicode €日本".to_string(),
+            "--hidden".to_string(),
+        ]);
+        assert_eq!(
+            filtered,
+            vec!["custom-arg".to_string(), "Unicode €日本".to_string()]
+        );
+
+        let command = recovery_arguments(
+            r"C:\Users\Alice\CellXplorer\cellxplorer.exe",
+            42,
+            &"ab".repeat(32),
+            "1.0.0-alpha.1",
+            "alpha",
+            &"cd".repeat(32),
+            &filter_restart_args(["--hidden".to_string(), "custom-arg".to_string()]),
+        )
+        .unwrap();
+        let encoded = command
+            .split("/CXRESTART=")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap();
+        let bytes: Vec<u8> = encoded
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 16).unwrap())
+            .collect();
+        let decoded: Vec<String> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, vec!["custom-arg".to_string()]);
     }
 }

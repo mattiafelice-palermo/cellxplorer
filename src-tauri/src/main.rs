@@ -766,6 +766,10 @@ fn main() {
                 finish_window_branding(&window, app_channel);
                 if start_hidden {
                     let _ = window.hide();
+                } else {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
             }
             if let Some(url) = initial_deep_link.clone() {

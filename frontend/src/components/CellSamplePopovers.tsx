@@ -1,6 +1,6 @@
-import { ActionIcon, Badge, Box, Button, Divider, Group, HoverCard, Popover, Stack, Text, Tooltip, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Badge, Box, Button, Divider, Group, Popover, Stack, Text, Tooltip, UnstyledButton } from "@mantine/core";
 import { IconChevronRight, IconChevronDown, IconPlus } from "@tabler/icons-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { CellSummary, ComputeResult } from "../api";
 import {
@@ -12,7 +12,15 @@ import {
 export type { CellFacts, RelatedAnalysis } from "../cellSamplePopoverLogic";
 export { cellFacts, relatedAnalysesForCell };
 
-/** Read-only summary shown on hover; never triggers a request. */
+const CELL_HOVER_OPEN_DELAY_MS = 350;
+const CELL_HOVER_CLOSE_DELAY_MS = 80;
+
+/**
+ * Read-only summary shown on hover; never triggers a request.
+ * Mounts Mantine's Popover/Floating-UI tree and computes cellFacts lazily only
+ * when the pointer lingers over a row, avoiding idle popover overhead across
+ * large tables.
+ */
 export function CellHoverCard({
   cell,
   result,
@@ -22,13 +30,74 @@ export function CellHoverCard({
   result: ComputeResult | undefined;
   children: React.ReactNode;
 }) {
+  const [opened, setOpened] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const clearTimer = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  useEffect(() => clearTimer, []);
+
+  const scheduleOpen = () => {
+    clearTimer();
+    if (opened) return;
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setOpened(true);
+    }, CELL_HOVER_OPEN_DELAY_MS);
+  };
+
+  const cancelClose = () => {
+    clearTimer();
+  };
+
+  const scheduleClose = () => {
+    clearTimer();
+    if (!opened) return;
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setOpened(false);
+    }, CELL_HOVER_CLOSE_DELAY_MS);
+  };
+
+  if (!opened) {
+    return (
+      <Box
+        style={{ minWidth: 0 }}
+        onMouseEnter={scheduleOpen}
+        onMouseLeave={clearTimer}
+      >
+        {children}
+      </Box>
+    );
+  }
+
   const facts = cellFacts(cell, result);
   return (
-    <HoverCard width={280} shadow="md" openDelay={350} closeDelay={80} position="right" withArrow>
-      <HoverCard.Target>
-        <Box style={{ minWidth: 0 }}>{children}</Box>
-      </HoverCard.Target>
-      <HoverCard.Dropdown>
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      width={280}
+      shadow="md"
+      position="right"
+      withArrow
+      withinPortal
+      trapFocus={false}
+    >
+      <Popover.Target>
+        <Box
+          style={{ minWidth: 0 }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          {children}
+        </Box>
+      </Popover.Target>
+      <Popover.Dropdown onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
         <Text size="sm" fw={700} style={{ wordBreak: "break-word" }}>
           {cell.name}
         </Text>
@@ -57,8 +126,8 @@ export function CellHoverCard({
             </Text>
           </>
         )}
-      </HoverCard.Dropdown>
-    </HoverCard>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 

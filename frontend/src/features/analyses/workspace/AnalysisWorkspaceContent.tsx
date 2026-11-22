@@ -1,5 +1,5 @@
-import { Box } from "@mantine/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Box, Center, Loader } from "@mantine/core";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import {
@@ -17,7 +17,18 @@ import {
   type AnalysesIndexNavigationOptions,
   type AnalysesIndexRouteIntent,
 } from "../database/AnalysesIndexView";
-import { AnalysisEditor } from "../editor/AnalysisEditor";
+
+const AnalysisEditor = lazy(() =>
+  import("../editor/AnalysisEditor").then((module) => ({ default: module.AnalysisEditor })),
+);
+
+function AnalysisEditorFallback() {
+  return (
+    <Center h={360}>
+      <Loader />
+    </Center>
+  );
+}
 
 function analysisIdFromPath(pathname: string): number | null {
   const match = pathname.match(/^\/analyses\/(\d+)$/);
@@ -175,12 +186,14 @@ export function AnalysisWorkspaceContent() {
   if (policy === "unmount") {
     if (activeId !== null) {
       return (
-        <AnalysisEditor
-          key={activeId}
-          analysisId={activeId}
-          onOpenAnalysis={onOpenAnalysis}
-          onOpenAnalysisDatabase={onOpenAnalysisDatabase}
-        />
+        <Suspense fallback={<AnalysisEditorFallback />}>
+          <AnalysisEditor
+            key={activeId}
+            analysisId={activeId}
+            onOpenAnalysis={onOpenAnalysis}
+            onOpenAnalysisDatabase={onOpenAnalysisDatabase}
+          />
+        </Suspense>
       );
     }
     return <AnalysisWorkspaceDatabase />;
@@ -192,6 +205,7 @@ export function AnalysisWorkspaceContent() {
         style={onHome ? undefined : {
           position: "absolute",
           inset: 0,
+          overflow: "hidden",
           visibility: "hidden",
           pointerEvents: "none",
         }}
@@ -205,17 +219,20 @@ export function AnalysisWorkspaceContent() {
           style={displayedId === analysisId ? undefined : {
             position: "absolute",
             inset: 0,
+            overflow: "hidden",
             visibility: "hidden",
             pointerEvents: "none",
           }}
           aria-hidden={displayedId !== analysisId}
         >
-          <AnalysisEditor
-            analysisId={analysisId}
-            workspaceVisible={displayedId === analysisId}
-            onOpenAnalysis={onOpenAnalysis}
-            onOpenAnalysisDatabase={onOpenAnalysisDatabase}
-          />
+          <Suspense fallback={displayedId === analysisId ? <AnalysisEditorFallback /> : null}>
+            <AnalysisEditor
+              analysisId={analysisId}
+              workspaceVisible={displayedId === analysisId}
+              onOpenAnalysis={onOpenAnalysis}
+              onOpenAnalysisDatabase={onOpenAnalysisDatabase}
+            />
+          </Suspense>
         </Box>
       ))}
     </Box>

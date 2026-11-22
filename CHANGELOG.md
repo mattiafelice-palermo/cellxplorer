@@ -10,6 +10,22 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.15 - 2026-11-22
+
+### New features
+
+- Add 25, 50 and 100 rows-per-page pagination to the Analysis Database table, with page selection and a one-click option to select all matching analyses across pages.
+- Show an anchored update notification bubble beneath the header power button when a new CellXplorer version is available, with direct links to view the release notes and install or open Settings -> App updates.
+- Show an immediate startup progress bar while the application interface loads on cold launches, and display non-flashing progress feedback when opening slow or network folders in the Load Cells browser.
+
+### Bug fixes
+
+- Speed up cold startup, Cell Database selection and Analysis Database browsing on slower laptops by splitting Plotly and secondary views out of the initial startup bundle, prefetching the analysis editor in the background, memoizing dense table rows and headers, and deferring hover popovers until hovered.
+- Isolate background-job and source-check polling into the header activity controller so active indexing or cache jobs no longer re-render the entire page on every polling tick.
+- Smooth Analysis Database column resizing by committing width updates once at the end of the drag instead of writing to local storage on every pointer move.
+- Keep CellXplorer in the foreground after installing an update instead of restarting minimized to the system tray when Windows launch-at-startup (--hidden) is enabled.
+- Eliminate idle background timer wakeups after Time / capacity progressive warmup completes, deduplicate startup cache snapshot writes, and prevent hidden analysis workspace panes from flashing an outer vertical scrollbar on route transitions.
+
 ## 0.29.0-alpha.14 - 2026-11-21
 
 ### New features

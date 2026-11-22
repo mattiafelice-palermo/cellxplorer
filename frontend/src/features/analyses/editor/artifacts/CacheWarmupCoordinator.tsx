@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   get,
@@ -13,7 +13,12 @@ import {
   warmupAnalysisQueryKey,
   warmupAnalysisRevisionsMatch,
 } from "../policies/warmupIdentityPolicy";
-import { AnalysisCacheWarmupRenderer } from "./AnalysisCacheWarmupRenderer";
+
+const AnalysisCacheWarmupRenderer = lazy(() =>
+  import("./AnalysisCacheWarmupRenderer").then((module) => ({
+    default: module.AnalysisCacheWarmupRenderer,
+  })),
+);
 
 async function mainWindowIsHidden(): Promise<boolean> {
   if (!isTauriApp()) return document.visibilityState === "hidden";
@@ -223,12 +228,14 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
         overflow: "hidden",
       }}
     >
-      <AnalysisCacheWarmupRenderer
-        analysis={analysis.data}
-        plot={plot}
-        task={task}
-        onComplete={finish}
-      />
+      <Suspense fallback={null}>
+        <AnalysisCacheWarmupRenderer
+          analysis={analysis.data}
+          plot={plot}
+          task={task}
+          onComplete={finish}
+        />
+      </Suspense>
     </div>
   );
 }

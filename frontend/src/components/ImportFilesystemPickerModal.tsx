@@ -12,6 +12,7 @@ import {
   NumberInput,
   Paper,
   Popover,
+  Progress,
   RangeSlider,
   ScrollArea,
   SegmentedControl,
@@ -22,6 +23,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { useDelayedFlag } from "../useDelayedFlag";
 import {
   importSourceVersion, importSourcePathKey, importSourceRejection,
   recordImportSourceRejection, pruneRejectedImportSelection, ImportSourceRejectedError,
@@ -365,6 +367,9 @@ export function ImportFilesystemPickerModal({
   const browseData = browseQuery.isError
     ? lastSuccessfulBrowseRef.current ?? browseQuery.data
     : browseQuery.data ?? lastSuccessfulBrowseRef.current;
+  const isNavigatingFolder =
+    opened && !indexedScope && browseQuery.isFetching && Boolean(browseData);
+  const showFolderLoading = useDelayedFlag(isNavigatingFolder, 180, 280);
   const selectedPreviewEntry = selectedPreviewPath
     ? selected.get(selectedPreviewPath)
       ?? (indexedPreviewEntry?.path === selectedPreviewPath ? indexedPreviewEntry : null)
@@ -1506,8 +1511,14 @@ export function ImportFilesystemPickerModal({
                     </Group>
                   </Box>
                 )}
+                {showFolderLoading && (
+                  <Group gap={6} wrap="nowrap" ml="xs" style={{ flexShrink: 0 }} role="status" aria-live="polite">
+                    <Loader size={14} />
+                    <Text size="xs" c="dimmed" visibleFrom="sm">Opening…</Text>
+                  </Group>
+                )}
               </Paper>
-              <ActionIcon variant="default" size="lg" aria-label="Refresh folder" onClick={refreshFolder}><IconRefresh size={17} /></ActionIcon>
+              <ActionIcon variant="default" size="lg" aria-label="Refresh folder" loading={showFolderLoading} onClick={refreshFolder}><IconRefresh size={17} /></ActionIcon>
             </Group>
             <Group gap="xs" wrap="nowrap">
               <TextInput size="md" placeholder="Search this folder" leftSection={<IconSearch size={15} />} value={search} onChange={(event) => setSearch(event.currentTarget.value)} style={{ flex: 1, minWidth: 0 }} />
@@ -1532,13 +1543,24 @@ export function ImportFilesystemPickerModal({
             </>}
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
-            <Paper withBorder p={0} style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
+            <Paper withBorder p={0} style={{ position: "relative", flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined, display: mode === "files" ? "flex" : undefined, flexDirection: mode === "files" ? "column" : undefined }}>
+              {showFolderLoading && (
+                <Progress
+                  value={100}
+                  size={3}
+                  animated
+                  radius={0}
+                  color="var(--mantine-primary-color-6)"
+                  aria-label="Opening folder"
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 6, pointerEvents: "none" }}
+                />
+              )}
               {mode === "files" && <Box p="xs" style={{ flex: 1, minHeight: 0, display: indexedScope ? "flex" : "none", flexDirection: "column" }}><IndexedSourceSearch sourceRejections={sourceRejections}
                   headerHints={headerHints} readModes={readModes} onTryPermissive={(file) => { setIndexedPreviewEntry(file); tryPermissive(file); }} onOpenEntity={onClose} filterContainer={searchFilterHost} onFilterCount={setSearchFilterCount} onOpenFilters={() => { setPreviewCollapsed(false); setSearchPanelTab("filters"); }} active={indexedScope && opened} onReveal={(file) => { const folder = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\")) + 1); navigate(folder); pendingRevealRef.current = { path: file.path, folder }; setHideUnavailable(false); setFocusedEntryPath(file.path); setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); }} onDialogChange={setSearchDialogOpen} onPopupChange={setSearchPopupOpen} selected={selected} currentPath={browseData?.current_path} onPreview={(file) => { setIndexedPreviewEntry(file); setSelectedPreviewPath(file.path); setSearchPanelTab("preview"); setPreviewCollapsed(false); }} onSelection={(next, files) => {
                 setHeaderHints((current) => { const hints = new Map(current); for (const file of files) if (!hints.has(file.path) && next.has(file.path) && file.recognition === "recognized" && !/\.mpr$/i.test(file.path)) hints.set(file.path, { path: file.path, supplier: file.supplier, technique: file.metadata.technique ?? null, source_format: file.extension, cycle_count: null, registered: file.registered, cells: file.cells, compatible: file.recognition === "recognized", error: null }); return hints; });
                 setSelected(next);
               }} /></Box>}
-              {!indexedScope && (browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : mode === "folder" ? <ScrollArea h={IMPORT_BROWSER_VIEWPORT_HEIGHT} offsetScrollbars><Stack gap={2} p="xs">{displayedEntries.filter((entry) => entry.kind === "folder").map((entry) => <Button key={entry.path} variant="subtle" justify="flex-start" leftSection={<IconFolder size={16} />} onClick={() => navigate(entry.path)}><Text size="sm" truncate title={entry.path}>{entry.name}</Text></Button>)}{!displayedEntries.some((entry) => entry.kind === "folder") && <Text size="sm" c="dimmed" p="sm">{folderPurpose === "search" ? "No subfolders here. You can index the current folder." : "No subfolders here. You can use the current folder."}</Text>}</Stack></ScrollArea> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%" } : undefined} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
+              {!indexedScope && (browseQuery.isPending && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }}><Loader /></Center> : browseQuery.isError && !browseData ? <Center style={{ height: mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT }} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : mode === "folder" ? <ScrollArea h={IMPORT_BROWSER_VIEWPORT_HEIGHT} offsetScrollbars style={{ opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" }}><Stack gap={2} p="xs">{displayedEntries.filter((entry) => entry.kind === "folder").map((entry) => <Button key={entry.path} variant="subtle" justify="flex-start" leftSection={<IconFolder size={16} />} onClick={() => navigate(entry.path)}><Text size="sm" truncate title={entry.path}>{entry.name}</Text></Button>)}{!displayedEntries.some((entry) => entry.kind === "folder") && <Text size="sm" c="dimmed" p="sm">{folderPurpose === "search" ? "No subfolders here. You can index the current folder." : "No subfolders here. You can use the current folder."}</Text>}</Stack></ScrollArea> : <ScrollArea viewportRef={entryViewportRef} viewportProps={{ style: { boxSizing: "border-box" } }} h={mode === "files" ? "100%" : IMPORT_BROWSER_VIEWPORT_HEIGHT} style={mode === "files" ? { height: "100%", opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" } : { opacity: showFolderLoading ? 0.55 : 1, transition: "opacity 150ms ease" }} scrollbarSize={IMPORT_BROWSER_SCROLLBAR_SIZE} type="auto" offsetScrollbars onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Box ref={tableRootRef} style={{ minWidth: "calc(40px + 64px + var(--import-name-width) + var(--import-extension-width) + var(--import-supplier-width) + var(--import-protocol-width) + var(--import-size-width) + var(--import-modified-width))", boxSizing: "border-box", paddingBottom: IMPORT_BROWSER_SCROLLBAR_SIZE + 8, ...browserGridStyle }}><Stack gap={0}>
                 <Box px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)", display: "grid", alignItems: "center", gap: 8, gridTemplateColumns, position: "sticky", top: 0, zIndex: 3 }}>
                   <Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} style={{ position: "sticky", left: "var(--mantine-spacing-sm)", zIndex: 5, background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" }} />
                   {(["name", "extension", "supplier", "protocol", "size", "modified"] as const).map(renderHeaderCell)}

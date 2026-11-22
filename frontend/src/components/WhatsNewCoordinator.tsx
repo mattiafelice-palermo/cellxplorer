@@ -1,15 +1,18 @@
-import { Badge, Group, Modal, Text } from "@mantine/core";
+import { Badge, Center, Group, Loader, Modal, Text } from "@mantine/core";
 import { useReducedMotion } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { get } from "../api";
 import { APP_CHANNEL, APP_BRANDING } from "../appChannel";
 import { isTauriApp } from "../downloads";
 import { isAfterReleaseIntroBaseline, markReleaseIntroSeen, releaseIntroWasSeen } from "../whatsNew";
-import { ReleaseIntroduction } from "./ReleaseIntroduction";
 import styles from "./ReleaseIntroduction.module.css";
 import { useOptionalAppUpdate } from "./AppUpdateCoordinator";
+
+const ReleaseIntroduction = lazy(() =>
+  import("./ReleaseIntroduction").then((module) => ({ default: module.ReleaseIntroduction })),
+);
 
 export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, ready, version, bootstrapBlocking }: {
   opened: boolean; onOpen: () => void; onClose: () => void; onTrySearch: () => void;
@@ -51,6 +54,10 @@ export function WhatsNewCoordinator({ opened, onOpen, onClose, onTrySearch, read
     onClose();
   };
   return <Modal opened={opened} onClose={close} title={<Group gap="sm"><Text size="sm" fw={700}>What’s new</Text>{APP_BRANDING.badgeLabel && <Badge variant="light" size="sm" radius="sm">{APP_BRANDING.badgeLabel}</Badge>}</Group>} closeButtonProps={{ "aria-label": "Close What’s New" }} size="46rem" centered padding={0} classNames={{ content: styles.modalContent, body: styles.modalBody, header: styles.modalHeader }}>
-    {opened && <ReleaseIntroduction onClose={close} onChooseFolders={() => { close(); onTrySearch(); }} reducedMotion={Boolean(reducedMotion)} />}
+    {opened && (
+      <Suspense fallback={<Center h={320}><Loader /></Center>}>
+        <ReleaseIntroduction onClose={close} onChooseFolders={() => { close(); onTrySearch(); }} reducedMotion={Boolean(reducedMotion)} />
+      </Suspense>
+    )}
   </Modal>;
 }

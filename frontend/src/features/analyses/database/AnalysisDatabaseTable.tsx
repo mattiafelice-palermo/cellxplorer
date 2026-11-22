@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -8,7 +9,9 @@ import {
   HoverCard,
   Menu,
   NumberInput,
+  Pagination,
   ScrollArea,
+  Select,
   Stack,
   Table,
   Text,
@@ -24,6 +27,7 @@ import {
   IconDotsVertical,
   IconFilter,
   IconFolder,
+  IconInfoCircle,
   IconLayoutSidebarRight,
   IconSearch,
   IconTrash,
@@ -31,15 +35,14 @@ import {
 import {
   useEffect,
   useMemo,
-  useRef,
   useState,
   type Dispatch,
-  type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { get, type AnalysisFull, type AnalysisSavedPlotSummary, type AnalysisSummary } from "../../../api";
+import { ColumnResizeHandle } from "../../../components/ColumnResizeHandle";
 import { AnalysisPlotSummary } from "./AnalysisPlotSummary";
 import {
   AnalysisSamplePreviewModal,
@@ -64,6 +67,20 @@ type Filters = {
 };
 
 const STORAGE_KEY = "cellxplorer.analysis-database-table.v1";
+const ANALYSIS_PAGE_SIZE_OPTIONS = ["25", "50", "100"] as const;
+type AnalysisPageSize = 25 | 50 | 100;
+const ANALYSIS_PAGE_SIZE_STORAGE_KEY = "cellxplorer-analysis-page-size";
+
+function loadAnalysisPageSize(): AnalysisPageSize {
+  if (typeof window === "undefined") return 25;
+  try {
+    const raw = window.localStorage.getItem(ANALYSIS_PAGE_SIZE_STORAGE_KEY);
+    if (raw === "25" || raw === "50" || raw === "100") return Number(raw) as AnalysisPageSize;
+  } catch {
+    /* storage may be disabled */
+  }
+  return 25;
+}
 const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
   title: 300,
   samples: 180,
@@ -438,6 +455,8 @@ export function AnalysisDatabaseTable({
   const preferences = useMemo(loadPreferences, []);
   const [search, setSearch] = useState("");
   const [openOnly, setOpenOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSizeState] = useState<AnalysisPageSize>(() => loadAnalysisPageSize());
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [lastSelected, setLastSelected] = useState<number | null>(null);
   const [sort, setSortState] = useState<{ column: ColumnKey; direction: SortDirection }>({
@@ -448,12 +467,14 @@ export function AnalysisDatabaseTable({
   const [widths, setWidths] = useState(preferences.widths);
   const [visible, setVisible] = useState(preferences.visible);
   const [samplePreview, setSamplePreview] = useState<AnalysisSamplePreview>(null);
-  const resizeCleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ widths, visible }));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ widths, visible }));
+    } catch {
+      /* storage may be disabled */
+    }
   }, [visible, widths]);
-  useEffect(() => () => resizeCleanup.current?.(), []);
   useEffect(() => {
     const available = new Set(rows.map((row) => row.id));
     setSelected((current) => new Set([...current].filter((id) => available.has(id))));
@@ -497,20 +518,45 @@ export function AnalysisDatabaseTable({
   }, [filters, openIds, openOnly, rows, search, sort]);
 
   const visibleColumns = (Object.keys(DEFAULT_WIDTHS) as ColumnKey[]).filter((key) => visible[key]);
-  const displayedIds = displayed.map((row) => row.id);
+  const displayedIds = useMemo(() => displayed.map((row) => row.id), [displayed]);
+  const pageCount = Math.max(1, Math.ceil(displayed.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageRows = displayed.slice(pageStart, pageStart + pageSize);
+  const pageEnd = pageStart + pageRows.length;
+  const pageIds = pageRows.map((row) => row.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const somePageSelected = pageIds.some((id) => selected.has(id));
   const allDisplayedSelected = displayedIds.length > 0 && displayedIds.every((id) => selected.has(id));
-  const someDisplayedSelected = displayedIds.some((id) => selected.has(id));
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, openOnly, filters, sort, pageSize]);
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
+  const setPageSize = (value: string | null) => {
+    if (value !== "25" && value !== "50" && value !== "100") return;
+    setPageSizeState(Number(value) as AnalysisPageSize);
+    try {
+      window.localStorage.setItem(ANALYSIS_PAGE_SIZE_STORAGE_KEY, value);
+    } catch {
+      /* storage may be disabled */
+    }
+  };
 
   const setSort = (column: ColumnKey, direction: SortDirection) => setSortState({ column, direction });
   const toggleSelection = (id: number, range: boolean) => {
     setSelected((current) => {
       const next = new Set(current);
       if (range && lastSelected !== null) {
-        const start = displayedIds.indexOf(lastSelected);
-        const end = displayedIds.indexOf(id);
+        const start = pageIds.indexOf(lastSelected);
+        const end = pageIds.indexOf(id);
         if (start >= 0 && end >= 0) {
           const shouldSelect = !current.has(id);
-          displayedIds.slice(Math.min(start, end), Math.max(start, end) + 1).forEach((rowId) => {
+          pageIds.slice(Math.min(start, end), Math.max(start, end) + 1).forEach((rowId) => {
             if (shouldSelect) next.add(rowId); else next.delete(rowId);
           });
         }
@@ -520,34 +566,24 @@ export function AnalysisDatabaseTable({
     });
     setLastSelected(id);
   };
-  const toggleAllDisplayed = () => {
+  const toggleAllOnPage = () => {
     setSelected((current) => {
       const next = new Set(current);
-      if (allDisplayedSelected) displayedIds.forEach((id) => next.delete(id));
-      else displayedIds.forEach((id) => next.add(id));
+      if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
       return next;
     });
+    setLastSelected(null);
   };
-  const beginResize = (column: ColumnKey, event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const startX = event.clientX;
-    const startWidth = widths[column];
-    const move = (moveEvent: PointerEvent) => {
-      setWidths((current) => ({
-        ...current,
-        [column]: Math.max(MIN_WIDTHS[column], startWidth + moveEvent.clientX - startX),
-      }));
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      resizeCleanup.current = null;
-    };
-    resizeCleanup.current?.();
-    resizeCleanup.current = stop;
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
+  const selectAllDisplayed = () => {
+    setSelected(new Set(displayedIds));
+    setLastSelected(null);
+  };
+  const resizeColumn = (column: ColumnKey, width: number) => {
+    setWidths((current) => ({
+      ...current,
+      [column]: Math.max(MIN_WIDTHS[column], Math.round(width)),
+    }));
   };
 
   return (
@@ -600,7 +636,25 @@ export function AnalysisDatabaseTable({
         </Group>
       </Group>
 
-      <ScrollArea type="auto">
+      {allPageSelected && displayed.length > pageRows.length && !allDisplayedSelected && (
+        <Alert
+          color="orange"
+          variant="light"
+          radius="md"
+          p="xs"
+          icon={<IconInfoCircle size={16} />}
+          style={{ border: "1px solid var(--mantine-color-orange-6)" }}
+        >
+          <Group justify="space-between" gap="sm" wrap="wrap">
+            <Text size="sm">All {pageRows.length} analyses on this page are selected.</Text>
+            <Button size="compact-sm" variant="light" color="orange" onClick={selectAllDisplayed}>
+              Select all {displayed.length} matching analyses
+            </Button>
+          </Group>
+        </Alert>
+      )}
+
+      <ScrollArea type="auto" scrollbars="x">
         <Box pb={12}>
         <Table highlightOnHover withTableBorder miw={700} style={{ tableLayout: "fixed" }}>
           <colgroup>
@@ -613,10 +667,10 @@ export function AnalysisDatabaseTable({
               <Table.Th>
                 <Checkbox
                   size="sm"
-                  aria-label="Select all filtered analyses"
-                  checked={allDisplayedSelected}
-                  indeterminate={someDisplayedSelected && !allDisplayedSelected}
-                  onChange={toggleAllDisplayed}
+                  aria-label="Select analyses on this page"
+                  checked={allPageSelected}
+                  indeterminate={somePageSelected && !allPageSelected}
+                  onChange={toggleAllOnPage}
                 />
               </Table.Th>
               {visibleColumns.map((column) => (
@@ -630,19 +684,11 @@ export function AnalysisDatabaseTable({
                     setFilters={setFilters}
                     setSort={setSort}
                   />
-                  <Box
-                    role="separator"
-                    aria-orientation="vertical"
-                    onPointerDown={(event) => beginResize(column, event)}
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      right: -4,
-                      width: 8,
-                      height: "100%",
-                      cursor: "col-resize",
-                      zIndex: 2,
-                    }}
+                  <ColumnResizeHandle
+                    label={COLUMN_LABELS[column]}
+                    width={widths[column]}
+                    showDivider={false}
+                    onResize={(nextWidth) => resizeColumn(column, nextWidth)}
                   />
                 </Table.Th>
               ))}
@@ -650,7 +696,7 @@ export function AnalysisDatabaseTable({
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {displayed.map((analysis) => (
+            {pageRows.map((analysis) => (
               <Table.Tr
                 key={analysis.id}
                 onClick={(event) => onOpen(analysis, event.ctrlKey || event.metaKey)}
@@ -742,10 +788,41 @@ export function AnalysisDatabaseTable({
         </Table>
         </Box>
       </ScrollArea>
-      {displayed.length === 0 && (
+      {displayed.length === 0 ? (
         <Text size="sm" c="dimmed" ta="center" py="lg">No analyses match the current filters.</Text>
+      ) : (
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+          <Text size="sm" c="dimmed">
+            Showing {pageStart + 1}–{pageEnd} of {displayed.length}
+          </Text>
+          <Group gap="sm" align="center">
+            <Group gap={6} align="center">
+              <Text size="xs" c="dimmed">
+                Per page
+              </Text>
+              <Select
+                size="xs"
+                w={80}
+                allowDeselect={false}
+                data={[...ANALYSIS_PAGE_SIZE_OPTIONS]}
+                value={String(pageSize)}
+                onChange={setPageSize}
+                aria-label="Analyses per page"
+              />
+            </Group>
+            <Pagination
+              size="sm"
+              value={safePage}
+              onChange={setPage}
+              total={pageCount}
+              disabled={pageCount <= 1}
+            />
+          </Group>
+        </Group>
       )}
-      <AnalysisSamplePreviewModal selection={samplePreview} onClose={() => setSamplePreview(null)} />
+      {samplePreview !== null ? (
+        <AnalysisSamplePreviewModal selection={samplePreview} onClose={() => setSamplePreview(null)} />
+      ) : null}
     </Stack>
   );
 }

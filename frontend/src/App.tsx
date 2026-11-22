@@ -1,15 +1,15 @@
-import { SearchIndexProgressBar } from "./components/SearchIndexProgress";
 import {
   ActionIcon,
   Alert,
   AppShell,
   Badge,
   Button,
+  Center,
   Code,
   Group,
+  Loader,
   NavLink,
   Paper,
-  Progress,
   ScrollArea,
   Stack,
   Divider,
@@ -20,32 +20,27 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  IconActivity,
   IconAlertTriangle,
   IconChartLine,
   IconDatabase,
   IconFolder,
   IconFolderOpen,
   IconLayoutSidebar,
-  IconLoader2,
   IconSettings,
   IconPlus,
   IconUpload,
 } from "@tabler/icons-react";
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import {
   get,
   post,
   type AutomationPauseState,
-  type BackgroundJob,
   type DatabaseStatus,
   type SourceCheckJob,
 } from "./api";
-import { ActivityCenter } from "./components/ActivityCenter";
-import { AnalysisUpdateIndicator } from "./components/AnalysisUpdateIndicator";
-import { ANALYSIS_UPDATES_VIEWED, acknowledgeUpdates, readSeenUpdates, unreadUpdates } from "./analysisUpdateNoticePolicy";
+import { BackgroundActivityController } from "./components/BackgroundActivityController";
 import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
@@ -55,31 +50,43 @@ import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator"
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
 import { WhatsNewCoordinator } from "./components/WhatsNewCoordinator";
 import { AnalysisWorkspaceTabs } from "./features/analyses/workspace/AnalysisWorkspaceTabs";
-import { AnalysisWorkspaceContent } from "./features/analyses/workspace/AnalysisWorkspaceContent";
 import { addDebugEvent, getDebugEvents } from "./debug";
 import { isTauriApp } from "./downloads";
-import { AnalysesIndexPage } from "./pages/AnalysesIndexPage";
-import { InboxPage } from "./pages/InboxPage";
 import { LibraryPage } from "./pages/LibraryPage";
-import { ProjectsPage } from "./pages/ProjectsPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
 import { startupQueryPersistence } from "./startupQueryPersistence";
-import {
-  invalidateAnalysisQueries,
-  invalidateSourceScientificQueries,
-} from "./features/analyses/workspace/analysisQueryCache";
 import { APP_BRANDING } from "./appChannel";
-import {
-  backgroundImportRefreshPlan,
-  importProgressCount,
-  importProgressPercent,
-} from "./importProgress";
-import {
-  readAcknowledgedFailedJobId,
-  writeAcknowledgedFailedJobId,
-  shouldShowActivityFailed,
-} from "./activityAcknowledgement";
+
+const AnalysisWorkspaceContent = lazy(() =>
+  import("./features/analyses/workspace/AnalysisWorkspaceContent").then((module) => ({
+    default: module.AnalysisWorkspaceContent,
+  })),
+);
+const InboxPage = lazy(() =>
+  import("./pages/InboxPage").then((module) => ({ default: module.InboxPage })),
+);
+const ProjectsPage = lazy(() =>
+  import("./pages/ProjectsPage").then((module) => ({ default: module.ProjectsPage })),
+);
+const SettingsPage = lazy(() =>
+  import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })),
+);
+
+function RouteLoadingFallback() {
+  return (
+    <Center h={320}>
+      <Loader />
+    </Center>
+  );
+}
+
+let analysisEditorPrefetchStarted = false;
+function prefetchAnalysisEditor(): void {
+  if (analysisEditorPrefetchStarted) return;
+  analysisEditorPrefetchStarted = true;
+  void import("./features/analyses/workspace/AnalysisWorkspaceContent");
+  void import("./features/analyses/editor/AnalysisEditor");
+}
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -122,16 +129,8 @@ export default function App({
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [bootstrapBlocking, setBootstrapBlocking] = useState(true);
   const openWhatsNew = useCallback(() => setWhatsNewOpen(true), []);
-  const [activityOpen, setActivityOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
-  const [acknowledgedFailedJobId, setAcknowledgedFailedJobId] = useState<number | null>(
-    () => readAcknowledgedFailedJobId(window.localStorage),
-  );
-  const handledSourceCheckJob = useRef<number | null>(null);
-  const handledSourceChangingState = useRef("");
-  const backgroundJobSnapshots = useRef(new Map<number, string>());
-  const lastImportCacheRefreshAt = useRef(0);
   const [uiZoom, setUiZoom] = useState(() => {
     const stored = Number(window.localStorage.getItem("cellxplorer-ui-zoom"));
     return Number.isFinite(stored) && stored >= 0.7 && stored <= 1.6 ? stored : 1;
@@ -174,6 +173,23 @@ export default function App({
       }
     }
   }, [databaseStatus.data, queryClient]);
+  useEffect(() => {
+    if (databaseStatus.data?.compatible !== true || bootstrapBlocking) return;
+    let idleId: number | null = null;
+    const timerId = window.setTimeout(() => {
+      if ("requestIdleCallback" in window) {
+        idleId = window.requestIdleCallback(prefetchAnalysisEditor, { timeout: 4000 });
+      } else {
+        prefetchAnalysisEditor();
+      }
+    }, 2000);
+    return () => {
+      window.clearTimeout(timerId);
+      if (idleId !== null && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }, [databaseStatus.data?.compatible, bootstrapBlocking]);
   useEffect(() => {
     document.documentElement.style.removeProperty("zoom");
     document.documentElement.style.setProperty("--cellxplorer-ui-zoom", String(uiZoom));
@@ -282,69 +298,6 @@ export default function App({
       cleanups.forEach((cleanup) => cleanup());
     };
   }, [navigate, queryClient]);
-  const backgroundJobs = useQuery({
-    queryKey: ["background-jobs"],
-    queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),
-    enabled: databaseStatus.data?.compatible === true,
-    refetchInterval: (query) =>
-      query.state.data?.some((job) => job.status === "running") ? 700 : 5000,
-  });
-  useEffect(() => {
-    const jobs = backgroundJobs.data ?? [];
-    const refresh = (keys: string[][]) => {
-      keys.forEach((queryKey) => {
-        void queryClient.invalidateQueries({ queryKey });
-      });
-    };
-    const plan = backgroundImportRefreshPlan(
-      backgroundJobSnapshots.current,
-      jobs,
-      Date.now(),
-      lastImportCacheRefreshAt.current,
-    );
-    backgroundJobSnapshots.current = plan.snapshots;
-    lastImportCacheRefreshAt.current = plan.lastCacheRefreshAt;
-    if (plan.registrationCommitted) {
-      refresh([
-        ["cells"],
-        ["files"],
-        ["tree"],
-        ["replicate-groups"],
-        ["activity"],
-        ["background-jobs"],
-      ]);
-    }
-    if (plan.cacheAdvanced && !plan.cacheTerminal) {
-      refresh([["cells"], ["files"]]);
-    }
-    if (plan.cacheTerminal) {
-      refresh([["cells"], ["files"], ["activity"], ["background-jobs"]]);
-    }
-  }, [backgroundJobs.data, queryClient]);
-
-  // Extract failed job IDs once for use in multiple places
-  const failedJobIds = useMemo(
-    () =>
-      (backgroundJobs.data ?? [])
-        .filter((job) => job.status === "failed")
-        .map((job) => job.id),
-    [backgroundJobs.data]
-  );
-
-  const acknowledgeFailedJobs = () => {
-    if (failedJobIds.length === 0) return;
-    const highestFailedId = Math.max(...failedJobIds);
-    if (highestFailedId > (acknowledgedFailedJobId ?? -1)) {
-      writeAcknowledgedFailedJobId(window.localStorage, highestFailedId);
-      setAcknowledgedFailedJobId(highestFailedId);
-    }
-  };
-  const sourceCheckJob = useQuery({
-    queryKey: ["source-check-job"],
-    queryFn: () => get<SourceCheckJob | null>("/api/source-check-jobs/latest"),
-    enabled: databaseStatus.data?.compatible === true,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 600 : false),
-  });
   const automationPause = useQuery({
     queryKey: PAUSE_QUERY_KEY,
     queryFn: () => get<AutomationPauseState>("/api/automation/pause"),
@@ -367,72 +320,13 @@ export default function App({
     document.addEventListener("contextmenu", onContextMenu);
     return () => document.removeEventListener("contextmenu", onContextMenu);
   }, []);
-  useEffect(() => {
-    const job = sourceCheckJob.data;
-    if (!job) return;
-    if (job.status === "running") {
-      const state = `${job.id}:${job.deferred ?? 0}`;
-      if (handledSourceChangingState.current !== state) {
-        handledSourceChangingState.current = state;
-        queryClient.invalidateQueries({ queryKey: ["cells"] });
-        queryClient.invalidateQueries({ queryKey: ["cell"] });
-      }
-      return;
-    }
-    if (handledSourceCheckJob.current === job.id) return;
-    handledSourceCheckJob.current = job.id;
-    queryClient.invalidateQueries({ queryKey: ["cells"] });
-    queryClient.invalidateQueries({ queryKey: ["cell"] });
-    queryClient.invalidateQueries({ queryKey: ["files"] });
-    queryClient.invalidateQueries({ queryKey: ["tree"] });
-    queryClient.invalidateQueries({ queryKey: ["activity"] });
-    // The list carries sources_changed, so it must refresh too — this is what
-    // makes an analysis go bold right after an automatic source check.
-    queryClient.invalidateQueries({ queryKey: ["analyses"] });
-    // Source adoption can affect any analysis that references the changed
-    // Cell, not only the currently visible tab.
-    void invalidateAnalysisQueries(queryClient);
-    if (job.update_after_check && job.ready_cell_ids?.length) {
-      void invalidateSourceScientificQueries(queryClient, {
-        cellIds: job.ready_cell_ids,
-      });
-    }
-    if (job.status === "failed") {
-      notifications.show({ message: job.error || "Source check failed.", color: "red" });
-    } else {
-      const updateWarnings = Boolean(job.offline || job.errors || job.deferred || job.update_errors?.length);
-      const deferredSuffix = job.deferred ? ` ${job.deferred} deferred because the source was still changing.` : "";
-      notifications.show({
-        message: job.update_after_check
-          ? `Checked ${job.completed} sources and updated ${job.updated ?? 0} changed file${job.updated === 1 ? "" : "s"}.${deferredSuffix}`
-          : `Checked ${job.completed} source file${job.completed === 1 ? "" : "s"} (${job.changed} changed, ${job.offline} offline).${deferredSuffix}`,
-        color: job.update_after_check
-          ? (updateWarnings ? "orange" : "teal")
-          : (job.changed || job.offline || job.errors ? "orange" : "teal"),
-      });
-      if (job.skipped_complete) {
-        notifications.show({
-          message: `Skipped ${job.skipped_complete} completed cell${job.skipped_complete === 1 ? "" : "s"}.`,
-          color: "gray",
-        });
-      }
-    }
-    if (isTauriApp()) {
-      void import("@tauri-apps/api/core").then(({ invoke }) =>
-        invoke("set_tray_status", { message: null }),
-      );
-    }
-  }, [location.pathname, queryClient, sourceCheckJob.data]);
-  const guardedNavigate = (path: string) => {
+  const guardedNavigate = useCallback((path: string) => {
     const event = new CustomEvent<AnalysisLeaveRequestDetail>(ANALYSIS_LEAVE_EVENT, {
       cancelable: true,
       detail: { proceed: () => navigate(path), reason: "navigate" },
     });
     if (window.dispatchEvent(event)) navigate(path);
-  };
-  const activeJob = backgroundJobs.data?.find((job) => job.status === "running") ?? null;
-  const activeJobCount = importProgressCount(activeJob);
-  const activityProgress = importProgressPercent(activeJob) ?? (activeJob ? 100 : 0);
+  }, [navigate]);
 
   if (databaseStatus.isError || (!databaseStatus.isLoading && !databaseStatus.data)) {
     return (
@@ -606,47 +500,19 @@ export default function App({
             </Group>
           </Group>
           <Group gap="xs">
-            <AnalysisUpdateIndicator databaseId={databaseStatus.data?.compatible ? databaseStatus.data.database_instance_id : null}
-              activityOpen={activityOpen} onOpen={() => setActivityOpen(true)}
-              onSettings={() => guardedNavigate("/settings/notifications")}>
-            <Button
-              className="background-activity-button"
-              size="compact-sm"
-              variant="subtle"
-              color={
-                shouldShowActivityFailed(failedJobIds, acknowledgedFailedJobId)
-                  ? "red"
-                  : APP_BRANDING.primaryColor
-              }
-              leftSection={
-                activeJob ? (
-                  <IconLoader2 size={14} className="source-check-spin" />
-                ) : (
-                  <IconActivity size={14} />
-                )
-              }
-              onClick={() => setActivityOpen(true)}
-            >
-              {activeJob ? (
-                <Stack gap={2} className="background-activity-content">
-                  <Group gap="xs" justify="space-between" wrap="nowrap">
-                    <Text size="xs" fw={600} truncate maw={210}>
-                      {activeJob.kind === "source_search_index" ? activeJob.phase_detail ?? "Finding source files" : activeJob.description}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {activeJob.kind === "source_search_index" && (!activeJob.phase || activeJob.phase === "discovering") ? `${activeJob.discovered_files ?? 0} found` : `${activeJobCount.current}/${activeJobCount.total}`}
-                    </Text>
-                  </Group>
-                  {activeJob.kind === "source_search_index" ? <SearchIndexProgressBar size={3} phase={activeJob.phase} discovered={activeJob.discovered_files} completed={activeJob.completed} total={activeJob.total} /> : <Progress value={activityProgress} size={3} animated color={APP_BRANDING.primaryColor} />}
-                </Stack>
-              ) : (
-                "Activity"
-              )}
-            </Button>
-            </AnalysisUpdateIndicator>
+            <BackgroundActivityController
+              enabled={databaseStatus.data?.compatible === true}
+              databaseId={databaseStatus.data?.compatible ? databaseStatus.data.database_instance_id : null}
+              onNavigate={guardedNavigate}
+            />
             <NavigationWarmupDebugButton />
             <DownloadsButton />
-            <QuickSettingsMenu onOpenDebug={() => setDebugOpen(true)} onOpenWhatsNew={openWhatsNew} />
+            <QuickSettingsMenu
+              onOpenDebug={() => setDebugOpen(true)}
+              onOpenWhatsNew={openWhatsNew}
+              onOpenUpdateSettings={() => guardedNavigate("/settings/updates")}
+              suppressUpdateBubble={bootstrapBlocking || whatsNewOpen}
+            />
           </Group>
         </Group>
       </AppShell.Header>
@@ -704,6 +570,8 @@ export default function App({
               </Tooltip>
             )}
             active={location.pathname === "/analyses"}
+            onMouseEnter={prefetchAnalysisEditor}
+            onFocus={prefetchAnalysisEditor}
             onClick={() => guardedNavigate("/analyses")}
           />
           <NavLink
@@ -734,58 +602,44 @@ export default function App({
         >
           {location.pathname.startsWith("/analyses") ? <AnalysisWorkspaceTabs /> : null}
           <RouteErrorBoundary routeKey={location.pathname}>
-            <Routes>
-              <Route path="/" element={<LibraryPage />} />
-              <Route path="/inbox" element={<InboxPage />} />
-              <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/analyses/*" element={<AnalysisWorkspaceContent />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/settings/file-search" element={<SettingsPage />} />
-              <Route path="/settings/monitoring" element={<SettingsPage />} />
-              <Route path="/settings/metadata" element={<SettingsPage />} />
-              <Route path="/settings/plots" element={<SettingsPage />} />
-              <Route path="/settings/desktop" element={<SettingsPage />} />
-              <Route path="/settings/updates" element={<SettingsPage />} />
-              <Route path="/settings/notifications" element={<SettingsPage />} />
-              <Route path="/settings/performance" element={<SettingsPage />} />
-              <Route path="/settings/cache" element={<SettingsPage />} />
-              <Route path="/settings/activity" element={<SettingsPage />} />
-            </Routes>
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <Routes>
+                <Route path="/" element={<LibraryPage />} />
+                <Route path="/inbox" element={<InboxPage />} />
+                <Route path="/projects" element={<ProjectsPage />} />
+                <Route path="/analyses/*" element={<AnalysisWorkspaceContent />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings/file-search" element={<SettingsPage />} />
+                <Route path="/settings/monitoring" element={<SettingsPage />} />
+                <Route path="/settings/metadata" element={<SettingsPage />} />
+                <Route path="/settings/plots" element={<SettingsPage />} />
+                <Route path="/settings/desktop" element={<SettingsPage />} />
+                <Route path="/settings/updates" element={<SettingsPage />} />
+                <Route path="/settings/notifications" element={<SettingsPage />} />
+                <Route path="/settings/performance" element={<SettingsPage />} />
+                <Route path="/settings/cache" element={<SettingsPage />} />
+                <Route path="/settings/activity" element={<SettingsPage />} />
+              </Routes>
+            </Suspense>
           </RouteErrorBoundary>
         </div>
       </AppShell.Main>
 
-      <CommandPalette opened={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      <DiagnosticsModal
-        opened={debugOpen}
-        onClose={() => setDebugOpen(false)}
-        debugContext={{
-          route: location.pathname,
-          href: window.location.href,
-          userAgent: navigator.userAgent,
-          events: getDebugEvents(),
-        }}
-      />
-      <ActivityCenter
-        opened={activityOpen}
-        onSettings={() => { setActivityOpen(false); guardedNavigate("/settings/notifications"); }}
-        onClose={() => setActivityOpen(false)}
-        jobs={backgroundJobs.data ?? []}
-        databaseId={databaseStatus.data?.database_instance_id ?? null}
-        onUpdatesViewed={(notices) => {
-          const databaseId = databaseStatus.data?.database_instance_id;
-          if (!databaseId || !unreadUpdates(notices, readSeenUpdates(window.localStorage, databaseId)).length) return;
-          acknowledgeUpdates(window.localStorage, databaseId, notices);
-          window.dispatchEvent(new Event(ANALYSIS_UPDATES_VIEWED));
-        }}
-        loading={backgroundJobs.isLoading}
-        failed={backgroundJobs.isError}
-        onOpenAnalysis={(id) => {
-          setActivityOpen(false);
-          guardedNavigate(`/analyses/${id}`);
-        }}
-        onProcessingViewed={acknowledgeFailedJobs}
-      />
+      {paletteOpen ? (
+        <CommandPalette opened={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      ) : null}
+      {debugOpen ? (
+        <DiagnosticsModal
+          opened={debugOpen}
+          onClose={() => setDebugOpen(false)}
+          debugContext={{
+            route: location.pathname,
+            href: window.location.href,
+            userAgent: navigator.userAgent,
+            events: getDebugEvents(),
+          }}
+        />
+      ) : null}
     </AppShell>
   );
 }
