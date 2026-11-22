@@ -5,8 +5,10 @@ revisiting battery-cycling data. Built per [SPEC.md](spec.md) around the
 open-source **NewareNDA** parser for Neware sources and an independently
 authored BioLogic `.mpr` reader. The same Cell/source workflow imports Neware
 `.nda`, `.ndax`, structured Neware Excel `.xlsx`, BioLogic GCPL, CP, OCV and MB
-`.mpr`, and Maccor tab-separated `.txt` record exports.
-For Maccor, the supported layout uses `Cycle C`, `Md`, `ES`, Ah, Wh, A, V and
+`.mpr`, Maccor tab-separated `.txt` exports, and native Maccor 4608 numbered
+channel files such as `.060`. The binary reader supports the verified 264-byte
+record layout and charge-first cycling loops. It reads the native file directly.
+The supported Maccor text layout uses `Cycle C`, `Md`, `ES`, Ah, Wh, A, V and
 day-first `DPT Time` timestamps. The reader checks the numeric time units against
 the timestamps. Partial cycles remain available in voltage and current plots.
 Verified GCPL runs provide cycling data; CP and OCV provide voltage curves.
@@ -125,7 +127,8 @@ explicit status and recompute actions.
   `biologic_mpr.py`/`biologic_gcpl.py` (independent BioLogic MPR/GCPL adapter;
   the verified layout exposes bounded metadata and remains metadata-only until
   an independently verified full-cycle identity is available),
-  `maccor_text.py` (Maccor record exports), `cache.py` (versioned Parquet), `calc.py` (per-cycle derivations),
+  `maccor_text.py` and `maccor_binary.py` (Maccor exports and channel files),
+  `cache.py` (versioned Parquet), `calc.py` (per-cycle derivations),
   `stitch.py` (multi-source Cell chains), `scanner.py` (background scans/relink),
   `analysis_engine.py` (analysis compute engine)
 - `backend/app/routers/` — REST API (`/api/...`)

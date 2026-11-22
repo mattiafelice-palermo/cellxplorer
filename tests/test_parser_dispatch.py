@@ -389,7 +389,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         )
         self.assertEqual(
             parsing.SUPPORTED_SOURCE_EXTENSIONS,
-            frozenset({".nda", ".ndax", ".xlsx", ".mpr", ".txt"}),
+            frozenset({".nda", ".ndax", ".xlsx", ".mpr", ".txt", ".NNN"}),
         )
 
     def test_source_filename_allowed_matches_supported_extensions(self):

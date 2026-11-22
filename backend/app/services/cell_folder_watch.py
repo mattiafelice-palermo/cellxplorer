@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..models import CellFolderWatch, CellFolderWatchCandidate, SourceFile, Test, TestFile
 from . import import_inspection, parsing
+from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
 
 DEFAULT_PATTERN = "*"
 DEFAULT_ORDERING = "timestamp_filename_hash"
@@ -63,9 +64,13 @@ def normalize_extensions(value: object) -> list[str]:
     }
     if not extensions:
         raise ValueError("At least one supported source extension is required for folder tracking.")
+    channel_group = MACCOR_CHANNEL_FORMAT.lstrip(".")
+    if channel_group.lower() in extensions:
+        extensions.remove(channel_group.lower())
+        extensions.add(channel_group)
     unsupported = sorted(
         extension for extension in extensions
-        if not parsing.source_filename_allowed(f"source.{extension}")
+        if extension != channel_group and not parsing.source_filename_allowed(f"source.{extension}")
     )
     if unsupported:
         raise ValueError(
@@ -73,6 +78,11 @@ def normalize_extensions(value: object) -> list[str]:
             "are not supported by the importer."
         )
     return sorted(extensions)
+
+
+def _matches_extension(path: Path, extensions: list[str]) -> bool:
+    suffix = path.suffix.lower()
+    return suffix.lstrip(".") in extensions or extension_key(suffix).lstrip(".") in extensions
 
 
 def validate_pattern(pattern_kind: str, pattern: str) -> str:
@@ -130,7 +140,7 @@ def validate_import_watch(
         path = Path(source_path).expanduser().resolve()
         if path.parent != folder:
             raise ValueError("All tracked sources must be in the same parent folder.")
-        if path.suffix.lower().lstrip(".") not in clean["extensions"]:
+        if not _matches_extension(path, clean["extensions"]):
             raise ValueError("All tracked sources must use one of the configured extensions.")
         if not matches_filename(filename or path.name, clean["pattern_kind"], clean["pattern"]):
             raise ValueError(f"The selected source {filename or path.name} does not match the filename pattern.")
@@ -215,7 +225,7 @@ def preview_watch_files(config: dict[str, Any], *, limit: int = 200) -> dict[str
         (
             path
             for path in paths
-            if path.suffix.lower().lstrip(".") in clean["extensions"]
+            if _matches_extension(path, clean["extensions"])
             and matches_filename(path.name, clean["pattern_kind"], clean["pattern"])
         ),
         key=lambda path: str(path.relative_to(root)).casefold(),
@@ -316,7 +326,7 @@ def initialize_watch_baseline(db: Session, watch: CellFolderWatch) -> int:
         normalized = str(path.resolve())
         if normalized in existing_paths:
             continue
-        if path.suffix.lower().lstrip(".") not in watch.extensions:
+        if not _matches_extension(path, watch.extensions):
             continue
         if not matches_filename(path.name, watch.pattern_kind, watch.pattern):
             continue
@@ -487,7 +497,7 @@ def _scan_one_watch(
                 CellFolderWatchCandidate.path == normalized,
             ).delete(synchronize_session=False)
             continue
-        if path.suffix.lower().lstrip(".") not in watch.extensions:
+        if not _matches_extension(path, watch.extensions):
             continue
         if not matches_filename(path.name, watch.pattern_kind, watch.pattern):
             continue

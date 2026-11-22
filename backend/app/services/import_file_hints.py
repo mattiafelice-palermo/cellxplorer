@@ -13,6 +13,7 @@ import stat as stat_module
 from typing import Any
 
 from .lazy_module import LazyModule
+from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
 from .source_format_errors import SourceFormatError, source_rejection_kind
 
 
@@ -112,7 +113,7 @@ def inspect_header_hint(
         before = path.stat()
         if not stat_module.S_ISREG(before.st_mode) or not parsing.source_filename_allowed(path.name):
             raise ValueError("File is no longer a supported source.")
-        ext = path.suffix.casefold()
+        ext = extension_key(path.suffix)
         if ext == ".xlsx":
             # Picker eligibility is structural. Do not open Calamine or read
             # workbook metadata here: on large Neware exports those optional
@@ -147,17 +148,18 @@ def inspect_header_hint(
             raise ValueError("File changed while its header was being read.")
         if hash_if_size_matches and before.st_size in hash_if_size_matches:
             result["_hash"] = parsing.compute_hash(path).lower()
-        if ext in {".xlsx", ".mpr", ".txt"}:
+        if ext in {".xlsx", ".mpr", ".txt", MACCOR_CHANNEL_FORMAT}:
             result["compatible"] = True
         biologic = ext == ".mpr"
         result.update(
             source_format=(
-                "Maccor text" if ext == ".txt"
+                "Maccor binary" if ext == MACCOR_CHANNEL_FORMAT
+                else "Maccor text" if ext == ".txt"
                 else "BioLogic EC-Lab" if biologic
                 else "Neware Excel" if ext == ".xlsx"
                 else f"Neware {ext.lstrip('.').upper()}"
             ),
-            supplier="Maccor" if ext == ".txt" else "BioLogic" if biologic else "Neware",
+            supplier="Maccor" if ext in {".txt", MACCOR_CHANNEL_FORMAT} else "BioLogic" if biologic else "Neware",
             technique=(str(metadata.get("technique")).strip() or None)
             if metadata.get("technique") is not None else None,
             cycle_count=_cycle_count_hint(metadata),
@@ -167,7 +169,7 @@ def inspect_header_hint(
         # explicitly classifies the workbook as unsupported. I/O races,
         # permissions, and malformed-but-recognized exports leave the hint
         # unknown so an optional scan failure cannot hide a selectable file.
-        if path.suffix.casefold() in {".xlsx", ".mpr", ".txt"} and metadata.get("error_kind") in {"unsupported", "invalid"}:
+        if extension_key(path.suffix) in {".xlsx", ".mpr", ".txt", MACCOR_CHANNEL_FORMAT} and metadata.get("error_kind") in {"unsupported", "invalid"}:
             result["compatible"] = False
             result["source_error_kind"] = metadata["error_kind"]
             if metadata.get("permissive_error"):

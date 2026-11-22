@@ -39,6 +39,7 @@ from ..models import (
 )
 from ..services import background_jobs
 from ..services.activity_log import record_activity
+from ..services.source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
 from ..services.lazy_module import LazyModule
 from ..services.process_priority import (
     apply_background_thread_priority,
@@ -1063,7 +1064,7 @@ def _cell_picker_source_summaries(db: Session, cell_ids: list[int]) -> dict[int,
         extension = str(row.extension or "").casefold().lstrip(".")
         system = (
             "biologic" if extension == "mpr"
-            else "maccor" if extension == "txt"
+            else "maccor" if extension_key("." + extension) in {MACCOR_CHANNEL_FORMAT, ".txt"}
             else "neware" if extension in {"nda", "ndax", "xlsx"}
             else "other"
         )
@@ -3172,8 +3173,6 @@ def cell_cycles(cell_id: int, db: Session = Depends(get_db)):
     if cell is None:
         raise HTTPException(404, "No such cell")
     hashes, files = analysis_svc.cell_ordered_hashes(db, cell)
-    from pathlib import Path
-
     metadata_only_sources = [
         {
             "source_file_id": source.id,

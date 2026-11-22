@@ -10,6 +10,12 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.18 - 2026-11-22
+
+### New features
+
+- Import native Maccor 4608 numbered channel files for charge-first cycling tests, with voltage, current, capacity and complete-cycle summaries.
+
 ## 0.29.0-alpha.17 - 2026-11-22
 
 ### New features

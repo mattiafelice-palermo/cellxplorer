@@ -77,7 +77,7 @@ export function FolderTrackingSettingsModal({
     ]);
     return [...values].sort().map((extension) => ({
       value: extension.replace(/^\./, ""),
-      label: `.${extension.replace(/^\./, "")}`,
+      label: extension === "NNN" ? "Maccor binary (.001–.999)" : `.${extension.replace(/^\./, "")}`,
     }));
   }, [draft?.extensions, metaQuery.data?.source_extensions]);
   const selectedPathSet = useMemo(

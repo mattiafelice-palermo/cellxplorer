@@ -4,7 +4,8 @@
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
 inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data,
-plus Maccor tab-separated `.txt` record exports and BioLogic GCPL-family `.mpr` sources. Verified BioLogic CP and OCV variants provide voltage
+plus Maccor tab-separated `.txt` exports, verified Maccor 4608 numbered channel files,
+and BioLogic GCPL-family `.mpr` sources. Verified BioLogic CP and OCV variants provide voltage
 curves; CP may infer complete cycles from charge/discharge polarity pairs, while OCV contributes no
 cycle summary. GCPL raw curves remain available when a source has only one active direction; cycle
 summaries require both charge and discharge, and zero-current Rest/OCV rows are neutral. The
@@ -170,7 +171,8 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/exploratory_plotting.py`: native-clock and discontinuity handling for unverified curves
 - `backend/app/services/biologic_cp_ocv.py`: CP/OCV voltage-curve adapter with current-polarity cycle inference
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
-- `backend/app/services/maccor_text.py`: bounded text recognition and Maccor record/counter mapping
+- `backend/app/services/maccor_text.py` and `maccor_binary.py`: bounded Maccor text and native 4608 readers
+- `backend/app/services/maccor_cycling.py`: shared Maccor direction, counters and cycle completeness
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/time_capacity_derived.py`: shared exact phase/capacity transforms and prepared-row contract (Spec 050.6)
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
@@ -227,6 +229,8 @@ Cellxplorer/
 │           ├── biologic_cp_ocv.py BioLogic CP/OCV voltage curves and polarity cycle inference
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── maccor_text.py      Maccor tab-separated record export reader
+│           ├── maccor_binary.py    Maccor 4608 channel header and 264-byte record decoder
+│           ├── maccor_cycling.py   Shared Maccor canonical record mapping
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── import_file_hints.py Optional concurrent header-only import-browser hints
 │           ├── import_search_catalog.py Disposable SQLite filename/metadata catalog (Spec 060)
@@ -341,6 +345,7 @@ Cellxplorer/
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
 │   ├── test_maccor_text.py          Maccor discovery, record semantics and cache regressions
+│   ├── test_maccor_binary.py        Synthetic Maccor hardware, record and admission regressions
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_import_file_hints.py    Optional header-only import-browser hint tests
 │   ├── test_import_search.py        Catalog, worker lifecycle, freshness and recovery tests (Spec 060)

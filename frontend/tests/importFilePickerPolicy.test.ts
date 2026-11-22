@@ -71,6 +71,20 @@ test("Maccor text is identified by its header and ordinary text is hidden after 
   assert.deepEqual(visible, [entry]);
 });
 
+test("numbered channels and unrelated numbered files are distinguished by their headers", () => {
+  const channel = { path: "cell.060", name: "cell.060", kind: "file" as const, size: 50, modified_at: null };
+  const other = { ...channel, path: "archive.001", name: "archive.001" };
+  const hint = { source_format: "Maccor binary", supplier: "Maccor", compatible: true, technique: null, cycle_count: null, error: null };
+  const hints = new Map<string, ImportHeaderHint>([
+    [channel.path, { ...hint, path: channel.path }],
+    [other.path, { ...hint, path: other.path, compatible: false, source_format: null, supplier: null }],
+  ]);
+  assert.equal(importEntryExtension(channel), ".060");
+  assert.equal(importEntrySupplier(channel), "Unknown");
+  assert.equal(importEntryFormat(channel, hints.get(channel.path)), "Maccor binary");
+  assert.deepEqual(filterAndSortImportEntries([other, channel], hints, "", EMPTY_IMPORT_BROWSER_FILTERS, sort), [channel]);
+});
+
 test("file browser sorts by size and leaves unavailable hint values last", () => {
   const visible = filterAndSortImportEntries(entries, hints, "", EMPTY_IMPORT_BROWSER_FILTERS, {
     key: "size",

@@ -61,7 +61,7 @@ class MaccorTextTests(unittest.TestCase):
         notes.write_bytes(b"Unrelated notes\n" + b"a" * 100_000)
         with patch.object(maccor_text, "parse_timeseries", side_effect=AssertionError("full parse")):
             self.assertIsNone(parsing.recognize_source(notes))
-            self.assertIsNone(parsing.recognize_source(self.path.with_suffix(".060")))
+            self.assertIsNone(parsing.recognize_source(self.path.with_suffix(".000")))
             self.assertEqual(parsing.recognize_source(self.path), parsing.FORMAT_MACCOR_TEXT)
             self.assertEqual(parsing.parser_identity(self.path), parsing.current_parser_identity_for_extension("TXT"))
             meta = import_inspection.inspect_file(str(self.path)).metadata

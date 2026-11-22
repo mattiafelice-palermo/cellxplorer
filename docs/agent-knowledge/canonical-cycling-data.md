@@ -719,6 +719,40 @@ including when optional index metadata is disabled.
   with only charge, remains present in raw plots. `VARn` channels retain their
   recorded values without assigning a physical unit to them.
 
+## Maccor 4608 binary channel files
+
+`maccor_binary.py` admits numbered channel suffixes `.001` through `.999` by
+inspecting the section directory, the 4608 descriptor, the range table, the
+version-11 embedded procedure and the initial setup record. Header reads are
+bounded to 4 MiB plus the setup record. Section offsets are one-based. The
+first 264-byte slot holds the start date and channel. Measurements start in
+the following slot, with consecutive record numbers starting at one. The
+physical suffix is retained on the source. Indexed search groups channels
+under `.NNN` and checks their headers even with metadata indexing disabled.
+
+The verified profile has a bipolar −5 to +5 V voltage ADC and a 5 A current
+descriptor. The observed measurement ranges are 0.15 mA and 5 mA. The active
+range flags govern instantaneous current. Ah and Wh accumulators use the finest
+current range across a range change. Test and step clocks count centiseconds.
+The floating-point acquisition date is in local days since 1899-12-30. Standby
+can carry the previous current ADC count while the exported current is zero.
+Its status, enclosing direction and advancing counters have distinct meanings.
+
+The text export supplies `Cycle C`. The native reader infers the same labels
+for verified charge-first loops from discharge-to-charge transitions, leaving
+intervening rests in the preceding cycle. Both readers use `maccor_cycling.py`
+for executed steps, measured counter spans and complete-cycle eligibility.
+The binary source header records the cycle basis. Auxiliary VAR channels, full
+procedure settings and CV classification have no verified binary mapping.
+
+Run `python scripts/verify_maccor_binary_pair.py channel.060 export.txt` on a
+matched pair. The verifier checks every core record after Parquet reload,
+full-resolution plots, and independent cycle summaries from the text. In the
+verified dialect, voltage, current, Ah and Wh reproduce every printed decimal
+after a binary32 conversion. Native calculations retain the ADC and accumulator
+resolution. The text truncates acquisition dates to the second. Keep real pairs
+and their generated comparison reports local.
+
 ## BioLogic mass selection
 
 Import review and Cell editing offer active-material and characteristic masses from unit-verified
