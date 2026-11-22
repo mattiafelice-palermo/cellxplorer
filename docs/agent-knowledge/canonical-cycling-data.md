@@ -724,23 +724,40 @@ including when optional index metadata is disabled.
   excluded from measurement rows. `VARn` channels retain their recorded values
   without assigning a physical unit to them.
 
+The same text reader recognizes period and comma decimals. The reduced
+`Rec / Time / Voltage / Current` table requires a second header row declaring
+hours, volts and amps. Preserve the reported current sign. This dialect provides
+neither mode nor capacity, so keep the phase unverified, set
+`capacity_verified=False` and withhold cycle summaries.
+
+`maccor_records.py` handles the `Rec# / Cyc#` record format in tab-delimited
+text, CSV and the Data worksheet of a Maccor workbook. Parse days and
+`hh:mm:ss` directly. The native `Amps` heading may contain A or mA. Compare
+near-constant active intervals with the reported Amp-hr increments to determine
+the scale. An unresolved scale prevents scientific import. A constant zero
+cycle counter requires grouping by the return of the first observed polarity.
+Ignore chart worksheets when reading records. Numeric-suffix text exports and
+Maccor workbooks carry their content-selected parser identity through caching.
+
 ## Maccor 4608 binary channel files
 
 `maccor_binary.py` admits numbered channel suffixes `.001` through `.999` by
 inspecting the section directory, the 4608 descriptor, the range table, the
 version-11 embedded procedure and the initial setup record. Header reads are
-bounded to 4 MiB plus the setup record. Section offsets are one-based. The
-first 264-byte slot holds the start date and channel. Measurements start in
-the following slot, with consecutive record numbers starting at one. The
+bounded to 4 MiB plus one slot per section. The directory contains one-based
+absolute positions, including the next-section pointer at byte 46. A fresh
+recording begins with a setup slot followed by record one. A linked section
+can begin with a continuation seed or a stop snapshot. Validate each section
+and retain the original record numbers. The
 physical suffix is retained on the source. Indexed search groups channels
 under `.NNN` and checks their headers even with metadata indexing disabled.
 
-The verified profile has a bipolar −5 to +5 V voltage ADC and a 5 A current
+The 5 A profile has a bipolar −5 to +5 V voltage ADC and a 5 A current
 descriptor. Its four current ranges are 0.15, 5, 150 and 5,000 mA. In ascending
 order, the charge flags are FFFF, EEEE, DDDD and CCCC. The corresponding
 discharge flags are BBBB, AAAA, 9999 and 8888. Cross-check the range ratio
 against within-step accumulator increments and the redundant integer at byte
-236 on steady-current records. Ah and Wh accumulators use the finest
+236 on steady-current records. Ah and Wh accumulators use the first
 current range across a range change. Test and step clocks count centiseconds.
 The floating-point acquisition date is in local days since 1899-12-30. Standby
 can carry the previous current ADC count while the exported current is zero.
@@ -749,9 +766,8 @@ Its status, enclosing direction and advancing counters have distinct meanings.
 The binary source header records its cycle basis. Without `AdvCycle`, the
 reader infers a new label when the observed current direction returns to the
 first programmed direction after its opposite. Intervening rests stay in the
-preceding group. Linear programs can precede flat loops. Each loop must have
-one consecutive group of charge steps and one of discharge steps, in a
-consistent order. Rest-only and one-direction files retain a single raw group
+preceding group. Linear programs can precede flat loops. A loop can contain one active direction, or consecutive
+charge and discharge groups in the verified order. Rest-only and one-direction files retain a single raw group
 with zero complete cycles.
 
 With `AdvCycle`, the word at bytes 11–14 must match the number of advances
@@ -760,8 +776,16 @@ exits and counter stability inside a step. Keep the zero counter on a neutral
 preamble and include those rows in plotted group one. The recorded counter
 supplies subsequent group labels. Without `AdvCycle`, the observed field
 patterns `00 00 00 00` and `00 00 00 03` are preserved as opaque provenance.
-Subroutines, nonsequential end-condition targets and nested loops require
-separate verification.
+A Loop Cnt target can return to the first step of its matching loop. A
+`SubRout` handoff requires mode 26/status 17, a stop trailer, and the named
+procedure in the next linked header. Acquisition segments break plots and
+prevent cross-restart capacity spans. Files containing only stop snapshots
+retain their record and clock metadata.
+
+The verified 50 A profile uses a unipolar 0–5 V ADC and a four-entry gain table
+of 100, 10, 50,000 and 1. The paired export verifies the FFFF/BBBB active
+range (0.5 A full scale) and the first-range accumulator conversion. The
+reader restricts this profile to those observed active range codes.
 
 Native mode 31/status 193 on the final End step and mode 30/status 192 on
 the interrupted step are terminal controls. Validate the final position,

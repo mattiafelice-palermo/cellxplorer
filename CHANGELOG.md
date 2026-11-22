@@ -10,6 +10,12 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.20 - 2026-11-22
+
+### New features
+
+- Import Maccor record exports from text, CSV and Excel, including voltage and current against time. Read linked channel sections, subroutines and the verified 50 A instrument profile.
+
 ## 0.29.0-alpha.19 - 2026-11-22
 
 ### New features

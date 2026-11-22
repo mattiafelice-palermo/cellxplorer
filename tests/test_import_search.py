@@ -123,7 +123,7 @@ class CatalogTests(unittest.TestCase):
             self.assertIn("GCPL", entry["metadata_json"])
             self.assertNotIn("active_mass_mg", entry["metadata_json"])
 
-    def test_mb_upgrade_retries_only_negative_mpr_catalog_facts_once(self):
+    def test_upgrade_retries_old_mpr_and_workbook_exclusions_once(self):
         items = [fact("C:\\cycling\\old-mb.mpr"), fact("C:\\cycling\\known.mpr"),
                  fact("C:\\cycling\\known.ndax"), fact("C:\\cycling\\unsupported.xlsx")]
         for i in (0, 3):
@@ -135,11 +135,11 @@ class CatalogTests(unittest.TestCase):
         upgraded = Catalog(self.catalog.path)
         with upgraded.connect() as db:
             after = {row["name"]: dict(row) for row in db.execute("SELECT * FROM entries")}
-        for name in ("known.mpr", "known.ndax", "unsupported.xlsx"):
+        for name in ("known.mpr", "known.ndax"):
             self.assertEqual(before[name], after[name])
-        retried = after["old-mb.mpr"]
-        self.assertEqual(retried["recognition"], "pending")
-        self.assertEqual(retried["metadata_version"], 0)
+        for name in ("old-mb.mpr", "unsupported.xlsx"):
+            self.assertEqual(after[name]["recognition"], "pending")
+            self.assertEqual(after[name]["metadata_version"], 0)
         # An MB that is still unsupported under the new reader is not retried
         # again on every catalog open.
         with upgraded.connect() as db:

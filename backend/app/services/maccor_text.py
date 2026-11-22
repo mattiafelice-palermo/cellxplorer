@@ -8,19 +8,21 @@ from typing import BinaryIO
 import numpy as np
 import pandas as pd
 
+from . import maccor_records
 from .canonical_cycling import voltage_capabilities
 from .maccor_cycling import canonical_records
 from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-ADAPTER_REVISION = 2
+ADAPTER_REVISION = 3
 _HEADER_BYTES = 64 * 1024
 _REQUIRED = (
     "Rec", "Cycle P", "Cycle C", "Step", "TestTime", "StepTime", "Cap. [Ah]",
     "Ener. [Wh]", "Current [A]", "Voltage [V]", "Md", "ES", "DPT Time",
 )
 _LOCAL_TIME = "%d/%m/%Y %H:%M:%S"
+_TIME_CURVE = ["Rec", "Time", "Voltage", "Current"]
 
 
 def _header(stream: BinaryIO) -> tuple[dict[str, str], list[str]]:
@@ -44,8 +46,14 @@ def _header(stream: BinaryIO) -> tuple[dict[str, str], list[str]]:
         if parts[0] == "Rec":
             while parts and not parts[-1]:
                 parts.pop()
-            if (not fields.get("Tester", "").casefold().startswith("maccor")
-                    or not set(_REQUIRED).issubset(parts)):
+            if not fields.get("Tester", "").casefold().startswith("maccor"):
+                break
+            if parts == _TIME_CURVE:
+                units = stream.readline(remaining + 1)
+                if len(units) <= remaining and units.rstrip(b"\r\n\t").split(b"\t") == [b"", b"[h]", b"[V]", b"[A]"]:
+                    return fields, parts
+                break
+            if not set(_REQUIRED).issubset(parts):
                 break
             if len(parts) != len(set(parts)) or "" in parts:
                 raise InvalidSourceFormatError("Maccor record header has duplicate or empty columns.")
@@ -63,18 +71,26 @@ def _header(stream: BinaryIO) -> tuple[dict[str, str], list[str]]:
 
 
 def read_header_metadata(path: str | Path) -> dict:
+    if maccor_records.delimited_signature(Path(path)):
+        return maccor_records.text_metadata(Path(path))
     with Path(path).open("rb") as stream:
         fields, columns = _header(stream)
     started = fields.get("Started")
-    try:
-        start_time = datetime.strptime(started, _LOCAL_TIME).isoformat() if started else None
-    except ValueError as exc:
-        raise InvalidSourceFormatError("Invalid Maccor Started date, expected day/month/year.") from exc
+    start_time = None
+    if started:
+        for fmt in (_LOCAL_TIME, "%d-%b-%y %I:%M:%S %p"):
+            try:
+                start_time = datetime.strptime(started, fmt).isoformat()
+                break
+            except ValueError:
+                continue
+        if start_time is None:
+            raise InvalidSourceFormatError("Invalid Maccor Started date.")
     declared = build_declared_protocol(
         [], warnings=["This Maccor export records the procedure name and executed steps only."]
     )
     return {
-        "raw": {"Maccor": fields, "record_columns": columns, DECLARED_PROTOCOL_METADATA_KEY: declared},
+        "raw": {"Maccor": fields, "record_columns": columns, "maccor_format": "text", DECLARED_PROTOCOL_METADATA_KEY: declared},
         "source_format": "Maccor text",
         "device_info": fields["Tester"],
         "channel": fields.get("Channel"),
@@ -110,7 +126,8 @@ def _read_records(path: Path) -> pd.DataFrame:
 def _decode_columns(records: list[list[bytes]], columns: list[str]) -> pd.DataFrame:
     table = pd.DataFrame(records, columns=columns)
     variables = [key for key in columns if key.startswith("VAR") and key[3:].isdigit()]
-    table = table.loc[:, [*_REQUIRED, *variables]]
+    if columns != _TIME_CURVE:
+        table = table.loc[:, [*_REQUIRED, *variables]]
     for key in table.columns:
         try:
             if key == "DPT Time":
@@ -118,18 +135,35 @@ def _decode_columns(records: list[list[bytes]], columns: list[str]) -> pd.DataFr
             elif key == "Md":
                 table[key] = table[key].str.decode("ascii")
             else:
-                table[key] = pd.to_numeric(table[key], errors="raise")
+                table[key] = pd.to_numeric(table[key].str.decode("ascii").str.replace(",", ".", regex=False), errors="raise")
                 if not np.isfinite(table[key]).all():
                     raise ValueError("non-finite")
         except (UnicodeError, TypeError, ValueError, OverflowError) as exc:
             raise InvalidSourceFormatError(f"Invalid Maccor {key} value.") from exc
         if table[key].isna().any():
             raise InvalidSourceFormatError(f"Missing Maccor {key} value.")
-    for key in ("Rec", "Cycle P", "Cycle C", "Step", "ES"):
+    for key in (k for k in ("Rec", "Cycle P", "Cycle C", "Step", "ES") if k in table):
         if not pd.api.types.is_integer_dtype(table[key]) or (table[key] < 0).any():
             raise InvalidSourceFormatError(f"Maccor {key} must contain nonnegative integers.")
     return table
 
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
-    return canonical_records(_read_records(Path(path)), verify_minute_units=True)
+    if maccor_records.delimited_signature(Path(path)):
+        return maccor_records.parse(Path(path), workbook=False)
+    table = _read_records(Path(path))
+    if list(table.columns) != _TIME_CURVE:
+        return canonical_records(table, verify_minute_units=True)
+    if (table.Rec.iloc[0] < 1 or table.Rec.diff().iloc[1:].ne(1).any()
+            or table.Time.lt(0).any() or not table.Time.is_monotonic_increasing):
+        raise InvalidSourceFormatError("Maccor time curve requires consecutive records and an ordered elapsed clock.")
+    seconds = table.Time * 3600
+    # This export has no operating mode or counters. Keep the current exactly
+    # as reported, including its sign, without assigning charge or discharge.
+    return pd.DataFrame({
+        "record_index": table.Rec, "cycle": 1, "step_index": 1, "step": 1,
+        "time_s": seconds, "total_time_s": seconds, "voltage_v": table.Voltage,
+        "current_ma": table.Current * 1000, "status": "Unverified", "maccor_mode": "Recorded",
+        "charge_capacity_mah": np.nan, "discharge_capacity_mah": np.nan,
+        "cycle_complete": False, "capacity_verified": False, "cv_mode_known": False,
+    })

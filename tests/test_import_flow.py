@@ -169,7 +169,8 @@ class ImportFlowTests(unittest.TestCase):
         self.assertTrue(files.import_filename_allowed("formation.xlsx"))
         self.assertTrue(files.import_filename_allowed("cycling.XLSX"))
         self.assertTrue(files.import_filename_allowed("cycling.mpr"))
-        self.assertFalse(files.import_filename_allowed("notes.csv"))
+        self.assertTrue(files.import_filename_allowed("export.csv"))
+        self.assertFalse(files.import_filename_allowed("notes.md"))
         self.assertFalse(files.import_filename_allowed("legacy.xls"))
         self.assertFalse(files.import_filename_allowed("legacy.xlsm"))
         self.assertFalse(files.import_filename_allowed("cycling.mpt"))
@@ -1840,7 +1841,7 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual([root["label"] for root in roots], ["batch", "batch"])
         self.assertNotEqual(roots[0]["path"], roots[1]["path"])
 
-    def test_import_directory_browser_lists_folders_and_neware_files_only(self):
+    def test_import_directory_browser_lists_candidate_files_by_suffix(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "nested").mkdir()
@@ -1858,6 +1859,7 @@ class ImportFlowTests(unittest.TestCase):
                 ("nested", "folder"),
                 ("cell.ndax", "file"),
                 ("export.xlsx", "file"),
+                ("notes.csv", "file"),
                 ("older.nda", "file"),
             ],
         )

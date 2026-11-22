@@ -143,12 +143,12 @@ class FormatRecognitionTests(unittest.TestCase):
                 parsing.source_parser_descriptor(path)
 
     def test_unsupported_extension_fails_clearly(self):
-        self.assertIsNone(parsing.recognize_source("source.csv"))
+        self.assertIsNone(parsing.recognize_source("source.unknown"))
         with self.assertRaises(parsing.UnsupportedSourceFormatError):
-            parsing.parse_timeseries("source.csv")
+            parsing.parse_timeseries("source.unknown")
         with self.assertRaises(parsing.UnsupportedSourceFormatError):
-            parsing.source_parser_descriptor("source.csv")
-        result = parsing.read_header_metadata("source.csv")
+            parsing.source_parser_descriptor("source.unknown")
+        result = parsing.read_header_metadata("source.unknown")
         self.assertEqual(result["raw"], {})
         self.assertIn("error", result)
 
@@ -389,7 +389,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         )
         self.assertEqual(
             parsing.SUPPORTED_SOURCE_EXTENSIONS,
-            frozenset({".nda", ".ndax", ".xlsx", ".mpr", ".txt", ".NNN"}),
+            frozenset({".nda", ".ndax", ".xlsx", ".mpr", ".txt", ".csv", ".NNN"}),
         )
 
     def test_source_filename_allowed_matches_supported_extensions(self):
@@ -398,7 +398,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         self.assertTrue(parsing.source_filename_allowed("a.xlsx"))
         self.assertTrue(parsing.source_filename_allowed("a.mpr"))
         self.assertTrue(parsing.source_filename_allowed("a.TXT"))
-        self.assertFalse(parsing.source_filename_allowed("a.csv"))
+        self.assertTrue(parsing.source_filename_allowed("a.csv"))
         self.assertFalse(parsing.source_filename_allowed("a.mpt"))
 
     def test_source_parser_family_unchanged(self):
@@ -407,7 +407,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         self.assertEqual(parsing.source_parser_family("a.xlsx"), "excel")
         self.assertEqual(parsing.source_parser_family("a.mpr"), "biologic")
         self.assertEqual(parsing.source_parser_family("a.txt"), "maccor")
-        self.assertIsNone(parsing.source_parser_family("a.csv"))
+        self.assertEqual(parsing.source_parser_family("a.csv"), "maccor")
 
 
 class TransitionalParserBundleTests(unittest.TestCase):

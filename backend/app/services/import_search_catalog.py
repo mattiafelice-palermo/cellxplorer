@@ -14,10 +14,10 @@ from ..config import APP_DATA_DIR
 from .source_extensions import MACCOR_CHANNEL_FORMAT
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 METADATA_VERSION = 2
 
-FORMATS = (".ndax", ".mpr", ".xlsx", ".txt", MACCOR_CHANNEL_FORMAT)
+FORMATS = (".ndax", ".mpr", ".xlsx", ".txt", ".csv", MACCOR_CHANNEL_FORMAT)
 METADATA_FIELDS = ("barcode", "remarks", "part_number", "start_time", "technique",
                    "active_mass_mg", "nominal_capacity_mah", "cycle_count", "duration_s", "device_info", "channel")
 
@@ -143,6 +143,12 @@ class Catalog:
                               search_text=catalog_text(path, json_remove(metadata_json, '$.active_mass_mg'), canonical)
                               WHERE extension='.mpr' AND technique='GCPL'
                               AND json_extract(metadata_json, '$.active_mass_mg') IS NOT NULL""")
+            if version < 5:
+                # These formats gained new structural readers. Re-screen old
+                # exclusions even when optional metadata enrichment is off.
+                db.execute("""UPDATE entries SET recognition='pending', metadata_state='pending',
+                              metadata_version=0 WHERE recognition='unsupported'
+                              AND extension IN ('.NNN', '.txt', '.xlsx')""")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

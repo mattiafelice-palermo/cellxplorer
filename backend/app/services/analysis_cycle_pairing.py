@@ -37,9 +37,10 @@ def label_pairs(raw: pd.DataFrame) -> pd.DataFrame:
     unknown = contradictory | phase.eq("unverified") | (phase.eq("rest") & ~neutral & current.isna())
     phase = phase.mask(unknown, "unverified")
     breaks = unknown.copy()
-    if "mpr_acquisition_segment" in raw:
-        acquisition = raw["mpr_acquisition_segment"]
-        breaks |= raw.segment.eq(raw.segment.shift()) & acquisition.notna() & acquisition.ne(acquisition.shift())
+    for column in ("mpr_acquisition_segment", "acquisition_segment"):
+        if column in raw:
+            acquisition = raw[column]
+            breaks |= raw.segment.eq(raw.segment.shift()) & acquisition.notna() & acquisition.ne(acquisition.shift())
     block = breaks.cumsum()
     direction = phase.where(phase.isin(["charge", "discharge"])).groupby(block).ffill()
     starts = direction.eq("discharge") & (~direction.shift().eq("discharge") | breaks)

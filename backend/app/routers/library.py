@@ -1040,6 +1040,7 @@ def _cell_picker_source_summaries(db: Session, cell_ids: list[int]) -> dict[int,
             Test.cell_id.label("cell_id"),
             TestFile.position.label("position"),
             SourceFile.ext.label("extension"),
+            SourceFile.parser_version.label("parser_version"),
             SourceFile.path.label("path"),
             SourceFile.observed_mtime_ns.label("modified_ns"),
             technique.label("technique"),
@@ -1064,7 +1065,8 @@ def _cell_picker_source_summaries(db: Session, cell_ids: list[int]) -> dict[int,
         extension = str(row.extension or "").casefold().lstrip(".")
         system = (
             "biologic" if extension == "mpr"
-            else "maccor" if extension_key("." + extension) in {MACCOR_CHANNEL_FORMAT, ".txt"}
+            else "maccor" if (extension_key("." + extension) in {MACCOR_CHANNEL_FORMAT, ".txt", ".csv"}
+                             or str(row.parser_version or "").startswith("mx:"))
             else "neware" if extension in {"nda", "ndax", "xlsx"}
             else "other"
         )

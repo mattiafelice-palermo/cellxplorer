@@ -87,8 +87,8 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import inspect as sqlalchemy_inspect
 
-from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, maccor_binary, maccor_text, neware_excel
-from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
+from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, maccor_binary, maccor_records, maccor_text, neware_excel
+from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 from .source_format_errors import (
     InvalidSourceFormatError,
     SourceFormatError,
@@ -137,6 +137,7 @@ FORMAT_NEWARE_EXCEL = "neware_excel"
 FORMAT_BIOLOGIC_MPR = "biologic_mpr"
 FORMAT_MACCOR_TEXT = "maccor_text"
 FORMAT_MACCOR_BINARY = "maccor_binary"
+FORMAT_MACCOR_EXCEL = "maccor_excel"
 
 _NEWARE_BINARY_FORMAT = SourceFormatDescriptor(
     format_id=FORMAT_NEWARE_BINARY,
@@ -158,7 +159,8 @@ _BIOLOGIC_MPR_FORMAT = SourceFormatDescriptor(
 )
 _FORMAT_DESCRIPTORS: dict[str, SourceFormatDescriptor] = {
     FORMAT_MACCOR_BINARY: SourceFormatDescriptor(FORMAT_MACCOR_BINARY, frozenset({MACCOR_CHANNEL_FORMAT}), str(maccor_binary.ADAPTER_REVISION)),
-    FORMAT_MACCOR_TEXT: SourceFormatDescriptor(FORMAT_MACCOR_TEXT, frozenset({".txt"}), str(maccor_text.ADAPTER_REVISION)),
+    FORMAT_MACCOR_EXCEL: SourceFormatDescriptor(FORMAT_MACCOR_EXCEL, frozenset({".xlsx"}), str(maccor_records.WORKBOOK_REVISION)),
+    FORMAT_MACCOR_TEXT: SourceFormatDescriptor(FORMAT_MACCOR_TEXT, frozenset({".txt", ".csv"}), str(maccor_text.ADAPTER_REVISION)),
     _NEWARE_BINARY_FORMAT.format_id: _NEWARE_BINARY_FORMAT,
     _NEWARE_EXCEL_FORMAT.format_id: _NEWARE_EXCEL_FORMAT,
     _BIOLOGIC_MPR_FORMAT.format_id: _BIOLOGIC_MPR_FORMAT,
@@ -202,13 +204,14 @@ SUPPORTED_DIRECT_SOURCE_EXTENSIONS = SUPPORTED_SOURCE_EXTENSIONS
 
 SUPPORTED_SOURCE_DESCRIPTION = (
     "Cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic (.mpr; GCPL "
-    "canonical cycling, CP/OCV curves, MB cycling with EIS excluded), and Maccor text (.txt) or binary channel files (.NNN)"
+    "canonical cycling, CP/OCV curves, MB cycling with EIS excluded), and Maccor record exports (.txt, .csv, structured .xlsx) or binary channel files (.NNN)"
 )
 SUPPORTED_SOURCE_GLOB = source_glob()
 
 _FORMAT_FAMILY = {
     FORMAT_MACCOR_BINARY: "maccor_binary",
     FORMAT_MACCOR_TEXT: "maccor",
+    FORMAT_MACCOR_EXCEL: "maccor_excel",
     FORMAT_NEWARE_BINARY: "binary",
     FORMAT_NEWARE_EXCEL: "excel",
     FORMAT_BIOLOGIC_MPR: "biologic",
@@ -228,29 +231,53 @@ _FORMAT_FAMILY = {
 def source_filename_allowed(filename: str | Path) -> bool:
     """Return whether a filename can enter the supported source path."""
 
-    return extension_key(Path(str(filename or "")).suffix) in SUPPORTED_SOURCE_EXTENSIONS
+    return extension_key(source_suffix(str(filename or ""))) in SUPPORTED_SOURCE_EXTENSIONS
 
 
-def source_parser_family(filename: str | Path) -> str | None:
-    """Return the parser family selected by a supported source suffix.
+def _stored_format(suffix: str, header_meta: object) -> str | None:
+    format_id = _EXTENSION_FORMAT_ID.get(extension_key(suffix))
+    if isinstance(header_meta, dict):
+        facts = header_meta.get("raw", header_meta)
+        if isinstance(facts, dict):
+            dialect = facts.get("maccor_format")
+            if format_id == FORMAT_NEWARE_EXCEL and dialect == "workbook":
+                return FORMAT_MACCOR_EXCEL
+            if format_id == FORMAT_MACCOR_BINARY:
+                # Earlier text-reader revisions stored the accepted record header
+                # before introducing a dialect marker. Binary headers never had it.
+                if dialect == "text" or (dialect is None and "Maccor" in facts and "record_columns" in facts):
+                    return FORMAT_MACCOR_TEXT
+    return format_id
 
-    Deliberately filename/suffix-only, never content-based: `scanner.py`
-    calls this on a bare filename (sometimes for a source it has not
-    necessarily re-read) to guard against exact-hash relinking silently
-    crossing the binary/Excel/BioLogic family boundary. `recognize_source` below is
-    the content-aware counterpart used when an actual readable path is
-    available; the two must not be conflated. Return values stay the
-    stable short family strings rather than the new
-    `format_id` spelling — this is a stability-critical safety guard, not
-    dispatch surface; changing the family labels would break lifecycle safety.
-    """
+
+def source_parser_family(filename: str | Path, *, header_meta: object = None) -> str | None:
+    """Resolve a relink family without I/O, using same-hash header facts for shared suffixes."""
 
     value = str(filename or "")
-    suffix = Path(value).suffix.casefold()
+    suffix = source_suffix(value)
     if not suffix:
         suffix = f".{value.lstrip('.')}"
-    format_id = _EXTENSION_FORMAT_ID.get(extension_key(suffix))
+    format_id = _stored_format(suffix, header_meta)
     return _FORMAT_FAMILY.get(format_id) if format_id is not None else None
+
+
+def _numbered_reader(path: Path) -> str:
+    # Some Maccor exports retain the instrument's numeric channel filename.
+    with path.open("rb") as stream:
+        prefix = stream.read(32).removeprefix(b"\xef\xbb\xbf")
+    if prefix.startswith((b"Name:\t", b"Today''s Date\t", b"Today''s Date,")):
+        return FORMAT_MACCOR_TEXT
+    return FORMAT_MACCOR_BINARY
+
+
+def workbook_format(path: str | Path) -> str:
+    try:
+        neware_excel.validate_supported_workbook(path)
+    except neware_excel.UnsupportedNewareExcelError:
+        if maccor_records.workbook_fields(Path(path)) is not None:
+            return FORMAT_MACCOR_EXCEL
+        raise
+    return FORMAT_NEWARE_EXCEL
 
 
 def recognize_source(path: str | Path) -> str | None:
@@ -266,12 +293,16 @@ def recognize_source(path: str | Path) -> str | None:
     Maccor text and numbered channel files require their bounded header checks.
     """
 
-    suffix = Path(str(path or "")).suffix.casefold()
+    suffix = source_suffix(path)
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(extension_key(suffix))
     if format_id is None:
         return None
     if format_id == FORMAT_NEWARE_EXCEL:
-        return format_id if neware_excel.is_supported_workbook(path) else None
+        if neware_excel.is_supported_workbook(path):
+            return FORMAT_NEWARE_EXCEL
+        return FORMAT_MACCOR_EXCEL if maccor_records.workbook_fields(Path(path)) is not None else None
+    if format_id == FORMAT_MACCOR_BINARY:
+        format_id = _numbered_reader(Path(path))
     if format_id in {FORMAT_MACCOR_TEXT, FORMAT_MACCOR_BINARY}:
         reader = maccor_binary if format_id == FORMAT_MACCOR_BINARY else maccor_text
         try:
@@ -283,7 +314,7 @@ def recognize_source(path: str | Path) -> str | None:
 
 def discoverable_source_path(path: str | Path) -> bool:
     """Check ambiguous text and numbered filenames before hashing."""
-    if extension_key(Path(path).suffix) not in {".txt", MACCOR_CHANNEL_FORMAT}:
+    if extension_key(source_suffix(path)) not in {".txt", ".csv", MACCOR_CHANNEL_FORMAT}:
         return source_filename_allowed(path)
     try:
         return recognize_source(path) is not None
@@ -336,6 +367,7 @@ def source_parser_descriptor(path: str | Path) -> dict[str, Any]:
 _FORMAT_IDENTITY_PREFIX: dict[str, str] = {
     FORMAT_MACCOR_BINARY: "mb",
     FORMAT_MACCOR_TEXT: "mt",
+    FORMAT_MACCOR_EXCEL: "mx",
     FORMAT_NEWARE_BINARY: "nb",
     FORMAT_NEWARE_EXCEL: "nx",
     FORMAT_BIOLOGIC_MPR: "bm",
@@ -443,7 +475,14 @@ def record_source_interpretation(source: object, info: dict) -> None:
 def current_parser_identity_for_source(source: object) -> str | None:
     ext = getattr(source, "ext", None)
     if str(ext or "").casefold().lstrip(".") != "mpr":
-        return current_parser_identity_for_extension(ext)
+        # Scalar identity records which reader accepted an ambiguous suffix.
+        identity = str(getattr(source, "parser_version", None) or "")
+        if identity.startswith("mx:") and str(ext).casefold().lstrip(".") == "xlsx":
+            return _identity_for_format(FORMAT_MACCOR_EXCEL)
+        if identity.startswith("mt:") and extension_key("." + str(ext).lstrip(".")) == MACCOR_CHANNEL_FORMAT:
+            return _identity_for_format(FORMAT_MACCOR_TEXT)
+        header = getattr(source, "__dict__", {}).get("header_meta")
+        return current_parser_identity_for_extension(ext, header_meta=header)
     if "header_meta" in getattr(source, "__dict__", {}):
         header_meta = source.header_meta
     else:
@@ -537,7 +576,7 @@ def current_parser_identity_for_extension(ext: str | None, *, read_mode: str = "
     suffix = str(ext or "")
     if suffix and not suffix.startswith("."):
         suffix = f".{suffix}"
-    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(extension_key(suffix))
+    format_id = _stored_format(suffix, header_meta)
     if format_id is None:
         return None
     identity = _identity_for_format(format_id)
@@ -569,12 +608,12 @@ def parser_identity(path: str | Path, *, read_mode: str = "safe") -> str:
         raise UnsupportedSourceFormatError(
             f"Unsupported cycling source format: {Path(str(path)).suffix or '<none>'}."
         )
-    header_meta = None
-    if format_id == FORMAT_BIOLOGIC_MPR:
-        with biologic_mpr.read_mpr_header(path) as document:
-            header_meta = {"settings": {"technique_id": biologic_mpr.mpr_technique_id(document)},
-                           "data": {"field_offsets": dict(document.vmp_data.field_offsets)}}
-    return current_parser_identity_for_extension(Path(path).suffix, read_mode=read_mode, header_meta=header_meta)
+    if format_id != FORMAT_BIOLOGIC_MPR:
+        return _identity_for_format(format_id)
+    with biologic_mpr.read_mpr_header(path) as document:
+        header_meta = {"settings": {"technique_id": biologic_mpr.mpr_technique_id(document)},
+                       "data": {"field_offsets": dict(document.vmp_data.field_offsets)}}
+    return current_parser_identity_for_extension(source_suffix(path), read_mode=read_mode, header_meta=header_meta)
 
 
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
@@ -590,8 +629,8 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
     if rejection is not None:
         error_type = UnsupportedSourceFormatError if rejection.kind == "unsupported" else InvalidSourceFormatError
         raise error_type(rejection.error)
-    suffix = Path(path).suffix.casefold()
-    if extension_key(suffix) not in {".xlsx", ".mpr", ".txt", MACCOR_CHANNEL_FORMAT}:
+    suffix = source_suffix(path)
+    if extension_key(suffix) not in {".xlsx", ".mpr", ".txt", ".csv", MACCOR_CHANNEL_FORMAT}:
         return
     error = metadata.get("error") if isinstance(metadata, dict) else None
     if not error:
@@ -601,7 +640,7 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
         raise UnsupportedSourceFormatError(message)
     if metadata.get("error_kind") == "invalid":
         raise InvalidSourceFormatError(message)
-    if extension_key(suffix) in {".mpr", ".txt", MACCOR_CHANNEL_FORMAT}:
+    if extension_key(suffix) in {".mpr", ".txt", ".csv", MACCOR_CHANNEL_FORMAT}:
         raise SourceFormatError(message)
     raise UnsupportedSourceFormatError(str(error))
 
@@ -1637,9 +1676,16 @@ def _parse_source_timeseries(path: str | Path, *, read_mode: str = "safe") -> pd
     would open the workbook header twice for no benefit.
     """
     source_path = Path(path)
-    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(extension_key(source_path.suffix))
+    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(extension_key(source_suffix(source_path)))
     if format_id == FORMAT_NEWARE_EXCEL:
-        return neware_excel.parse_timeseries(source_path)
+        try:
+            return neware_excel.parse_timeseries(source_path)
+        except neware_excel.UnsupportedNewareExcelError:
+            if maccor_records.workbook_fields(source_path) is None:
+                raise
+            return maccor_records.parse(source_path, workbook=True)
+    if format_id == FORMAT_MACCOR_BINARY:
+        format_id = _numbered_reader(source_path)
     if format_id == FORMAT_MACCOR_TEXT:
         return maccor_text.parse_timeseries(source_path)
     if format_id == FORMAT_MACCOR_BINARY:
@@ -1719,7 +1765,7 @@ def validate_parsed_output(
 ) -> None:
     """Run source-owned independent checks after raw/cycle derivation."""
 
-    if Path(path).suffix.casefold() == ".xlsx":
+    if Path(path).suffix.casefold() == ".xlsx" and "maccor_mode" not in raw:
         neware_excel.validate_cycles(path, raw, cycles)
 
 
@@ -1952,10 +1998,12 @@ def read_header_metadata(
     ``SourceFile.header_meta``.
     """
     path = Path(path)
-    suffix = path.suffix.casefold()
+    suffix = source_suffix(path)
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(extension_key(suffix))
     mpr_layout_verified = False
     try:
+        if format_id == FORMAT_MACCOR_BINARY:
+            format_id = _numbered_reader(path)
         if format_id == FORMAT_MACCOR_BINARY:
             return maccor_binary.read_header_metadata(path)
         if format_id == FORMAT_MACCOR_TEXT:
@@ -1975,11 +2023,14 @@ def read_header_metadata(
                     )
                 return biologic_gcpl.read_gcpl_header_metadata(document)
         if format_id == FORMAT_NEWARE_EXCEL:
-            meta = (
-                neware_excel.read_metadata_fast(path)
-                if fast_excel_hint
-                else neware_excel.read_metadata(path)
-            )
+            try:
+                meta = (neware_excel.read_metadata_fast(path) if fast_excel_hint
+                        else neware_excel.read_metadata(path))
+            except neware_excel.UnsupportedNewareExcelError:
+                fields = maccor_records.workbook_fields(path)
+                if fields is None:
+                    raise
+                return maccor_records.metadata(fields, workbook=True)
             flat = _flatten(meta)
         elif format_id == FORMAT_NEWARE_BINARY:
             flat = _read_neware_binary_header_flat(path)

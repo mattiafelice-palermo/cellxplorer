@@ -60,9 +60,9 @@ export function importEntryFormat(entry: ImportBrowseEntry, hint?: ImportHeaderH
   if (hint?.source_format) return hint.source_format;
   const extension = entry.name.split(".").pop()?.toLowerCase();
   if (extension === "mpr") return "BioLogic EC-Lab";
-  if (extension === "txt") return "Text export";
+  if (["txt", "csv"].includes(extension ?? "")) return "Text export";
   if (isMaccorChannel(importEntryExtension(entry))) return "Numbered channel file";
-  if (extension === "xlsx") return "Neware Excel";
+  if (extension === "xlsx") return "Excel workbook";
   if (extension === "nda") return "Neware NDA";
   if (extension === "ndax") return "Neware NDAX";
   return "Unknown";
@@ -71,7 +71,7 @@ export function importEntryFormat(entry: ImportBrowseEntry, hint?: ImportHeaderH
 export function importEntrySupplier(entry: ImportBrowseEntry, hint?: ImportHeaderHint): string {
   if (hint?.supplier) return hint.supplier;
   const extension = importEntryExtension(entry);
-  if (extension === ".txt" || isMaccorChannel(extension)) return "Unknown";
+  if ([".txt", ".csv", ".xlsx"].includes(extension) || isMaccorChannel(extension)) return "Unknown";
   return extension === ".mpr" ? "BioLogic" : "Neware";
 }
 
@@ -121,7 +121,7 @@ export function filterAndSortImportEntries(
     if (entry.kind === "folder") return showFolders;
     const hint = hints.get(entry.path);
     const suffix = importEntryExtension(entry);
-    if (([".xlsx", ".txt"].includes(suffix) || isMaccorChannel(suffix)) && hint?.compatible === false) return false;
+    if (([".xlsx", ".txt", ".csv"].includes(suffix) || isMaccorChannel(suffix)) && hint?.compatible === false) return false;
     const supplier = importEntrySupplier(entry, hint);
     const size = entry.size === null ? null : entry.size / (1024 * 1024);
     const modified = entry.modified_at ? Date.parse(entry.modified_at) : null;

@@ -297,6 +297,7 @@ function ImportPlotSkeleton({
 export function ImportSourcePreview({
   source: inspectedSource,
   quickSourcePath,
+  sourceFormatHint,
   quickSourceVersion,
   onQuickPreviewSettled,
   onSourceRejected,
@@ -312,6 +313,7 @@ export function ImportSourcePreview({
 }: {
   source: ImportPreview | null;
   quickSourcePath?: string;
+  sourceFormatHint?: string | null;
   quickSourceVersion?: string;
   onQuickPreviewSettled?: (path: string, sourceVersion: string | undefined, requiresFullInspection: boolean) => void;
   onSourceRejected?: (rejection: ImportSourceRejection) => void;
@@ -385,7 +387,8 @@ export function ImportSourcePreview({
     ? Math.max(180, Math.min(widthLimitedPlotHeight, verticalPlotBudget))
     : plotHeight;
   const plotStackHeight = responsivePlotHeight + 20;
-  const quickNewareExcelPath = Boolean(quickSourcePath && /\.xlsx$/i.test(quickSourcePath));
+  const quickNewareExcelPath = Boolean(quickSourcePath && /\.xlsx$/i.test(quickSourcePath)
+    && (inspectedSource?.source_format ?? sourceFormatHint) !== "Maccor Excel");
   const quickNdaxPath = Boolean(quickSourcePath && /\.ndax$/i.test(quickSourcePath));
   const supportsQuickVoltagePreview = quickNewareExcelPath || quickNdaxPath;
   useEffect(() => {

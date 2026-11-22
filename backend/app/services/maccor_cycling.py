@@ -23,7 +23,7 @@ def _validate_records(table: pd.DataFrame) -> None:
         raise InvalidSourceFormatError("Maccor TestTime decreases in acquisition order.")
     if not table["Md"].isin(("C", "D", "R", "SBw", "O", "Stop")).all():
         raise UnsupportedSourceFormatError("Unsupported Maccor operating mode.")
-    if not table["ES"].isin((0, 1, 4, 5, *_STEP_END, 136, 192, 193, 195, 199)).all():
+    if not table["ES"].isin((0, 1, 4, 5, *_STEP_END, 136, 192, 193, 195, 199, 254)).all():
         raise UnsupportedSourceFormatError("Unsupported Maccor end status.")
 
 
@@ -40,7 +40,7 @@ def _measurement_records(table: pd.DataFrame) -> pd.DataFrame:
     if last["Md"] == "O":
         valid = last["Step"] > prior["Step"] and last["Current [A]"] == 0
     else:
-        valid = ("Program field" in table and last["Step"] == prior["Step"]
+        valid = (("Program field" in table or last["Current [A]"] == 0) and last["Step"] == prior["Step"]
                  and last["StepTime"] >= prior["StepTime"])
     if not valid:
         raise InvalidSourceFormatError("Maccor terminal record contradicts the preceding execution.")
@@ -73,7 +73,7 @@ def canonical_records(table: pd.DataFrame, *, verify_minute_units: bool) -> pd.D
     cycle, program, mode, es = (table[name] for name in ("Cycle C", "Step", "Md", "ES"))
     standby = mode.eq("SBw")
     neutral = standby | mode.eq("R")
-    if (neutral & table["Current [A]"].ne(0)).any() or (standby != es.eq(195)).any():
+    if (neutral & table["Current [A]"].ne(0)).any() or (standby != es.isin((195, 254))).any():
         raise InvalidSourceFormatError("Inconsistent Maccor rest or standby record.")
     if table.loc[mode.eq("R"), ["Cap. [Ah]", "Ener. [Wh]"]].ne(0).any().any():
         raise UnsupportedSourceFormatError("Unsupported Maccor rest counters.")
@@ -87,6 +87,12 @@ def canonical_records(table: pd.DataFrame, *, verify_minute_units: bool) -> pd.D
         witnessed = (same_program & same_program.shift(-1, fill_value=False)
                      & before.isin(("C", "D")) & before.eq(after)
                      & table["StepTime"].diff().ge(0) & table["StepTime"].diff().shift(-1).ge(0))
+        # Status 254 can end a file during an interruption. Its elapsed
+        # counter and immediately preceding active row identify the phase.
+        last = table.index[-1]
+        if standby.loc[last] and es.loc[last] == 254:
+            witnessed.loc[last] = (same_program.loc[last] and before.loc[last] in ("C", "D")
+                                   and table["StepTime"].diff().loc[last] >= 0)
         if (standby & ~witnessed).any():
             raise UnsupportedSourceFormatError("Maccor standby is outside a verified continuing step.")
     direction = mode.where(~standby, mode.shift())
