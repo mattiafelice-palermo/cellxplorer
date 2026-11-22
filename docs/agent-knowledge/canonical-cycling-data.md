@@ -779,8 +779,8 @@ patterns `00 00 00 00` and `00 00 00 03` are preserved as opaque provenance.
 A Loop Cnt target can return to the first step of its matching loop. A
 `SubRout` handoff requires mode 26/status 17, a stop trailer, and the named
 procedure in the next linked header. Acquisition segments break plots and
-prevent cross-restart capacity spans. Files containing only stop snapshots
-retain their record and clock metadata.
+prevent cross-restart capacity spans. A file consisting entirely of stop
+snapshots is unsupported at both header inspection and full decoding.
 
 The verified 50 A profile uses a unipolar 0–5 V ADC and a four-entry gain table
 of 100, 10, 50,000 and 1. The paired export verifies the FFFF/BBBB active
@@ -801,6 +801,23 @@ verified dialect, voltage, current, Ah and Wh reproduce every printed decimal
 after a binary32 conversion. Native calculations retain the ADC and accumulator
 resolution. The text truncates acquisition dates to the second. Keep real pairs
 and their generated comparison reports local.
+
+## Maccor mass for normalization
+
+The 4608 section prefix stores two little-endian binary32 startup values at
+offsets 50 and 54. Matched instrument text exports identify them as `SCap`
+and `C Rate`. The Data worksheet of a Maccor workbook can carry the same
+fields in its first row. Preserve both as source metadata. Linked sections
+can disagree, even within the same recording.
+
+`maccor_metadata.py` accepts an explicitly labelled active mass with a
+positive finite value and mass unit in the label or value. Import uses mg
+for the source default. An unlabelled SCap is unitless in these formats.
+Show a common positive SCap in import review and Cell editing so the user can
+select its meaning and unit. That choice uses the existing Cell mass override.
+Keep zero values, conflicting section values, C Rate and masses embedded in
+filenames out of automatic normalization. Older registered Maccor sources
+refresh their startup metadata during scientific cache preparation.
 
 ## BioLogic mass selection
 

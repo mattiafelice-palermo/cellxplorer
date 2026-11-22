@@ -231,6 +231,7 @@ def _inspect_import_path(
             "channel": _bounded_staged_text_or_none(meta.get("channel")),
             "start_time": _bounded_staged_text_or_none(meta.get("start_time")),
             **mpr_facts,
+            **({"maccor_scap": meta["maccor_scap"]} if meta.get("maccor_scap") is not None else {}),
             "active_mass_mg": meta.get("active_mass_mg"),
             "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
             "nda_version": _bounded_staged_text_or_none(meta.get("nda_version")),

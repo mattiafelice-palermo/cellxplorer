@@ -123,6 +123,18 @@ class CatalogTests(unittest.TestCase):
             self.assertIn("GCPL", entry["metadata_json"])
             self.assertNotIn("active_mass_mg", entry["metadata_json"])
 
+    def test_upgrade_rescreens_recognized_maccor_channels_and_refreshes_export_metadata(self):
+        items = [fact(r"C:\cycling\stop.003"), fact(r"C:\cycling\data.xlsx"), fact(r"C:\cycling\neware.xlsx")]
+        items[0].update(extension=".NNN", supplier="Maccor", metadata_state="disabled")
+        items[1].update(supplier="Maccor")
+        self.catalog.apply_batch("root", "one", items)
+        with self.catalog.connect() as db:
+            db.execute("PRAGMA user_version=5")
+        with Catalog(self.catalog.path).connect() as db:
+            result = {r["name"]: (r["recognition"], r["metadata_state"]) for r in db.execute("SELECT * FROM entries")}
+        self.assertEqual(result, {"stop.003": ("pending", "pending"), "data.xlsx": ("recognized", "pending"),
+                                  "neware.xlsx": ("recognized", "ready")})
+
     def test_upgrade_retries_old_mpr_and_workbook_exclusions_once(self):
         items = [fact("C:\\cycling\\old-mb.mpr"), fact("C:\\cycling\\known.mpr"),
                  fact("C:\\cycling\\known.ndax"), fact("C:\\cycling\\unsupported.xlsx")]

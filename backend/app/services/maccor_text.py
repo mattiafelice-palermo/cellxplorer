@@ -11,11 +11,12 @@ import pandas as pd
 from . import maccor_records
 from .canonical_cycling import voltage_capabilities
 from .maccor_cycling import canonical_records
+from .maccor_metadata import with_normalization
 from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-ADAPTER_REVISION = 3
+ADAPTER_REVISION = 4
 _HEADER_BYTES = 64 * 1024
 _REQUIRED = (
     "Rec", "Cycle P", "Cycle C", "Step", "TestTime", "StepTime", "Cap. [Ah]",
@@ -89,7 +90,7 @@ def read_header_metadata(path: str | Path) -> dict:
     declared = build_declared_protocol(
         [], warnings=["This Maccor export records the procedure name and executed steps only."]
     )
-    return {
+    return with_normalization({
         "raw": {"Maccor": fields, "record_columns": columns, "maccor_format": "text", DECLARED_PROTOCOL_METADATA_KEY: declared},
         "source_format": "Maccor text",
         "device_info": fields["Tester"],
@@ -98,7 +99,7 @@ def read_header_metadata(path: str | Path) -> dict:
         "start_time": start_time,
         "protocol_warnings": declared["warnings"],
         "voltage_capabilities": voltage_capabilities(),
-    }
+    })
 
 
 def _read_records(path: Path) -> pd.DataFrame:

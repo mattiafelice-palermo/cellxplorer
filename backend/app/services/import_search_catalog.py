@@ -14,7 +14,7 @@ from ..config import APP_DATA_DIR
 from .source_extensions import MACCOR_CHANNEL_FORMAT
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 METADATA_VERSION = 2
 
 FORMATS = (".ndax", ".mpr", ".xlsx", ".txt", ".csv", MACCOR_CHANNEL_FORMAT)
@@ -77,7 +77,7 @@ class Catalog:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, SCHEMA_VERSION):
+            if not 0 <= version <= SCHEMA_VERSION:
                 raise ValueError("Search catalog version changed; rebuild the search index.")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS roots (
@@ -149,6 +149,13 @@ class Catalog:
                 db.execute("""UPDATE entries SET recognition='pending', metadata_state='pending',
                               metadata_version=0 WHERE recognition='unsupported'
                               AND extension IN ('.NNN', '.txt', '.xlsx')""")
+            if version < 6:
+                # A previously recognized channel can contain only stop snapshots.
+                db.execute("""UPDATE entries SET recognition='pending', metadata_state='pending',
+                              metadata_version=0 WHERE extension='.NNN' AND recognition='recognized'""")
+                db.execute("""UPDATE entries SET metadata_state='pending', metadata_version=0
+                              WHERE supplier='Maccor' AND extension IN ('.txt', '.csv', '.xlsx')
+                              AND recognition='recognized' AND metadata_state='ready'""")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

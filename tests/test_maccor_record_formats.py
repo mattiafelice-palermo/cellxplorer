@@ -10,10 +10,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from backend.app.db import Base
-from backend.app.routers.files import _ensure_import_source_admitted
+from backend.app.models import Cell, Test, TestFile
+from backend.app.routers import library
+from backend.app.routers.files import _ensure_import_source_admitted, _inspect_import_path
 from backend.app.services import (
-    calc, exploratory_plotting, import_file_hints, import_inspection, import_search_worker,
-    maccor_records, parsing, scanner,
+    analysis_engine, cache, calc, exploratory_plotting, import_file_hints, import_inspection, import_search_worker,
+    maccor_metadata, maccor_records, parsing, scanner,
 )
 from backend.app.services.filesystem_cleanup import TemporaryDirectory
 from tests.test_maccor_binary import channel_file, operation
@@ -59,6 +61,64 @@ def link_sections(first, second, *, restart):
 class MaccorRecordFormatTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(TemporaryDirectory()))
+
+    def test_maccor_startup_mass_requires_positive_consistent_values_and_units(self):
+        for fields, expected in (
+            ({"Active material mass [mg]": "15,2"}, 15.2),
+            ({"Active mass (g)": ".012", "Comment": "batch 2; Active mass: 12 mg"}, 12),
+            ({"Description": "Active material mass = 750 µg"}, .75),
+            ({"Description": "Active mass: 12 mg/cm2"}, None),
+            ({"Comment": "Previous active mass: 12 mg"}, None),
+            ({"Electrode weight": "12 mg", "C Rate": 12, "SCap": ".012"}, None),
+            ({"Active mass": "12", "Comment": "Cell mass: 12 mg"}, None),
+            ({"Active mass [mg]": "12 g"}, None),
+            ({"Active mass": "2 g", "Active material mass": "12 mg"}, None),
+            ({"Active mass": "1e500 g"}, None),
+        ):
+            with self.subTest(fields=fields):
+                self.assertEqual(maccor_metadata.normalization(fields)["active_mass_mg"], expected)
+        for invalid in (0, -1, float("nan"), "1e501", "12 mAh/g", None):
+            self.assertIsNone(maccor_metadata.normalization({"SCap": invalid})["maccor_scap"])
+
+    def test_mass_flows_through_staging_existing_source_upgrade_and_cycle_normalization(self):
+        engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+        Base.metadata.create_all(engine)
+        p = self.root / "mass.150"
+        content = export_text().replace("Tester\t", "SCap\t0,014977\r\nActive material mass [g]\t0,0125\r\nTester\t")
+        p.write_bytes(content.encode("cp1252"))
+        with Session(engine) as db:
+            preview = _inspect_import_path(p, db)
+            self.assertEqual((preview["active_mass_mg"], preview["maccor_scap"]), (12.5, .014977))
+            source = scanner.ingest_path(db, p, parse_now=True)
+            cell = Cell(name="Mass normalization")
+            db.add(TestFile(test=Test(cell=cell, name="internal"), file=source, position=0))
+            db.commit()
+            self.assertEqual(library.get_cell(cell.id, db)["sources"][0]["maccor_scap"], .014977)
+            self.assertEqual(analysis_engine.cell_active_mass_mg(cell), 12.5)
+            cycles = cache.load_cycles(source.hash, source.parser_version, cache.CALC_VERSION)
+            derived, _ = analysis_engine.add_derived_columns(cycles, {}, analysis_engine.cell_active_mass_mg(cell))
+            self.assertAlmostEqual(derived.discharge_capacity_mah_g.iloc[0], 2 / .0125)
+            library.update_cell(cell.id, library.CellUpdate(active_mass_mg_override=14.977), db)
+            source.active_mass_mg = None
+            source.parser_version = "mt:3:r1"
+            source.header_meta = {k: v for k, v in source.header_meta.items() if k != "maccor_normalization"}
+            db.commit()
+            scanner.parse_file(db, source)
+            self.assertEqual((source.parse_status, source.active_mass_mg), ("parsed", 12.5))
+            self.assertEqual(analysis_engine.cell_active_mass_mg(cell), 14.977)
+            library.update_cell(cell.id, library.CellUpdate(active_mass_mg_override=None), db)
+            self.assertEqual(analysis_engine.cell_active_mass_mg(cell), 12.5)
+
+    def test_native_startup_fields_are_distinct_and_unitless(self):
+        p = self.root / "cell.003"
+        data = bytearray(channel_file())
+        struct.pack_into("<ff", data, 50, .0149768, 14.9768)
+        p.write_bytes(data)
+        meta = parsing.read_header_metadata(p)
+        self.assertAlmostEqual(meta["maccor_scap"], .0149768)
+        self.assertIsNone(meta["active_mass_mg"])
+        self.assertAlmostEqual(meta["raw"]["Maccor"]["C Rate"], 14.9768, places=5)
 
     def test_dot_channel_and_numbered_text_use_their_own_reader_identities(self):
         for name, content, kind in ((".042", channel_file(), parsing.FORMAT_MACCOR_BINARY),
@@ -119,9 +179,12 @@ class MaccorRecordFormatTests(unittest.TestCase):
         for name, sep, current in (("data.csv", ",", .25), ("data.txt", "\t", 250)):
             with self.subTest(name=name):
                 p = self.root / name
-                data = [["Today''s Date","11/22/2026 04:00:00"], ["Date of Test:", "11/22/2026 00:00:00"],
+                data = [["Today''s Date","11/22/2026 04:00:00", "SCap", ".014"],
+                        ["Date of Test:", "11/22/2026 00:00:00", "Active mass [mg]", "12"],
                         maccor_records.COLUMNS, *record_export(current)]
                 p.write_text("\n".join(sep.join(map(str, row)) for row in data))
+                meta = parsing.read_header_metadata(p)
+                self.assertEqual((meta["active_mass_mg"], meta["maccor_scap"]), (12, .014))
                 raw = parsing.parse_timeseries(p)
                 self.assertEqual(raw.cycle.tolist(), [1, 1, 1, 1, 2])
                 np.testing.assert_allclose(raw.current_ma, [250,250,-250,-250,250])
@@ -140,7 +203,7 @@ class MaccorRecordFormatTests(unittest.TestCase):
         sheet = book.active
         sheet.title = "Data"
         sheet.append(["Today''s Date", datetime(2026, 11, 22), "Date of Test:", datetime(2026, 11, 22),
-                      "Filename:", "record.001", "Procedure", "cycling.000"])
+                      "Filename:", "record.001", "Procedure", "cycling.000", "LFP", "SCap", .0123, "C Rate", 12.3])
         sheet.append(maccor_records.COLUMNS)
         records = record_export()
         terminal = [*records[-1]]
@@ -148,10 +211,17 @@ class MaccorRecordFormatTests(unittest.TestCase):
         for row in [*records, terminal]:
             row[11] = datetime.strptime(row[11], "%m/%d/%Y %H:%M:%S")
             sheet.append(row)
-        book.create_sheet("Statistics")
+        stats = book.create_sheet("Statistics")
+        stats.append(["TesterID:", "Maccor #1"])
+        stats.append(["Channel Number:", 7])
+        stats.append(["Active material mass (mg):", 10])
         book.create_sheet("Cycle 0 CHG").append(["StepTime", "Voltage", "Current", "Capacity"])
         book.save(p)
         self.assertEqual(parsing.recognize_source(p), parsing.FORMAT_MACCOR_EXCEL)
+        meta = parsing.read_header_metadata(p)
+        self.assertEqual((meta["active_mass_mg"], meta["maccor_scap"]), (10, .0123))
+        self.assertEqual((meta["device_info"], meta["channel"], meta["remarks"]), ("Maccor #1", "7", "LFP"))
+        self.assertEqual(meta["start_time"], "2026-11-22T00:00:00")
         self.assertEqual(import_file_hints.inspect_header_hint(str(p))["supplier"], "Maccor")
         st = p.stat()
         fact = dict(path=str(p), extension=".xlsx", recognition="pending", size=st.st_size, mtime_ns=st.st_mtime_ns)
@@ -168,7 +238,12 @@ class MaccorRecordFormatTests(unittest.TestCase):
         first = channel_file(steps, operation(0, 1, 0xFFFF) + [(0,30,192,0xFFFF,0,110,1,1)])
         second = channel_file(steps, operation(1, 2, 0xBBBB))
         data = link_sections(first, second, restart=True)
+        struct.pack_into("<f", data, 50, .012)
+        struct.pack_into("<f", data, len(first) + 50, .017)
         p.write_bytes(data)
+        meta = parsing.read_header_metadata(p)
+        self.assertIsNone(meta["maccor_scap"])
+        np.testing.assert_allclose([s["SCap"] for s in meta["raw"]["Maccor"]["Sections"]], [.012, .017])
         raw = parsing.parse_timeseries(p)
         self.assertEqual(raw.record_index.tolist(), [1, 2, 4, 5])
         self.assertEqual(raw.step.tolist(), [1, 1, 2, 2])
@@ -178,14 +253,17 @@ class MaccorRecordFormatTests(unittest.TestCase):
         p.write_bytes(data)
         self.assertIsNone(parsing.recognize_source(p))
 
-    def test_snapshot_only_file_keeps_record_metadata_without_scientific_rows(self):
+    def test_snapshot_only_file_is_excluded_from_discovery_and_import(self):
         p = self.root / "stopped.003"
         data = bytearray(channel_file(("Charge","End"), []))
         offset = len(data) - 264
         struct.pack_into("BB", data, offset + 9, 30, 192)
         struct.pack_into("<I", data, offset + 230, 45)
         p.write_bytes(data)
-        meta = parsing.read_header_metadata(p)
-        self.assertTrue(parsing.source_metadata_only(meta))
-        self.assertEqual(meta["raw"]["Maccor"]["Stop snapshots"][0]["Record"], 45)
-        self.assertTrue(parsing.parse_timeseries(p).empty)
+        self.assertIsNone(parsing.recognize_source(p))
+        self.assertFalse(parsing.discoverable_source_path(p))
+        self.assertEqual(parsing.read_header_metadata(p)["error_kind"], "unsupported")
+        with self.assertRaises(import_inspection.SourceInspectionRejection):
+            import_inspection.inspect_file(str(p))
+        with self.assertRaisesRegex(parsing.UnsupportedSourceFormatError, "stop snapshots"):
+            parsing.parse_timeseries(p)

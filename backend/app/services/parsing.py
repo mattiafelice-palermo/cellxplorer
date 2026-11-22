@@ -2047,7 +2047,7 @@ def read_header_metadata(
                 meta = (neware_excel.read_metadata_fast(path) if fast_excel_hint
                         else neware_excel.read_metadata(path))
             except neware_excel.UnsupportedNewareExcelError:
-                fields = maccor_records.workbook_fields(path)
+                fields = maccor_records.workbook_fields(path, include_statistics=True)
                 if fields is None:
                     raise
                 return maccor_records.metadata(fields, workbook=True)

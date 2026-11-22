@@ -4,11 +4,20 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
-Alpha.18–21 and Alpha.23–24 below are development checkpoints, not published installers.
-Alpha.22 summarizes the accumulated changes since the published Alpha.17 release.
+The Alpha.18–22 entries describe the changes made at each development checkpoint.
 
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
+
+## 0.29.0-alpha.22 - 2026-11-23
+
+### New features
+
+- Maccor imports use explicitly labelled active-material masses for normalization. Unitless SCap values are available in import review and Cell editing with a choice of grams or milligrams.
+
+### Bug fixes
+
+- Exclude Maccor channel files containing only stop snapshots from discovery and import. Linked recordings with sampled cycling data retain their restart breaks.
 
 ## 0.29.0-alpha.21 - 2026-11-23
 

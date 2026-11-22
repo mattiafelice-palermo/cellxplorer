@@ -6,21 +6,24 @@ from datetime import datetime
 from io import BytesIO
 from itertools import islice
 from pathlib import Path
+from xml.etree import ElementTree
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH, from_excel
 
 from . import neware_excel
 from .canonical_cycling import voltage_capabilities
 from .maccor_cycling import canonical_records
+from .maccor_metadata import read_startup_pairs, with_normalization
 from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-WORKBOOK_REVISION = 1
+WORKBOOK_REVISION = 2
 COLUMNS = ("Rec#", "Cyc#", "Step", "TestTime", "StepTime", "Amp-hr", "Watt-hr",
            "Amps", "Volts", "State", "ES", "DPt Time")
 _DATE_FORMAT = "%m/%d/%Y %H:%M:%S"
@@ -47,42 +50,81 @@ def _delimited_header(path: Path):
         started = datetime.strptime(rows[1][1], _DATE_FORMAT).isoformat()
     except ValueError as exc:
         raise InvalidSourceFormatError("Invalid Maccor date of test.") from exc
-    return delimiter, {"Date of Test": started}
+    fields = {"Date of Test": started}
+    for row in rows[:2]:
+        read_startup_pairs(row[2:], fields)
+    return delimiter, fields
 
 
-def workbook_fields(path: Path) -> dict | None:
-    """Recognize two header rows without opening the full Data or chart sheets."""
+def _header_rows(archive: ZipFile, member: str, count: int) -> list[tuple]:
+    with archive.open(member) as stream:
+        rows = list(islice(neware_excel._iter_xlsx_xml_rows(BytesIO(stream.read(128 * 1024))), count))
+    indices = neware_excel._xlsx_shared_string_indices(b"".join(rows))
+    if indices and max(indices) > 4096:
+        return []
+    strings = neware_excel._xlsx_shared_strings(archive, max_index=max(indices)) if indices else []
+    return [neware_excel._xlsx_row_values(row, strings) for row in rows]
+
+
+def _workbook_start(value, archive: ZipFile) -> str | None:
+    try:
+        serial = float(value)
+    except (TypeError, ValueError):
+        try:
+            return datetime.fromisoformat(str(value)).isoformat()
+        except ValueError:
+            return None
+    properties = ElementTree.fromstring(archive.read("xl/workbook.xml")).find("{*}workbookPr")
+    mac = properties is not None and properties.get("date1904") in ("1", "true")
+    try:
+        started = from_excel(serial, MAC_EPOCH if mac else WINDOWS_EPOCH)
+    except (ValueError, OverflowError):
+        return None
+    return started.isoformat() if isinstance(started, datetime) else None
+
+
+def workbook_fields(path: Path, *, include_statistics: bool = False) -> dict | None:
+    """Recognize Data from two header rows. Read optional startup facts for import."""
     try:
         with ZipFile(path) as archive:
             sheets = neware_excel._xlsx_sheet_paths(archive)
             if "data" not in sheets or "statistics" not in sheets or "record" in sheets:
                 return None
-            with archive.open(sheets["data"]) as stream:
-                rows = list(islice(neware_excel._iter_xlsx_xml_rows(BytesIO(stream.read(128 * 1024))), 2))
+            rows = _header_rows(archive, sheets["data"], 2)
             if len(rows) != 2:
                 return None
-            indices = neware_excel._xlsx_shared_string_indices(b"".join(rows))
-            if indices and max(indices) > 4096:
+            first, columns = rows
+            if (first[:1] != ("Today''s Date",) or first[2:3] != ("Date of Test:",)
+                    or first[4:5] != ("Filename:",) or first[6:7] != ("Procedure",)
+                    or tuple(columns[:len(COLUMNS)]) != COLUMNS):
                 return None
-            strings = neware_excel._xlsx_shared_strings(archive, max_index=max(indices, default=-1)) if indices else []
-            first, columns = [neware_excel._xlsx_row_values(row, strings) for row in rows]
+            fields = {"Procedure": first[7]} if len(first) > 7 else {}
+            if include_statistics:
+                fields["Date of Test"] = _workbook_start(first[3], archive)
+                if len(first) > 9 and first[8] and first[9] == "SCap":
+                    fields["Description"] = first[8]
+                read_startup_pairs(first[8:], fields)
+                aliases = {"TesterID": "Tester", "Channel Number": "Channel", "TestDesc": "Description"}
+                for row in _header_rows(archive, sheets["statistics"], 16):
+                    if row[:1] == ("Cycle",):
+                        break
+                    if len(row) >= 2 and isinstance(row[0], str):
+                        key = row[0].rstrip(":")
+                        read_startup_pairs((aliases.get(key, key), row[1]), fields)
+            return fields
     except (BadZipFile, FileNotFoundError, KeyError, ValueError, ParseError):
         return None
-    if (first[:1] != ("Today''s Date",) or first[2:3] != ("Date of Test:",)
-            or first[4:5] != ("Filename:",) or first[6:7] != ("Procedure",)
-            or tuple(columns[:len(COLUMNS)]) != COLUMNS):
-        return None
-    # The serial value alone does not identify the workbook's date epoch.
-    return {"Procedure": str(first[7])} if len(first) > 7 else {}
 
 
 def metadata(fields: dict, *, workbook: bool) -> dict:
     declared = build_declared_protocol([], warnings=["The Maccor export contains recorded steps only."])
-    return {"raw": {"Maccor": fields, "maccor_format": "workbook" if workbook else "text",
+    return with_normalization({"raw": {"Maccor": fields, "maccor_format": "workbook" if workbook else "text",
                     "record_columns": list(COLUMNS), DECLARED_PROTOCOL_METADATA_KEY: declared},
             "source_format": "Maccor Excel" if workbook else "Maccor text",
+            "device_info": fields.get("Tester"), "channel": fields.get("Channel"),
+            "remarks": fields.get("Description"),
             "start_time": fields.get("Date of Test"), "protocol_warnings": declared["warnings"],
-            "voltage_capabilities": voltage_capabilities()}
+            "voltage_capabilities": voltage_capabilities()})
 
 
 def text_metadata(path: Path) -> dict:

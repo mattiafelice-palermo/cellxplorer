@@ -1,6 +1,7 @@
 """Native Maccor 4608 channel files, verified 264-byte record layout."""
 from __future__ import annotations
 
+import math
 import os
 import re
 import struct
@@ -12,13 +13,14 @@ from xml.etree import ElementTree
 import numpy as np
 import pandas as pd
 
-from .canonical_cycling import REQUIRED_CYCLING_COLUMNS, voltage_capabilities
+from .canonical_cycling import voltage_capabilities
 from .maccor_cycling import canonical_records
+from .maccor_metadata import with_normalization
 from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-ADAPTER_REVISION = 3
+ADAPTER_REVISION = 4
 _PREFIX_BYTES = 416
 _HEADER_LIMIT = 4 * 1024 * 1024
 _ADC_MAX = 65535
@@ -220,6 +222,10 @@ def _read_header(stream: BinaryIO) -> _Header:
               "Cycle basis": program.cycle_basis,
               "Current full scale [A]": current_max, "Current range gains": list(gains),
               "Voltage range [V]": [vmin, vmax]}
+    # Matched native/text exports locate these two separate startup values.
+    for key, value in zip(("SCap", "C Rate"), struct.unpack_from("<2f", prefix, 50)):
+        if math.isfinite(value):
+            fields[key] = value
     declared = build_declared_protocol([], warnings=["Full Maccor procedure settings are unavailable for protocol analysis."])
     metadata = {
         "raw": {"Maccor": fields, DECLARED_PROTOCOL_METADATA_KEY: declared}, "source_format": "Maccor binary",
@@ -235,6 +241,7 @@ def _read_header(stream: BinaryIO) -> _Header:
 def _sections(stream: BinaryIO, size: int):
     channel = None
     previous_snapshot = None
+    has_measurements = False
     for _ in range(64):
         header = _read_header(stream)
         if channel is not None and header.channel != channel:
@@ -248,6 +255,9 @@ def _sections(stream: BinaryIO, size: int):
                                                  for key in ("record", "test_ticks", "date")):
             raise InvalidSourceFormatError("Maccor stop snapshots are out of acquisition order.")
         previous_snapshot = None if count else header.seed
+        has_measurements |= count > 0
+        if header.next_section is None and not has_measurements:
+            raise UnsupportedSourceFormatError("Maccor file contains only stop snapshots and no sampled cycling records.")
         yield header, count
         if header.next_section is None:
             return
@@ -261,19 +271,7 @@ def read_header_metadata(path: str | Path) -> dict:
     meta = sections[0][0].metadata
     if len(sections) > 1:
         meta["raw"]["Maccor"]["Sections"] = [h.metadata["raw"]["Maccor"].copy() for h, _ in sections]
-    if not any(count for _, count in sections):
-        warning = "This Maccor file contains stop-state snapshots only. No sampled cycle data were recorded."
-        meta["raw"]["Maccor"]["Stop snapshots"] = [
-            {"Record": int(h.seed["record"]), "Step": int(h.seed["step"]) + 1,
-             "Program field": int(h.seed["program_field"]), "Test time [s]": int(h.seed["test_ticks"]) / 100,
-             "Step time [s]": int(h.seed["step_ticks"]) / 100, "Local date": h.metadata["start_time"]}
-            for h, _ in sections
-        ]
-        # These timestamps identify stops. The original test start is unknown.
-        meta.pop("start_time", None)
-        meta["raw"]["capabilities"] = {"metadata_only": True, "canonical_cycling": False}
-        meta["raw"]["protocol_warnings"] = meta["protocol_warnings"] = [warning]
-    return meta
+    return with_normalization(meta)
 
 
 def _decode(rows: np.ndarray, header: _Header) -> pd.DataFrame:
@@ -365,7 +363,6 @@ def _assign_cycles(table: pd.DataFrame, program: _Program, *, resumed: bool = Fa
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
     segments = []
-    snapshots_only = True
     last_record = last_ticks = next_routine = last_date = None
     with Path(path).open("rb") as stream:
         before = os.fstat(stream.fileno())
@@ -384,7 +381,6 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
             if not count:
                 last_record, last_ticks, last_date = initial, int(seed["test_ticks"]), float(seed["date"])
                 continue
-            snapshots_only = False
             if number == 1 and seed["mode"] == 30:
                 raise UnsupportedSourceFormatError("Maccor measurements start from an unverified stop snapshot.")
             chunks = []
@@ -428,8 +424,6 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
         after = os.fstat(stream.fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise OSError("Maccor source changed while reading records.")
-    if snapshots_only:
-        return pd.DataFrame(columns=REQUIRED_CYCLING_COLUMNS)
     if not segments:
         raise UnsupportedSourceFormatError("Maccor file contains no sampled cycling records.")
     result = pd.concat(segments, ignore_index=True)

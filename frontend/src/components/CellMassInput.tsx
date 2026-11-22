@@ -2,27 +2,37 @@ import { Button, Menu, NumberInput, Stack, type NumberInputProps } from "@mantin
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import type { RecordedMass } from "../api";
 
-type MassSource = { filename: string; recorded_masses?: RecordedMass[] };
+type MassSource = {
+  filename: string;
+  active_mass_mg?: number | null;
+  recorded_masses?: RecordedMass[];
+  maccor_scap?: number | null;
+};
 
 export function CellMassInput({ sources, ...input }: NumberInputProps & { sources: MassSource[] }) {
-  if (!sources.some((source) => source.recorded_masses?.length)) {
+  const hasSCap = sources.some((source) => source.maccor_scap != null);
+  if (!hasSCap && !sources.some((source) => source.recorded_masses?.length)) {
     return <NumberInput {...input} />;
   }
+  const source = sources.length === 1 ? sources[0] : undefined;
+  const description = source?.maccor_scap != null && source.active_mass_mg == null
+    ? "Recorded SCap " + Number(source.maccor_scap.toPrecision(7)) + " (unit unspecified)"
+    : input.description;
   return (
     <Stack gap={4}>
-      <NumberInput {...input} label="Mass for calculations (mg)" />
+      <NumberInput {...input} label="Mass for calculations (mg)" description={description} />
       <Menu position="bottom-start" withinPortal>
         <Menu.Target>
           <Button size="compact-xs" variant="subtle" w="fit-content" disabled={input.disabled}
             rightSection={<IconChevronDown size={14} />}>
-            Choose recorded mass
+            {hasSCap ? "Choose mass from source" : "Choose recorded mass"}
           </Button>
         </Menu.Target>
         <Menu.Dropdown mah={320} style={{ overflowY: "auto" }}>
-          {sources.map((source, index) => source.recorded_masses?.length ? (
+          {sources.map((source, index) => source.recorded_masses?.length || source.maccor_scap != null ? (
             <div key={index}>
               {sources.length > 1 && <Menu.Label>{index + 1}. {source.filename}</Menu.Label>}
-              {source.recorded_masses.map(({ kind, value, unit }) => {
+              {source.recorded_masses?.map(({ kind, value, unit }) => {
                 const massMg = unit === "g" ? value * 1000 : value;
                 const label = kind === "characteristic" ? "Characteristic mass" : "Active material mass";
                 return (
@@ -32,6 +42,18 @@ export function CellMassInput({ sources, ...input }: NumberInputProps & { source
                   </Menu.Item>
                 );
               })}
+              {source.maccor_scap != null && <>
+                <Menu.Label>SCap · {Number(source.maccor_scap.toPrecision(7))} (unit unspecified)</Menu.Label>
+                {(["g", "mg"] as const).map((unit) => {
+                  const massMg = source.maccor_scap! * (unit === "g" ? 1000 : 1);
+                  return Number.isFinite(massMg) && (
+                    <Menu.Item key={unit} onClick={() => input.onChange?.(massMg)}
+                      rightSection={input.value === massMg ? <IconCheck size={14} /> : undefined}>
+                      Use SCap as {unit === "g" ? "grams" : "milligrams"} · {Number(massMg.toPrecision(7))} mg
+                    </Menu.Item>
+                  );
+                })}
+              </>}
             </div>
           ) : null)}
           <Menu.Divider />

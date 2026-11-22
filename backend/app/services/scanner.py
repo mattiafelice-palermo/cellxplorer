@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import SourceFile
-from . import background_jobs, cache, parsing
+from . import background_jobs, cache, maccor_metadata, parsing
 from . import scientific_preparation
 
 logger = logging.getLogger(__name__)
@@ -89,12 +89,30 @@ def _refresh_gcpl_dimensions(sf: SourceFile, settings: dict | None) -> None:
                 break
 
 
+def _needs_maccor_header_refresh(sf: SourceFile) -> bool:
+    return maccor_metadata.stored_fields(sf) is not None and "maccor_normalization" not in sf.header_meta
+
+
+def _read_maccor_upgrade_header(path: Path, fingerprint: parsing.SourceFingerprint | None) -> dict:
+    meta = parsing.read_header_metadata(path)
+    parsing.ensure_supported_source_metadata(path, meta)
+    if fingerprint is not None:
+        _assert_stable_fingerprint(path, fingerprint)
+    return meta
+
+
 def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
     sf.total_charge_capacity_mah = info.get("total_charge_capacity_mah")
     sf.total_discharge_capacity_mah = info.get("total_discharge_capacity_mah")
     sf.max_discharge_capacity_mah = info.get("max_discharge_capacity_mah")
     sf.capacity_summary_status = "ready"
     _refresh_gcpl_dimensions(sf, info.get("gcpl_cell_dimensions"))
+    if (meta := info.get("maccor_upgrade_header")) is not None:
+        sf.header_meta = {**(sf.header_meta or {}), **meta["raw"]}
+        sf.active_mass_mg = meta["active_mass_mg"]
+        for key in ("device_info", "channel", "remarks", "start_time"):
+            if meta.get(key) is not None:
+                setattr(sf, key, meta[key])
     parsing.record_source_interpretation(sf, info)
 
 
@@ -542,6 +560,7 @@ def _capacity_source_job(
         "read_mode": parsing.source_read_mode(sf),
         "expected_parser_version": parsing.current_parser_identity_for_source(sf),
         "registered_parser_version": sf.parser_version,
+        "refresh_maccor_header": _needs_maccor_header_refresh(sf),
         "source_fingerprint": {
             "hash": sf.hash,
             "size": observed_size,
@@ -595,7 +614,7 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
             job.get("registered_parser_version") is not None
             and job["registered_parser_version"] != expected
         )
-        if cycles is None or (job["prepare_all_missing"] and not raw_ready) or identity_bring_forward:
+        if cycles is None or (job["prepare_all_missing"] and not raw_ready) or identity_bring_forward or job.get("refresh_maccor_header"):
             source_path = Path(job["path"])
             try:
                 source_stat = source_path.stat()
@@ -626,6 +645,8 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
                     expected_fingerprint=expected_fingerprint,
                     **({"read_mode": job["read_mode"]} if job.get("read_mode", "safe") != "safe" else {}),
                 )
+                if job.get("refresh_maccor_header"):
+                    info["maccor_upgrade_header"] = _read_maccor_upgrade_header(source_path, expected_fingerprint)
             except cache.SourceChangedDuringBuild as exc:
                 location_status = "changed"
                 raise SourceChangedDuringRead(str(exc)) from exc
@@ -1236,6 +1257,8 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing:
         parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
+        if existing.parse_status == "metadata_only" and maccor_metadata.stored_fields(existing) is not None:
+            _read_maccor_upgrade_header(path, fingerprint)
         target_ext = parsing.source_suffix(path).lstrip(".")
         header = existing.header_meta
         target_family = parsing.source_parser_family(path, header_meta=header)
@@ -1345,7 +1368,8 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
 def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     """Full parse → build Parquet caches at current versions."""
     pending_biologic_candidate = parsing.source_has_pending_biologic_cycle_verification(sf)
-    if parsing.source_record_metadata_only(sf) and not pending_biologic_candidate:
+    refresh_maccor_header = _needs_maccor_header_refresh(sf)
+    if parsing.source_record_metadata_only(sf) and not pending_biologic_candidate and not refresh_maccor_header:
         if parsing.source_uses_retired_biologic_parser(sf):
             parsing.reclassify_retired_biologic_source(sf)
         elif parsing.source_uses_pre_r8_biologic_parser(sf):
@@ -1375,6 +1399,8 @@ def parse_file(db: Session, sf: SourceFile) -> SourceFile:
             else None
         )
         info = cache.build(sf.hash, sf.path, expected_fingerprint=expected, **({"read_mode": parsing.source_read_mode(sf)} if parsing.source_read_mode(sf) != "safe" else {}))
+        if refresh_maccor_header:
+            info["maccor_upgrade_header"] = _read_maccor_upgrade_header(Path(sf.path), expected)
         sf.parse_status = "parsed"
         sf.parse_error = None
         sf.parser_version = info["parser_version"]

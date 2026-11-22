@@ -39,6 +39,7 @@ from ..models import (
 )
 from ..services import background_jobs
 from ..services.activity_log import record_activity
+from ..services import maccor_metadata
 from ..services.source_extensions import MACCOR_CHANNEL_FORMAT, extension_key
 from ..services.lazy_module import LazyModule
 from ..services.process_priority import (
@@ -1418,6 +1419,8 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
         source.pop("test_name", None)
         if link.file.ext == "mpr":
             source["recorded_masses"] = parsing.recorded_biologic_masses(link.file.header_meta)
+        elif (fields := maccor_metadata.stored_fields(link.file)) is not None:
+            source["maccor_scap"] = maccor_metadata.normalization(fields)["maccor_scap"]
         source["position"] = position
         source["tracked_tail"] = position == len(links)
         d["sources"].append(source)

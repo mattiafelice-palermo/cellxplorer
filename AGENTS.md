@@ -173,6 +173,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/maccor_text.py` and `maccor_binary.py`: bounded Maccor text and native 4608 readers
 - `backend/app/services/maccor_records.py`: Maccor Rec#/Cyc# text, CSV and Data worksheet reader
+- `backend/app/services/maccor_metadata.py`: Maccor startup SCap and unit-labelled active mass
 - `backend/app/services/maccor_cycling.py`: shared Maccor direction, counters and cycle completeness
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/time_capacity_derived.py`: shared exact phase/capacity transforms and prepared-row contract (Spec 050.6)
