@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 _lock = threading.Lock()
 _jobs: dict[int, dict] = {}
 _next_id = 1
+_cancelled_tokens: set[str] = set()
+_cancelled_job_ids: set[int] = set()
 
 # Large imports start CPU-heavy cache workers only after the committed Cell rows
 # have had time to reach the detached frontend. The registration job is already
@@ -34,6 +36,7 @@ def _create_job_locked(
     global _next_id
     job_id = _next_id
     _next_id += 1
+    pre_cancelled = bool(token and token in _cancelled_tokens)
     _jobs[job_id] = {
         "id": job_id,
         "kind": kind,
@@ -41,7 +44,7 @@ def _create_job_locked(
         "payload_fingerprint": fingerprint,
         "title": title,
         "description": description,
-        "status": "running",
+        "status": "cancelled" if pre_cancelled else "running",
         # Import registration and cache preparation are separate lifecycles.
         # Keep an explicit commit marker so the UI can detach as soon as the
         # relational transaction is durable, even while status/progress for a
@@ -64,10 +67,13 @@ def _create_job_locked(
         ],
         "error": None,
         "started_at": _now(),
-        "completed_at": None,
+        "completed_at": _now() if pre_cancelled else None,
     }
+    if pre_cancelled:
+        _cancelled_job_ids.add(job_id)
     for old_id in sorted(_jobs)[:-30]:
         _jobs.pop(old_id, None)
+        _cancelled_job_ids.discard(old_id)
     return job_id
 
 
@@ -147,15 +153,60 @@ def find_by_token(token: str) -> dict | None:
     return None
 
 
+def cancel_job_by_token(token: str) -> dict | None:
+    """Mark a running or queued token-scoped background job as cancelled."""
+    clean = str(token or "").strip()
+    if not clean:
+        return None
+    with _lock:
+        _cancelled_tokens.add(clean)
+        target = None
+        for job in reversed(_jobs.values()):
+            if job.get("token") == clean:
+                target = job
+                break
+        if target is None:
+            return None
+        _cancelled_job_ids.add(int(target["id"]))
+        if target.get("status") not in {"completed", "failed", "cancelled"}:
+            target["status"] = "cancelled"
+            if not target.get("completed_at"):
+                target["completed_at"] = _now()
+            target["current_item_id"] = None
+            target["current_item_label"] = None
+        return deepcopy(target)
+
+
+def is_cancelled(*, job_id: int | None = None, token: str | None = None) -> bool:
+    with _lock:
+        if job_id is not None and int(job_id) in _cancelled_job_ids:
+            return True
+        if token and token in _cancelled_tokens:
+            return True
+        return False
+
+
 def update_job(job_id: int, **values) -> None:
     with _lock:
         job = _jobs.get(job_id)
         if job is None:
             return
+        if job.get("status") == "cancelled":
+            allowed = {
+                key: value
+                for key, value in values.items()
+                if key not in {"status", "current_item_id", "current_item_label", "phase"}
+            }
+            job.update(allowed)
+            return
         job.update(values)
-        if values.get("status") in {"completed", "failed"} and not job.get("completed_at"):
+        if values.get("status") == "cancelled":
+            _cancelled_job_ids.add(int(job_id))
+            if job.get("token"):
+                _cancelled_tokens.add(str(job["token"]))
+        if values.get("status") in {"completed", "failed", "cancelled"} and not job.get("completed_at"):
             job["completed_at"] = _now()
-        if values.get("status") in {"completed", "failed"}:
+        if values.get("status") in {"completed", "failed", "cancelled"}:
             job["current_item_id"] = None
             job["current_item_label"] = None
 
@@ -249,6 +300,8 @@ def clear_jobs() -> None:
     global _next_id
     with _lock:
         _jobs.clear()
+        _cancelled_tokens.clear()
+        _cancelled_job_ids.clear()
         _next_id = 1
 
 

@@ -190,6 +190,7 @@ export function ImportFilesystemPickerModal({
   loading,
   progress,
   onClose,
+  onCancelLoading,
   onConfirm,
   mode = "files",
   initialPath,
@@ -203,6 +204,7 @@ export function ImportFilesystemPickerModal({
   loading: boolean;
   progress?: ReactNode;
   onClose: () => void;
+  onCancelLoading?: () => void;
   onConfirm?: (selection: ImportSourceSelection) => void;
   mode?: "files" | "folder";
   initialPath?: string | null;
@@ -1318,8 +1320,14 @@ export function ImportFilesystemPickerModal({
   return (
     <ImportModalShell
       opened={opened}
-      onClose={onClose}
-      closeDisabled={loading || searchDialogOpen}
+      onClose={() => {
+        if (loading && onCancelLoading) {
+          onCancelLoading();
+        } else {
+          onClose();
+        }
+      }}
+      closeDisabled={(loading && !onCancelLoading) || searchDialogOpen}
       escapeDisabled={searchPopupOpen}
       title={mode === "folder" ? folderPurpose === "search" ? "Add search location" : "Choose a folder" : "Load cell files"}
       step={mode === "files" ? 1 : undefined}
@@ -1336,7 +1344,17 @@ export function ImportFilesystemPickerModal({
               : `${folderCount} folder${folderCount === 1 ? "" : "s"}${fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}`}
           </Text>
           <ImportModalPrimaryActions>
-            <Button variant="default" disabled={loading} onClick={onClose}>
+            <Button
+              variant="default"
+              disabled={loading && !onCancelLoading}
+              onClick={() => {
+                if (loading && onCancelLoading) {
+                  onCancelLoading();
+                } else {
+                  onClose();
+                }
+              }}
+            >
               Cancel
             </Button>
             {mode === "folder" ? (

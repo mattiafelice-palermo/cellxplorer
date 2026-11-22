@@ -319,14 +319,14 @@ export function SettingsPage() {
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [monitorForm, setMonitorForm] = useState<SourceMonitoringSettings>({
-    enabled: false,
+    enabled: true,
     schedule_mode: "interval",
     interval_value: 6,
     interval_unit: "hours",
     scheduled_every_value: 1,
     scheduled_every_unit: "days",
     daily_time: "02:00",
-    auto_update: false,
+    auto_update: true,
     scan_batch_size: 100,
     stability_value: 5,
     stability_unit: "seconds",

@@ -2097,7 +2097,7 @@ export interface BackgroundJob {
   kind: "capacity_summary" | "source_check" | "import_cache" | "import_register" | string;
   title: string;
   description: string;
-  status: "running" | "paused" | "completed" | "failed";
+  status: "running" | "paused" | "completed" | "failed" | "cancelled";
   registration_committed?: boolean;
   created_cell_ids?: number[];
   cache_handoff_complete?: boolean;

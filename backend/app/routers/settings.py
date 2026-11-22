@@ -68,14 +68,14 @@ class DownloadSettings(BaseModel):
 
 
 class SourceMonitoringSettings(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     schedule_mode: Literal["interval", "scheduled"] = "interval"
     interval_value: int = 6
     interval_unit: Literal["minutes", "hours", "days"] = "hours"
     scheduled_every_value: int = 1
     scheduled_every_unit: Literal["days", "weeks"] = "days"
     daily_time: str = "02:00"
-    auto_update: bool = False
+    auto_update: bool = True
     scan_batch_size: int = 100
     stability_value: int = 5
     stability_unit: Literal["seconds", "minutes"] = "seconds"

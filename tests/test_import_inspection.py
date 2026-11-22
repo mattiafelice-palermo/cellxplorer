@@ -269,6 +269,67 @@ class ImportInspectionTests(unittest.TestCase):
         snapshot = import_inspection.ImportIdentitySnapshot({"archived": candidate}, (candidate,))
         self.assertIsNone(import_inspection.match_import(snapshot, "archived", "old.ndax", {}))
 
+    def test_assert_source_fingerprint_without_verify_hash_uses_single_stat(self):
+        path = Path("C:/data/cell.ndax")
+        fingerprint = import_inspection.parsing.SourceFingerprint("abc", 100, 12345)
+        ok_stat = SimpleNamespace(st_mode=stat.S_IFREG, st_size=100, st_mtime_ns=12345)
+        with patch.object(Path, "stat", return_value=ok_stat) as stat_mock:
+            import_inspection.parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
+        self.assertEqual(stat_mock.call_count, 1)
+
+    def test_inspect_files_network_io_uses_threaded_strategy_without_worker_sleep(self):
+        paths = [f"file-{index}.ndax" for index in range(10)]
+        phases = []
+
+        def fake_inspect(path: str, *, is_cancelled=None):
+            index = int(Path(path).stem.split("-")[1])
+            return import_inspection.FileInspection(path, Path(path).name, index + 1, index + 1, "ndax", str(index), {})
+
+        with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect), \
+            patch.object(import_inspection.time, "sleep") as sleep:
+            result = import_inspection.inspect_files(
+                paths,
+                on_phase=phases.append,
+                network_io=True,
+            )
+
+        self.assertEqual([item.path for item in result], paths)
+        self.assertEqual(sleep.call_count, 0)
+        self.assertFalse(any(event["phase"] == "starting_workers" for event in phases))
+        reading_events = [event for event in phases if event["phase"] == "reading"]
+        self.assertEqual(reading_events[-1]["strategy"], "threaded")
+        self.assertEqual(reading_events[-1]["worker_count"], 8)
+
+    def test_inspect_files_cancellation_stops_remaining_work_and_hashing(self):
+        with TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.ndax"
+            second = Path(tmp) / "second.ndax"
+            first.write_bytes(b"first-content")
+            second.write_bytes(b"second-content")
+            cancelled = False
+            calls = []
+
+            def fake_inspect(path: str, *, is_cancelled=None):
+                nonlocal cancelled
+                calls.append(path)
+                if len(calls) == 1:
+                    cancelled = True
+                    return import_inspection.FileInspection(path, Path(path).name, 10, 1, "ndax", "h1", {})
+                if is_cancelled is not None and is_cancelled():
+                    raise import_inspection.ImportInspectionCancelled("cancelled")
+                return import_inspection.FileInspection(path, Path(path).name, 10, 1, "ndax", "h2", {})
+
+            with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect):
+                with self.assertRaises(import_inspection.ImportInspectionCancelled):
+                    import_inspection.inspect_files(
+                        [str(first), str(second)],
+                        is_cancelled=lambda: cancelled,
+                    )
+            self.assertEqual(calls, [str(first)])
+
+            with self.assertRaises(import_inspection.parsing.SourceReadCancelled):
+                import_inspection.parsing.compute_hash(first, cancel_check=lambda: True)
+
 
 if __name__ == "__main__":
     unittest.main()

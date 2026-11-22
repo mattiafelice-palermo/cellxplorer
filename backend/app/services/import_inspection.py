@@ -10,9 +10,9 @@ import time
 from time import perf_counter
 from typing import Callable
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
-from ..models import SourceFile, Test, TestFile
+from ..models import Cell, SourceFile, Test, TestFile
 from .lazy_module import LazyModule
 from .process_priority import process_pool_executor
 
@@ -39,6 +39,10 @@ class SourceInspectionRejection(ValueError):
     def __init__(self, message: str, *, kind: str | None = None):
         super().__init__(message)
         self.kind = kind
+
+
+class ImportInspectionCancelled(Exception):
+    """Raised when an active import inspection batch is cancelled."""
 
 
 def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata: dict) -> None:
@@ -79,7 +83,7 @@ def inspection_estimate_seconds(
     if path_count <= 0:
         return 0.0
     sample = max(0.05, float(sample_seconds))
-    if strategy == "multiprocessing":
+    if strategy in {"multiprocessing", "threaded"}:
         remaining = max(0, path_count - 1)
         return sample + (remaining * sample / max(1, worker_count))
     return sample * path_count
@@ -133,35 +137,69 @@ class FileInspectionOutcome:
 
 
 def build_identity_snapshot(db: Session) -> ImportIdentitySnapshot:
-    """Load all identity data once, with relationships eager-loaded."""
+    """Load identity scalar columns once without deserializing header_meta JSON."""
     rows = (
-        db.query(SourceFile)
-        .options(joinedload(SourceFile.test_link).joinedload(TestFile.test).joinedload(Test.cell))
+        db.query(
+            SourceFile.id,
+            SourceFile.hash,
+            SourceFile.filename,
+            SourceFile.barcode,
+            SourceFile.channel,
+            SourceFile.start_time,
+            SourceFile.remarks,
+            SourceFile.path,
+            SourceFile.location_status,
+            SourceFile.parse_status,
+            Test.id,
+            Test.name,
+            Cell.id,
+            Cell.name,
+            Cell.archived,
+        )
+        .outerjoin(TestFile, TestFile.file_id == SourceFile.id)
+        .outerjoin(Test, Test.id == TestFile.test_id)
+        .outerjoin(Cell, Cell.id == Test.cell_id)
         .all()
     )
     candidates: list[ImportMatchCandidate] = []
-    for sf in rows:
-        link = sf.test_link
-        test = link.test if link is not None else None
-        cell = test.cell if test is not None else None
+    for (
+        source_file_id,
+        file_hash,
+        filename,
+        barcode,
+        channel,
+        start_time,
+        remarks,
+        path,
+        location_status,
+        parse_status,
+        test_id,
+        test_name,
+        cell_id,
+        cell_name,
+        cell_archived,
+    ) in rows:
+        has_test = test_id is not None
+        has_cell = cell_id is not None
+        archived = has_cell and bool(cell_archived)
         candidates.append(
             ImportMatchCandidate(
-                source_file_id=sf.id,
-                hash=sf.hash,
-                filename=sf.filename,
-                barcode=sf.barcode,
-                channel=sf.channel,
-                start_time=sf.start_time,
-                remarks=sf.remarks,
-                registered=link is not None and cell is not None and not cell.archived,
-                archived=cell is not None and cell.archived,
-                cell_id=test.cell_id if test is not None else None,
-                cell_name=cell.name if cell is not None else None,
-                test_id=test.id if test is not None else None,
-                test_name=test.name if test is not None else None,
-                path=sf.path,
-                location_status=sf.location_status,
-                parse_status=sf.parse_status,
+                source_file_id=int(source_file_id),
+                hash=file_hash,
+                filename=filename,
+                barcode=barcode,
+                channel=channel,
+                start_time=start_time,
+                remarks=remarks,
+                registered=has_test and has_cell and not archived,
+                archived=archived,
+                cell_id=int(cell_id) if has_test and has_cell else None,
+                cell_name=cell_name if has_cell else None,
+                test_id=int(test_id) if has_test else None,
+                test_name=test_name if has_test else None,
+                path=path,
+                location_status=location_status,
+                parse_status=parse_status,
             )
         )
     return ImportIdentitySnapshot(
@@ -224,8 +262,15 @@ def match_import(snapshot: ImportIdentitySnapshot, file_hash: str, filename: str
     return _payload(item, "possible_update", matched_on)
 
 
-def inspect_file(path_string: str, *, read_mode: str = "safe") -> FileInspection:
+def inspect_file(
+    path_string: str,
+    *,
+    read_mode: str = "safe",
+    is_cancelled: Callable[[], bool] | None = None,
+) -> FileInspection:
     """Inspect one file using filesystem/parser work only; no DB/session."""
+    if is_cancelled is not None and is_cancelled():
+        raise ImportInspectionCancelled("Import inspection cancelled.")
     path = Path(path_string)
     filename = path.name
     if not parsing.source_filename_allowed(filename):
@@ -233,7 +278,13 @@ def inspect_file(path_string: str, *, read_mode: str = "safe") -> FileInspection
             f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {filename}"
         )
     try:
-        fingerprint = parsing.capture_source_fingerprint(path)
+        fingerprint = (
+            parsing.capture_source_fingerprint(path, cancel_check=is_cancelled)
+            if is_cancelled is not None
+            else parsing.capture_source_fingerprint(path)
+        )
+    except parsing.SourceReadCancelled as exc:
+        raise ImportInspectionCancelled("Import inspection cancelled.") from exc
     except parsing.SourceIdentityError as exc:
         if "changed" in str(exc).casefold():
             raise SourceInspectionRejection(
@@ -242,7 +293,11 @@ def inspect_file(path_string: str, *, read_mode: str = "safe") -> FileInspection
         raise SourceInspectionRejection(
             f"Could not establish a stable source identity: {filename}"
         ) from exc
+    if is_cancelled is not None and is_cancelled():
+        raise ImportInspectionCancelled("Import inspection cancelled.")
     metadata = parsing.metadata_for_read_mode(path, parsing.read_header_metadata(path), read_mode)
+    if is_cancelled is not None and is_cancelled():
+        raise ImportInspectionCancelled("Import inspection cancelled.")
     try:
         parsing.ensure_supported_source_metadata(path, metadata)
     except ValueError as exc:
@@ -268,13 +323,23 @@ def inspect_file(path_string: str, *, read_mode: str = "safe") -> FileInspection
     )
 
 
-def _inspect_file_outcome(path_string: str, read_mode: str = "safe") -> FileInspectionOutcome:
+def _inspect_file_outcome(
+    path_string: str,
+    read_mode: str = "safe",
+    is_cancelled: Callable[[], bool] | None = None,
+) -> FileInspectionOutcome:
     """Convert source-level inspection errors into a picklable batch outcome."""
 
     try:
+        kwargs: dict = {}
+        if read_mode != "safe":
+            kwargs["read_mode"] = read_mode
+        if is_cancelled is not None:
+            kwargs["is_cancelled"] = is_cancelled
+        inspection = inspect_file(path_string, **kwargs)
         return FileInspectionOutcome(
             path=path_string,
-            inspection=inspect_file(path_string, read_mode=read_mode) if read_mode != "safe" else inspect_file(path_string),
+            inspection=inspection,
             error=None,
         )
     except SourceInspectionRejection as exc:
@@ -287,13 +352,29 @@ def _inspect_file_outcome(path_string: str, read_mode: str = "safe") -> FileInsp
         )
 
 
+def _shutdown_executor_cancelled(executor: object) -> None:
+    if isinstance(executor, ProcessPoolExecutor):
+        for process in list((getattr(executor, "_processes", None) or {}).values()):
+            try:
+                process.terminate()
+            except Exception:
+                pass
+    try:
+        executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[attr-defined]
+    except TypeError:
+        executor.shutdown(wait=False)  # type: ignore[attr-defined]
+
+
 def inspect_files(
     paths: list[str],
     *,
     read_mode: str = "safe",
     on_completed: Callable[[str], None] | None = None,
+    on_outcome: Callable[[FileInspectionOutcome], None] | None = None,
     on_phase: Callable[[dict], None] | None = None,
     executor_cls: type | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    network_io: bool = False,
 ) -> list[FileInspectionOutcome]:
     """Inspect paths with an adaptive strategy, restoring input order before returning.
 
@@ -306,10 +387,21 @@ def inspect_files(
     if not paths:
         return []
 
+    def check_cancelled() -> None:
+        if is_cancelled is not None and is_cancelled():
+            raise ImportInspectionCancelled("Import inspection cancelled.")
+
+    check_cancelled()
+
     total = len(paths)
     results: list[FileInspectionOutcome | None] = [None] * len(paths)
-    strategy = inspection_strategy(total)
-    worker_count = inspection_worker_count(total) if strategy == "multiprocessing" else 1
+    use_network_threads = network_io and executor_cls is None and total > 1
+    if use_network_threads:
+        strategy = "threaded"
+        worker_count = min(8, total)
+    else:
+        strategy = inspection_strategy(total)
+        worker_count = inspection_worker_count(total) if strategy == "multiprocessing" else 1
 
     def emit_phase(**values: object) -> None:
         if on_phase is not None:
@@ -333,11 +425,14 @@ def inspect_files(
         progress_percent=0.0,
     )
     sample_started = perf_counter()
-    sampled = _inspect_file_outcome(paths[0], read_mode)
+    sampled = _inspect_file_outcome(paths[0], read_mode, is_cancelled)
     sample_seconds = perf_counter() - sample_started
     results[0] = sampled
+    if on_outcome is not None:
+        on_outcome(sampled)
     if on_completed is not None:
         on_completed(paths[0])
+    check_cancelled()
     estimate_seconds = inspection_estimate_seconds(
         sample_seconds,
         total,
@@ -381,6 +476,7 @@ def inspect_files(
         # This short, truthful phase gives the client a visible state while Windows starts the
         # bounded worker pool. It is deliberately skipped for serial batches.
         for core in range(1, worker_count + 1):
+            check_cancelled()
             emit_phase(
                 phase="starting_workers",
                 phase_current=core,
@@ -426,6 +522,8 @@ def inspect_files(
                 inspected.metadata,
             )
         results[index] = outcome
+        if on_outcome is not None:
+            on_outcome(outcome)
         if on_completed is not None:
             on_completed(paths[index])
         completed = sum(result is not None for result in results)
@@ -446,28 +544,43 @@ def inspect_files(
 
     if strategy == "serial" and executor_cls is None:
         for index, path in enumerate(remaining, start=1):
-            store_result(index, _inspect_file_outcome(path, read_mode))
+            check_cancelled()
+            store_result(index, _inspect_file_outcome(path, read_mode, is_cancelled))
     else:
-        executor = (
-            process_pool_executor(worker_count)
-            if executor_cls is None or executor_cls is ProcessPoolExecutor
-            else executor_cls(max_workers=worker_count)
-        )
-        with executor:
-            futures: dict[Future[FileInspectionOutcome], int] = {
-                executor.submit(_inspect_file_outcome, path, read_mode): index
-                for index, path in enumerate(remaining, start=1)
-            }
-            try:
-                for future in as_completed(futures):
-                    index = futures[future]
-                    # Source-level errors are converted by the top-level
-                    # wrapper. Exceptions from the executor itself (for
-                    # example a broken process pool) must propagate so the
-                    # job is not falsely reported as a successful inspection.
-                    store_result(index, future.result())
-            except Exception:
-                for future in futures:
-                    future.cancel()
-                raise
+        if use_network_threads:
+            executor = ThreadPoolExecutor(max_workers=worker_count)
+            pass_cancel = is_cancelled
+        elif executor_cls is None or executor_cls is ProcessPoolExecutor:
+            executor = process_pool_executor(worker_count)
+            pass_cancel = None
+        else:
+            executor = executor_cls(max_workers=worker_count)
+            pass_cancel = is_cancelled if not isinstance(executor, ProcessPoolExecutor) else None
+        futures: dict[Future[FileInspectionOutcome], int] = {
+            executor.submit(_inspect_file_outcome, path, read_mode, pass_cancel): index
+            for index, path in enumerate(remaining, start=1)
+        }
+        shut_down = False
+        try:
+            for future in as_completed(futures):
+                check_cancelled()
+                index = futures[future]
+                # Source-level errors are converted by the top-level
+                # wrapper. Exceptions from the executor itself (for
+                # example a broken process pool) must propagate so the
+                # job is not falsely reported as a successful inspection.
+                store_result(index, future.result())
+        except Exception as exc:
+            for future in futures:
+                future.cancel()
+            if isinstance(exc, ImportInspectionCancelled):
+                _shutdown_executor_cancelled(executor)
+                shut_down = True
+            else:
+                executor.shutdown(wait=True)
+                shut_down = True
+            raise
+        finally:
+            if not shut_down:
+                executor.shutdown(wait=True)
     return [result for result in results if result is not None]

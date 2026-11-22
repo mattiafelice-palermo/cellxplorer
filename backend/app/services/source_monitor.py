@@ -21,7 +21,7 @@ LAST_FINISHED_KEY = "source_monitor_last_finished_at"
 LAST_STATUS_KEY = "source_monitor_last_status"
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "enabled": False,
+    "enabled": True,
     # "interval" = every N minutes/hours/days from the last run.
     # "scheduled" = every N days/weeks at a fixed wall-clock time.
     "schedule_mode": "interval",
@@ -30,7 +30,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "scheduled_every_value": 1,
     "scheduled_every_unit": "days",
     "daily_time": "02:00",
-    "auto_update": False,
+    "auto_update": True,
     "scan_batch_size": 100,
     "stability_value": 5,
     "stability_unit": "seconds",

@@ -8,11 +8,12 @@ import threading
 import uuid
 import json
 import hashlib
+import time
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 from ..services import import_inspection
@@ -1695,6 +1696,7 @@ class ImportPathInspectRequest(BaseModel):
     read_mode: Literal["safe", "permissive"] = "safe"
     paths: list[str]
     job_token: str | None = Field(default=None, max_length=100)
+    known_sizes: dict[str, int] | None = None
 
 
 class ImportHeaderHintsRequest(BaseModel):
@@ -2031,38 +2033,72 @@ def browse_import_directory(path: str | None = None, db: Session | None = None) 
     }
 
 
-def list_import_folder_files(root: Path, *, defer_header_recognition: bool = False) -> dict:
-    root = root.expanduser().resolve()
-    if not root.is_dir():
-        raise HTTPException(400, f"Not a directory: {root}")
-    files: list[dict] = []
+class ImportOperationCancelled(Exception):
+    """Raised when an active import scan or screening operation is cancelled."""
 
+
+def _normalize_import_folder_path(raw_folder: str | Path) -> Path:
+    expanded = Path(raw_folder).expanduser()
+    if _is_likely_network_path(expanded):
+        return Path(os.path.abspath(str(expanded)))
+    return expanded.resolve()
+
+
+def _shutdown_pool_cancelled(pool: object) -> None:
+    if isinstance(pool, ProcessPoolExecutor):
+        for process in list((getattr(pool, "_processes", None) or {}).values()):
+            try:
+                process.terminate()
+            except Exception:
+                pass
+    try:
+        pool.shutdown(wait=False, cancel_futures=True)  # type: ignore[attr-defined]
+    except TypeError:
+        pool.shutdown(wait=False)  # type: ignore[attr-defined]
+
+
+def list_import_folder_files(
+    root: Path,
+    *,
+    defer_header_recognition: bool = False,
+    normalized_root: bool = False,
+    max_subdir_workers: int = 8,
+    is_cancelled: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> dict:
+    if not normalized_root:
+        root = _normalize_import_folder_path(root)
     root_path = str(root)
-    root_name = root.name or str(root)
+    root_name = root.name or root_path
     accept_file = parsing.source_filename_allowed if defer_header_recognition else parsing.discoverable_source_path
 
-    def visit(directory: str, relative_directory: Path) -> None:
+    def check_cancelled() -> None:
+        if is_cancelled is not None and is_cancelled():
+            raise ImportOperationCancelled("Import scan cancelled.")
+
+    def scan_directory(directory: str, relative_directory: Path) -> tuple[tuple[tuple[str, str], ...], list[tuple[str, Path]], list[dict], int]:
+        check_cancelled()
         directories: list[os.DirEntry[str]] = []
         filenames: list[os.DirEntry[str]] = []
-        try:
-            with os.scandir(directory) as scan:
-                for entry in scan:
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            directories.append(entry)
-                        elif entry.is_file(follow_symlinks=False) and accept_file(entry.path):
-                            filenames.append(entry)
-                    except OSError:
-                        continue
-        except OSError:
-            return
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        directories.append(entry)
+                    elif entry.is_file(follow_symlinks=False) and accept_file(entry.path):
+                        filenames.append(entry)
+                except OSError:
+                    continue
 
+        dir_files: list[dict] = []
+        dir_bytes = 0
         for entry in sorted(filenames, key=lambda item: item.name.casefold()):
             try:
                 stat = entry.stat(follow_symlinks=False)
             except OSError:
                 continue
-            files.append(
+            dir_bytes += stat.st_size
+            dir_files.append(
                 {
                     "path": entry.path,
                     "relative_path": (relative_directory / entry.name).as_posix(),
@@ -2075,11 +2111,92 @@ def list_import_folder_files(root: Path, *, defer_header_recognition: bool = Fal
                     },
                 }
             )
+        subdirectories = [
+            (entry.path, relative_directory / entry.name)
+            for entry in sorted(directories, key=lambda item: item.name.casefold())
+        ]
+        sort_key = tuple((part.casefold(), part) for part in relative_directory.parts)
+        return sort_key, subdirectories, dir_files, dir_bytes
 
-        for entry in sorted(directories, key=lambda item: item.name.casefold()):
-            visit(entry.path, relative_directory / entry.name)
+    def scan_subdir_safe(directory: str, relative_directory: Path) -> tuple[tuple[tuple[str, str], ...], list[tuple[str, Path]], list[dict], int]:
+        try:
+            return scan_directory(directory, relative_directory)
+        except OSError:
+            sort_key = tuple((part.casefold(), part) for part in relative_directory.parts)
+            return sort_key, [], [], 0
 
-    visit(root_path, Path())
+    try:
+        root_key, root_subdirs, root_files, root_bytes = scan_directory(root_path, Path())
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(400, f"Not a directory: {root}") from exc
+    except OSError as exc:
+        if not root.is_dir():
+            raise HTTPException(400, f"Not a directory: {root}") from exc
+        return {
+            "root_path": root_path,
+            "root_name": root_name,
+            "files": [],
+        }
+
+    if on_progress is not None and (root_files or root_bytes):
+        on_progress(len(root_files), root_bytes)
+
+    if not root_subdirs:
+        return {
+            "root_path": root_path,
+            "root_name": root_name,
+            "files": root_files,
+        }
+
+    dir_results: list[tuple[tuple[tuple[str, str], ...], list[dict]]] = [(root_key, root_files)]
+    if max_subdir_workers <= 1:
+        stack = list(reversed(root_subdirs))
+        while stack:
+            subdir_path, relative_subdir = stack.pop()
+            sort_key, children, dir_files, dir_bytes = scan_subdir_safe(subdir_path, relative_subdir)
+            if dir_files:
+                dir_results.append((sort_key, dir_files))
+                if on_progress is not None:
+                    on_progress(len(dir_files), dir_bytes)
+            for child in reversed(children):
+                stack.append(child)
+    else:
+        pool = ThreadPoolExecutor(max_workers=max_subdir_workers)
+        pending: set[Future[tuple[tuple[tuple[str, str], ...], list[tuple[str, Path]], list[dict], int]]] = {
+            pool.submit(scan_subdir_safe, subdir_path, relative_subdir)
+            for subdir_path, relative_subdir in root_subdirs
+        }
+        shut_down = False
+        try:
+            while pending:
+                check_cancelled()
+                done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
+                check_cancelled()
+                for future in done:
+                    sort_key, children, dir_files, dir_bytes = future.result()
+                    if dir_files:
+                        dir_results.append((sort_key, dir_files))
+                        if on_progress is not None:
+                            on_progress(len(dir_files), dir_bytes)
+                    for child_path, child_rel in children:
+                        pending.add(pool.submit(scan_subdir_safe, child_path, child_rel))
+        except Exception as exc:
+            for future in pending:
+                future.cancel()
+            if isinstance(exc, ImportOperationCancelled):
+                _shutdown_pool_cancelled(pool)
+                shut_down = True
+            else:
+                pool.shutdown(wait=True)
+                shut_down = True
+            raise
+        finally:
+            if not shut_down:
+                pool.shutdown(wait=True)
+
+    files: list[dict] = []
+    for _, dir_files in sorted(dir_results, key=lambda entry: entry[0]):
+        files.extend(dir_files)
     return {
         "root_path": root_path,
         "root_name": root_name,
@@ -2152,6 +2269,7 @@ def _run_screen_hint_pool(
     pre_kept_count: int,
     pre_skipped_count: int,
     use_process_pool: bool,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict[int, tuple[dict | None, dict | None]]:
     outcomes: dict[int, tuple[dict | None, dict | None]] = {}
     worker_count = import_file_hints.screening_worker_count(
@@ -2166,36 +2284,57 @@ def _run_screen_hint_pool(
     checked = 0
     kept_screened = 0
     skipped_screened = 0
-    with pool:
-        future_map = {
-            pool.submit(import_file_hints.screen_source_candidate, str(item["path"])): (index, item)
-            for index, item in to_screen
-        }
-        for future in as_completed(future_map):
-            index, item = future_map[future]
-            try:
-                hint = future.result()
-            except Exception:
-                hint = {}
-            kept_item, skipped_item = _classify_screened_hint(item, hint)
-            outcomes[index] = (kept_item, skipped_item)
-            checked += 1
-            if kept_item is not None:
-                kept_screened += 1
-            else:
-                skipped_screened += 1
-            if job_id is not None:
-                kept_total = pre_kept_count + kept_screened
-                skipped_total = pre_skipped_count + skipped_screened
-                background_jobs.update_job(
-                    job_id,
-                    phase="screening",
-                    phase_current=checked,
-                    phase_total=len(to_screen),
-                    progress_percent=min(99, int(checked * 100 / len(to_screen))),
-                    phase_detail=f"{kept_total} supported · {skipped_total} skipped",
-                    current_item_label=str(item.get("filename") or ""),
-                )
+    future_map = {
+        pool.submit(import_file_hints.screen_source_candidate, str(item["path"])): (index, item)
+        for index, item in to_screen
+    }
+    pending = set(future_map)
+    shut_down = False
+    try:
+        while pending:
+            if is_cancelled is not None and is_cancelled():
+                raise ImportOperationCancelled("Import scan cancelled.")
+            done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
+            if is_cancelled is not None and is_cancelled():
+                raise ImportOperationCancelled("Import scan cancelled.")
+            for future in done:
+                index, item = future_map[future]
+                try:
+                    hint = future.result()
+                except Exception:
+                    hint = {}
+                kept_item, skipped_item = _classify_screened_hint(item, hint)
+                outcomes[index] = (kept_item, skipped_item)
+                checked += 1
+                if kept_item is not None:
+                    kept_screened += 1
+                else:
+                    skipped_screened += 1
+                if job_id is not None:
+                    kept_total = pre_kept_count + kept_screened
+                    skipped_total = pre_skipped_count + skipped_screened
+                    background_jobs.update_job(
+                        job_id,
+                        phase="screening",
+                        phase_current=checked,
+                        phase_total=len(to_screen),
+                        progress_percent=min(99, int(checked * 100 / len(to_screen))),
+                        phase_detail=f"{kept_total} supported · {skipped_total} skipped",
+                        current_item_label=str(item.get("filename") or ""),
+                    )
+    except Exception as exc:
+        for future in pending:
+            future.cancel()
+        if isinstance(exc, ImportOperationCancelled):
+            _shutdown_pool_cancelled(pool)
+            shut_down = True
+        else:
+            pool.shutdown(wait=True)
+            shut_down = True
+        raise
+    finally:
+        if not shut_down:
+            pool.shutdown(wait=True)
     return outcomes
 
 
@@ -2204,6 +2343,7 @@ def _screen_import_source_candidates(
     *,
     db: Session | None = None,
     job_id: int | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> tuple[list[dict], dict]:
     """Screen discovered folder files upfront using cheap DB and header checks."""
     if not files:
@@ -2272,6 +2412,8 @@ def _screen_import_source_candidates(
         results[index] = (dict(item), None)
 
     if to_screen:
+        if is_cancelled is not None and is_cancelled():
+            raise ImportOperationCancelled("Import scan cancelled.")
         pre_skipped_count = registered_count + pre_unsupported_count
         if job_id is not None:
             background_jobs.update_job(
@@ -2283,9 +2425,15 @@ def _screen_import_source_candidates(
                 phase_detail=f"{pre_kept_count} supported · {pre_skipped_count} skipped",
                 current_item_label=f"Checking {len(to_screen)} files for compatibility",
             )
+        has_network = any(
+            _is_likely_network_path(Path(str(item["path"])))
+            for _, item in to_screen
+            if item.get("path")
+        )
         use_process_pool = (
             len(to_screen) >= import_file_hints.SCREEN_PROCESS_POOL_THRESHOLD
             and (os.cpu_count() or 1) >= 2
+            and not has_network
         )
         try:
             screened = _run_screen_hint_pool(
@@ -2294,6 +2442,7 @@ def _screen_import_source_candidates(
                 pre_kept_count=pre_kept_count,
                 pre_skipped_count=pre_skipped_count,
                 use_process_pool=use_process_pool,
+                is_cancelled=is_cancelled,
             )
         except (OSError, RuntimeError, PermissionError):
             if not use_process_pool:
@@ -2304,6 +2453,7 @@ def _screen_import_source_candidates(
                 pre_kept_count=pre_kept_count,
                 pre_skipped_count=pre_skipped_count,
                 use_process_pool=False,
+                is_cancelled=is_cancelled,
             )
         for index, outcome in screened.items():
             results[index] = outcome
@@ -2336,13 +2486,16 @@ def list_import_sources(
     job_id: int | None = None,
     db: Session | None = None,
     screen_sources: bool = False,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict:
     files: list[dict] = []
     seen: set[str] = set()
-    loose_paths = [Path(path).expanduser().resolve() for path in file_paths]
+    loose_paths = [_normalize_import_folder_path(path) for path in file_paths]
     discovered_files = 0
     total_bytes = 0
     for path in loose_paths:
+        if is_cancelled is not None and is_cancelled():
+            raise ImportOperationCancelled("Import scan cancelled.")
         if job_id is not None:
             background_jobs.update_job(
                 job_id,
@@ -2386,57 +2539,122 @@ def list_import_sources(
         )
         background_jobs.update_job(job_id, discovered_files=discovered_files, total_bytes=total_bytes)
 
-    folder_results: list[tuple[Path, dict] | None] = [None] * len(folder_paths)
-    folder_futures = {}
-    with ThreadPoolExecutor(max_workers=min(2, max(1, len(folder_paths)))) as executor:
-        for index, raw_folder in enumerate(folder_paths):
-            folder = Path(raw_folder).expanduser().resolve()
-            future = executor.submit(list_import_folder_files, folder, defer_header_recognition=screen_sources)
-            folder_futures[future] = index
-        for future in as_completed(folder_futures):
-            index = folder_futures[future]
-            folder = Path(folder_paths[index]).expanduser().resolve()
-            listing = future.result()
-            folder_results[index] = (folder, listing)
-            if job_id is not None:
-                root_count = len(listing["files"])
-                background_jobs.record_result(
-                    job_id,
-                    str(folder),
-                    status="ready",
-                    detail=f"Discovered {root_count} file{'s' if root_count != 1 else ''}",
-                )
+    if folder_paths:
+        if is_cancelled is not None and is_cancelled():
+            raise ImportOperationCancelled("Import scan cancelled.")
+        folder_results: list[dict | None] = [None] * len(folder_paths)
+        root_workers = min(8, max(1, len(folder_paths)))
+        subdir_workers = max(1, 8 // root_workers)
+        live_lock = threading.Lock()
+        live_discovered = discovered_files
+        live_bytes = total_bytes
+        last_emit = 0.0
 
-    for result in folder_results:
-        if result is None:
-            continue
-        folder, listing = result
-        root_id = str(folder)
-        root_discovered = 0
-        root_bytes = 0
-        for item in listing["files"]:
-            path = Path(item["path"])
-            key = os.path.normcase(str(path))
-            if key in seen:
-                continue
-            seen.add(key)
-            root_discovered += 1
-            root_bytes += int(item["size"] or 0)
-            files.append(
-                {
-                    **item,
-                }
+        def on_subdir_progress(delta_count: int, delta_bytes: int) -> None:
+            nonlocal live_discovered, live_bytes, last_emit
+            if job_id is None:
+                return
+            with live_lock:
+                live_discovered += delta_count
+                live_bytes += delta_bytes
+                now = time.monotonic()
+                if now - last_emit < 0.15:
+                    return
+                last_emit = now
+                snapshot_count = live_discovered
+                snapshot_bytes = live_bytes
+            background_jobs.update_job(
+                job_id,
+                discovered_files=snapshot_count,
+                total_bytes=snapshot_bytes,
             )
-        discovered_files += root_discovered
-        total_bytes += root_bytes
+
+        def scan_root_task(raw_folder: str) -> dict:
+            folder = _normalize_import_folder_path(raw_folder)
+            return list_import_folder_files(
+                folder,
+                defer_header_recognition=screen_sources,
+                normalized_root=True,
+                max_subdir_workers=subdir_workers,
+                is_cancelled=is_cancelled,
+                on_progress=on_subdir_progress if job_id is not None else None,
+            )
+
+        executor = ThreadPoolExecutor(max_workers=root_workers)
+        folder_futures = {
+            executor.submit(scan_root_task, raw_folder): index
+            for index, raw_folder in enumerate(folder_paths)
+        }
+        pending = set(folder_futures)
+        shut_down = False
+        try:
+            while pending:
+                if is_cancelled is not None and is_cancelled():
+                    raise ImportOperationCancelled("Import scan cancelled.")
+                done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
+                if is_cancelled is not None and is_cancelled():
+                    raise ImportOperationCancelled("Import scan cancelled.")
+                for future in done:
+                    index = folder_futures[future]
+                    listing = future.result()
+                    folder_results[index] = listing
+                    if job_id is not None:
+                        root_count = len(listing["files"])
+                        item_id = str(Path(folder_paths[index]).expanduser())
+                        background_jobs.record_result(
+                            job_id,
+                            item_id,
+                            status="ready",
+                            detail=f"Discovered {root_count} file{'s' if root_count != 1 else ''}",
+                        )
+                        with live_lock:
+                            snapshot_count = live_discovered
+                            snapshot_bytes = live_bytes
+                        background_jobs.update_job(
+                            job_id,
+                            discovered_files=snapshot_count,
+                            total_bytes=snapshot_bytes,
+                        )
+        except Exception as exc:
+            for future in pending:
+                future.cancel()
+            if isinstance(exc, ImportOperationCancelled):
+                _shutdown_pool_cancelled(executor)
+                shut_down = True
+            else:
+                executor.shutdown(wait=True)
+                shut_down = True
+            raise
+        finally:
+            if not shut_down:
+                executor.shutdown(wait=True)
+
+        for listing in folder_results:
+            if listing is None:
+                continue
+            for item in listing["files"]:
+                path = Path(item["path"])
+                key = os.path.normcase(str(path))
+                if key in seen:
+                    continue
+                seen.add(key)
+                discovered_files += 1
+                total_bytes += int(item["size"] or 0)
+                files.append(dict(item))
         if job_id is not None:
             background_jobs.update_job(
                 job_id,
                 discovered_files=discovered_files,
                 total_bytes=total_bytes,
             )
+
     if screen_sources:
-        files, skipped = _screen_import_source_candidates(files, db=db, job_id=job_id)
+        files, skipped = _screen_import_source_candidates(
+            files,
+            db=db,
+            job_id=job_id,
+            is_cancelled=is_cancelled,
+        )
         return {
             "root_path": None,
             "root_name": "Selected sources",
@@ -2483,12 +2701,12 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             {"id": path, "label": Path(path).name or path}
             for path in req.paths
         ]
+        known_sizes = req.known_sizes or {}
         total_bytes = 0
         for path in req.paths:
-            try:
-                total_bytes += max(0, Path(path).stat().st_size)
-            except OSError:
-                pass
+            known = known_sizes.get(path)
+            if isinstance(known, int) and not isinstance(known, bool) and known >= 0:
+                total_bytes += known
         job_id = background_jobs.create_job(
             kind="import_inspect",
             title="Inspecting import files",
@@ -2508,6 +2726,15 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             progress_percent=0.0,
             estimate_scope="total",
         )
+    cancel_check = (
+        (lambda: background_jobs.is_cancelled(job_id=job_id, token=req.job_token))
+        if req.job_token is not None
+        else None
+    )
+    if cancel_check is not None and cancel_check():
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="cancelled")
+        raise HTTPException(499, "Import inspection cancelled.")
     if not req.paths:
         if job_id is not None:
             background_jobs.update_job(
@@ -2519,11 +2746,19 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             )
         return {"files": [], "failures": []}
     previews = []
-    completed_bytes = 0
+    reading_completed_bytes = 0
+    finalizing_bytes = 0
     completion_lock = threading.Lock()
     completed_inspections = 0
     try:
         match_snapshot = import_inspection.build_identity_snapshot(db)
+
+        def report_outcome(outcome: import_inspection.FileInspectionOutcome) -> None:
+            nonlocal reading_completed_bytes
+            if job_id is None or outcome.inspection is None:
+                return
+            with completion_lock:
+                reading_completed_bytes += max(0, int(outcome.inspection.size or 0))
 
         def report_completed(path_string: str) -> None:
             nonlocal completed_inspections
@@ -2531,12 +2766,14 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 with completion_lock:
                     completed_inspections += 1
                     completed = completed_inspections
+                    current_bytes = reading_completed_bytes
                 background_jobs.update_job(
                     job_id,
                     stage="inspect",
                     current_item_id=path_string,
                     current_item_label=Path(path_string).name or path_string,
                     completed=completed,
+                    completed_bytes=current_bytes,
                 )
 
         def report_phase(event: dict) -> None:
@@ -2565,12 +2802,19 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 values["completed"] = values.pop("completed_count")
             background_jobs.update_job(job_id, **values)
 
-        inspections = import_inspection.inspect_files(
-            req.paths,
-            on_completed=report_completed,
-            on_phase=report_phase,
-            **({"read_mode": req.read_mode} if req.read_mode != "safe" else {}),
-        )
+        network_io = any(_is_likely_network_path(Path(path)) for path in req.paths)
+        inspect_kwargs: dict = {
+            "on_completed": report_completed,
+            "on_outcome": report_outcome,
+            "on_phase": report_phase,
+            "is_cancelled": cancel_check,
+            "network_io": network_io,
+        }
+        if req.read_mode != "safe":
+            inspect_kwargs["read_mode"] = req.read_mode
+        inspections = import_inspection.inspect_files(req.paths, **inspect_kwargs)
+        if cancel_check is not None and cancel_check():
+            raise import_inspection.ImportInspectionCancelled("Import inspection cancelled.")
         if job_id is not None:
             background_jobs.update_job(
                 job_id,
@@ -2585,6 +2829,8 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             )
         failures: list[dict[str, str]] = []
         for index, outcome in enumerate(inspections):
+            if cancel_check is not None and cancel_check():
+                raise import_inspection.ImportInspectionCancelled("Import inspection cancelled.")
             path_string = outcome.path
             from ..services import source_readability
 
@@ -2620,7 +2866,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                     read_mode=req.read_mode,
                 )
                 previews.append(preview)
-                completed_bytes += max(0, int(preview.get("size") or 0))
+                finalizing_bytes += max(0, int(preview.get("size") or 0))
                 if job_id is not None:
                     background_jobs.update_item(
                         job_id,
@@ -2631,7 +2877,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             if job_id is not None:
                 background_jobs.update_job(
                     job_id,
-                    completed_bytes=completed_bytes,
+                    completed_bytes=max(reading_completed_bytes, finalizing_bytes),
                     phase="finalizing",
                     phase_current=index + 1,
                     phase_total=len(inspections),
@@ -2651,6 +2897,10 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 progress_percent=100.0,
             )
         return {"files": previews, "failures": failures}
+    except import_inspection.ImportInspectionCancelled as exc:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="cancelled")
+        raise HTTPException(499, str(exc) or "Import inspection cancelled.") from exc
     except ValueError as exc:
         if job_id is not None:
             background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
@@ -4989,17 +5239,29 @@ def list_import_source_paths(req: ImportSourceListRequest, db: Session = Depends
         if req.job_token
         else None
     )
+    cancel_check = (
+        (lambda: background_jobs.is_cancelled(job_id=job_id, token=req.job_token))
+        if req.job_token is not None
+        else None
+    )
     try:
+        if cancel_check is not None and cancel_check():
+            raise ImportOperationCancelled("Import scan cancelled.")
         result = list_import_sources(
             req.file_paths,
             req.folder_paths,
             job_id=job_id,
             db=session,
             screen_sources=req.screen_sources,
+            is_cancelled=cancel_check,
         )
         if job_id is not None:
             background_jobs.update_job(job_id, status="completed", completed=background_jobs.get_job(job_id)["total"])
         return result
+    except ImportOperationCancelled as exc:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="cancelled")
+        raise HTTPException(499, str(exc) or "Import scan cancelled.") from exc
     except Exception as exc:
         if job_id is not None:
             background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))

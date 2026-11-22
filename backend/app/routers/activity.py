@@ -131,6 +131,12 @@ def get_background_job_by_token(token: str, db: Session = Depends(get_db)):
     return durable_import_job_dict(submission) if submission is not None else None
 
 
+@router.post("/background-jobs/by-token/{token}/cancel")
+def cancel_background_job_by_token(token: str):
+    job = background_jobs.cancel_job_by_token(token)
+    return {"cancelled": True, "token": token, "job": job}
+
+
 @router.get("/background-jobs/{job_id}")
 def get_background_job(job_id: int, db: Session = Depends(get_db)):
     job = background_jobs.get_job(job_id)

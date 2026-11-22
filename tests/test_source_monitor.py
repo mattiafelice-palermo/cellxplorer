@@ -961,6 +961,29 @@ class SourceMonitorValidationTests(unittest.TestCase):
             )
         self.assertEqual(caught.exception.status_code, 422)
 
+    def test_automatic_source_checks_and_updates_enabled_by_default_unless_opted_out(self):
+        db = self.make_session()
+        loaded = source_monitor.load_config(db)
+        state = source_monitor.monitoring_state(db)
+        settings = settings_router.get_source_monitor_settings(db=db)
+
+        self.assertTrue(loaded["enabled"])
+        self.assertTrue(loaded["auto_update"])
+        self.assertTrue(state["enabled"])
+        self.assertTrue(state["auto_update"])
+        self.assertTrue(settings["enabled"])
+        self.assertTrue(settings["auto_update"])
+
+        saved = source_monitor.save_config(
+            db,
+            {**loaded, "enabled": False, "auto_update": False},
+        )
+        self.assertFalse(saved["enabled"])
+        self.assertFalse(saved["auto_update"])
+        reloaded = source_monitor.load_config(db)
+        self.assertFalse(reloaded["enabled"])
+        self.assertFalse(reloaded["auto_update"])
+
 
 if __name__ == "__main__":
     unittest.main()

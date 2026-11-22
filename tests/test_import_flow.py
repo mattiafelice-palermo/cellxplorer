@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import Cell, CellMetadata, ImportSubmission, SourceFile, Test, TestFile
+from app.routers import activity
 from app.routers import files
 from app.routers import library
 from app.services import cache, parsing
@@ -693,6 +694,190 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(failed_item["error"], "Unreadable source")
         self.assertEqual(job["status"], "completed")
         background_jobs.clear_jobs()
+
+    def test_concurrent_subfolder_listing_preserves_alphabetical_dfs_order_and_progress(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "2026"
+            (root / "Alpha" / "Sub").mkdir(parents=True)
+            (root / "Beta").mkdir(parents=True)
+            (root / "z_root.nda").write_bytes(b"123")
+            (root / "Alpha" / "b_alpha.nda").write_bytes(b"1234")
+            (root / "Alpha" / "Sub" / "a_sub.nda").write_bytes(b"12345")
+            (root / "Beta" / "c_beta.ndax").write_bytes(b"123456")
+
+            progress_events = []
+            listed = files.list_import_folder_files(
+                root,
+                max_subdir_workers=4,
+                on_progress=lambda count, nbytes: progress_events.append((count, nbytes)),
+            )
+
+        self.assertEqual(
+            [item["relative_path"] for item in listed["files"]],
+            [
+                "z_root.nda",
+                "Alpha/b_alpha.nda",
+                "Alpha/Sub/a_sub.nda",
+                "Beta/c_beta.ndax",
+            ],
+        )
+        self.assertEqual(sum(c for c, _ in progress_events), 4)
+        self.assertEqual(sum(b for _, b in progress_events), 18)
+
+    def test_network_screening_uses_thread_pool_and_supports_job_cancellation(self):
+        background_jobs.clear_jobs()
+        items = [
+            {
+                "path": f"\\\\faraday\\share\\folder\\file_{i:02d}.xlsx",
+                "relative_path": f"file_{i:02d}.xlsx",
+                "filename": f"file_{i:02d}.xlsx",
+            }
+            for i in range(files.import_file_hints.SCREEN_PROCESS_POOL_THRESHOLD + 2)
+        ]
+        with patch("os.cpu_count", return_value=8), \
+             patch.object(files, "process_pool_executor", side_effect=AssertionError("process pool should not spawn for network files")), \
+             patch.object(
+                 files.import_file_hints,
+                 "screen_source_candidate",
+                 side_effect=lambda p: {"path": p, "compatible": True},
+             ):
+            kept, skipped = files._screen_import_source_candidates(items)
+
+        self.assertEqual(len(kept), len(items))
+        self.assertEqual(skipped["unsupported"], 0)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cancel-scan"
+            root.mkdir()
+            for idx in range(5):
+                (root / f"cell_{idx}.nda").write_bytes(b"abc")
+
+            cancel_response = activity.cancel_background_job_by_token("scan-cancel-token")
+            self.assertEqual(cancel_response, {"cancelled": True, "token": "scan-cancel-token", "job": None})
+
+            with self.assertRaises(HTTPException) as ctx:
+                files.list_import_source_paths(
+                    files.ImportSourceListRequest(
+                        folder_paths=[str(root)],
+                        job_token="scan-cancel-token",
+                    )
+                )
+            self.assertEqual(ctx.exception.status_code, 499)
+            job = background_jobs.find_by_token("scan-cancel-token")
+            self.assertEqual(job["status"], "cancelled")
+        background_jobs.clear_jobs()
+
+    def test_inspect_import_paths_uses_known_sizes_without_pre_job_stat_and_cancels(self):
+        background_jobs.clear_jobs()
+        inspected = import_inspection.FileInspection(
+            path="C:/data/x.ndax",
+            filename="x.ndax",
+            size=4096,
+            mtime_ns=1,
+            ext="ndax",
+            hash="hash",
+            metadata={},
+        )
+        preview = {"staged_name": "x", "size": 4096, "filename": "x.ndax"}
+        real_create_job = background_jobs.create_job
+        stat_calls_before_create: list[bool] = []
+        job_created = False
+
+        def tracked_stat(self, *args, **kwargs):
+            if not job_created:
+                stat_calls_before_create.append(True)
+            raise OSError("unexpected stat")
+
+        def tracked_create_job(*args, **kwargs):
+            nonlocal job_created
+            job_created = True
+            return real_create_job(*args, **kwargs)
+
+        with patch.object(Path, "stat", tracked_stat), \
+            patch.object(files.background_jobs, "create_job", side_effect=tracked_create_job), \
+            patch.object(files.import_inspection, "build_identity_snapshot", return_value=Mock()), \
+            patch.object(
+                files.import_inspection,
+                "inspect_files",
+                return_value=[import_inspection.FileInspectionOutcome(path="C:/data/x.ndax", inspection=inspected, error=None)],
+            ), \
+            patch.object(files, "_inspect_import_path", return_value=preview):
+            files.inspect_import_paths(
+                files.ImportPathInspectRequest(
+                    paths=["C:/data/x.ndax"],
+                    job_token="known-size-test",
+                    known_sizes={"C:/data/x.ndax": 4096},
+                ),
+                db=Mock(),
+            )
+        self.assertEqual(stat_calls_before_create, [])
+        job = background_jobs.find_by_token("known-size-test")
+        self.assertEqual(job["total_bytes"], 4096)
+
+        with TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.ndax"
+            first.write_bytes(b"first")
+
+            def cancel_during_inspect(*args, **kwargs):
+                activity.cancel_background_job_by_token("inspect-cancel-test")
+                raise import_inspection.ImportInspectionCancelled("cancelled")
+
+            with patch.object(files.import_inspection, "build_identity_snapshot", return_value=Mock()), \
+                patch.object(files.import_inspection, "inspect_files", side_effect=cancel_during_inspect):
+                with self.assertRaises(HTTPException) as ctx:
+                    files.inspect_import_paths(
+                        files.ImportPathInspectRequest(
+                            paths=[str(first)],
+                            job_token="inspect-cancel-test",
+                            known_sizes={str(first): 5},
+                        ),
+                        db=Mock(),
+                    )
+            self.assertEqual(ctx.exception.status_code, 499)
+            cancelled_job = background_jobs.find_by_token("inspect-cancel-test")
+            self.assertEqual(cancelled_job["status"], "cancelled")
+        background_jobs.clear_jobs()
+
+    def test_build_identity_snapshot_loads_scalar_columns_without_header_meta(self):
+        from sqlalchemy import event
+
+        db = self.make_session()
+        cell = Cell(name="Scalar Cell")
+        test_row = Test(cell=cell, name="internal")
+        sf = SourceFile(
+            hash="f" * 64,
+            path="C:/data/scalar.ndax",
+            filename="scalar.ndax",
+            size=100,
+            ext="ndax",
+            barcode="BC-1",
+            channel="CH-2",
+            header_meta={"huge": "payload"},
+        )
+        db.add_all([test_row, sf])
+        db.flush()
+        db.add(TestFile(test_id=test_row.id, file_id=sf.id, position=0))
+        db.commit()
+
+        queries: list[str] = []
+
+        def capture_sql(_conn, _cursor, statement, *_args):
+            queries.append(statement)
+
+        engine = db.get_bind()
+        event.listen(engine, "before_cursor_execute", capture_sql)
+        try:
+            snapshot = import_inspection.build_identity_snapshot(db)
+        finally:
+            event.remove(engine, "before_cursor_execute", capture_sql)
+
+        self.assertTrue(any("FROM source_files" in q for q in queries))
+        self.assertFalse(any("header_meta" in q for q in queries))
+        exact = import_inspection.match_import(snapshot, "f" * 64, "other.ndax", {})
+        self.assertEqual(exact["kind"], "exact_duplicate")
+        soft = import_inspection.match_import(snapshot, "0" * 64, "scalar.ndax", {"barcode": "BC-1"})
+        self.assertEqual(soft["kind"], "possible_update")
+        db.close()
 
     def test_registration_job_failure_is_failed_and_rolls_back(self):
         background_jobs.clear_jobs()

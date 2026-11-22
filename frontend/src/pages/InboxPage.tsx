@@ -363,6 +363,7 @@ function FolderImportSelectionModal({
   progress,
   onBack,
   onClose,
+  onCancelLoading,
   onConfirm,
 }: {
   opened: boolean;
@@ -375,6 +376,7 @@ function FolderImportSelectionModal({
   progress?: ReactNode;
   onBack: (selected: FolderImportCandidate[]) => void;
   onClose: () => void;
+  onCancelLoading?: () => void;
   onConfirm: (selected: FolderImportCandidate[]) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -620,8 +622,14 @@ function FolderImportSelectionModal({
   return (
     <ImportModalShell
       opened={opened}
-      onClose={onClose}
-      closeDisabled={loading}
+      onClose={() => {
+        if (loading && onCancelLoading) {
+          onCancelLoading();
+        } else {
+          onClose();
+        }
+      }}
+      closeDisabled={loading && !onCancelLoading}
       title="Choose files to import"
       step={2}
       titleInfo="Selected folders are expanded for import selection. Use checkboxes to choose files and Preview to inspect them."
@@ -636,7 +644,17 @@ function FolderImportSelectionModal({
       fill
       actions={
         <>
-          <Button variant="default" disabled={loading} onClick={onClose}>
+          <Button
+            variant="default"
+            disabled={loading && !onCancelLoading}
+            onClick={() => {
+              if (loading && onCancelLoading) {
+                onCancelLoading();
+              } else {
+                onClose();
+              }
+            }}
+          >
             Cancel
           </Button>
           <ImportModalPrimaryActions>
@@ -1551,6 +1569,7 @@ function ImportModal({
       notifications.show({
         message: importRegistrationSuccessMessage(submittedCells, submittedSources),
         color: "teal",
+        position: "bottom-left",
       });
       qc.invalidateQueries({ queryKey: ["cells"] });
       qc.invalidateQueries({ queryKey: ["files"] });
@@ -1775,6 +1794,7 @@ function ImportModal({
               <ImportProgressPanel
                 stage="register"
                 job={registerProgress.data}
+                preparationJob={linkedCachePreparation.data}
                 error={save.isError && save.error instanceof Error ? save.error.message : null}
               />
             </Paper>
@@ -2705,6 +2725,148 @@ function ImportModal({
   );
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function buildKnownSizesMap(candidates: readonly FolderImportCandidate[]): Record<string, number> {
+  const sizes: Record<string, number> = {};
+  for (const candidate of candidates) {
+    if (candidate.path && typeof candidate.size === "number" && candidate.size >= 0) {
+      sizes[candidate.path] = candidate.size;
+    }
+  }
+  return sizes;
+}
+
+function filterKnownSizesForGroup(
+  paths: readonly string[],
+  knownSizes?: Record<string, number>,
+): Record<string, number> | undefined {
+  if (!knownSizes) return undefined;
+  const filtered: Record<string, number> = {};
+  let hasEntry = false;
+  for (const path of paths) {
+    const size = knownSizes[path];
+    if (typeof size === "number" && size >= 0) {
+      filtered[path] = size;
+      hasEntry = true;
+    }
+  }
+  return hasEntry ? filtered : undefined;
+}
+
+function useImportRequestControl(
+  onClearProgress: () => void,
+  onSetProgressToken: (token: string | null) => void,
+) {
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const cancelTokenRef = useRef<string | null>(null);
+
+  const beginRequest = useCallback((token: string) => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    cancelTokenRef.current = token;
+    return controller;
+  }, []);
+
+  const updateCancelToken = useCallback((controller: AbortController, token: string) => {
+    if (abortControllerRef.current === controller) {
+      cancelTokenRef.current = token;
+    }
+  }, []);
+
+  const clearRequest = useCallback((controller?: AbortController) => {
+    if (!controller || abortControllerRef.current === controller) {
+      abortControllerRef.current = null;
+      cancelTokenRef.current = null;
+    }
+  }, []);
+
+  const cancelActive = useCallback(() => {
+    const controller = abortControllerRef.current;
+    const token = cancelTokenRef.current;
+    abortControllerRef.current = null;
+    cancelTokenRef.current = null;
+    controller?.abort();
+    if (token) {
+      void post(`/api/background-jobs/by-token/${encodeURIComponent(token)}/cancel`).catch(() => {});
+    }
+    onClearProgress();
+  }, [onClearProgress]);
+
+  const runInspect = useCallback(({
+    paths,
+    append,
+    jobToken,
+    readModes = {},
+    knownSizes,
+  }: {
+    paths: string[];
+    append: boolean;
+    jobToken: string;
+    readModes?: MprReadModes;
+    knownSizes?: Record<string, number>;
+  }) => {
+    const controller = beginRequest(jobToken);
+    return inspectPathsWithReadModes(paths, readModes, (group, read_mode) => {
+      if (controller.signal.aborted) {
+        return Promise.reject(new DOMException("Import inspection cancelled", "AbortError"));
+      }
+      const groupToken = `${jobToken}-${read_mode}`;
+      onSetProgressToken(groupToken);
+      updateCancelToken(controller, groupToken);
+      return post<ImportInspectResult>(
+        "/api/imports/inspect-paths",
+        {
+          paths: group,
+          job_token: groupToken,
+          read_mode,
+          known_sizes: filterKnownSizesForGroup(group, knownSizes),
+        },
+        { signal: controller.signal },
+      );
+    })
+      .then((result) => ({ result, append }))
+      .finally(() => clearRequest(controller));
+  }, [beginRequest, clearRequest, onSetProgressToken, updateCancelToken]);
+
+  const runList = useCallback(({
+    filePaths,
+    folderPaths,
+    append,
+    jobToken,
+    readModes = {},
+  }: {
+    readModes?: MprReadModes;
+    filePaths: string[];
+    folderPaths: string[];
+    append: boolean;
+    jobToken: string;
+  }) => {
+    const controller = beginRequest(jobToken);
+    return post<ImportFolderSelectionResult>(
+      "/api/imports/list-sources",
+      {
+        file_paths: filePaths,
+        folder_paths: folderPaths,
+        job_token: jobToken,
+        screen_sources: folderPaths.length > 0,
+      },
+      { signal: controller.signal },
+    )
+      .then((result) => ({ result, append, folderPaths, readModes }))
+      .finally(() => clearRequest(controller));
+  }, [beginRequest, clearRequest]);
+
+  return {
+    cancelActive,
+    runInspect,
+    runList,
+  };
+}
+
 export function ImportCellsLauncher({
   targetFolderId,
   onSaved,
@@ -2741,6 +2903,11 @@ export function ImportCellsLauncher({
   const inspectionStartedAt = useRef<number | null>(null);
   const progressQuery = useImportJobProgress(progressToken, Boolean(progressStage));
   const previewLoader = useImportPreviewLoader(setDrafts);
+  const clearProgress = useCallback(() => {
+    setProgressStage(null);
+    setProgressToken(null);
+  }, []);
+  const requestControl = useImportRequestControl(clearProgress, setProgressToken);
 
   const closeImportSession = () => {
     previewLoader.cancel();
@@ -2763,15 +2930,7 @@ export function ImportCellsLauncher({
   };
 
   const inspectPaths = useMutation({
-    mutationFn: ({ paths, append, jobToken, readModes = {} }: { paths: string[]; append: boolean; jobToken: string; readModes?: MprReadModes }) =>
-      inspectPathsWithReadModes(paths, readModes, (group, read_mode) => {
-        const groupToken = `${jobToken}-${read_mode}`;
-        setProgressToken(groupToken);
-        return post<ImportInspectResult>("/api/imports/inspect-paths", { paths: group, job_token: groupToken, read_mode });
-      }).then((result) => ({
-        result,
-        append,
-      })),
+    mutationFn: requestControl.runInspect,
     onSuccess: ({ result, append }) => {
       // Keep the file picker visible throughout single-file inspection, then
       // switch directly to the review step in the same render.
@@ -2801,29 +2960,15 @@ export function ImportCellsLauncher({
         hydrateInspection(result, append);
       }
     },
-    onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
+    onError: (e: Error) => {
+      clearProgress();
+      if (isAbortError(e)) return;
+      notifications.show({ message: e.message, color: "red" });
+    },
   });
 
   const listSources = useMutation({
-    mutationFn: ({
-      filePaths,
-      folderPaths,
-      append,
-      jobToken,
-      readModes = {},
-    }: {
-      readModes?: MprReadModes;
-      filePaths: string[];
-      folderPaths: string[];
-      append: boolean;
-      jobToken: string;
-    }) =>
-      post<ImportFolderSelectionResult>("/api/imports/list-sources", {
-        file_paths: filePaths,
-        folder_paths: folderPaths,
-        job_token: jobToken,
-        screen_sources: folderPaths.length > 0,
-      }).then((result) => ({ result, append, folderPaths, readModes })),
+    mutationFn: requestControl.runList,
     onSuccess: ({ result, append, folderPaths, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
@@ -2854,6 +2999,7 @@ export function ImportCellsLauncher({
           append,
           jobToken,
           readModes,
+          knownSizes: buildKnownSizesMap(candidates),
         });
         return;
       }
@@ -2864,8 +3010,18 @@ export function ImportCellsLauncher({
       setSourcePickerOpen(false);
       setFolderModalOpen(true);
     },
-    onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
+    onError: (e: Error) => {
+      clearProgress();
+      if (isAbortError(e)) return;
+      notifications.show({ message: e.message, color: "red" });
+    },
   });
+
+  const cancelActiveImportWork = () => {
+    requestControl.cancelActive();
+    listSources.reset();
+    inspectPaths.reset();
+  };
 
   const startSourceSelection = (append: boolean) => {
     setNoImportableCounts(null);
@@ -2907,6 +3063,7 @@ export function ImportCellsLauncher({
       append: sourceAppend,
       jobToken,
       readModes: sourceSelection?.readModes,
+      knownSizes: buildKnownSizesMap(selected),
     });
   };
 
@@ -2933,6 +3090,7 @@ export function ImportCellsLauncher({
           />
         ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
+        onCancelLoading={cancelActiveImportWork}
         initialSelection={sourceSelection}
         selectionKey={sourcePickerKey}
         onConfirm={continueSourceSelection}
@@ -2969,6 +3127,7 @@ export function ImportCellsLauncher({
           setFolderSkipped(null);
           setInspectionFailures([]);
         }}
+        onCancelLoading={cancelActiveImportWork}
         onConfirm={confirmFolderSelection}
       />
       <NoImportableSourcesModal
@@ -3069,6 +3228,11 @@ export function InboxPage() {
   );
   const targetFolderName = findFolderName(treeQuery.data?.folders ?? [], targetFolderId);
   const previewLoader = useImportPreviewLoader(setDrafts);
+  const clearProgress = useCallback(() => {
+    setProgressStage(null);
+    setProgressToken(null);
+  }, []);
+  const requestControl = useImportRequestControl(clearProgress, setProgressToken);
 
   const closeImportSession = () => {
     previewLoader.cancel();
@@ -3091,15 +3255,7 @@ export function InboxPage() {
   };
 
   const inspectPaths = useMutation({
-    mutationFn: ({ paths, append, jobToken, readModes = {} }: { paths: string[]; append: boolean; jobToken: string; readModes?: MprReadModes }) =>
-      inspectPathsWithReadModes(paths, readModes, (group, read_mode) => {
-        const groupToken = `${jobToken}-${read_mode}`;
-        setProgressToken(groupToken);
-        return post<ImportInspectResult>("/api/imports/inspect-paths", { paths: group, job_token: groupToken, read_mode });
-      }).then((result) => ({
-        result,
-        append,
-      })),
+    mutationFn: requestControl.runInspect,
     onSuccess: ({ result, append }) => {
       setSourcePickerOpen(false);
       setBlockingInspectionSeconds((current) => current + Math.max(
@@ -3127,29 +3283,15 @@ export function InboxPage() {
         hydrateInspection(result, append);
       }
     },
-    onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
+    onError: (e: Error) => {
+      clearProgress();
+      if (isAbortError(e)) return;
+      notifications.show({ message: e.message, color: "red" });
+    },
   });
 
   const listSources = useMutation({
-    mutationFn: ({
-      filePaths,
-      folderPaths,
-      append,
-      jobToken,
-      readModes = {},
-    }: {
-      readModes?: MprReadModes;
-      filePaths: string[];
-      folderPaths: string[];
-      append: boolean;
-      jobToken: string;
-    }) =>
-      post<ImportFolderSelectionResult>("/api/imports/list-sources", {
-        file_paths: filePaths,
-        folder_paths: folderPaths,
-        job_token: jobToken,
-        screen_sources: folderPaths.length > 0,
-      }).then((result) => ({ result, append, folderPaths, readModes })),
+    mutationFn: requestControl.runList,
     onSuccess: ({ result, append, folderPaths, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
@@ -3168,6 +3310,7 @@ export function InboxPage() {
         return;
       }
       setSourceAppend(append);
+      setInspectionFailures([]);
       setFolderReviewRequired(folderPaths.length > 0);
       if (folderPaths.length === 0) {
         const jobToken = newImportJobToken();
@@ -3179,6 +3322,7 @@ export function InboxPage() {
           append,
           jobToken,
           readModes,
+          knownSizes: buildKnownSizesMap(candidates),
         });
         return;
       }
@@ -3189,8 +3333,18 @@ export function InboxPage() {
       setSourcePickerOpen(false);
       setFolderModalOpen(true);
     },
-    onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
+    onError: (e: Error) => {
+      clearProgress();
+      if (isAbortError(e)) return;
+      notifications.show({ message: e.message, color: "red" });
+    },
   });
+
+  const cancelActiveImportWork = () => {
+    requestControl.cancelActive();
+    listSources.reset();
+    inspectPaths.reset();
+  };
 
   const startSourceSelection = (append: boolean) => {
     setNoImportableCounts(null);
@@ -3232,6 +3386,7 @@ export function InboxPage() {
       append: sourceAppend,
       jobToken,
       readModes: sourceSelection?.readModes,
+      knownSizes: buildKnownSizesMap(selected),
     });
   };
 
@@ -3267,6 +3422,7 @@ export function InboxPage() {
           />
         ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
+        onCancelLoading={cancelActiveImportWork}
         initialSelection={sourceSelection}
         selectionKey={sourcePickerKey}
         onConfirm={continueSourceSelection}
@@ -3303,6 +3459,7 @@ export function InboxPage() {
           setFolderSkipped(null);
           setInspectionFailures([]);
         }}
+        onCancelLoading={cancelActiveImportWork}
         onConfirm={confirmFolderSelection}
       />
       <NoImportableSourcesModal

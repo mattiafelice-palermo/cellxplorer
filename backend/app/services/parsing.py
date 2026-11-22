@@ -80,7 +80,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISREG
-from typing import Any
+from typing import Any, Callable
 
 import NewareNDA
 import numpy as np
@@ -704,11 +704,24 @@ BIOLOGIC_CYCLE_IDENTITY_SOURCES = frozenset(
 )
 
 
-def compute_hash(path: str | Path) -> str:
+class SourceReadCancelled(Exception):
+    """Raised when a cooperative caller cancels a source read."""
+
+
+def compute_hash(
+    path: str | Path,
+    *,
+    cancel_check: Callable[[], bool] | None = None,
+) -> str:
     """Content hash = file identity. sha256, streamed."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
-        while chunk := f.read(1024 * 1024):
+        while True:
+            if cancel_check is not None and cancel_check():
+                raise SourceReadCancelled("Source read cancelled")
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
             h.update(chunk)
     return h.hexdigest()
 
@@ -730,6 +743,7 @@ def capture_source_fingerprint(
     path: str | Path,
     *,
     expected_hash: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> SourceFingerprint:
     """Hash a regular source between two stat checks.
 
@@ -745,7 +759,11 @@ def capture_source_fingerprint(
     if not S_ISREG(initial.st_mode):
         raise SourceIdentityError(f"Source is not a regular file: {source_path}")
     try:
-        file_hash = compute_hash(source_path)
+        file_hash = (
+            compute_hash(source_path, cancel_check=cancel_check)
+            if cancel_check is not None
+            else compute_hash(source_path)
+        )
         final = source_path.stat()
     except OSError as exc:
         raise SourceIdentityError(f"Source became unavailable while being read: {source_path}") from exc
@@ -770,8 +788,10 @@ def assert_source_fingerprint(
         raise SourceIdentityError("Source became unavailable while being read") from exc
     if (before.st_size, before.st_mtime_ns) != (fingerprint.size, fingerprint.mtime_ns):
         raise SourceIdentityError("Source changed during identity read")
+    if not verify_hash:
+        return
     try:
-        current_hash = compute_hash(source_path) if verify_hash else fingerprint.hash
+        current_hash = compute_hash(source_path)
     except OSError as exc:
         raise SourceIdentityError("Source became unavailable while being read") from exc
     try:

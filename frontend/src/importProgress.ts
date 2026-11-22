@@ -1,7 +1,17 @@
 import type { BackgroundJob } from "./api";
+import { formatImportBytes } from "./importSelectionSummary.ts";
 
 export type ImportProgressStage = "scan" | "inspect" | "register";
 export type ImportProgressMode = "determinate" | "indeterminate";
+export type ImportProgressPhaseStatus = "pending" | "active" | "completed" | "failed";
+export type ImportProgressPhaseRow = {
+  id: string;
+  label: string;
+  status: ImportProgressPhaseStatus;
+  mode: ImportProgressMode;
+  percent: number | null;
+  detail: string | null;
+};
 export type ImportProgressPhase =
   | "sampling"
   | "starting_workers"
@@ -365,4 +375,362 @@ export function importRemainingEstimate(
     maximumLabel: friendlyDuration(maximum),
     scope: "remaining",
   };
+}
+
+function clampedPercent(current: number, total: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(99, (current / total) * 100));
+}
+
+export function importProgressPhases(
+  stage: ImportProgressStage,
+  job: BackgroundJob | null | undefined,
+  preparationJob?: BackgroundJob | null,
+): ImportProgressPhaseRow[] {
+  if (stage === "scan") {
+    if (!job) {
+      return [
+        {
+          id: "discover",
+          label: "Scanning selected locations",
+          status: "active",
+          mode: "indeterminate",
+          percent: null,
+          detail: "Working…",
+        },
+      ];
+    }
+    const isCompleted = job.status === "completed";
+    const inScreening = job.phase === "screening";
+    const discoverDone = isCompleted || inScreening;
+    const discovered = job.discovered_files ?? 0;
+    const totalLocations = Math.max(0, job.total);
+    const locationsUnit = `location${totalLocations === 1 ? "" : "s"}`;
+    const filesLabel = `${discovered} file${discovered === 1 ? "" : "s"} found`;
+    const rows: ImportProgressPhaseRow[] = [
+      discoverDone
+        ? {
+            id: "discover",
+            label: "Scanning selected locations",
+            status: "completed",
+            mode: "determinate",
+            percent: 100,
+            detail: `${totalLocations} ${locationsUnit} · ${filesLabel}`,
+          }
+        : {
+            id: "discover",
+            label: "Scanning selected locations",
+            status: "active",
+            mode: totalLocations > 1 ? "determinate" : "indeterminate",
+            percent: totalLocations > 1 ? clampedPercent(job.completed, totalLocations) : null,
+            detail: totalLocations > 0
+              ? `${Math.min(totalLocations, job.completed + 1)} of ${totalLocations} ${locationsUnit} · ${filesLabel}`
+              : filesLabel,
+          },
+    ];
+    const phaseTotal = Math.max(0, Number(job.phase_total) || 0);
+    if (inScreening || phaseTotal > 0) {
+      const count = importProgressCount(job);
+      const screenTotal = phaseTotal > 0 ? phaseTotal : count.total;
+      const screenCurrent = Math.max(0, Math.min(screenTotal, count.current));
+      const countText = `${screenCurrent} of ${screenTotal} file${screenTotal === 1 ? "" : "s"}`;
+      rows.push(
+        isCompleted
+          ? {
+              id: "screen",
+              label: "Checking file compatibility",
+              status: "completed",
+              mode: "determinate",
+              percent: 100,
+              detail: job.phase_detail || `${screenTotal} file${screenTotal === 1 ? "" : "s"} checked`,
+            }
+          : {
+              id: "screen",
+              label: "Checking file compatibility",
+              status: "active",
+              mode: screenTotal > 0 ? "determinate" : "indeterminate",
+              percent: screenTotal > 0 ? clampedPercent(screenCurrent, screenTotal) : null,
+              detail: `${countText}${job.phase_detail ? ` · ${job.phase_detail}` : ""}`,
+            },
+      );
+    }
+    return rows;
+  }
+
+  if (stage === "inspect") {
+    const isCompleted = job?.status === "completed" || job?.phase === "completed";
+    const phase = job?.phase ?? "sampling";
+    const includeWorkers = Boolean(job && (phase === "starting_workers" || job.strategy === "multiprocessing"));
+    const rows: ImportProgressPhaseRow[] = [];
+
+    if (!job || (phase === "sampling" && !isCompleted)) {
+      const calibrated = Boolean(job && (job.phase_current ?? 0) >= 1);
+      rows.push({
+        id: "sampling",
+        label: "Reading first file",
+        status: "active",
+        mode: calibrated ? "determinate" : "indeterminate",
+        percent: calibrated ? 100 : null,
+        detail: calibrated ? "Calibrated" : "Estimating inspection time",
+      });
+    } else {
+      rows.push({
+        id: "sampling",
+        label: "Reading first file",
+        status: "completed",
+        mode: "determinate",
+        percent: 100,
+        detail: "Calibrated",
+      });
+    }
+
+    if (includeWorkers && job) {
+      if (phase === "sampling" && !isCompleted) {
+        rows.push({
+          id: "starting_workers",
+          label: "Starting processing workers",
+          status: "pending",
+          mode: "determinate",
+          percent: 0,
+          detail: null,
+        });
+      } else if (phase === "starting_workers" && !isCompleted) {
+        const wTotal = Math.max(1, job.phase_total ?? job.worker_count ?? 1);
+        const wCur = Math.max(0, Math.min(wTotal, job.phase_current ?? 0));
+        rows.push({
+          id: "starting_workers",
+          label: "Starting processing workers",
+          status: "active",
+          mode: "determinate",
+          percent: clampedPercent(wCur, wTotal),
+          detail: `${wCur} of ${wTotal} workers`,
+        });
+      } else {
+        const wTotal = job.worker_count ?? job.phase_total;
+        rows.push({
+          id: "starting_workers",
+          label: "Starting processing workers",
+          status: "completed",
+          mode: "determinate",
+          percent: 100,
+          detail: wTotal ? `${wTotal} workers ready` : "Ready",
+        });
+      }
+    }
+
+    const totalFiles = Math.max(0, job?.total ?? 0);
+    const completedFiles = Math.max(0, Math.min(totalFiles, job?.completed ?? 0));
+    const totalBytes = Math.max(0, job?.total_bytes ?? 0);
+    const completedBytes = Math.max(0, Math.min(totalBytes || Number.MAX_SAFE_INTEGER, job?.completed_bytes ?? 0));
+    const filesUnit = `file${totalFiles === 1 ? "" : "s"}`;
+    const byteProgress = totalBytes > 0
+      ? ` · ${formatImportBytes(completedBytes)} / ${formatImportBytes(totalBytes)}`
+      : "";
+
+    if (!job || (!isCompleted && (phase === "sampling" || phase === "starting_workers"))) {
+      rows.push({
+        id: "reading",
+        label: "Checking file identity and metadata",
+        status: "pending",
+        mode: "determinate",
+        percent: 0,
+        detail: totalFiles > 0 ? `${totalFiles} ${filesUnit} queued` : null,
+      });
+    } else if (phase === "reading" && !isCompleted) {
+      rows.push({
+        id: "reading",
+        label: "Checking file identity and metadata",
+        status: "active",
+        mode: totalFiles > 0 ? "determinate" : "indeterminate",
+        percent: totalFiles > 0 ? clampedPercent(completedFiles, totalFiles) : null,
+        detail: `${completedFiles} of ${totalFiles} ${filesUnit}${byteProgress}`,
+      });
+    } else {
+      const totalBytesSuffix = totalBytes > 0 ? ` · ${formatImportBytes(totalBytes)}` : "";
+      rows.push({
+        id: "reading",
+        label: "Checking file identity and metadata",
+        status: "completed",
+        mode: "determinate",
+        percent: 100,
+        detail: `${totalFiles} of ${totalFiles} ${filesUnit}${totalBytesSuffix}`,
+      });
+    }
+
+    if (isCompleted) {
+      rows.push({
+        id: "finalizing",
+        label: "Building import review",
+        status: "completed",
+        mode: "determinate",
+        percent: 100,
+        detail: "Ready",
+      });
+    } else if (phase === "finalizing") {
+      const fTotal = Math.max(0, job?.phase_total ?? totalFiles);
+      const fCur = Math.max(0, Math.min(fTotal, job?.phase_current ?? 0));
+      rows.push({
+        id: "finalizing",
+        label: "Building import review",
+        status: "active",
+        mode: fTotal > 0 ? "determinate" : "indeterminate",
+        percent: fTotal > 0 ? clampedPercent(fCur, fTotal) : null,
+        detail: `${fCur} of ${fTotal} file${fTotal === 1 ? "" : "s"}`,
+      });
+    } else {
+      rows.push({
+        id: "finalizing",
+        label: "Building import review",
+        status: "pending",
+        mode: "determinate",
+        percent: 0,
+        detail: null,
+      });
+    }
+
+    return rows;
+  }
+
+  // Stage "register": validation -> registration -> optional preparation (import_cache)
+  const totalCells = Math.max(0, job?.total ?? 0);
+  const cellsUnit = `cell${totalCells === 1 ? "" : "s"}`;
+  const regCompleted = job?.status === "completed" || job?.phase === "completed";
+  const committed = Boolean(job?.registration_committed) || regCompleted;
+  const pastValidation = committed || job?.phase === "registration";
+  const rows: ImportProgressPhaseRow[] = [];
+
+  if (!job) {
+    rows.push({
+      id: "validation",
+      label: "Validating drafts",
+      status: "active",
+      mode: "indeterminate",
+      percent: null,
+      detail: "Working…",
+    });
+  } else if (pastValidation) {
+    rows.push({
+      id: "validation",
+      label: "Validating drafts",
+      status: "completed",
+      mode: "determinate",
+      percent: 100,
+      detail: `${totalCells} of ${totalCells} ${cellsUnit}`,
+    });
+  } else {
+    const vTotal = Math.max(0, job.phase_total ?? totalCells);
+    const vCur = Math.max(0, Math.min(vTotal, job.phase_current ?? 0));
+    rows.push({
+      id: "validation",
+      label: "Validating drafts",
+      status: "active",
+      mode: vTotal > 0 ? "determinate" : "indeterminate",
+      percent: vTotal > 0 ? clampedPercent(vCur, vTotal) : null,
+      detail: vTotal > 0 ? `${vCur} of ${vTotal} cell${vTotal === 1 ? "" : "s"}` : "Working…",
+    });
+  }
+
+  if (committed) {
+    rows.push({
+      id: "registration",
+      label: "Committing Cell registration",
+      status: "completed",
+      mode: "determinate",
+      percent: 100,
+      detail: `${totalCells} ${cellsUnit} committed`,
+    });
+  } else if (job?.phase === "registration") {
+    const rTotal = Math.max(0, job.phase_total ?? totalCells);
+    const rCur = Math.max(0, Math.min(rTotal, job.phase_current ?? 0));
+    rows.push({
+      id: "registration",
+      label: "Committing Cell registration",
+      status: "active",
+      mode: rTotal > 0 ? "determinate" : "indeterminate",
+      percent: rTotal > 0 ? clampedPercent(rCur, rTotal) : null,
+      detail: rTotal > 0 ? `${rCur} of ${rTotal} cell${rTotal === 1 ? "" : "s"}` : "Working…",
+    });
+  } else {
+    rows.push({
+      id: "registration",
+      label: "Committing Cell registration",
+      status: "pending",
+      mode: "determinate",
+      percent: 0,
+      detail: totalCells > 0 ? `${totalCells} ${cellsUnit} queued` : null,
+    });
+  }
+
+  const noCacheWork = job?.cache_handoff_complete === true && job?.cache_job_id == null && !preparationJob;
+  if (!noCacheWork) {
+    if (preparationJob) {
+      const prepState = job
+        ? importPreparationState(job, preparationJob)
+        : preparationJob.status === "failed"
+          ? "failed"
+          : preparationJob.status === "completed"
+            ? "ready"
+            : "active";
+      const pTotal = Math.max(0, preparationJob.total ?? 0);
+      const pCur = Math.max(0, Math.min(pTotal, preparationJob.completed ?? 0));
+      const filesUnitPrep = `file${pTotal === 1 ? "" : "s"}`;
+      if (prepState === "failed") {
+        rows.push({
+          id: "preparation",
+          label: "Preparing cycling data",
+          status: "failed",
+          mode: "determinate",
+          percent: pTotal > 0 ? (pCur / pTotal) * 100 : 100,
+          detail: preparationJob.error || preparationJob.description || "Preparation failed",
+        });
+      } else if (prepState === "ready") {
+        rows.push({
+          id: "preparation",
+          label: "Preparing cycling data",
+          status: "completed",
+          mode: "determinate",
+          percent: 100,
+          detail: `${pCur} of ${pTotal} ${filesUnitPrep} ready`,
+        });
+      } else if (preparationJob.phase === "queued" || preparationJob.status === "paused") {
+        rows.push({
+          id: "preparation",
+          label: "Preparing cycling data",
+          status: "active",
+          mode: "indeterminate",
+          percent: null,
+          detail: preparationJob.phase_detail || "Queued — starting cycling data preparation…",
+        });
+      } else {
+        rows.push({
+          id: "preparation",
+          label: "Preparing cycling data",
+          status: "active",
+          mode: pTotal > 0 ? "determinate" : "indeterminate",
+          percent: pTotal > 0 ? clampedPercent(pCur, pTotal) : null,
+          detail: `${pCur} of ${pTotal} ${filesUnitPrep}`,
+        });
+      }
+    } else if (committed) {
+      rows.push({
+        id: "preparation",
+        label: "Preparing cycling data",
+        status: "active",
+        mode: "indeterminate",
+        percent: null,
+        detail: "Starting cycling data preparation…",
+      });
+    } else {
+      rows.push({
+        id: "preparation",
+        label: "Preparing cycling data",
+        status: "pending",
+        mode: "determinate",
+        percent: 0,
+        detail: "Starts after registration commits",
+      });
+    }
+  }
+
+  return rows;
 }

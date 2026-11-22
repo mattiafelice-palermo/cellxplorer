@@ -10,6 +10,7 @@ import {
   importProgressCurrentLabel,
   importProgressMode,
   importProgressPercent,
+  importProgressPhases,
   importJobPollInterval,
   importRegistrationSuccessMessage,
   importRegistrationUiState,
@@ -295,4 +296,186 @@ test("automatic completion waits for its own explicit cache handoff and success"
   }
   registration.cache_job_id = null;
   assert.equal(importPreparationState(registration, undefined), "ready");
+});
+
+test("importProgressPhases exposes every scan sub-phase with its own progress bar state", () => {
+  assert.deepEqual(importProgressPhases("scan", null), [
+    {
+      id: "discover",
+      label: "Scanning selected locations",
+      status: "active",
+      mode: "indeterminate",
+      percent: null,
+      detail: "Working…",
+    },
+  ]);
+
+  const multiDiscover = importProgressPhases(
+    "scan",
+    job({ kind: "import_scan", total: 120, completed: 30, discovered_files: 250 }),
+  );
+  assert.equal(multiDiscover.length, 1);
+  assert.equal(multiDiscover[0].status, "active");
+  assert.equal(multiDiscover[0].mode, "determinate");
+  assert.equal(multiDiscover[0].percent, 25);
+  assert.equal(multiDiscover[0].detail, "31 of 120 locations · 250 files found");
+
+  const screening = importProgressPhases(
+    "scan",
+    job({
+      kind: "import_scan",
+      total: 120,
+      completed: 120,
+      discovered_files: 610,
+      phase: "screening",
+      phase_current: 15,
+      phase_total: 45,
+      phase_detail: "580 supported · 0 skipped",
+    }),
+  );
+  assert.equal(screening.length, 2);
+  assert.deepEqual(screening[0], {
+    id: "discover",
+    label: "Scanning selected locations",
+    status: "completed",
+    mode: "determinate",
+    percent: 100,
+    detail: "120 locations · 610 files found",
+  });
+  assert.equal(screening[1].id, "screen");
+  assert.equal(screening[1].status, "active");
+  assert.equal(screening[1].mode, "determinate");
+  assert.ok(Math.abs((screening[1].percent ?? 0) - (15 / 45) * 100) < 0.01);
+});
+
+test("importProgressPhases shows sampling, optional workers, identity reading with bytes, and finalizing during inspect", () => {
+  const sampling = importProgressPhases(
+    "inspect",
+    job({ phase: "sampling", phase_current: 0, phase_total: 1, total: 100, completed: 0 }),
+  );
+  assert.deepEqual(sampling.map((row) => [row.id, row.status]), [
+    ["sampling", "active"],
+    ["reading", "pending"],
+    ["finalizing", "pending"],
+  ]);
+
+  const readingMultiprocess = importProgressPhases(
+    "inspect",
+    job({
+      phase: "reading",
+      strategy: "multiprocessing",
+      worker_count: 4,
+      total: 100,
+      completed: 40,
+      total_bytes: 10485760,
+      completed_bytes: 5242880,
+    }),
+  );
+  assert.deepEqual(readingMultiprocess.map((row) => [row.id, row.status]), [
+    ["sampling", "completed"],
+    ["starting_workers", "completed"],
+    ["reading", "active"],
+    ["finalizing", "pending"],
+  ]);
+  assert.equal(readingMultiprocess[2].percent, 40);
+  assert.equal(readingMultiprocess[2].detail, "40 of 100 files · 5 MB / 10 MB");
+
+  const threadedFinalizing = importProgressPhases(
+    "inspect",
+    job({
+      phase: "finalizing",
+      strategy: "threaded",
+      total: 100,
+      completed: 100,
+      phase_current: 25,
+      phase_total: 100,
+    }),
+  );
+  assert.deepEqual(threadedFinalizing.map((row) => [row.id, row.status]), [
+    ["sampling", "completed"],
+    ["reading", "completed"],
+    ["finalizing", "active"],
+  ]);
+  assert.equal(threadedFinalizing[2].percent, 25);
+});
+
+test("importProgressPhases shows validation, registration, and cycling data preparation sub-phases", () => {
+  const validating = importProgressPhases(
+    "register",
+    job({ kind: "import_register", phase: "validation", phase_current: 2, phase_total: 10, total: 10 }),
+  );
+  assert.deepEqual(validating.map((row) => [row.id, row.status]), [
+    ["validation", "active"],
+    ["registration", "pending"],
+    ["preparation", "pending"],
+  ]);
+
+  const committing = importProgressPhases(
+    "register",
+    job({ kind: "import_register", phase: "registration", phase_current: 5, phase_total: 10, total: 10 }),
+  );
+  assert.deepEqual(committing.map((row) => [row.id, row.status]), [
+    ["validation", "completed"],
+    ["registration", "active"],
+    ["preparation", "pending"],
+  ]);
+
+  const regDone = job({
+    kind: "import_register",
+    status: "completed",
+    phase: "completed",
+    total: 10,
+    completed: 10,
+    registration_committed: true,
+    cache_handoff_complete: true,
+    cache_job_id: 2,
+  });
+  const prepQueued = importProgressPhases(
+    "register",
+    regDone,
+    job({ id: 2, kind: "import_cache", status: "running", phase: "queued", phase_detail: "Queued after Cell registration", total: 10, completed: 0 }),
+  );
+  assert.equal(prepQueued[2].status, "active");
+  assert.equal(prepQueued[2].mode, "indeterminate");
+
+  const prepRunning = importProgressPhases(
+    "register",
+    regDone,
+    job({ id: 2, kind: "import_cache", status: "running", phase: "processing", total: 10, completed: 6 }),
+  );
+  assert.equal(prepRunning[2].status, "active");
+  assert.equal(prepRunning[2].mode, "determinate");
+  assert.equal(prepRunning[2].percent, 60);
+  assert.equal(prepRunning[2].detail, "6 of 10 files");
+
+  const prepDone = importProgressPhases(
+    "register",
+    regDone,
+    job({ id: 2, kind: "import_cache", status: "completed", total: 10, completed: 10, counters: { ready: 10 }, items: Array.from({ length: 10 }, () => ({ id: "f", label: "f", status: "ready", detail: null, error: null })) }),
+  );
+  assert.equal(prepDone[2].status, "completed");
+  assert.equal(prepDone[2].percent, 100);
+
+  const prepFailed = importProgressPhases(
+    "register",
+    regDone,
+    job({ id: 2, kind: "import_cache", status: "failed", error: "worker crashed", total: 10, completed: 3 }),
+  );
+  assert.equal(prepFailed[2].status, "failed");
+  assert.equal(prepFailed[2].detail, "worker crashed");
+
+  const metadataOnlyDone = importProgressPhases(
+    "register",
+    job({
+      kind: "import_register",
+      status: "completed",
+      phase: "completed",
+      total: 2,
+      completed: 2,
+      registration_committed: true,
+      cache_handoff_complete: true,
+      cache_job_id: null,
+    }),
+  );
+  assert.deepEqual(metadataOnlyDone.map((row) => row.id), ["validation", "registration"]);
 });
