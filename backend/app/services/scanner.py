@@ -1202,7 +1202,8 @@ def _run_scan(job_id: int, root: str, parse_now: bool) -> None:
     apply_background_thread_priority()
     try:
         paths = sorted(
-            p for p in Path(root).rglob("*") if parsing.source_filename_allowed(p.name) and p.is_file()
+            p for p in Path(root).rglob("*")
+            if parsing.source_filename_allowed(p.name) and p.is_file() and parsing.discoverable_source_path(p)
         )
         _update(job_id, found=len(paths))
         db = SessionLocal()

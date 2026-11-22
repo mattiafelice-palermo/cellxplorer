@@ -2030,7 +2030,7 @@ def browse_import_directory(path: str | None = None, db: Session | None = None) 
     }
 
 
-def list_import_folder_files(root: Path) -> dict:
+def list_import_folder_files(root: Path, *, defer_text_recognition: bool = False) -> dict:
     root = root.expanduser().resolve()
     if not root.is_dir():
         raise HTTPException(400, f"Not a directory: {root}")
@@ -2038,6 +2038,7 @@ def list_import_folder_files(root: Path) -> dict:
 
     root_path = str(root)
     root_name = root.name or str(root)
+    accept_file = parsing.source_filename_allowed if defer_text_recognition else parsing.discoverable_source_path
 
     def visit(directory: str, relative_directory: Path) -> None:
         directories: list[os.DirEntry[str]] = []
@@ -2048,7 +2049,7 @@ def list_import_folder_files(root: Path) -> dict:
                     try:
                         if entry.is_dir(follow_symlinks=False):
                             directories.append(entry)
-                        elif entry.is_file(follow_symlinks=False) and import_filename_allowed(entry.name):
+                        elif entry.is_file(follow_symlinks=False) and accept_file(entry.path):
                             filenames.append(entry)
                     except OSError:
                         continue
@@ -2113,7 +2114,7 @@ def _create_import_scan_job(file_paths: list[str], folder_paths: list[str], toke
 
 
 def _classify_screened_hint(item: dict, hint: dict[str, object]) -> tuple[dict | None, dict | None]:
-    """Classify one screened .mpr/.xlsx candidate using permissive-by-default for .mpr."""
+    """Classify a source header, using permissive-by-default for BioLogic."""
     ext = Path(str(item.get("filename") or item["path"])).suffix.casefold()
     if ext == ".mpr":
         permissive_error = hint.get("permissive_error")
@@ -2131,7 +2132,8 @@ def _classify_screened_hint(item: dict, hint: dict[str, object]) -> tuple[dict |
         return kept, None
 
     if hint.get("compatible") is False:
-        detail = hint.get("error") or "Unsupported Neware Excel workbook."
+        fallback = "Unsupported Maccor text export." if ext == ".txt" else "Unsupported Neware Excel workbook."
+        detail = hint.get("error") or fallback
         return None, {
             "path": str(item["path"]),
             "relative_path": str(item["relative_path"]),
@@ -2246,7 +2248,7 @@ def _screen_import_source_candidates(
             continue
 
         ext = Path(filename).suffix.casefold()
-        if ext in {".xlsx", ".mpr"}:
+        if ext in {".xlsx", ".mpr", ".txt"}:
             to_screen.append((index, item))
             continue
 
@@ -2388,7 +2390,8 @@ def list_import_sources(
     with ThreadPoolExecutor(max_workers=min(2, max(1, len(folder_paths)))) as executor:
         for index, raw_folder in enumerate(folder_paths):
             folder = Path(raw_folder).expanduser().resolve()
-            folder_futures[executor.submit(list_import_folder_files, folder)] = index
+            future = executor.submit(list_import_folder_files, folder, defer_text_recognition=screen_sources)
+            folder_futures[future] = index
         for future in as_completed(folder_futures):
             index = folder_futures[future]
             folder = Path(folder_paths[index]).expanduser().resolve()

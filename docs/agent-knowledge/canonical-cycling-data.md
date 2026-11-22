@@ -686,6 +686,39 @@ before decimation and derive response break indexes after sampling. Derivative
 smoothing/calculation also stays inside each explicit segment. Numeric exports
 retain every recorded row; interactive and graphical exports share line breaks.
 
+## Maccor text exports
+
+`maccor_text.py` recognizes a bounded Maccor preamble and the tab-separated
+`Rec / Cycle P / Cycle C / Step / TestTime / StepTime` record layout with explicit
+Ah, Wh, A and V units. Generic text is common in discovery roots. Check the
+header before registration and before treating a search hit as recognized,
+including when optional index metadata is disabled.
+
+- Use the recorded `Cycle C` labels and the programmed `Step` number. Signs come
+  from `Md`. The current field is a magnitude, and voltage retains its recorded sign.
+  `C` and `D` establish direction only. CV metrics are unknown and the procedure
+  name supplies no declared protocol conditions.
+- Verify the minute scale of both numeric clocks against day-first, local
+  `DPT Time` timestamps within executed steps. Preserve the instrument clock
+  independently of the wall clock, which can advance during a suspension.
+  Time/Capacity and its per-cycle index use recorded `TestTime`. Sort by source
+  position and record number so that the stitched display-only cycle label zero
+  cannot move an unfinished final discharge ahead of the first recorded row.
+- An observed zero-current `SBw` / `ES=195` between matching active records
+  with a continuing step clock retains the same executed step and counters.
+  Its own status is Standby. The capacity axis follows the measured step counter
+  through this record, including the increment since the preceding sample.
+  An unwitnessed standby context is unsupported.
+- Store native Ah and Wh counters alongside direction-specific measured
+  changes since the first record of each execution. Adjacent charge steps can
+  carry the same counter. Shared cycle calculations sum within-step spans.
+  Energy follows the reported Wh counter. The reader does not derive it from voltage.
+- Complete summaries require measured current in both directions and bounded
+  active executions. The verified start status is 0 and the verified terminal
+  statuses are 129, 132 and 133. A final ongoing discharge, or a final cycle
+  with only charge, remains present in raw plots. `VARn` channels retain their
+  recorded values without assigning a physical unit to them.
+
 ## BioLogic mass selection
 
 Import review and Cell editing offer active-material and characteristic masses from unit-verified

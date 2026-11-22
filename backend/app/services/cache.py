@@ -858,7 +858,7 @@ def _consecutive_time_metadata(frame: pd.DataFrame) -> dict[str, Any]:
     without reading all preceding rows.
     """
 
-    values = pd.to_numeric(frame["time_s"], errors="coerce").to_numpy(dtype="float64")
+    values = pd.to_numeric(time_capacity_derived.source_clock(frame), errors="coerce").to_numpy(dtype="float64")
     cycles = pd.to_numeric(frame["cycle"], errors="coerce").to_numpy(dtype="float64")
     offsets = np.zeros(len(values), dtype="float64")
     if len(values) >= 2:

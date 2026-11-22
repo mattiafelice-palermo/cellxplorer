@@ -1363,7 +1363,8 @@ function AddEntriesModal({
     const labelFor = (value: string, facet: "system" | "format" | "technique") => {
       if (value === UNKNOWN_CELL_PICKER_FACET) return "Unknown / other";
       if (facet === "system") {
-        return value === "biologic" ? "BioLogic" : value === "neware" ? "Neware" : "Other";
+        const labels: Record<string, string> = { biologic: "BioLogic", neware: "Neware", maccor: "Maccor" };
+        return labels[value] ?? "Other";
       }
       if (facet === "format") {
         const friendly = value === ".xlsx" ? "Excel" : value.slice(1).toUpperCase();

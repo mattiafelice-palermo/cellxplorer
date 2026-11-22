@@ -55,6 +55,22 @@ test("unsupported Neware Excel files are removed after the automatic compatibili
   assert.deepEqual(filterAndSortImportEntries(excelEntries, excelHints, "", EMPTY_IMPORT_BROWSER_FILTERS, sort).map((entry) => entry.path), ["good.xlsx", "unknown.xlsx"]);
 });
 
+test("Maccor text is identified by its header and ordinary text is hidden after inspection", () => {
+  const entry = { path: "cell.TXT", name: "cell.TXT", kind: "file" as const, size: 50, modified_at: null };
+  const notes = { ...entry, path: "notes.txt", name: "notes.txt" };
+  const maccor = { source_format: "Maccor text", supplier: "Maccor", compatible: true, technique: null, cycle_count: null, error: null };
+  const checked = new Map<string, ImportHeaderHint>([
+    [entry.path, { ...maccor, path: entry.path }],
+    [notes.path, { ...maccor, path: notes.path, compatible: false, supplier: null, source_format: null }],
+  ]);
+  assert.equal(importEntrySupplier(entry), "Unknown");
+  assert.equal(importEntryFormat(entry, checked.get(entry.path)), "Maccor text");
+  const visible = filterAndSortImportEntries([entry, notes], checked, "", {
+    ...EMPTY_IMPORT_BROWSER_FILTERS, suppliers: ["Maccor"],
+  }, sort);
+  assert.deepEqual(visible, [entry]);
+});
+
 test("file browser sorts by size and leaves unavailable hint values last", () => {
   const visible = filterAndSortImportEntries(entries, hints, "", EMPTY_IMPORT_BROWSER_FILTERS, {
     key: "size",

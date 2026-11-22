@@ -15,6 +15,14 @@ from .import_search_diagnostics import trace
 from .import_search_catalog import METADATA_FIELDS, METADATA_VERSION, path_key
 
 
+def _initial_recognition(extension: str) -> str:
+    return "pending" if extension in {".xlsx", ".txt"} else "recognized"
+
+
+def _supplier(extension: str) -> str:
+    return {".mpr": "BioLogic", ".txt": "Maccor"}.get(extension, "Neware")
+
+
 def file_created_at(value):
     birth = getattr(value, "st_birthtime", None)
     if birth is None and os.name == "nt":
@@ -42,7 +50,14 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
     fact["metadata"] = {}
     fact["metadata_version"] = 0
     try:
-        if fact["extension"] == ".xlsx":
+        header = None
+        if fact["extension"] == ".txt":
+            header = parsing.read_header_metadata(fact["path"])
+            if header.get("error_kind") in {"invalid", "unsupported"}:
+                fact.update(recognition="unsupported", metadata_state="unavailable")
+            elif header.get("error"):
+                raise OSError(header["error"])
+        elif fact["extension"] == ".xlsx":
             try:
                 neware_excel.validate_supported_workbook(fact["path"])
             except neware_excel.UnsupportedNewareExcelError:
@@ -50,7 +65,8 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
         if fact["recognition"] != "unsupported":
             fact["recognition"] = "recognized"
         if metadata_enabled and fact["recognition"] != "unsupported":
-            header = parsing.read_header_metadata(fact["path"], fast_excel_hint=True)
+            if header is None:
+                header = parsing.read_header_metadata(fact["path"], fast_excel_hint=True)
             if header.get("error"):
                 trace("header_error", path=fact["path"], error=header.get("error"), error_kind=header.get("error_kind"))
                 if header.get("error_kind") == "unsupported":
@@ -77,12 +93,12 @@ def inspect_fact(fact: dict, metadata_enabled: bool) -> dict:
             after = os.stat(fact["path"])
         if (after.st_size, after.st_mtime_ns) != (fact["size"], fact["mtime_ns"]):
             # Live source changes must end in a visible retry state, not pending.
-            fact.update(recognition="pending" if fact["extension"] == ".xlsx" else "recognized",
+            fact.update(recognition=_initial_recognition(fact["extension"]),
                         metadata_state="unavailable", metadata={}, metadata_version=0)
     except Exception as exc:
         trace("header_exception", path=fact["path"], error=repr(exc))
         # A transient I/O error must not label a workbook unsupported.
-        fact.update(recognition="pending" if fact["extension"] == ".xlsx" else "recognized",
+        fact.update(recognition=_initial_recognition(fact["extension"]),
                     metadata_state="unavailable", metadata={}, metadata_version=0)
     trace("header_end", path=fact["path"], elapsed=time.monotonic()-started, state=fact["metadata_state"], metadata_fields=sorted(fact["metadata"]))
     if fact["recognition"] == "unsupported":
@@ -144,9 +160,9 @@ def scan_root(root: dict, config: dict, catalog_path: str, spool_path: str) -> N
                             fact = dict(canonical=key, path=entry.path, name=entry.name, extension=extension,
                                         size=stat.st_size, mtime_ns=stat.st_mtime_ns, file_created_at=file_created_at(stat),
                                         modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-                                        recognition="pending" if extension == ".xlsx" else "recognized",
+                                        recognition=_initial_recognition(extension),
                                         metadata_state="pending" if config["metadata_enabled"] else "disabled",
-                                        metadata_version=0, metadata={}, supplier="BioLogic" if extension == ".mpr" else "Neware")
+                                        metadata_version=0, metadata={}, supplier=_supplier(extension))
                             old = previous.execute("SELECT * FROM entries WHERE canonical=?", (key,)).fetchone()
                             if old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns and old["recognition"] != "pending" and (
                                 old["recognition"] == "unsupported" and old["metadata_version"] == METADATA_VERSION or
@@ -257,14 +273,14 @@ def scan_changes(root: dict, config: dict, catalog_path: str, spool_path: str) -
         fact = dict(canonical=key(path), path=path, name=Path(path).name, extension=extension,
             size=value.st_size, mtime_ns=value.st_mtime_ns, file_created_at=file_created_at(value),
             modified_at=datetime.fromtimestamp(value.st_mtime, timezone.utc).isoformat(),
-            recognition="pending" if extension == ".xlsx" else "recognized", metadata={}, metadata_version=0,
+            recognition=_initial_recognition(extension), metadata={}, metadata_version=0,
             metadata_state="pending" if config["metadata_enabled"] else "disabled",
-            supplier="BioLogic" if extension == ".mpr" else "Neware")
+            supplier=_supplier(extension))
         return fact
 
     def enrich(fact):
         nonlocal recovered
-        if fact["extension"] != ".xlsx" and not config["metadata_enabled"]:
+        if fact["recognition"] != "pending" and not config["metadata_enabled"]:
             return None  # No header work or duplicate publication.
         path = fact["path"]
         try:

@@ -14,6 +14,7 @@ from collections.abc import Sequence
 import pandas as pd
 
 from .time_capacity_derived import (
+    capacity_phases,
     consecutive_capacity_display,
     phase_capacity,
     phase_from_raw,
@@ -267,7 +268,7 @@ def voltage_preview_from_raw(
             phase_values = phase_capacity(frame, phases)
             reset_ids = frame["cycle"].to_numpy() if "cycle" in frame.columns else None
             x_values = pd.Series(
-                consecutive_capacity_display(phase_values, phases, reset_ids=reset_ids,
+                consecutive_capacity_display(phase_values, capacity_phases(frame, phases), reset_ids=reset_ids,
                                              capacity_verified=frame.get("capacity_verified")),
                 index=frame.index,
             )

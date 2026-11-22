@@ -389,7 +389,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         )
         self.assertEqual(
             parsing.SUPPORTED_SOURCE_EXTENSIONS,
-            frozenset({".nda", ".ndax", ".xlsx", ".mpr"}),
+            frozenset({".nda", ".ndax", ".xlsx", ".mpr", ".txt"}),
         )
 
     def test_source_filename_allowed_matches_supported_extensions(self):
@@ -397,6 +397,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         self.assertTrue(parsing.source_filename_allowed("a.ndax"))
         self.assertTrue(parsing.source_filename_allowed("a.xlsx"))
         self.assertTrue(parsing.source_filename_allowed("a.mpr"))
+        self.assertTrue(parsing.source_filename_allowed("a.TXT"))
         self.assertFalse(parsing.source_filename_allowed("a.csv"))
         self.assertFalse(parsing.source_filename_allowed("a.mpt"))
 
@@ -405,6 +406,7 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         self.assertEqual(parsing.source_parser_family("a.ndax"), "binary")
         self.assertEqual(parsing.source_parser_family("a.xlsx"), "excel")
         self.assertEqual(parsing.source_parser_family("a.mpr"), "biologic")
+        self.assertEqual(parsing.source_parser_family("a.txt"), "maccor")
         self.assertIsNone(parsing.source_parser_family("a.csv"))
 
 

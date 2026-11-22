@@ -15,7 +15,7 @@ from ..config import APP_DATA_DIR
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
 SCHEMA_VERSION = 4
 METADATA_VERSION = 2
-FORMATS = (".ndax", ".mpr", ".xlsx")
+FORMATS = (".ndax", ".mpr", ".xlsx", ".txt")
 METADATA_FIELDS = ("barcode", "remarks", "part_number", "start_time", "technique",
                    "active_mass_mg", "nominal_capacity_mah", "cycle_count", "duration_s", "device_info", "channel")
 

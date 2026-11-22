@@ -70,7 +70,7 @@ export function IndexedSearchFilters({ filters, onChange, config, techniques, re
             {section.id === "file" && <>
               {facet("root_id", "Search location", config?.roots.filter((r) => r.enabled).map((r) => ({ value: r.id, label: r.path })) ?? [])}
               {facet("extension", "File format", config?.formats ?? [])}
-              {facet("supplier", "Supplier", ["Neware", "BioLogic"])}
+              {facet("supplier", "Supplier", ["Neware", "BioLogic", "Maccor"])}
             </>}
             {RANGE_FIELDS.filter((f) => f.category === section.id && show(f.key)).map((field) => {
               const value = filters.ranges?.[field.key] ?? {};

@@ -87,7 +87,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import inspect as sqlalchemy_inspect
 
-from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, neware_excel
+from . import biologic_cp_ocv, biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, maccor_text, neware_excel
 from .source_format_errors import (
     InvalidSourceFormatError,
     SourceFormatError,
@@ -134,6 +134,7 @@ class SourceFormatDescriptor:
 FORMAT_NEWARE_BINARY = "neware_binary"
 FORMAT_NEWARE_EXCEL = "neware_excel"
 FORMAT_BIOLOGIC_MPR = "biologic_mpr"
+FORMAT_MACCOR_TEXT = "maccor_text"
 
 _NEWARE_BINARY_FORMAT = SourceFormatDescriptor(
     format_id=FORMAT_NEWARE_BINARY,
@@ -154,6 +155,7 @@ _BIOLOGIC_MPR_FORMAT = SourceFormatDescriptor(
     ),
 )
 _FORMAT_DESCRIPTORS: dict[str, SourceFormatDescriptor] = {
+    FORMAT_MACCOR_TEXT: SourceFormatDescriptor(FORMAT_MACCOR_TEXT, frozenset({".txt"}), str(maccor_text.ADAPTER_REVISION)),
     _NEWARE_BINARY_FORMAT.format_id: _NEWARE_BINARY_FORMAT,
     _NEWARE_EXCEL_FORMAT.format_id: _NEWARE_EXCEL_FORMAT,
     _BIOLOGIC_MPR_FORMAT.format_id: _BIOLOGIC_MPR_FORMAT,
@@ -190,18 +192,19 @@ SUPPORTED_SOURCE_EXTENSIONS = frozenset(_EXTENSION_FORMAT_ID)
 SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset(
     extension
     for extension, format_id in _EXTENSION_FORMAT_ID.items()
-    if format_id != FORMAT_BIOLOGIC_MPR
+    if format_id in {FORMAT_NEWARE_BINARY, FORMAT_NEWARE_EXCEL}
 )
 _DIRECT_EXTENSION_FORMAT_ID = _EXTENSION_FORMAT_ID
 SUPPORTED_DIRECT_SOURCE_EXTENSIONS = SUPPORTED_SOURCE_EXTENSIONS
 
 SUPPORTED_SOURCE_DESCRIPTION = (
     "Cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic (.mpr; GCPL "
-    "canonical cycling, CP/OCV curves, MB cycling with EIS excluded)"
+    "canonical cycling, CP/OCV curves, MB cycling with EIS excluded), and Maccor record exports (.txt)"
 )
 SUPPORTED_SOURCE_GLOB = source_glob()
 
 _FORMAT_FAMILY = {
+    FORMAT_MACCOR_TEXT: "maccor",
     FORMAT_NEWARE_BINARY: "binary",
     FORMAT_NEWARE_EXCEL: "excel",
     FORMAT_BIOLOGIC_MPR: "biologic",
@@ -268,7 +271,22 @@ def recognize_source(path: str | Path) -> str | None:
         return None
     if format_id == FORMAT_NEWARE_EXCEL:
         return format_id if neware_excel.is_supported_workbook(path) else None
+    if format_id == FORMAT_MACCOR_TEXT:
+        try:
+            maccor_text.read_header_metadata(path)
+        except (InvalidSourceFormatError, UnsupportedSourceFormatError):
+            return None
     return format_id
+
+
+def discoverable_source_path(path: str | Path) -> bool:
+    """Screen generic text files during recursive discovery, before hashing."""
+    if Path(path).suffix.casefold() != ".txt":
+        return source_filename_allowed(path)
+    try:
+        return recognize_source(path) == FORMAT_MACCOR_TEXT
+    except OSError:
+        return False
 
 
 def source_parser_descriptor(path: str | Path) -> dict[str, Any]:
@@ -314,6 +332,7 @@ def source_parser_descriptor(path: str | Path) -> dict[str, Any]:
 # future longer upstream version string fails loudly instead of silently
 # producing a value `SourceFile.parser_version` cannot store.
 _FORMAT_IDENTITY_PREFIX: dict[str, str] = {
+    FORMAT_MACCOR_TEXT: "mt",
     FORMAT_NEWARE_BINARY: "nb",
     FORMAT_NEWARE_EXCEL: "nx",
     FORMAT_BIOLOGIC_MPR: "bm",
@@ -569,7 +588,7 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
         error_type = UnsupportedSourceFormatError if rejection.kind == "unsupported" else InvalidSourceFormatError
         raise error_type(rejection.error)
     suffix = Path(path).suffix.casefold()
-    if suffix not in {".xlsx", ".mpr"}:
+    if suffix not in {".xlsx", ".mpr", ".txt"}:
         return
     error = metadata.get("error") if isinstance(metadata, dict) else None
     if not error:
@@ -579,7 +598,7 @@ def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
         raise UnsupportedSourceFormatError(message)
     if metadata.get("error_kind") == "invalid":
         raise InvalidSourceFormatError(message)
-    if suffix == ".mpr":
+    if suffix in {".mpr", ".txt"}:
         raise SourceFormatError(message)
     raise UnsupportedSourceFormatError(str(error))
 
@@ -1618,6 +1637,8 @@ def _parse_source_timeseries(path: str | Path, *, read_mode: str = "safe") -> pd
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(source_path.suffix.casefold())
     if format_id == FORMAT_NEWARE_EXCEL:
         return neware_excel.parse_timeseries(source_path)
+    if format_id == FORMAT_MACCOR_TEXT:
+        return maccor_text.parse_timeseries(source_path)
     if format_id == FORMAT_NEWARE_BINARY:
         return _parse_neware_binary_timeseries(source_path)
     if format_id == FORMAT_BIOLOGIC_MPR:
@@ -1930,6 +1951,8 @@ def read_header_metadata(
     format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix)
     mpr_layout_verified = False
     try:
+        if format_id == FORMAT_MACCOR_TEXT:
+            return maccor_text.read_header_metadata(path)
         if format_id == FORMAT_BIOLOGIC_MPR:
             with biologic_mpr.read_mpr_header(path) as document:
                 mpr_layout_verified = True
@@ -1958,7 +1981,11 @@ def read_header_metadata(
                 f"Unsupported cycling source format: {path.suffix or '<none>'}."
             )
     except SourceFormatError as exc:
-        logger.warning("metadata read failed for %s: %s", path, exc)
+        # Most .txt files in an indexed folder are ordinary documents.
+        if format_id == FORMAT_MACCOR_TEXT and isinstance(exc, UnsupportedSourceFormatError):
+            logger.debug("unrecognized Maccor text header for %s: %s", path, exc)
+        else:
+            logger.warning("metadata read failed for %s: %s", path, exc)
         from .source_error_messages import source_error_message
 
         error_kind = source_rejection_kind(exc)

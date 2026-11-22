@@ -1325,7 +1325,7 @@ export function ImportFilesystemPickerModal({
       step={mode === "files" ? 1 : undefined}
       titleInfo={mode === "folder"
         ? folderPurpose === "search" ? "Index this folder and its subfolders for fast file search. This does not import any files." : "Choose the folder to monitor. The watcher checks source files directly in this folder."
-        : "Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL, CP, OCV, or MB (.mpr) data, plus folders. Click a folder row to open it; use its checkbox to select the folder."}
+        : "Select Neware (.nda, .ndax, structured .xlsx), BioLogic GCPL, CP, OCV or MB (.mpr), or Maccor text exports (.txt). Click a folder row to open it or use its checkbox to select the folder."}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       fill={mode === "files"}
       actions={

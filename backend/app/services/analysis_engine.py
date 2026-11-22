@@ -1872,7 +1872,9 @@ def _phase_from_raw(frame: pd.DataFrame) -> list[str]:
 def _time_capacity_sort_columns(frame: pd.DataFrame) -> list[str]:
     if "_stitch_order" in frame.columns:
         return ["_stitch_order"]
-    if "mpr_elapsed_time_s" in frame.columns:
+    # A display-only partial cycle has stitched label zero even at the end of
+    # a recording. Its instrument rows must keep their acquisition order.
+    if "mpr_elapsed_time_s" in frame.columns or "maccor_mode" in frame.columns:
         return [column for column in ("segment", "record_index") if column in frame.columns]
     return ["cycle", "segment", "record_index"] if "record_index" in frame.columns else ["cycle", "segment"]
 
@@ -1904,6 +1906,8 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
         return frame.assign(time_s=values)
     if "_stitch_time_s" in frame.columns:
         return frame.assign(time_s=frame["_stitch_time_s"].to_numpy(dtype=float))
+    if "maccor_mode" in frame.columns:
+        frame = frame.assign(time_s=time_capacity_derived.source_clock(frame))
     if "time_s" not in frame.columns or len(frame) < 2:
         return frame
     t = frame["time_s"].to_numpy(dtype="float64")
@@ -2020,7 +2024,7 @@ def _time_capacity_display_x(
         if capacity_axis and settings.get("view") == "voltage_current":
             return time_capacity_derived.consecutive_capacity_display(
                 values,
-                phases,
+                time_capacity_derived.capacity_phases(raw, phases),
                 reset_ids=(raw["cycle"].to_numpy() if "cycle" in raw.columns else None),
                 initial_offset=origin_capacity if origin_capacity is not None else 0.0,
                 capacity_verified=raw.get("capacity_verified"),
@@ -2121,7 +2125,7 @@ def _aligned_prepared_transform_values(
         return None
     sort_columns = [
         column
-        for column in ("cycle", "segment", "record_index")
+        for column in _time_capacity_sort_columns(raw)
         if column in raw.columns and column in prepared.columns
     ]
     if not sort_columns:

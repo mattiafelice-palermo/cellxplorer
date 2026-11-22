@@ -49,8 +49,8 @@ export function discoverFilters(query: string, fields: DiscoveryField[]) {
 }
 export const DISCOVERY_FIELDS: DiscoveryField[] = [
   { key: "root_id", category: "file", label: "Search location", aliases: ["root", "directory", "network drive"] },
-  { key: "extension", category: "file", label: "File format", aliases: ["extension", "file type"], options: [".nda", ".ndax", ".xlsx", ".mpr"] },
-  { key: "supplier", category: "file", label: "Supplier", aliases: ["manufacturer", "vendor", "instrument maker"], options: ["Neware", "BioLogic"] },
+  { key: "extension", category: "file", label: "File format", aliases: ["extension", "file type"], options: [".nda", ".ndax", ".xlsx", ".mpr", ".txt"] },
+  { key: "supplier", category: "file", label: "Supplier", aliases: ["manufacturer", "vendor", "instrument maker"], options: ["Neware", "BioLogic", "Maccor"] },
   { key: "size", category: "file", label: "File size", aliases: ["bytes", "MB", "megabytes", "storage size"] },
   { key: "file_created_at", category: "dates", label: "File created", aliases: ["creation date", "date created", "creation time"] },
   { key: "modified_at", category: "dates", label: "File modified", aliases: ["modification date", "last changed", "date modified"] },

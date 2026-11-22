@@ -1063,6 +1063,7 @@ def _cell_picker_source_summaries(db: Session, cell_ids: list[int]) -> dict[int,
         extension = str(row.extension or "").casefold().lstrip(".")
         system = (
             "biologic" if extension == "mpr"
+            else "maccor" if extension == "txt"
             else "neware" if extension in {"nda", "ndax", "xlsx"}
             else "other"
         )

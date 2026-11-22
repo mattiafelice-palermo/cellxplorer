@@ -10,6 +10,12 @@ Alpha.22 summarizes the accumulated changes since the published Alpha.17 release
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.17 - 2026-11-22
+
+### New features
+
+- Import Maccor tab-separated cycling records and plot signed current, voltage and capacity, including measurements from interrupted or incomplete cycles.
+
 ## 0.29.0-alpha.16 - 2026-11-22
 
 ### New features

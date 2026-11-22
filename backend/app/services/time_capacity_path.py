@@ -37,6 +37,7 @@ TIME_CAPACITY_OPTIONAL_COLUMNS: tuple[str, ...] = (
     "mpr_elapsed_time_s",
     "mpr_acquisition_segment",
     "biologic_mb_time_s",
+    "maccor_standby_phase",
     "capacity_verified",
 )
 
@@ -240,6 +241,8 @@ def time_capacity_raw_columns(available_columns: Iterable[str]) -> list[str]:
 
     available = set(available_columns)
     columns = [column for column in TIME_CAPACITY_REQUIRED_COLUMNS if column in available]
+    if {"maccor_mode", "total_time_s"} <= available:
+        columns.extend(("maccor_mode", "total_time_s"))
     columns.extend(
         column
         for column in TIME_CAPACITY_OPTIONAL_COLUMNS
@@ -282,6 +285,8 @@ def time_capacity_request_columns(
         "mpr_acquisition_segment",
         "biologic_mb_time_s",
     ]
+    if "maccor_mode" in available:
+        requested.extend(("maccor_mode", "total_time_s"))
     if protocol_active:
         requested.append("step_index" if "step_index" in available else "Step_Index")
 
@@ -309,7 +314,7 @@ def time_capacity_request_columns(
         needs_capacity = True
 
     if needs_capacity:
-        requested.extend(("charge_capacity_mah", "discharge_capacity_mah", "capacity_verified"))
+        requested.extend(("charge_capacity_mah", "discharge_capacity_mah", "capacity_verified", "maccor_standby_phase"))
     return [
         column for column in time_capacity_raw_columns(available) if column in requested
     ]

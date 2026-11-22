@@ -147,16 +147,17 @@ def inspect_header_hint(
             raise ValueError("File changed while its header was being read.")
         if hash_if_size_matches and before.st_size in hash_if_size_matches:
             result["_hash"] = parsing.compute_hash(path).lower()
-        if ext in {".xlsx", ".mpr"}:
+        if ext in {".xlsx", ".mpr", ".txt"}:
             result["compatible"] = True
         biologic = ext == ".mpr"
         result.update(
             source_format=(
-                "BioLogic EC-Lab" if biologic
+                "Maccor text" if ext == ".txt"
+                else "BioLogic EC-Lab" if biologic
                 else "Neware Excel" if ext == ".xlsx"
                 else f"Neware {ext.lstrip('.').upper()}"
             ),
-            supplier="BioLogic" if biologic else "Neware",
+            supplier="Maccor" if ext == ".txt" else "BioLogic" if biologic else "Neware",
             technique=(str(metadata.get("technique")).strip() or None)
             if metadata.get("technique") is not None else None,
             cycle_count=_cycle_count_hint(metadata),
@@ -166,7 +167,7 @@ def inspect_header_hint(
         # explicitly classifies the workbook as unsupported. I/O races,
         # permissions, and malformed-but-recognized exports leave the hint
         # unknown so an optional scan failure cannot hide a selectable file.
-        if path.suffix.casefold() in {".xlsx", ".mpr"} and metadata.get("error_kind") in {"unsupported", "invalid"}:
+        if path.suffix.casefold() in {".xlsx", ".mpr", ".txt"} and metadata.get("error_kind") in {"unsupported", "invalid"}:
             result["compatible"] = False
             result["source_error_kind"] = metadata["error_kind"]
             if metadata.get("permissive_error"):

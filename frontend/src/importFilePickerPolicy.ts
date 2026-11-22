@@ -56,6 +56,7 @@ export function importEntryFormat(entry: ImportBrowseEntry, hint?: ImportHeaderH
   if (hint?.source_format) return hint.source_format;
   const extension = entry.name.split(".").pop()?.toLowerCase();
   if (extension === "mpr") return "BioLogic EC-Lab";
+  if (extension === "txt") return "Text export";
   if (extension === "xlsx") return "Neware Excel";
   if (extension === "nda") return "Neware NDA";
   if (extension === "ndax") return "Neware NDAX";
@@ -64,7 +65,9 @@ export function importEntryFormat(entry: ImportBrowseEntry, hint?: ImportHeaderH
 
 export function importEntrySupplier(entry: ImportBrowseEntry, hint?: ImportHeaderHint): string {
   if (hint?.supplier) return hint.supplier;
-  return entry.name.toLowerCase().endsWith(".mpr") ? "BioLogic" : "Neware";
+  const extension = importEntryExtension(entry);
+  if (extension === ".txt") return "Unknown";
+  return extension === ".mpr" ? "BioLogic" : "Neware";
 }
 
 export function importEntryExtension(entry: ImportBrowseEntry): string {
@@ -112,7 +115,7 @@ export function filterAndSortImportEntries(
     if (query && !entry.name.toLocaleLowerCase().includes(query)) return false;
     if (entry.kind === "folder") return showFolders;
     const hint = hints.get(entry.path);
-    if (importEntryExtension(entry) === ".xlsx" && hint?.compatible === false) return false;
+    if ([".xlsx", ".txt"].includes(importEntryExtension(entry)) && hint?.compatible === false) return false;
     const supplier = importEntrySupplier(entry, hint);
     const size = entry.size === null ? null : entry.size / (1024 * 1024);
     const modified = entry.modified_at ? Date.parse(entry.modified_at) : null;

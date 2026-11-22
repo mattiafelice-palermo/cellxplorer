@@ -91,6 +91,13 @@ class TimeCapacityTransformNeeds:
         )
 
 
+def source_clock(frame: pd.DataFrame) -> pd.Series:
+    """Choose the recorded Maccor test clock, including in mixed-source Cells."""
+    if "maccor_mode" in frame and "total_time_s" in frame:
+        return frame["time_s"].where(frame["maccor_mode"].isna(), frame["total_time_s"])
+    return frame["time_s"]
+
+
 def phase_from_raw(frame: pd.DataFrame) -> list[str]:
     """Return charge/discharge/rest per row using the canonical phase rule."""
 
@@ -120,6 +127,14 @@ def phase_from_raw(frame: pd.DataFrame) -> list[str]:
     return phases.tolist()
 
 
+def capacity_phases(frame: pd.DataFrame, phases: list[str]) -> list[str] | np.ndarray:
+    """Keep a witnessed Maccor standby on the counter it continues to measure."""
+    if "maccor_standby_phase" in frame:
+        standby = frame["maccor_standby_phase"]
+        return np.where(standby.notna(), standby, phases)
+    return phases
+
+
 def phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
     """Return exact cumulative phase capacity across counter resets."""
 
@@ -134,7 +149,7 @@ def phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
         if "discharge_capacity_mah" in frame.columns
         else np.full(n, np.nan)
     )
-    phase_arr = np.asarray(phases)
+    phase_arr = np.asarray(capacity_phases(frame, phases))
     with np.errstate(invalid="ignore"):
         best = np.where(
             np.isnan(charge),
