@@ -10,6 +10,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.26 - 2026-11-23
+
+### Bug fixes
+
+- Speed up native Maccor 4608 imports by decoding current ranges and operating modes in numeric blocks.
+
 ## 0.29.0-alpha.25 - 2026-11-23
 
 ### Bug fixes

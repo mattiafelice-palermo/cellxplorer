@@ -173,6 +173,40 @@ class MaccorBinaryTests(unittest.TestCase):
             with self.assertRaisesRegex(InvalidSourceFormatError, "truncated"):
                 parsing.parse_timeseries(self.path)
 
+    def test_all_eight_current_ranges_use_the_full_flag_and_recorded_direction(self):
+        steps = ("Charge", "Dischrge", "End")
+        records = []
+        for step, mode, flags in ((0, 1, (0xFFFF, 0xEEEE, 0xDDDD, 0xCCCC)),
+                                  (1, 2, (0xBBBB, 0xAAAA, 0x9999, 0x8888))):
+            for i, flag in enumerate(flags):
+                records.append((step, mode, 129 if i == 3 else 0, flag, 65535, 100 * i, i, i))
+        self.path.write_bytes(channel_file(steps, records))
+        raw = parsing.parse_timeseries(self.path)
+        np.testing.assert_allclose(raw.current_ma, [.15, 5, 150, 5000, -.15, -5, -150, -5000])
+        for flag in (0x0FFF, 0xFF0F, 0xFFFE, 0xBBBB):
+            with self.subTest(charge_flag=hex(flag)):
+                self.path.write_bytes(channel_file(steps, [(0, 1, 0, flag, 65535, 0, 0, 0)]))
+                with self.assertRaisesRegex(UnsupportedSourceFormatError, "current range code"):
+                    parsing.parse_timeseries(self.path)
+
+    def test_first_invalid_block_determines_the_diagnostic(self):
+        steps = ("Rest", "End")
+        header = channel_file(steps, [])
+        slot = channel_file(steps, [(0, 4, 0, 0x3333, 0, 0, 0, 0)])[-264:]
+        count = 16385
+        rows = bytearray(slot * count)
+        for index in range(count):
+            struct.pack_into("<I", rows, index * 264 + 230, index + 1)
+        rows[(count - 2) * 264 + 8] = 255  # Bad channel in the first block.
+        rows[(count - 1) * 264 + 9] = 255  # Unknown mode in the second.
+        self.path.write_bytes(header + rows)
+        with self.assertRaisesRegex(InvalidSourceFormatError, "channel or step"):
+            parsing.parse_timeseries(self.path)
+        rows[(count - 2) * 264 + 8] = 2
+        self.path.write_bytes(header + rows)
+        with self.assertRaisesRegex(UnsupportedSourceFormatError, "operating mode"):
+            parsing.parse_timeseries(self.path)
+
     def test_witnessed_standby_and_resume_keep_measured_counters_and_plot_break(self):
         steps = ("Dischrge", "Charge", "End")
         records = [

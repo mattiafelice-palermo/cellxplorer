@@ -791,6 +791,12 @@ of 100, 10, 50,000 and 1. The paired export verifies the FFFF/BBBB active
 range (0.5 A full scale) and the first-range accumulator conversion. The
 reader restricts this profile to those observed active range codes.
 
+The native decoder validates mode bytes and complete 16-bit range words in
+acquisition order, one 16,384-record block at a time. The range identifies
+both direction and gain. Reject an unknown word or a range for the opposite
+active direction before applying the calibrated scale. Build mode labels
+after validation so the canonical mapper receives the same values and dtypes.
+
 Native mode 31/status 193 on the final End step and mode 30/status 192 on
 the interrupted step are control snapshots. A 5 A recording can also resume
 after an interior Stop. The witnessed pattern has an active charge or discharge

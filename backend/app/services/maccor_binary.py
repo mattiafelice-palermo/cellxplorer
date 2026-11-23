@@ -6,6 +6,7 @@ import os
 import re
 import struct
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import BinaryIO
 from xml.etree import ElementTree
@@ -32,10 +33,21 @@ _RECORD = np.dtype({
     "offsets": [0, 8, 9, 10, 11, 15, 16, 18, 21, 29, 37, 45, 230, 234],
     "itemsize": 264,
 })
-_MODE = {1: "C", 2: "D", 4: "R", 26: "SubRout", 29: "SBw", 30: "Stop", 31: "O"}
+_CHARGE, _DISCHARGE, _REST = 1, 2, 4
+_SUBROUTINE, _STANDBY, _STOP, _OFF = 26, 29, 30, 31
+_MODE = {_CHARGE: "C", _DISCHARGE: "D", _REST: "R", _SUBROUTINE: "SubRout",
+         _STANDBY: "SBw", _STOP: "Stop", _OFF: "O"}
+_MODE_LABELS = np.array([_MODE.get(code) for code in range(256)], dtype=object)
+_KNOWN_MODE = np.array([code in _MODE for code in range(256)])
 _PROGRAM_MODE = {"Charge": "C", "Dischrge": "D", "Rest": "R"}
+_STEP_MODE = {"Charge": _CHARGE, "Dischrge": _DISCHARGE, "Rest": _REST, "SubRout": _SUBROUTINE, "End": _OFF}
 _CHARGE_RANGES = (0xFFFF, 0xEEEE, 0xDDDD, 0xCCCC)
 _DISCHARGE_RANGES = (0xBBBB, 0xAAAA, 0x9999, 0x8888)
+# Index by the complete 16-bit flag. Zero denotes an unknown range. The sign
+# gives its direction and the magnitude selects one of the four calibrated gains.
+_RANGE_NUMBER = np.zeros(1 << 16, dtype=np.int8)
+_RANGE_NUMBER[list(_CHARGE_RANGES)] = (1, 2, 3, 4)
+_RANGE_NUMBER[list(_DISCHARGE_RANGES)] = (-1, -2, -3, -4)
 
 
 @dataclass(frozen=True)
@@ -46,6 +58,10 @@ class _Program:
     # Step zero is the start of the procedure. Do/Loop/AdvCycle emit no rows.
     transitions: dict[tuple[int, int], int]
     subroutines: dict[int, str]
+
+    @cached_property
+    def record_modes(self) -> np.ndarray:
+        return np.array([_STEP_MODE.get(kind, 0) for kind in self.steps], dtype=np.uint8)
 
     @property
     def explicit(self) -> bool:
@@ -192,7 +208,7 @@ def _read_header(stream: BinaryIO) -> _Header:
     if base:
         setup[21:29] = bytes(8)  # continued elapsed time and record number
         setup[230:234] = bytes(4)
-    stopped = snapshot["mode"] == 30 and snapshot["end_status"] == 192 and snapshot["record"] > 0
+    stopped = snapshot["mode"] == _STOP and snapshot["end_status"] == 192 and snapshot["record"] > 0
     if seed[8] != channel or (any(setup[9:]) and not stopped):
         raise InvalidSourceFormatError("Maccor setup record does not match its channel descriptor.")
     started = _dates(np.frombuffer(seed, dtype="<f8", count=1))[0]
@@ -278,50 +294,49 @@ def _supported_standby_ranges(rows: np.ndarray, header: _Header) -> bool:
     flags, status = rows["range_code"], rows["end_status"]
     supported = ((flags == 0x2222) & (status == 195)) | ((flags == 0x6666) & (status == 254))
     if header.voltage_min == -5:
-        steps = np.asarray(header.program.steps)[rows["step"]]
-        charge = (steps == "Charge") & (flags == 0x6666) & np.isin(status, (195, 253))
-        discharge = (steps == "Dischrge") & (flags == 0x2222) & (status == 254)
+        expected = header.program.record_modes[rows["step"]]
+        charge = (expected == _CHARGE) & (flags == 0x6666) & np.isin(status, (195, 253))
+        discharge = (expected == _DISCHARGE) & (flags == 0x2222) & (status == 254)
         supported |= charge | discharge
     return bool(supported.all())
 
 
 def _decode(rows: np.ndarray, header: _Header) -> pd.DataFrame:
     field = rows["program_field"]
-    if not header.program.explicit and not np.isin(field, (0, 0x03000000)).all():
+    if not header.program.explicit and not ((field == 0) | (field == 0x03000000)).all():
         raise UnsupportedSourceFormatError("Unsupported Maccor record layout before the step field.")
-    mode = pd.Series(rows["mode"]).map(_MODE)
-    if mode.isna().any():
+    mode = rows["mode"]
+    if not _KNOWN_MODE[mode].all():
         raise UnsupportedSourceFormatError("Unsupported Maccor binary operating mode.")
     step = rows["step"].astype("int64")
     if (rows["channel"] != header.channel).any() or (step >= len(header.program.steps)).any():
         raise InvalidSourceFormatError("Maccor record channel or step contradicts the header.")
-    kinds = pd.Series(np.asarray(header.program.steps)[step])
-    expected_mode = kinds.map(_PROGRAM_MODE)
-    standby = mode.eq("SBw")
-    valid_mode = (mode.eq(expected_mode) | (standby & expected_mode.isin(("C", "D")))
-                  | (mode.eq("O") & kinds.eq("End")) | (mode.eq("SubRout") & kinds.eq("SubRout"))
-                  | (mode.eq("Stop") & (expected_mode.notna() | kinds.eq("SubRout"))))
+    expected = header.program.record_modes[step]
+    active_step = (expected == _CHARGE) | (expected == _DISCHARGE)
+    standby = mode == _STANDBY
+    stoppable_step = active_step | (expected == _REST) | (expected == _SUBROUTINE)
+    valid_mode = (mode == expected) | (standby & active_step) | ((mode == _STOP) & stoppable_step)
     if not valid_mode.all():
         raise InvalidSourceFormatError("Maccor record mode contradicts the programmed step.")
 
-    charge, discharge = mode.eq("C"), mode.eq("D")
+    charge, discharge = mode == _CHARGE, mode == _DISCHARGE
     flags = rows["range_code"]
     if header.voltage_min == 0 and ((charge & (flags != 0xFFFF)) | (discharge & (flags != 0xBBBB))).any():
         raise UnsupportedSourceFormatError("Unverified active range in the Maccor 50 A profile.")
-    if ((charge & ~np.isin(flags, _CHARGE_RANGES)).any() or (discharge & ~np.isin(flags, _DISCHARGE_RANGES)).any()
-            or (standby.any() and not _supported_standby_ranges(rows[standby.to_numpy(dtype=bool)], header))):
+    range_number = _RANGE_NUMBER[flags]
+    if ((charge & (range_number <= 0)).any() or (discharge & (range_number >= 0)).any()
+            or (standby.any() and not _supported_standby_ranges(rows[standby], header))):
         raise UnsupportedSourceFormatError("Unsupported active Maccor current range code.")
-    if (mode.eq("R") & (rows["current"] != 0)).any():
+    if ((mode == _REST) & (rows["current"] != 0)).any():
         raise InvalidSourceFormatError("Maccor rest record has a nonzero current count.")
-    scales = dict(zip(_CHARGE_RANGES, header.current_ranges))
-    scales.update(zip(_DISCHARGE_RANGES, header.current_ranges))
-    current = rows["current"] * pd.Series(flags).map(scales) / _ADC_MAX
+    scales = np.asarray((0.0, *header.current_ranges))
+    current = rows["current"] * scales[np.abs(range_number)] / _ADC_MAX
     voltage_span = (header.voltage_max - header.voltage_min) / _ADC_MAX
     # Accumulators use the first current range and centisecond ticks,
     # even if the instantaneous ADC range changes during a step.
     ah_per_count = header.current_ranges[0] / (_ADC_MAX * 100 * 3600)
     return pd.DataFrame({
-        "Rec": rows["record"].astype("int64"), "Step": step + 1, "Md": mode, "ES": rows["end_status"],
+        "Rec": rows["record"].astype("int64"), "Step": step + 1, "Md": _MODE_LABELS[mode], "ES": rows["end_status"],
         "TestTime": rows["test_ticks"] / 6000.0, "StepTime": rows["step_ticks"] / 6000.0,
         "Current [A]": np.where(charge | discharge, current, 0.0),
         "Voltage [V]": header.voltage_min + rows["voltage"] * voltage_span,
@@ -392,7 +407,7 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
             if not count:
                 last_record, last_ticks, last_date = initial, int(seed["test_ticks"]), float(seed["date"])
                 continue
-            if number == 1 and seed["mode"] == 30:
+            if number == 1 and seed["mode"] == _STOP:
                 raise UnsupportedSourceFormatError("Maccor measurements start from an unverified stop snapshot.")
             chunks = []
             for first in range(0, count, 16384):
