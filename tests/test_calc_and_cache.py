@@ -3,7 +3,9 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -348,6 +350,264 @@ class WriteBehindTests(unittest.TestCase):
         cycles = cache.build_write_behind(self.HASH, "unused.ndax")
         self.assertEqual(self.calls, 1)  # no re-parse
         self.assertEqual(list(cycles["cycle"]), [1, 2])
+
+
+class SharedCacheBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = Path(self.enterContext(TemporaryDirectory()))
+        self.enterContext(patch.object(cache, "CACHE_DIR", self.directory / "cache"))
+        self.picker = self.directory / "picker.ndax"
+        self.preview = self.directory / "preview.ndax"
+        for path in (self.picker, self.preview):
+            path.write_bytes(b"same source")
+        self.fingerprint = parsing.capture_source_fingerprint(self.preview)
+        self.key = self.fingerprint.hash
+        self.frame = _canonical_cache_test_frame()
+        self.expected_cycles = calc.per_cycle(self.frame)
+        self.joined = threading.Event()
+        original = cache._start_cache_build
+
+        def observe_join(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if not result[1]:
+                self.joined.set()
+            return result
+
+        self.enterContext(patch.object(cache, "_start_cache_build", side_effect=observe_join))
+
+    def preview_cycles(self):
+        return cache.build_write_behind(self.key, self.preview, expected_fingerprint=self.fingerprint)
+
+    def assert_shared_import(self, picker_first):
+        parsing_started = threading.Event()
+        release_parse = threading.Event()
+        publishing = threading.Event()
+        release = threading.Event()
+        original = cache._publish_optimized_raw
+
+        def read(_path):
+            parsing_started.set()
+            self.assertTrue(release_parse.wait(10))
+            return self.frame
+
+        def publish(*args):
+            publishing.set()
+            self.assertTrue(release.wait(10))
+            return original(*args)
+
+        with (
+            patch.object(parsing, "parse_timeseries", side_effect=read) as parse,
+            patch.object(parsing, "compute_hash", wraps=parsing.compute_hash) as checksum,
+            patch.object(calc, "per_cycle", wraps=calc.per_cycle) as derive,
+            patch.object(cache, "_publish_optimized_raw", side_effect=publish) as writer,
+            patch.object(cache, "_write_atomic", wraps=cache._write_atomic) as writes,
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            try:
+                if picker_first:
+                    self.assertEqual(cache.schedule_build(self.key, self.picker)["status"], "started")
+                else:
+                    preview = pool.submit(self.preview_cycles)
+                self.assertTrue(parsing_started.wait(10))
+                if picker_first:
+                    preview = pool.submit(self.preview_cycles)
+                else:
+                    self.assertEqual(cache.schedule_build(self.key, self.picker)["status"], "started")
+                self.assertTrue(self.joined.wait(10))
+                release_parse.set()
+                self.assertTrue(publishing.wait(10))
+                cycles = preview.result(timeout=10)
+                pd.testing.assert_frame_equal(cycles, self.expected_cycles, check_exact=True)
+                cycles.loc[0, "cycle"] = 99
+                waiter = pool.submit(cache.wait_for_pending, self.key)
+                with self.assertRaises(TimeoutError):
+                    waiter.result(timeout=.05)
+                self.assertCountEqual([call.args[0] for call in checksum.call_args_list], [self.preview, self.picker])
+            finally:
+                release_parse.set()
+                release.set()
+                cache.wait_for_pending(self.key)
+
+            info = cache.build(self.key, self.preview, expected_fingerprint=self.fingerprint)
+            self.assertTrue(info["cached"])
+            self.assertEqual(checksum.call_count, 3)
+            parse.assert_called_once()
+            derive.assert_called_once()
+            writer.assert_called_once()
+            self.assertEqual(sum(call.args[1].name.startswith("cycles__") for call in writes.call_args_list), 1)
+            pd.testing.assert_frame_equal(cache.load_cycles(self.key, info["parser_version"], cache.CALC_VERSION),
+                                          self.expected_cycles, check_exact=True)
+            self.assertTrue(cache.time_capacity_derived_path(self.key, info["parser_version"]).is_file())
+
+    def test_picker_first_serves_preview_before_publication(self):
+        self.assert_shared_import(picker_first=True)
+
+    def test_preview_first_serves_picker_and_registration(self):
+        self.assert_shared_import(picker_first=False)
+
+    def test_joining_preview_checks_its_own_path_before_and_after_waiting(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def parse(_path):
+            entered.set()
+            self.assertTrue(release.wait(10))
+            return self.frame
+
+        with patch.object(parsing, "parse_timeseries", side_effect=parse) as reader, ThreadPoolExecutor(2) as pool:
+            owner = pool.submit(cache.build, self.key, self.picker)
+            try:
+                self.assertTrue(entered.wait(10))
+                changed = self.directory / "different.ndax"
+                changed.write_bytes(b"other bytes")
+                with self.assertRaisesRegex(cache.SourceChangedDuringBuild, "hash"):
+                    cache.build_write_behind(self.key, changed)
+                with self.assertRaisesRegex(cache.SourceChangedDuringBuild, "missing"):
+                    cache.build_write_behind(self.key, self.directory / "missing.ndax")
+                preview = pool.submit(self.preview_cycles)
+                self.assertTrue(self.joined.wait(10))
+                self.preview.write_bytes(b"changed while preview waited")
+            finally:
+                release.set()
+            with self.assertRaises(cache.SourceChangedDuringBuild):
+                preview.result(timeout=10)
+            self.assertFalse(owner.result(timeout=10)["cached"])
+            reader.assert_called_once()
+
+    def test_failed_publication_releases_joiners_and_can_be_retried(self):
+        writing = threading.Event()
+        release = threading.Event()
+        original = cache._write_atomic
+
+        def fail_cycles(frame, path):
+            if path.name.startswith("cycles__"):
+                writing.set()
+                self.assertTrue(release.wait(10))
+                raise OSError("cycle write interrupted")
+            original(frame, path)
+
+        with patch.object(parsing, "parse_timeseries", return_value=self.frame) as parse:
+            with patch.object(cache, "_write_atomic", side_effect=fail_cycles), ThreadPoolExecutor(1) as pool:
+                self.preview_cycles()
+                try:
+                    self.assertTrue(writing.wait(10))
+                    durable = pool.submit(cache.build, self.key, self.picker)
+                    self.assertTrue(self.joined.wait(10))
+                finally:
+                    release.set()
+                with self.assertRaisesRegex(OSError, "cycle write interrupted"):
+                    durable.result(timeout=10)
+            self.assertNotIn(self.key, cache.pending_hashes())
+            self.assertFalse(cache.raw_path(self.key, parsing.parser_identity(self.picker)).exists())
+            self.assertFalse(cache.build(self.key, self.picker)["cached"])
+            self.assertEqual(parse.call_count, 2)
+
+    def test_parse_error_reaches_preview_and_durable_waiter_before_retry(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def fail(_path):
+            entered.set()
+            self.assertTrue(release.wait(10))
+            raise ValueError("invalid measurement")
+
+        with patch.object(parsing, "parse_timeseries", side_effect=fail) as parse, ThreadPoolExecutor(2) as pool:
+            preview = pool.submit(self.preview_cycles)
+            try:
+                self.assertTrue(entered.wait(10))
+                durable = pool.submit(cache.build, self.key, self.picker)
+                self.assertTrue(self.joined.wait(10))
+            finally:
+                release.set()
+            for result in (preview, durable):
+                with self.assertRaisesRegex(ValueError, "invalid measurement"):
+                    result.result(timeout=10)
+            parse.assert_called_once()
+        with patch.object(parsing, "parse_timeseries", return_value=self.frame):
+            self.assertFalse(cache.build(self.key, self.picker)["cached"])
+
+    def test_late_optional_request_prepares_from_published_raw(self):
+        skipped = threading.Event()
+        release = threading.Event()
+        prepare = cache._CacheBuild.prepare_derived
+
+        def observe_skip(work, *args):
+            prepare(work, *args)
+            if work.skipped_time_capacity:
+                skipped.set()
+                self.assertTrue(release.wait(10))
+
+        with (
+            patch.object(parsing, "parse_timeseries", return_value=self.frame) as parse,
+            patch.object(cache._CacheBuild, "prepare_derived", observe_skip),
+            ThreadPoolExecutor(2) as pool,
+        ):
+            base = pool.submit(cache.build, self.key, self.picker, prepare_time_capacity=False)
+            try:
+                self.assertTrue(skipped.wait(10))
+                preview = pool.submit(self.preview_cycles)
+                with self.assertRaises(TimeoutError):
+                    preview.result(timeout=.05)
+            finally:
+                release.set()
+            info = base.result(timeout=10)
+            pd.testing.assert_frame_equal(preview.result(timeout=10), self.expected_cycles, check_exact=True)
+            cache.wait_for_pending(self.key)
+            parse.assert_called_once()
+            self.assertTrue(cache.time_capacity_derived_path(self.key, info["parser_version"]).is_file())
+
+    def test_forced_rebuild_waits_then_reparses(self):
+        first_write = threading.Event()
+        release = threading.Event()
+        original = cache._publish_optimized_raw
+
+        def publish(*args):
+            first_write.set()
+            self.assertTrue(release.wait(10))
+            return original(*args)
+
+        with (
+            patch.object(parsing, "parse_timeseries", return_value=self.frame) as parse,
+            patch.object(cache, "_publish_optimized_raw", side_effect=publish),
+            ThreadPoolExecutor(1) as pool,
+        ):
+            self.preview_cycles()
+            try:
+                self.assertTrue(first_write.wait(10))
+                forced = pool.submit(cache.build, self.key, self.picker, force=True)
+                with self.assertRaises(TimeoutError):
+                    forced.result(timeout=.05)
+                parse.assert_called_once()
+            finally:
+                release.set()
+            self.assertFalse(forced.result(timeout=10)["cached"])
+            self.assertEqual(parse.call_count, 2)
+
+    def test_process_handoff_waits_while_picker_verifies_source(self):
+        hashing = threading.Event()
+        release = threading.Event()
+        original = parsing.compute_hash
+
+        def checksum(path):
+            hashing.set()
+            self.assertTrue(release.wait(10))
+            return original(path)
+
+        with (
+            patch.object(parsing, "compute_hash", side_effect=checksum),
+            patch.object(parsing, "parse_timeseries", return_value=self.frame),
+            ThreadPoolExecutor(1) as pool,
+        ):
+            cache.schedule_build(self.key, self.picker)
+            try:
+                self.assertTrue(hashing.wait(10))
+                handoff = pool.submit(cache.wait_for_pending, self.key)
+                with self.assertRaises(TimeoutError):
+                    handoff.result(timeout=.05)
+            finally:
+                release.set()
+            handoff.result(timeout=10)
+            self.assertTrue(cache.cycles_path(self.key, parsing.parser_identity(self.picker)).is_file())
 
 
 class CacheSourceSafetyTests(unittest.TestCase):

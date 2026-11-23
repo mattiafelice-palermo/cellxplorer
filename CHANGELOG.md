@@ -10,6 +10,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.27 - 2026-11-23
+
+### Bug fixes
+
+- Speed up imports by sharing the cycling-data cache build between the file picker and the import preview. Both views continue to verify the source checksum.
+
 ## 0.29.0-alpha.26 - 2026-11-23
 
 ### Bug fixes

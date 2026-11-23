@@ -404,15 +404,20 @@ is handed to the post-commit worker rather than read inside the registration tra
 results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
 serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
-On a cold native Maccor import, advancing from the picker while its preview is preparing can
-start two builds for the same source. Staged continuation inspection calls `cache.schedule_build`,
-which tracks its worker in `_background_builds`. The import editor's capacity preview calls
-`cache.build_write_behind`, which registers a writer in `_pending` only after parsing and cycle
-derivation. Both callers can therefore decode, validate, and summarize the same recording. Their
-raw Parquet and index publications serialize on `_raw_layout_io_lock`. The post-registration
-cache worker can spend most of its elapsed time waiting for that publication and then report a
-cache hit. To assign time to the right caller, count native parses, per-cycle derivations, and
-raw publications by source hash and thread, and measure the writer alongside the waiting job.
+The picker, capacity preview and in-process import worker share a cache build keyed by source
+checksum, effective parser identity (including BioLogic read mode) and calculation version.
+Each caller verifies its own path before joining and checks its fingerprint again before returning.
+The owner claims the key before looking up or parsing raw data. A preview can use validated cycle
+summaries while the owner writes the raw Parquet, index and cycle cache. Registration and
+process-pool handoff wait for durable publication. A picker on its own defers the optional
+Time/Capacity artifact. A preview joining in time requests that artifact from the same in-memory
+raw data. A later request prepares it from the published cache. Forced rebuilds wait for the
+active owner. A failed build releases its key so a later request can retry.
+
+To verify this boundary, overlap the picker and preview in both arrival orders. Hold the raw
+writer open, check that the preview can return, and check that a durable reader still waits.
+In full-import traces, count native parses, cycle derivations and raw/index/cycle publications
+separately from source checksum reads and time spent waiting for another caller.
 
 For repeated Windows import benchmarks, isolate each app library and verify that the entire
 test backend process tree exits between trials. Terminating the server alone can leave spawned
@@ -1154,9 +1159,9 @@ areal arrays and intentionally does not open the phase-only sidecar; it computes
 already-selected raw rows and reports `derived_access: not_needed`. Compact capacity and derivative
 requests read only the exact prepared vectors they consume; full/non-compact responses retain all
 existing arrays. The shared phase/capacity owner is important: cache preparation and fallback cannot
-drift scientifically. During a write-behind publication, the owner skips only its own pending-thread
-join so it can publish the in-memory sidecar; external readers still wait for the complete raw,
-cycle, index and derived publication boundary. Focused parity and golden tests are the evidence
+drift scientifically. A build owner can publish the sidecar from its in-memory raw frame while
+another read mode for the same checksum is active. External readers wait until all active builds
+for that checksum finish publishing raw, cycle, index and requested derived data. Focused parity and golden tests are the evidence
 boundary; profiler output must keep raw/prepared group counts and phase/capacity source facts
 separate from wall-clock claims.
 

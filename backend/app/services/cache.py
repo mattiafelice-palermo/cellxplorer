@@ -22,6 +22,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Iterable
+from concurrent.futures import Future, wait
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -269,11 +270,32 @@ def _require_source_fingerprint(
             f"{exc}; the cache was not published."
         ) from exc
 
-# background (write-behind) cache writes, keyed by file hash — see
-# build_write_behind(). Everything that reads or rebuilds a cache waits on
-# any in-flight write for that hash first.
+@dataclass
+class _CacheBuild:
+    """One owner from the cache lookup through the final publication check."""
+
+    prepare_time_capacity: bool
+    fingerprint: parsing.SourceFingerprint | None
+    owner: threading.Thread = field(default_factory=threading.current_thread)
+    cycles: Future[pd.DataFrame | None] = field(default_factory=Future)
+    finished: Future[dict] = field(default_factory=Future)
+    skipped_time_capacity: bool = False
+
+    def prepare_derived(self, file_hash: str, parser_identity: str, raw: pd.DataFrame | None = None) -> None:
+        with _pending_lock:
+            if not self.prepare_time_capacity:
+                # A later request for this artifact must wait for publication
+                # and use the warm cache. The ordinary case uses the live frame.
+                self.skipped_time_capacity = True
+                return
+        try:
+            prepare_time_capacity_derived(file_hash, parser_identity, raw_frame=raw)
+        except Exception:
+            logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
+
+
 _pending_lock = threading.Lock()
-_pending: dict[str, set[threading.Thread]] = {}
+_pending: dict[tuple[str, str, str], _CacheBuild] = {}
 _protected_hashes: set[str] = set()
 
 # Continuation inspection can be repeated while a source cache is preparing. Keep
@@ -293,21 +315,25 @@ _background_build_failures: dict[tuple[str, str, str], tuple[float, str]] = {}
 CACHE_WAIT_TIMEOUT_SECONDS = 300.0
 
 
-def _wait_for_pending(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS) -> None:
+def _wait_for_pending(
+    file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS, *, require_completion: bool = False,
+) -> None:
     deadline = time.monotonic() + timeout
     while True:
         with _pending_lock:
-            threads = tuple(_pending.get(file_hash, ()))
+            builds = [build for key, build in _pending.items() if key[0] == file_hash]
         # Writers prepare their own immutable raw frame; they must not wait on
         # themselves or sibling mode writers that may be doing the same work.
-        if not threads or threading.current_thread() in threads:
+        if not builds or any(build.owner is threading.current_thread() for build in builds):
             return
-        for thread in threads:
-            remaining = max(0.0, deadline - time.monotonic())
-            thread.join(remaining)
-            if thread.is_alive():
-                logger.warning("timed out waiting %.0fs for the cache write of %s; continuing", timeout, file_hash[:12])
-                return
+        _, unfinished = wait(
+            [build.finished for build in builds], timeout=max(0.0, deadline - time.monotonic())
+        )
+        if unfinished:
+            if require_completion:
+                raise TimeoutError(f"Timed out waiting for cache publication of {file_hash[:12]}")
+            logger.warning("timed out waiting %.0fs for the cache write of %s; continuing", timeout, file_hash[:12])
+            return
 
 
 @contextmanager
@@ -326,7 +352,7 @@ def _cleanup_delete_boundary(
     while True:
         _wait_for_pending(file_hash, timeout=max(0.0, deadline - time.monotonic()))
         with _pending_lock:
-            active = file_hash in _pending or file_hash in _protected_hashes
+            active = any(key[0] == file_hash for key in _pending) or file_hash in _protected_hashes
             if not active:
                 # A converter that starts after this point waits for the lock
                 # and therefore cannot observe a half-deleted directory.
@@ -343,13 +369,22 @@ def wait_for_pending(file_hash: str) -> None:
     """Block until any in-flight background cache write for this hash is
     done. Needed before handing work to OTHER processes (which cannot see
     this process's write threads); in-process readers wait automatically."""
-    _wait_for_pending(file_hash)
+    # A picker worker may still be verifying its checksum before it can
+    # claim a build. A separate process cannot see either stage.
+    with _background_build_lock:
+        scheduled = [thread for key, thread in _background_builds.items() if key[0] == file_hash]
+    for thread in scheduled:
+        if thread is not threading.current_thread():
+            thread.join(CACHE_WAIT_TIMEOUT_SECONDS)
+            if thread.is_alive():
+                raise TimeoutError(f"Timed out waiting for cache preparation of {file_hash[:12]}")
+    _wait_for_pending(file_hash, require_completion=True)
 
 
 def pending_hashes() -> set[str]:
     """Return hashes whose Parquet files are currently being written."""
     with _pending_lock:
-        return set(_pending) | set(_protected_hashes)
+        return {key[0] for key in _pending} | _protected_hashes
 
 
 def schedule_build(file_hash: str, source_path: str | Path, *, read_mode: str = "safe") -> dict[str, str | None]:
@@ -420,7 +455,11 @@ def schedule_build(file_hash: str, source_path: str | Path, *, read_mode: str = 
             name=f"cache-build-{file_hash[:8]}",
         )
         _background_builds[key] = thread
-        thread.start()
+        try:
+            thread.start()
+        except BaseException:
+            _background_builds.pop(key, None)
+            raise
     return {"status": "started", "error": None}
 
 
@@ -2650,6 +2689,88 @@ def capacity_totals(cycles: pd.DataFrame | None) -> dict[str, float | None]:
     }
 
 
+def _verified_cache_identity(
+    file_hash: str,
+    source_path: str | Path,
+    read_mode: str,
+    expected_fingerprint: parsing.SourceFingerprint | None,
+) -> tuple[parsing.SourceFingerprint | None, str]:
+    # Each participant verifies its own path, even when another path with the
+    # same contents already owns the build.
+    fingerprint = _resolve_source_fingerprint(source_path, file_hash, expected_fingerprint)
+    _require_source_fingerprint(source_path, fingerprint)
+    parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
+    _require_source_fingerprint(source_path, fingerprint)
+    return fingerprint, parser_identity
+
+
+def _start_cache_build(
+    file_hash: str,
+    source_path: str | Path,
+    read_mode: str,
+    fingerprint: parsing.SourceFingerprint | None,
+    parser_identity: str,
+    *,
+    force: bool = False,
+    prepare_time_capacity: bool = True,
+    write_behind: bool = False,
+) -> tuple[_CacheBuild, bool]:
+    key = (file_hash, parser_identity, CALC_VERSION)
+
+    def run() -> None:
+        try:
+            try:
+                if write_behind:
+                    from .process_priority import apply_background_thread_priority
+
+                    apply_background_thread_priority()
+                info = _build_verified(
+                    file_hash, source_path, read_mode, fingerprint, parser_identity, force, work
+                )
+            finally:
+                with _pending_lock:
+                    del _pending[key]
+        except BaseException as exc:
+            if not work.cycles.done():
+                work.cycles.set_exception(exc)
+            elif write_behind:
+                logger.exception("background cache write failed for %s", file_hash)
+            work.finished.set_exception(exc)
+        else:
+            if not work.cycles.done():
+                work.cycles.set_result(None)  # a warm hit, available on disk
+            work.finished.set_result(info)
+
+    while True:
+        with _pending_lock:
+            existing = _pending.get(key)
+            if existing is None:
+                work = _CacheBuild(prepare_time_capacity, fingerprint)
+                _pending[key] = work
+                if write_behind:
+                    work.owner = threading.Thread(target=run, daemon=True, name=f"cache-write-{file_hash[:8]}")
+                    try:
+                        work.owner.start()
+                    except BaseException:
+                        del _pending[key]
+                        raise
+                break
+            if not force and not (prepare_time_capacity and existing.skipped_time_capacity):
+                if fingerprint is None and existing.fingerprint is not None:
+                    raise SourceChangedDuringBuild(f"Source is missing or unreadable: {source_path}")
+                if prepare_time_capacity:
+                    existing.prepare_time_capacity = True
+                return existing, False
+        # A forced rebuild or a late request for derived data must take its
+        # own turn. A failed predecessor leaves the source eligible for retry.
+        wait([existing.finished])
+        _require_source_fingerprint(source_path, fingerprint)
+
+    if not write_behind:
+        run()
+    return work, True
+
+
 def build(
     file_hash: str,
     source_path: str | Path,
@@ -2675,13 +2796,25 @@ def build(
     identical caches, so if both files already exist the parse is skipped
     (row/cycle counts come from Parquet metadata). Pass force=True to
     rebuild regardless, e.g. if a cache file is suspected corrupt."""
-    _wait_for_pending(file_hash)
-    expected_source_fingerprint = _resolve_source_fingerprint(
-        source_path, file_hash, expected_fingerprint
+    fingerprint, parser_identity = _verified_cache_identity(file_hash, source_path, read_mode, expected_fingerprint)
+    work, owner = _start_cache_build(
+        file_hash, source_path, read_mode, fingerprint, parser_identity,
+        force=force, prepare_time_capacity=prepare_time_capacity,
     )
-    _require_source_fingerprint(source_path, expected_source_fingerprint)
-    parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
-    _require_source_fingerprint(source_path, expected_source_fingerprint)
+    info = work.finished.result()
+    _require_source_fingerprint(source_path, fingerprint)
+    return info if owner else {**info, "cached": True}
+
+
+def _build_verified(
+    file_hash: str,
+    source_path: str | Path,
+    read_mode: str,
+    expected_source_fingerprint: parsing.SourceFingerprint | None,
+    parser_identity: str,
+    force: bool,
+    work: _CacheBuild,
+) -> dict:
     rp, cp = raw_path(file_hash, parser_identity), cycles_path(file_hash, parser_identity)
     reparse_for_biologic_provenance = False
     cached_cycles = existing_cycles_path(file_hash, parser_identity, CALC_VERSION) if not force else None
@@ -2695,14 +2828,6 @@ def build(
             if column in pq.read_schema(cached_cycles).names
         ]
         totals = capacity_totals(pd.read_parquet(cached_cycles, columns=cycle_columns))
-        if prepare_time_capacity:
-            try:
-                prepare_time_capacity_derived(file_hash, parser_identity)
-            except Exception:
-                # The prepared artifact is optional performance state.  A source
-                # with valid raw/cycle caches must remain scientifically usable
-                # when its sidecar cannot be published.
-                logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
         cached_dimensions = None
         cached_cycle_identity_source = None
         if Path(source_path).suffix.casefold() == ".mpr":
@@ -2716,6 +2841,7 @@ def build(
                 # candidate. Reparse once to publish exact adapter evidence.
                 reparse_for_biologic_provenance = True
         if not reparse_for_biologic_provenance:
+            work.prepare_derived(file_hash, parser_identity)
             return {
                 "rows": pq.read_metadata(rp).num_rows,
                 "cycles": pq.read_metadata(cached_cycles).num_rows,
@@ -2752,18 +2878,11 @@ def build(
     raw_was_present = rp.exists()
     cycles_was_present = cp.exists()
     try:
+        work.cycles.set_result(cycles)
         if parsed_from_source:
             _publish_optimized_raw(raw, rp, parser_identity)
         _write_atomic(cycles, cp)
-        if prepare_time_capacity:
-            try:
-                prepare_time_capacity_derived(
-                    file_hash,
-                    parser_identity,
-                    raw_frame=raw,
-                )
-            except Exception:
-                logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
+        work.prepare_derived(file_hash, parser_identity, raw)
         _require_source_fingerprint(source_path, expected_source_fingerprint)
     except Exception:
         if not raw_was_present:
@@ -2798,80 +2917,32 @@ def build_write_behind(
     read_mode: str = "safe",
     expected_fingerprint: parsing.SourceFingerprint | None = None,
 ) -> pd.DataFrame:
-    """Parse now, return the per-cycle frame immediately, and write the
-    raw + cycles Parquet caches on a background thread.
-
-    This is the preview path: the caller gets plottable data as soon as the
-    parse finishes instead of also waiting ~0.5–1s for cache writes. Any
-    later build()/load for the same hash joins the in-flight write first,
-    so the caches are always complete before they are read."""
-    _wait_for_pending(file_hash)
-    expected_source_fingerprint = _resolve_source_fingerprint(
-        source_path, file_hash, expected_fingerprint
-    )
-    _require_source_fingerprint(source_path, expected_source_fingerprint)
-    parser_identity = parsing.parser_identity(source_path, read_mode=read_mode)
-    _require_source_fingerprint(source_path, expected_source_fingerprint)
-    if raw_path(file_hash, parser_identity).exists() and has_cycles(
-        file_hash, parser_identity, CALC_VERSION
-    ):
-        _require_source_fingerprint(source_path, expected_source_fingerprint)
+    """Return validated cycles as soon as the shared cache build produces them."""
+    fingerprint, parser_identity = _verified_cache_identity(file_hash, source_path, read_mode, expected_fingerprint)
+    with _pending_lock:
+        building = (file_hash, parser_identity, CALC_VERSION) in _pending
+    if (not building and raw_path(file_hash, parser_identity).is_file()
+            and has_cycles(file_hash, parser_identity, CALC_VERSION)):
+        # Established summaries can serve a warm preview, including BioLogic
+        # data that predates the provenance required for source registration.
         try:
             prepare_time_capacity_derived(file_hash, parser_identity)
         except Exception:
             logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
-        return load_cycles(file_hash, parser_identity, CALC_VERSION)
-
-    _require_source_fingerprint(source_path, expected_source_fingerprint)
-    raw = parsing.parse_timeseries(source_path, read_mode=read_mode) if read_mode != "safe" else parsing.parse_timeseries(source_path)
-    canonical_cycling.validate_raw_timeseries(raw)
-    cycles = calc.per_cycle(raw)
-    parsing.validate_parsed_output(source_path, raw, cycles)
-    _write_parser_diagnostics(file_hash, parser_identity, raw)
-    _require_source_fingerprint(source_path, expected_source_fingerprint)
-    raw_target = raw_path(file_hash, parser_identity)
-    cycles_target = cycles_path(file_hash, parser_identity)
-    raw_was_present = raw_target.exists()
-    cycles_was_present = cycles_target.exists()
-
-    def _write() -> None:
-        from .process_priority import apply_background_thread_priority
-
-        apply_background_thread_priority()
-        try:
-            _require_source_fingerprint(source_path, expected_source_fingerprint)
-            _dir(file_hash).mkdir(parents=True, exist_ok=True)
-            _publish_optimized_raw(raw, raw_target, parser_identity)
-            _write_atomic(cycles, cycles_target)
-            try:
-                prepare_time_capacity_derived(
-                    file_hash,
-                    parser_identity,
-                    raw_frame=raw,
-                )
-            except Exception:
-                logger.exception("prepared Time/Capacity cache build failed for %s", file_hash[:12])
-            _require_source_fingerprint(source_path, expected_source_fingerprint)
-        except Exception:
-            if not raw_was_present:
-                raw_target.unlink(missing_ok=True)
-                raw_index_path(file_hash, parser_identity).unlink(missing_ok=True)
-            if not cycles_was_present:
-                cycles_target.unlink(missing_ok=True)
-            logger.exception("background cache write failed for %s", file_hash)
-        finally:
-            with _pending_lock:
-                owners = _pending.get(file_hash)
-                if owners is not None:
-                    owners.discard(threading.current_thread())
-                    if not owners:
-                        _pending.pop(file_hash, None)
-
-    thread = threading.Thread(target=_write, daemon=True, name=f"cache-write-{file_hash[:8]}")
-    with _pending_lock:
-        _pending.setdefault(file_hash, set()).add(thread)
-        thread.start()
-    return cycles
+        cycles = load_cycles(file_hash, parser_identity, CALC_VERSION)
+        _require_source_fingerprint(source_path, fingerprint)
+        return cycles
+    work, _ = _start_cache_build(
+        file_hash, source_path, read_mode, fingerprint, parser_identity, write_behind=True,
+    )
+    cycles = work.cycles.result()
+    if cycles is None:
+        cycles = load_cycles(file_hash, parser_identity, CALC_VERSION)
+        _require_source_fingerprint(source_path, fingerprint)
+        return cycles
+    _require_source_fingerprint(source_path, fingerprint)
+    # The writer and other previews may still be using the owner's frame.
+    return cycles.copy()
 
 
 def load_cycles(
