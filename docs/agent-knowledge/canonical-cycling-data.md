@@ -760,8 +760,12 @@ against within-step accumulator increments and the redundant integer at byte
 236 on steady-current records. Ah and Wh accumulators use the first
 current range across a range change. Test and step clocks count centiseconds.
 The floating-point acquisition date is in local days since 1899-12-30. Standby
-can carry the previous current ADC count while the exported current is zero.
-Its status, enclosing direction and advancing counters have distinct meanings.
+can carry a current ADC count while the exported current is zero. The verified
+5 A profile includes charge standby with range 6666 and status 195 or 253,
+and discharge standby with range 2222 and status 254. The surrounding active
+records must witness the same continuing step. A final standby with status
+253 or 254 may retain the preceding phase and its counters. It leaves that
+execution open.
 
 The binary source header records its cycle basis. Without `AdvCycle`, the
 reader infers a new label when the observed current direction returns to the
@@ -788,8 +792,15 @@ range (0.5 A full scale) and the first-range accumulator conversion. The
 reader restricts this profile to those observed active range codes.
 
 Native mode 31/status 193 on the final End step and mode 30/status 192 on
-the interrupted step are terminal controls. Validate the final position,
-channel, step and status before excluding the control from scientific rows.
+the interrupted step are control snapshots. A 5 A recording can also resume
+after an interior Stop. The witnessed pattern has an active charge or discharge
+at status 1 or 5 before the Stop and the same active mode at status 0 after it.
+Check cycle, programmed step and program field across all three records,
+with nondecreasing instrument clocks, acquisition dates and Ah/Wh counters.
+Omit the Stop from measurements, retain original record numbers, and break
+plotted curves at the first resumed sample. A witnessed resume retains the
+executed step and the measured counter span. Linked procedures still start
+their own acquisition segments.
 Both readers use `maccor_cycling.py` for executed steps, measured spans and
 complete-cycle eligibility. Auxiliary VAR channels, full procedure settings
 and CV classification have no verified binary mapping.

@@ -168,6 +168,7 @@ class MaccorTextTests(unittest.TestCase):
             (content.replace("Cap. [Ah]", "Cap. [mAh]"), "Expected a Maccor"),
             (content.replace("3\t0\t1\t3", "2\t0\t1\t3"), "consecutive"),
             (content.replace("\tSBw\t195\t", "\tX\t195\t"), "operating mode"),
+            (content.replace("\tSBw\t195\t", "\tSBw\t253\t"), "end status"),
             (content.replace("\t0\t-0.1\tSBw", "\t0.1\t-0.1\tSBw"), "standby"),
             (content.replace("\t0.002\t0.0002\t0.06\t-0.1\tD", "\t0.0009\t0.0002\t0.06\t-0.1\tD"), "decreases"),
             (content.replace("\t0.12\t3\tC", "\t-0.12\t3\tC"), "unsigned"),

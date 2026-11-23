@@ -20,7 +20,7 @@ from .protocol import DECLARED_PROTOCOL_METADATA_KEY, build_declared_protocol
 from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
 
 
-ADAPTER_REVISION = 4
+ADAPTER_REVISION = 5
 _PREFIX_BYTES = 416
 _HEADER_LIMIT = 4 * 1024 * 1024
 _ADC_MAX = 65535
@@ -274,6 +274,17 @@ def read_header_metadata(path: str | Path) -> dict:
     return with_normalization(meta)
 
 
+def _supported_standby_ranges(rows: np.ndarray, header: _Header) -> bool:
+    flags, status = rows["range_code"], rows["end_status"]
+    supported = ((flags == 0x2222) & (status == 195)) | ((flags == 0x6666) & (status == 254))
+    if header.voltage_min == -5:
+        steps = np.asarray(header.program.steps)[rows["step"]]
+        charge = (steps == "Charge") & (flags == 0x6666) & np.isin(status, (195, 253))
+        discharge = (steps == "Dischrge") & (flags == 0x2222) & (status == 254)
+        supported |= charge | discharge
+    return bool(supported.all())
+
+
 def _decode(rows: np.ndarray, header: _Header) -> pd.DataFrame:
     field = rows["program_field"]
     if not header.program.explicit and not np.isin(field, (0, 0x03000000)).all():
@@ -298,8 +309,7 @@ def _decode(rows: np.ndarray, header: _Header) -> pd.DataFrame:
     if header.voltage_min == 0 and ((charge & (flags != 0xFFFF)) | (discharge & (flags != 0xBBBB))).any():
         raise UnsupportedSourceFormatError("Unverified active range in the Maccor 50 A profile.")
     if ((charge & ~np.isin(flags, _CHARGE_RANGES)).any() or (discharge & ~np.isin(flags, _DISCHARGE_RANGES)).any()
-            or (standby & ~(((flags == 0x2222) & (rows["end_status"] == 195))
-                            | ((flags == 0x6666) & (rows["end_status"] == 254)))).any()):
+            or (standby.any() and not _supported_standby_ranges(rows[standby.to_numpy(dtype=bool)], header))):
         raise UnsupportedSourceFormatError("Unsupported active Maccor current range code.")
     if (mode.eq("R") & (rows["current"] != 0)).any():
         raise InvalidSourceFormatError("Maccor rest record has a nonzero current count.")
@@ -363,6 +373,7 @@ def _assign_cycles(table: pd.DataFrame, program: _Program, *, resumed: bool = Fa
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
     segments = []
+    pause_count = 0
     last_record = last_ticks = next_routine = last_date = None
     with Path(path).open("rb") as stream:
         before = os.fstat(stream.fileno())
@@ -413,13 +424,21 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
                 if table.empty:
                     continue
             _assign_cycles(table, header.program, resumed=number > 1)
-            raw = canonical_records(table, verify_minute_units=False)
+            raw = canonical_records(table, verify_minute_units=False, allow_native_pauses=header.voltage_min == -5)
             # Section-local procedures may reuse step numbers and counters. A
             # control record or a restart cannot prove an intervening phase.
             if segments:
                 raw["step"] += segments[-1]["step"].iloc[-1]
                 raw["cycle"] += segments[-1]["cycle"].iloc[-1]
-            raw["acquisition_segment"] = number
+            acquisition = number + pause_count
+            records = raw["record_index"]
+            if records.iat[-1] - records.iat[0] + 1 != len(records):
+                # Every original slot was sequence-checked. Each internal hole is
+                # a witnessed stop control omitted between two measurements.
+                breaks = records.diff().gt(1).cumsum()
+                pause_count += int(breaks.iat[-1])
+                acquisition += breaks
+            raw["acquisition_segment"] = acquisition
             segments.append(raw)
         after = os.fstat(stream.fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
@@ -427,6 +446,6 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     if not segments:
         raise UnsupportedSourceFormatError("Maccor file contains no sampled cycling records.")
     result = pd.concat(segments, ignore_index=True)
-    if len(segments) == 1:
+    if len(segments) == 1 and not pause_count:
         result.drop(columns="acquisition_segment", inplace=True)
     return result

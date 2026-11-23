@@ -10,7 +10,7 @@ import numpy as np
 
 from backend.app.routers import files
 from backend.app.services import (
-    cache, canonical_cycling, cell_folder_watch, import_file_hints, import_inspection,
+    cache, calc, canonical_cycling, cell_folder_watch, exploratory_plotting, import_file_hints, import_inspection,
     import_search_worker, maccor_binary, parsing,
 )
 from backend.app.services.filesystem_cleanup import TemporaryDirectory
@@ -172,6 +172,88 @@ class MaccorBinaryTests(unittest.TestCase):
             self.path.write_bytes(contents)
             with self.assertRaisesRegex(InvalidSourceFormatError, "truncated"):
                 parsing.parse_timeseries(self.path)
+
+    def test_witnessed_standby_and_resume_keep_measured_counters_and_plot_break(self):
+        steps = ("Dischrge", "Charge", "End")
+        records = [
+            (0, 2, 0, 0xAAAA, 5000, 0, 0, 0),
+            (0, 2, 5, 0xAAAA, 5000, 100, 1, 1),
+            (0, 30, 192, 0x2222, 5000, 110, 2, 2),
+            (0, 2, 0, 0xAAAA, 5000, 120, 3, 3),
+            (0, 29, 254, 0x2222, 5000, 130, 4, 4),
+            (0, 2, 129, 0xAAAA, 5000, 140, 5, 5),
+            (1, 1, 0, 0xEEEE, 5000, 0, 0, 0),
+            (1, 29, 195, 0x6666, 5000, 40, 1, 1),
+            (1, 1, 0, 0xEEEE, 5000, 50, 2, 2),
+            (1, 29, 253, 0x6666, 5000, 60, 3, 3),
+            (1, 1, 0, 0xEEEE, 5000, 70, 4, 4),
+            (1, 1, 133, 0xEEEE, 5000, 80, 5, 5),
+        ]
+        self.path.write_bytes(channel_file(steps, records))
+        raw = parsing.parse_timeseries(self.path)
+        canonical_cycling.validate_raw_timeseries(raw)
+        self.assertEqual(raw.record_index.tolist(), [1, 2, *range(4, 13)])
+        self.assertEqual(exploratory_plotting.break_before(raw), [2])
+        self.assertEqual(raw.step.tolist(), [1] * 5 + [2] * 6)
+        sb = raw[raw.status.eq("Standby")]
+        self.assertEqual(sb.maccor_standby_phase.tolist(), ["discharge", "charge", "charge"])
+        self.assertTrue(sb.current_ma.eq(0).all())
+        np.testing.assert_allclose(raw.discharge_capacity_mah.iloc[:5], [0, .15, .45, .60, .75])
+        summary, = calc.per_cycle(raw).itertuples()
+        np.testing.assert_allclose([summary.charge_capacity_mah, summary.discharge_capacity_mah], [.75, .75])
+        self.assertTrue(raw.cycle_complete.all())
+
+        # A file can stop recording on a witnessed 253. This leaves the last cycle open.
+        self.path.write_bytes(channel_file(steps, records[:-1] + [(1, 29, 253, 0x6666, 5000, 80, 5, 5)]))
+        raw = parsing.parse_timeseries(self.path)
+        self.assertEqual(raw.status.iat[-1], "Standby")
+        self.assertEqual(raw.current_ma.iat[-1], 0)
+        self.assertTrue(calc.per_cycle(raw).empty)
+
+    def test_standby_codes_and_stop_resumes_require_matching_evidence(self):
+        steps = ("Charge", "Dischrge", "End")
+        before = (0, 1, 5, 0xEEEE, 5000, 10, 1, 1)
+        stop = (0, 30, 192, 0x6666, 5000, 11, 2, 2)
+        after = (0, 1, 0, 0xEEEE, 5000, 12, 3, 3)
+        for records in (
+            [before, stop, (1, 2, 0, 0xAAAA, 5000, 12, 3, 3)],
+            [before, stop, (0, 1, 5, 0xEEEE, 5000, 12, 3, 3)],
+            [before, stop, (0, 1, 0, 0xEEEE, 5000, 10, 3, 3)],
+            [before, stop, (0, 1, 0, 0xEEEE, 5000, 12, 1, 3)],
+            [before, stop, (0, 1, 0, 0xEEEE, 5000, 12, 3, 1)],
+            [stop, after], [before, stop, stop, after],
+            [before, (0, 29, 253, 0x2222, 5000, 11, 2, 2), after],
+            [before, (0, 29, 252, 0x6666, 5000, 11, 2, 2), after],
+            [(1, 2, 0, 0xAAAA, 5000, 10, 1, 1), (1, 29, 253, 0x6666, 5000, 11, 2, 2)],
+            [before, (0, 1, 253, 0xEEEE, 5000, 11, 2, 2), after],
+            [before, (0, 29, 253, 0x6666, 5000, 11, 2, 2), (1, 2, 0, 0xAAAA, 5000, 12, 3, 3)],
+        ):
+            with self.subTest(records=records):
+                self.path.write_bytes(channel_file(steps, records))
+                with self.assertRaises(parsing.SourceFormatError):
+                    parsing.parse_timeseries(self.path)
+
+        for fields in ([0, 0x03000000, 0], [0, 0, 0x03000000]):
+            self.path.write_bytes(channel_file(steps, [before, stop, after], fields))
+            with self.assertRaises(UnsupportedSourceFormatError):
+                parsing.parse_timeseries(self.path)
+        data = bytearray(channel_file(steps, [before, stop, after]))
+        struct.pack_into("<d", data, len(data) - 264, 46000.5)
+        self.path.write_bytes(data)
+        with self.assertRaises(UnsupportedSourceFormatError):
+            parsing.parse_timeseries(self.path)
+
+    def test_new_standby_range_combinations_require_the_bipolar_5a_profile(self):
+        active = (0, 1, 0, 0xFFFF, 100, 0, 0, 0)
+        standby = (0, 29, 253, 0x6666, 100, 1, 1, 1)
+        data = bytearray(channel_file(("Charge", "End"), [active, standby]))
+        for base in (416, 576):
+            struct.pack_into("<f", data, base + 2, 50)
+            struct.pack_into("<4d", data, base + 106, 100, 10, 50000, 1)
+        struct.pack_into("<ff", data, 738, 0, 5)
+        self.path.write_bytes(data)
+        with self.assertRaisesRegex(UnsupportedSourceFormatError, "current range code"):
+            parsing.parse_timeseries(self.path)
 
     def test_linear_rest_and_single_direction_recordings_keep_only_measurements(self):
         rest = operation(0, 4, 0xBBBB, end=129)

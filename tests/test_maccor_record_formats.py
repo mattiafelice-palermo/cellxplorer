@@ -309,6 +309,24 @@ class MaccorRecordFormatTests(unittest.TestCase):
         p.write_bytes(data)
         self.assertIsNone(parsing.recognize_source(p))
 
+    def test_link_after_a_resumed_stop_creates_its_own_acquisition_break(self):
+        p = self.root / "resumed-then-linked.003"
+        steps = ("Charge", "Dischrge", "End")
+        first = channel_file(steps, [
+            (0, 1, 0, 0xEEEE, 1000, 0, 0, 0),
+            (0, 1, 5, 0xEEEE, 1000, 10, 1, 1),
+            (0, 30, 192, 0x6666, 1000, 11, 2, 2),
+            (0, 1, 0, 0xEEEE, 1000, 12, 3, 3),
+            (0, 30, 192, 0x6666, 1000, 13, 4, 4),
+        ])
+        second = channel_file(steps, operation(1, 2, 0xAAAA))
+        p.write_bytes(link_sections(first, second, restart=True))
+        raw = parsing.parse_timeseries(p)
+        self.assertEqual(raw.record_index.tolist(), [1, 2, 4, 6, 7])
+        self.assertEqual(raw.acquisition_segment.tolist(), [1, 1, 2, 3, 3])
+        self.assertEqual(exploratory_plotting.break_before(raw), [2, 3])
+        self.assertTrue(calc.per_cycle(raw).empty)
+
     def test_snapshot_only_file_is_excluded_from_discovery_and_import(self):
         p = self.root / "stopped.003"
         data = bytearray(channel_file(("Charge","End"), []))

@@ -10,6 +10,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.25 - 2026-11-23
+
+### Bug fixes
+
+- Read verified Maccor 4608 standby interruptions and same-step stop/resume recordings. Retain measured counters and show acquisition breaks at resumed samples.
+
 ## 0.29.0-alpha.24 - 2026-11-23
 
 ### New features
