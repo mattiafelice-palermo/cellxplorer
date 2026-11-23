@@ -4039,6 +4039,8 @@ def _build_continuation_preview(
                         "charge_capacity_mah",
                         "discharge_capacity_mah",
                         "capacity_mah",
+                        "maccor_standby_phase",
+                        "acquisition_segment",
                         "mpr_elapsed_time_s",
                         "mpr_acquisition_segment",
                         "biologic_mb_time_s",

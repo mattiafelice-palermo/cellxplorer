@@ -255,6 +255,32 @@ class MaccorBinaryTests(unittest.TestCase):
         with self.assertRaisesRegex(UnsupportedSourceFormatError, "current range code"):
             parsing.parse_timeseries(self.path)
 
+    def test_cycle_window_import_preview_keeps_resume_break_and_standby_capacity(self):
+        steps = ("Do 1", "Charge", "Dischrge", "Loop 1", "End")
+        records = [
+            (1, 1, 0, 0xEEEE, 5000, 0, 0, 0),
+            (1, 1, 5, 0xEEEE, 5000, 100, 1, 1),
+            (1, 30, 192, 0x6666, 5000, 110, 2, 2),
+            (1, 1, 0, 0xEEEE, 5000, 120, 3, 3),
+            (1, 29, 253, 0x6666, 5000, 130, 4, 4),
+            (1, 1, 129, 0xEEEE, 5000, 140, 5, 5),
+            *operation(2, 2, 0xAAAA, end=129),
+        ]
+        self.path.write_bytes(channel_file(steps, records * 2))
+        with patch.object(cache, "CACHE_DIR", self.path.parent / "cache"):
+            key = parsing.compute_hash(self.path)
+            info = cache.build(key, self.path)
+            source = {"hash": key, "parser_version": info["parser_version"],
+                      "source_key": "maccor", "filename": self.path.name}
+            with patch.object(cache, "load_raw", side_effect=AssertionError("full raw read")):
+                for axis in ("time", "capacity"):
+                    preview = files._build_continuation_preview(
+                        [source], quantity="voltage", voltage_x_axis=axis, cycle_start=2, cycle_end=2)
+                    segment, = preview["segments"]
+                    self.assertEqual(segment["display_break_before"], [2])
+                    if axis == "capacity":
+                        np.testing.assert_allclose(segment["x"], [0, .15, .45, .60, .75, .75, .90])
+
     def test_linear_rest_and_single_direction_recordings_keep_only_measurements(self):
         rest = operation(0, 4, 0xBBBB, end=129)
         stop = (0, 30, 192, 0x3333, 0, 110, 0, 0)
