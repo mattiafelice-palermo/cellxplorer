@@ -1,6 +1,6 @@
 # 114 — Alpha 0.29.0-alpha.24 release
 
-Status: Release verification in progress. Authorized 2026-11-23.
+Status: Complete; published and independently verified 2026-11-23.
 
 Publish the main-line changes since published Alpha .16. Revisions .17–.23 are
 unpublished development checkpoints; bump the prepared .23 to .24, keeping the
@@ -33,3 +33,30 @@ Accepted application main is `ad9db1c3`; its clean-Windows preflight
 passes. Thirty-four focused Maccor and migration tests pass. The private
 three-source continued-import regression passes without skips. No private
 expectations were regenerated.
+
+## Release outcome
+
+- Immutable source/peeled tag: `d73931d883b9ef8275c2efee4f9b7ce21e2c3eb0`.
+  Fresh four-worker no-cache local preflight passed all 252 modules/files and
+  version, type and production-bundle stages. The exact-main
+  [Windows preflight 45086611574](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/45086611574)
+  passed. Thirty-two focused release-card/progress tests also passed.
+- The current eight-source/five-chain BioLogic corpus passed unchanged. The
+  real Maccor binary/text-pair verifier passed 40,946 records, 924 executed
+  steps, 184 complete cycles, both standby records, cache reload and full plots
+  against export precision. Cycle 185 remained incomplete. Private originals
+  and reports were not committed or uploaded.
+- [Signed release workflow 45086834700](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/45086834700)
+  passed packaged science/API, installer policy, mandatory candidate native
+  upgrade/reinstall and final asset gates. The native coverage boundary above
+  still applies; no local installation or real-profile migration was performed.
+- [Alpha 0.29.0-alpha.24](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.29.0-alpha.24)
+  was published as a non-draft prerelease at `2026-11-23T00:21:36Z`.
+  Independently downloaded all three public assets, matched sizes/digests and
+  exact release notes, validated the manifest and cryptographically verified
+  the installer against the embedded updater public key. Installer SHA-256:
+  `2f3c5fc027b505573f2941bf28f13312c6d0f6ad8d6fe150e7883a7268ef9e74`.
+- Public raw Alpha feed bytes match the release manifest. Feed branch advanced
+  from `cfa85d472f0b6dd9c3cb8d3363a4f4bf0d99296c` to
+  `a018275f3a3fb182fc0717855765864820b234c3`; README, Stable and Beta blobs
+  are unchanged. The published tag was not moved.

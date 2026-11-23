@@ -1,7 +1,8 @@
 # Feature specs
 
 - [114 — Alpha 0.29.0-alpha.24 release](114-alpha24-release.md).
-  **Release verification in progress.** Consolidate Maccor support, normalization, concurrent imports and release cards since published Alpha .16.
+  **Complete; published and independently verified.** Maccor support, normalization,
+  concurrent imports and release cards since Alpha .16; local/Windows and signed native gates passed.
 
 - [113 — UI lightness, startup responsiveness, and slow-laptop profiling](113-ui-lightness-performance.md).
   **Complete; prepared for Alpha `0.29.0-alpha.15` with build, 1,037 frontend tests, Rust/installer tests, and 6× CPU Edge A/B profiling passed.**
