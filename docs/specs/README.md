@@ -1,5 +1,8 @@
 # Feature specs
 
+- [114 — Alpha 0.29.0-alpha.24 release](114-alpha24-release.md).
+  **Release verification in progress.** Consolidate Maccor support, normalization, concurrent imports and release cards since published Alpha .16.
+
 - [113 — UI lightness, startup responsiveness, and slow-laptop profiling](113-ui-lightness-performance.md).
   **Complete; prepared for Alpha `0.29.0-alpha.15` with build, 1,037 frontend tests, Rust/installer tests, and 6× CPU Edge A/B profiling passed.**
   Post-mortem spec and benchmark record covering startup code-splitting + idle Plotly prefetch, frame-1 boot splash, isolated background-job polling, Cell/Analysis table lightness & pagination, anti-flash network-drive navigation feedback, power-menu update bubble, and foreground post-update restarts.

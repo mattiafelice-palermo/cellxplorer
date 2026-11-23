@@ -4,10 +4,27 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
-The Alpha.18–22 entries describe the changes made at each development checkpoint.
+For 0.29.0, Alpha.17–23 are unpublished development checkpoints. Alpha.24
+summarizes their accumulated changes since published Alpha.16.
 
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
+
+## 0.29.0-alpha.24 - 2026-11-23
+
+### New features
+
+- Import supported Maccor record exports from text, CSV and structured Excel, plus verified native Maccor 4608 numbered channel files. Retain voltage, signed current, capacity, complete cycles and partial measurements within each reader's supported layouts.
+- Support verified Maccor linear and discharge-first programs, explicit cycle advances, linked recordings, subroutines and the observed 50 A instrument profile. Preserve restart boundaries and omit terminal control snapshots from measurements.
+- Use explicitly labelled Maccor active masses for normalization. Otherwise use a common positive SCap value in grams as the source default, with import and Cell-edit overrides and a restore-default action. Existing stored source metadata gains the same default while Cell overrides are preserved.
+- Inspect network-folder imports concurrently, show discovery, verification and registration progress, and cancel pending work or long file reads.
+- Enable source monitoring and automatic source updates by default when no explicit preference is stored. Update the What's New cards with Maccor imports, analysis controls and import-workflow examples.
+
+### Bug fixes
+
+- Exclude Maccor files containing only stop snapshots from discovery and import while retaining sampled linked recordings and their acquisition gaps.
+- Preserve instrument time order for partial Maccor cycles, and leave CV-specific quantities unavailable when the source does not establish CV mode.
+- Resolve supported source formats consistently across import, search, cache identity, source monitoring and folder tracking.
 
 ## 0.29.0-alpha.23 - 2026-11-23
 
