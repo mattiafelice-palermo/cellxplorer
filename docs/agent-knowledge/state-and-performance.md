@@ -404,6 +404,22 @@ is handed to the post-commit worker rather than read inside the registration tra
 results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
 serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
+On a cold native Maccor import, advancing from the picker while its preview is preparing can
+start two builds for the same source. Staged continuation inspection calls `cache.schedule_build`,
+which tracks its worker in `_background_builds`. The import editor's capacity preview calls
+`cache.build_write_behind`, which registers a writer in `_pending` only after parsing and cycle
+derivation. Both callers can therefore decode, validate, and summarize the same recording. Their
+raw Parquet and index publications serialize on `_raw_layout_io_lock`. The post-registration
+cache worker can spend most of its elapsed time waiting for that publication and then report a
+cache hit. To assign time to the right caller, count native parses, per-cycle derivations, and
+raw publications by source hash and thread, and measure the writer alongside the waiting job.
+
+For repeated Windows import benchmarks, isolate each app library and verify that the entire
+test backend process tree exits between trials. Terminating the server alone can leave spawned
+workers holding committed memory across trials. A Windows Job Object with kill-on-close can
+contain the server and its workers. Function-entry and return timings preserve the distinction
+between overlapping work and elapsed time without a profiling callback on every recorded row.
+
 Folder tracking for a continued Cell is also scheduler-owned. `source_monitor._run_scheduler()`
 runs the bounded folder-watch pass only after the global source check and only when automation is
 not paused and no source-check or background job is still running; do not add a per-Cell watcher
