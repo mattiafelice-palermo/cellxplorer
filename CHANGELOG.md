@@ -4,11 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+For 0.29.0, Alpha.25–28 are unpublished development checkpoints. Alpha.29
+summarizes their accumulated changes since published Alpha.24.
+
 For 0.29.0, Alpha.17–23 are unpublished development checkpoints. Alpha.24
 summarizes their accumulated changes since published Alpha.16.
 
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
+
+## 0.29.0-alpha.29 - 2026-11-25
+
+### Bug fixes
+
+- Read verified Maccor 4608 standby interruptions and same-step stop/resume recordings. Preserve measured capacity counters and show acquisition gaps at resumed samples.
+- Speed up native Maccor 4608 imports with block-based decoding of current ranges and operating modes.
+- Avoid duplicate parsing by sharing the cycling-data cache build between the file picker and import preview. Both views continue to verify their source checksum.
+- Read classic BioLogic MB recordings with control and energy columns, retaining measured charge across restarts with a delayed half-cycle counter.
 
 ## 0.29.0-alpha.28 - 2026-11-25
 
