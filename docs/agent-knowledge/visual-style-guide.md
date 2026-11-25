@@ -180,6 +180,12 @@ second independently scrolling vertical viewport. Pin the Cell Actions header
 and cells to the right of that horizontal viewport with opaque theme-aware
 backgrounds; preserve selected and hovered row colors behind the buttons.
 
+Replicate-table names and member lists must wrap even unbroken source names within
+their column. Clamp long member lists to three lines with the complete list in a
+hover/focus tooltip. Reserve at least 320 px for the three text actions, including when
+restoring older saved column widths; keep the actions together and allow the
+table viewport to scroll horizontally rather than clipping buttons.
+
 ## Buttons and icons
 
 ### Button sizing matrix

@@ -919,6 +919,8 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
   ungroupPending: boolean;
   actionsRef: React.MutableRefObject<ReplicateGroupsSectionActions>;
 }) {
+  // Older saved widths reserved only 100px for all three row actions.
+  const tableWidths = { ...groupWidths, actions: Math.max(320, groupWidths.actions) };
   return (
     <Stack gap="xs" mt="xl">
       <Group justify="space-between" align="center" style={LIBRARY_STICKY_BAR_STYLE}>
@@ -949,10 +951,10 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
       </Group>
       <Paper withBorder p="sm">
         <ScrollArea type="auto" offsetScrollbars="x">
-          <Table highlightOnHover style={{ tableLayout: "fixed", width: 36 + Object.values(groupWidths).reduce((a, b) => a + b, 0) }}>
+          <Table highlightOnHover style={{ tableLayout: "fixed", minWidth: "100%", width: 36 + Object.values(tableWidths).reduce((a, b) => a + b, 0) }}>
             <colgroup>
               <col style={{ width: 36 }} />
-              {Object.values(groupWidths).map((width, i) => <col key={i} style={{ width }} />)}
+              {Object.values(tableWidths).map((width, i) => <col key={i} style={{ width }} />)}
             </colgroup>
             <Table.Thead>
               <Table.Tr>
@@ -1006,7 +1008,7 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
                   </Table.Td>
                   <Table.Td>
                     <div>
-                      <Text fw={700}>{group.name}</Text>
+                      <Text fw={700} style={{ overflowWrap: "anywhere" }}>{group.name}</Text>
                       {group.description && (
                         <Text size="xs" c="dimmed" lineClamp={1}>
                           {group.description}
@@ -1015,7 +1017,9 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
                     </div>
                   </Table.Td>
                   <Table.Td>
-                    <Text size="sm">{group.cells.map((cell) => cell.name).join(", ")}</Text>
+                    <Tooltip multiline w={360} events={{ hover: true, focus: true, touch: false }} label={group.cells.map((cell) => cell.name).join(", ")} styles={{ tooltip: { overflowWrap: "anywhere" } }}>
+                      <Text size="sm" lineClamp={3} tabIndex={0} style={{ overflowWrap: "anywhere" }}>{group.cells.map((cell) => cell.name).join(", ")}</Text>
+                    </Tooltip>
                   </Table.Td>
                   <Table.Td>{formatCapacity(group.average_total_charge_capacity_mah)}</Table.Td>
                   <Table.Td>{formatCapacity(group.average_total_discharge_capacity_mah)}</Table.Td>
@@ -1025,8 +1029,9 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    <Group gap="xs" justify="end">
+                    <Group gap="xs" justify="end" wrap="nowrap">
                       <Button
+                        style={{ flexShrink: 0 }}
                         size="xs"
                         variant="default"
                         leftSection={<IconPencil size={14} />}
@@ -1039,6 +1044,7 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
                         variant="default"
                         leftSection={<IconEye size={14} />}
                         onClick={() => actionsRef.current.openPreviewGroup(group.id)}
+                        style={{ flexShrink: 0 }}
                       >
                         Preview
                       </Button>
@@ -1049,6 +1055,7 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
                         leftSection={<IconUnlink size={14} />}
                         loading={ungroupPending}
                         onClick={() => actionsRef.current.confirmUngroup([group.id])}
+                        style={{ flexShrink: 0 }}
                       >
                         Separate
                       </Button>
@@ -1075,7 +1082,7 @@ const ReplicateGroupsSection = memo(function ReplicateGroupsSection({
 
 export function LibraryPage() {
   const { widths: cellWidths, resize: resizeCellColumn } = useColumnWidths("cellxplorer.cell-columns.v1", LIBRARY_CELL_TABLE_COL_WIDTHS);
-  const { widths: groupWidths, resize: resizeGroupColumn } = useColumnWidths("cellxplorer.replicate-columns.v1", { name: 260, cells: 100, charge: 130, discharge: 130, created: 140, actions: 100 });
+  const { widths: groupWidths, resize: resizeGroupColumn } = useColumnWidths("cellxplorer.replicate-columns.v1", { name: 260, cells: 260, charge: 130, discharge: 130, created: 140, actions: 320 });
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const openCellImportRef = useRef<(() => void) | null>(null);
