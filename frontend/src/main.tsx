@@ -12,6 +12,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import { APP_BRANDING } from "./appChannel";
+import { alphaPurple, betaBlue } from "./channelPalette";
 import { isTauriApp } from "./downloads";
 import { AppUpdateProvider } from "./components/AppUpdateCoordinator";
 import { BetaInstallProvider } from "./components/BetaInstallCoordinator";
@@ -20,32 +21,6 @@ import {
   configureStartupQueryDefaults,
   startupQueryPersistence,
 } from "./startupQueryPersistence";
-
-const betaBlue = [
-  "#eef7ff",
-  "#dceeff",
-  "#badcff",
-  "#96c9f2",
-  "#7db7e8",
-  "#61a3dc",
-  "#478dcd",
-  "#3678b7",
-  "#2d659f",
-  "#265487",
-] as const;
-
-const alphaPurple = [
-  "#f3f0ff",
-  "#e5dbff",
-  "#d0bfff",
-  "#b197fc",
-  "#9775fa",
-  "#845ef7",
-  "#7950f2",
-  "#7048e8",
-  "#6741d9",
-  "#5f3dc4",
-] as const;
 
 const channelTheme =
   APP_BRANDING.channel === "beta"

@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/app-icon.png" />
-    <title>CellXplorer</title>
+    <link rel="icon" type="image/png" href="__CX_BOOT_ICON__" />
+    <title>__CX_BOOT_NAME__</title>
   </head>
   <body>
     <div id="root">
@@ -36,7 +36,7 @@
           width: 45%;
           height: 100%;
           border-radius: 999px;
-          background: #12b886;
+          background: __CX_BOOT_ACCENT_LIGHT__;
           animation: cx-boot-slide 1.2s ease-in-out infinite;
         }
         @keyframes cx-boot-slide {
@@ -54,6 +54,9 @@
           #cx-boot-splash .cx-boot-track {
             background: #373a40;
           }
+          #cx-boot-splash .cx-boot-bar {
+            background: __CX_BOOT_ACCENT_DARK__;
+          }
         }
         @media (prefers-reduced-motion: reduce) {
           #cx-boot-splash .cx-boot-bar {
@@ -63,9 +66,9 @@
           }
         }
       </style>
-      <div id="cx-boot-splash" role="progressbar" aria-label="Starting CellXplorer">
-        <img src="/app-icon.png" alt="" width="40" height="40" style="display:block;" />
-        <div style="font-size: 16px; font-weight: 700; letter-spacing: -0.01em;">CellXplorer</div>
+      <div id="cx-boot-splash" role="progressbar" aria-label="Starting __CX_BOOT_NAME__">
+        <img src="__CX_BOOT_ICON__" alt="" width="40" height="40" style="display:block;" />
+        <div style="font-size: 16px; font-weight: 700; letter-spacing: -0.01em;">__CX_BOOT_NAME__</div>
         <div class="cx-boot-track"><div class="cx-boot-bar"></div></div>
         <div class="cx-boot-sub">Starting application…</div>
       </div>

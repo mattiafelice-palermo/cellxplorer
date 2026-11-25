@@ -1820,6 +1820,10 @@ database browsing.
 
 Keep `#cx-boot-splash` inline and zero-JS in `frontend/index.html` so slow
 WebView2 launches paint progress on frame 1 before React mounts.
+Vite's `cellxplorer-boot-branding` HTML transform resolves its name, icon, and
+light/dark accent from the same resolved `VITE_CELLXPLORER_CHANNEL` as the app.
+`channelPalette.ts` shares the Beta/Alpha shades with Mantine; never defer splash
+branding to React or another downloaded module, which would flash Stable first.
 
 Keep `backgroundJobs` and `sourceCheckJob` polling isolated inside
 `BackgroundActivityController.tsx`; never move high-frequency `refetchInterval`
