@@ -443,6 +443,10 @@ MPR_GCPL_TECHNIQUE_IDS = frozenset({0x04, 0x77})
 MPR_CP_TECHNIQUE_ID = 0x19
 MPR_OCV_TECHNIQUE_ID = 0x0B
 MPR_MB_TECHNIQUE_ID = 0x7F
+# Ordinary MB measurements with no frequency discriminator. Base 74 is a
+# stored energy magnitude, not an impedance field or a directional capacity.
+_MB_RDO_BASES = frozenset({131, 39, 4, 20, 6, 8, 7, 13, 211, 212})
+MB_CONTROL_ENERGY_BASES = frozenset({131, 39, 4, 5, 6, 8, 7, 13, 74, 211, 212})
 MPR_TECHNIQUE_LAYOUT_PROFILES = (
     MprTechniqueLayoutProfile(
         "MB", frozenset({MPR_MB_TECHNIQUE_ID}), _REQUIRED_FLAG_IDS,
@@ -1020,12 +1024,9 @@ def _decode_vmp_data(
             if layout.opaque_trailing_column_ids:
                 raise UnsupportedMprColumn("MB cannot exclude EIS with unknown opaque columns")
             if 32 not in layout.resolved_base_ids:
-                # Only the independently observed non-EIS RDO signature is
-                # verified without a frequency discriminator. Other impedance
-                # families must not silently become ordinary cycling rows.
-                rdo_bases = {131, 39, 4, 20, 6, 8, 7, 13, 211, 212}
-                if set(layout.resolved_base_ids) - {None} != rdo_bases:
-                    raise UnsupportedMprColumn("MB without frequency requires the verified non-EIS RDO layout")
+                bases = set(layout.resolved_base_ids) - {None}
+                if bases != _MB_RDO_BASES and not (classic and bases == MB_CONTROL_ENERGY_BASES):
+                    raise UnsupportedMprColumn("MB without frequency requires a verified non-EIS column layout")
 
         records: np.ndarray | None = None
         flags: dict[str, np.ndarray] = {}

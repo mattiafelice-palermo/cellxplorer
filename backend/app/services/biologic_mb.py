@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from . import canonical_cycling
-from .biologic_mpr import InvalidMprError
+from .biologic_mpr import InvalidMprError, MB_CONTROL_ENERGY_BASES
 from .biologic_quantities import record_limitations
 
 
@@ -73,6 +73,30 @@ def _cycle_labels(half: np.ndarray, direction: np.ndarray) -> tuple[np.ndarray, 
     return cycle, np.isin(cycle, list(complete_ids))
 
 
+def _align_restart_counters(records, ns, mode, half, direction, time):
+    """Use the independent Q-Q0 reset to align a one-record late half-cycle."""
+    counter = records["raw_q_charge_discharge_mAh"].copy()
+    dq = records["raw_dq_mAh"]
+    relative = records["raw_q_minus_q0_mAh"]
+    # i is the first sample after a rest. The sequence switches there,
+    # whereas the half index and signed counter switch on the next sample.
+    candidates = 1 + np.flatnonzero(
+        (mode[:-2] == 3) & (mode[1:-1] == 1) & (mode[2:] == 1)
+        & (ns[:-2] != ns[1:-1]) & (ns[1:-1] == ns[2:])
+        & (half[:-2] == half[1:-1]) & (half[2:] == half[1:-1] + 1)
+        & (direction[1:-1] != 0) & (direction[1:-1] == direction[2:])
+        & (time[1:-1] < time[2:])
+    )
+    for i in candidates:
+        if (dq[i] == 0 and relative[i] == 0 and counter[i] == counter[i - 1]
+                and counter[i] * direction[i] < 0 and dq[i + 1] * direction[i] > 0
+                and np.isclose(relative[i + 1], dq[i + 1], rtol=1e-6, atol=1e-9)
+                and np.isclose(counter[i + 1], dq[i + 1], rtol=1e-6, atol=1e-9)):
+            half[i] = half[i + 1]
+            counter[i] = relative[i]
+    return counter
+
+
 def map_mb_to_canonical(document) -> pd.DataFrame:
     records = document.vmp_data.records
     if records is None or not len(records):
@@ -121,6 +145,10 @@ def map_mb_to_canonical(document) -> pd.DataFrame:
     if ((mode == 0) | ((mode == 3) & (direction != 0))).any():
         raise InvalidMprError("BioLogic MB current contradicts the recorded control mode")
     breaks = np.r_[False, np.diff(position) != 1]
+    counter = None
+    if set(document.vmp_data.resolved_base_ids) - {None} == MB_CONTROL_ENERGY_BASES:
+        # This verified frequencyless layout retains every source record.
+        counter = _align_restart_counters(records, ns, mode, half, direction, time)
     boundary = np.r_[True, (np.diff(ns) != 0) | (np.diff(mode) != 0) |
                      (np.diff(direction) != 0) | (np.diff(half) != 0)] | breaks
     starts = np.maximum.accumulate(np.where(boundary, np.arange(len(time)), 0))
@@ -129,7 +157,8 @@ def map_mb_to_canonical(document) -> pd.DataFrame:
         limitations["capacity"] = "The recording lacks the charge counters needed to verify step capacity."
     if "capacity" not in limitations:
         dq = np.asarray(records["raw_dq_mAh"][keep], dtype=float)
-        counter = np.asarray(records["raw_q_charge_discharge_mAh"][keep], dtype=float)
+        if counter is None:
+            counter = np.asarray(records["raw_q_charge_discharge_mAh"][keep], dtype=float)
         try:
             charge, discharge = _step_capacity(time, dq, counter, direction, boundary)
         except _QuantityUnavailable as exc:

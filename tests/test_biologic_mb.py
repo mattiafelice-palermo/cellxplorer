@@ -22,12 +22,14 @@ from app.services import analysis_engine, biologic_mpr, cache, calc, parsing, sc
 from app.services.filesystem_cleanup import TemporaryDirectory
 
 
-def write_mb(path, rows, *, classic=False, frequency=True, omit_columns=()):
+def write_mb(path, rows, *, classic=False, frequency=True, omit_columns=(), control_energy=False):
     # Storage definitions intentionally do not use the production registry/dtype.
     fields = [(131, "H", "ns", 0), (39, "H", "range", 115),
-              (4, "d", "time", 0), (20, "f", "control", 0), (6, "f", "voltage", 3.5),
+              (4, "d", "time", 0), (5 if control_energy else 20, "f", "control", 0), (6, "f", "voltage", 3.5),
               (8, "f", "current", 1), (7, "d", "dq", 0),
-              (13, "d", "q", 0)]
+              (13, "d", "relative" if control_energy else "q", 0)]
+    if control_energy:
+        fields += [(74, "d", "energy", 0)]
     if frequency:
         fields += [(32, "f", "frequency", 0), (36, "f", "impedance", 0)]
     fields += [(467 if classic else 211, "d", "q", 0), (468, "I", "half", 0)]
@@ -176,6 +178,35 @@ class BiologicMbTests(unittest.TestCase):
             path.write_bytes(payload)
             with self.subTest(column=column), self.assertRaises(parsing.SourceFormatError):
                 parsing.parse_timeseries(path)
+
+    def test_frequencyless_classic_restart_aligns_late_half_and_first_increment(self):
+        rows = [
+            dict(time=0), dict(time=1, q=1, dq=1, relative=1),
+            dict(time=2, ns=1, current=-1, half=1),
+            dict(time=3, ns=1, current=-1, half=1, q=-1, dq=-1),
+            dict(time=4, ns=2, current=0, flags=3, half=1, q=-1),
+            dict(time=5, ns=0, half=1, q=-1),
+            dict(time=6, ns=0, half=2, q=.7, dq=.7, relative=.7),
+            dict(time=7, ns=0, half=2, q=1.1, dq=.4, relative=1.1),
+        ]
+        path = self.directory / "restart.mpr"
+        write_mb(path, rows, classic=True, frequency=False, control_energy=True)
+        with biologic_mpr.read_mpr_header(path) as header:
+            self.assertEqual(header.vmp_data.record_stride, 61)
+        for mode in ("safe", "permissive"):
+            frame = parsing.parse_timeseries(path, read_mode=mode)
+            self.assertEqual(frame.cycle.tolist(), [1] * 5 + [2] * 3)
+            self.assertEqual(frame.cycle_complete.tolist(), [True] * 5 + [False] * 3)
+            np.testing.assert_allclose(frame.charge_capacity_mah.iloc[-3:], [0, .7, 1.1])
+            self.assertEqual(frame.step.iloc[-1], frame.step.iloc[-3])
+        for field, value in (("relative", .2), ("dq", .2), ("q", -2)):
+            with self.subTest(field=field):
+                changed = [dict(row) for row in rows]
+                changed[5][field] = value
+                write_mb(path, changed, classic=True, frequency=False, control_energy=True)
+                frame = parsing.parse_timeseries(path)
+                self.assertFalse(frame.cycle_complete.any())
+                self.assertEqual(frame.current_ma.tolist(), [1, 1, -1, -1, 0, 1, 1, 1])
 
     def test_frequency_mapping_is_scoped_to_mb_preserving_existing_readers(self):
         ids = (1, 2, 3, 21, 31, 65, 131, 4, 7, 5, 6, 211, 468, 32)

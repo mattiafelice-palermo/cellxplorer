@@ -24,8 +24,20 @@ interpreted using GCPL metadata offsets.
 charge counters, Ns, packed flags and half-cycle identity. Column 32 is named
 `raw_frequency_hz` only for the MB profile; it remains ignored by older adapters,
 including their replay-recovery gates. Unknown opaque MB columns are rejected.
-Without frequency, only the observed RDO ordinary base-column set is accepted:
-`131,39,4,20,6,8,7,13,211,212`, plus the six packed flag declarations.
+Without frequency, the supported ordinary base-column sets are
+`131,39,4,20,6,8,7,13,211,212` (RDO) and
+`131,39,4,5,6,8,7,13,74,211,212` (classic control/energy recording).
+Both require the six packed flag declarations. The latter has 61-byte rows.
+Column 5 stores the control value and column 74 stores energy magnitude.
+Measured current and directional capacity still come from the current and charge fields.
+
+In the classic control/energy layout the first CC sample after a rest can retain
+the previous half-cycle index and signed counter. Align that single sample only
+when the independent Q-Q0 and dq are both zero on entry, the signed counter is
+carried from the rest with the opposite sign, and the following sample advances
+the half-cycle by one within the same operation and direction. Both counters
+must then agree with that first signed increment. This preserves the measured
+interval after entry. Ambiguous polarity continues to withhold cycle summaries.
 
 A positive frequency excludes its entire contiguous Ns execution, including
 zero-frequency boundary rows. Instrument error flags in those omitted operations

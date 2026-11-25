@@ -10,6 +10,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.28 - 2026-11-25
+
+### Bug fixes
+
+- BioLogic MB cycling recordings with control and energy columns now import and retain measured charge across restarts with a delayed half-cycle counter.
+
 ## 0.29.0-alpha.27 - 2026-11-23
 
 ### Bug fixes
