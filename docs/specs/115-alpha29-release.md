@@ -1,6 +1,6 @@
 # 115 — Alpha 0.29.0-alpha.29 release
 
-Status: Release verification in progress.
+Status: Complete; published and independently verified 2026-11-25.
 
 Publish the main-line changes since published Alpha .24. Revisions .25–.28 are
 unpublished development checkpoints; bump the prepared .28 to .29, keeping the
@@ -58,3 +58,29 @@ root. All existing version declarations matched .28 before release preparation.
   (20 tests). The complete four-worker no-cache preflight then passed with normal
   Windows permissions: all 252 backend/frontend test files/modules, version
   consistency, type checking and production build (4/4 stages; 185.48 seconds).
+
+## Release checkpoint
+
+Release preparation commit and annotated tag target:
+`ef090a4eabc00622ebd9e7c863b18b67d140e7b0` (`v0.29.0-alpha.29`).
+Its exact-main [Windows preflight 45631114396](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/45631114396)
+passed, including the named Clean Windows preflight job. The signed release
+[workflow 45631273322](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/45631273322)
+passed, including frozen science/API checks, installation policy and the mandatory
+native upgrade/reinstall gate. The native coverage boundary above remains unchanged.
+
+## Release outcome
+
+- [Alpha 0.29.0-alpha.29](https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.29.0-alpha.29)
+  was published as a non-draft prerelease at `2026-11-25T14:23:52Z`.
+- Independently downloaded all three public assets, matched their sizes and
+  SHA-256 digests, checked exact release notes, validated the updater manifest
+  and cryptographically verified the installer against the embedded updater key.
+  Installer SHA-256:
+  `c82e1db9147b5677285706249a67d48985967f2d5865217bf1ad89774178c9fd`.
+- Public raw Alpha feed bytes match the release manifest. The feed branch
+  advanced from `a018275f3a3fb182fc0717855765864820b234c3` to
+  `6a97959e7bfffb625e70bbee7adf842f79a7b60d`. README, Stable and Beta
+  blobs remain unchanged. The published tag was not moved.
+- No private data or frozen expectations were uploaded or modified. No local
+  installation, real-profile migration or unrelated-worktree cleanup was performed.

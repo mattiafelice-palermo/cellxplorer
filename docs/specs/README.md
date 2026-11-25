@@ -1,8 +1,8 @@
 # Feature specs
 
 - [115 — Alpha 0.29.0-alpha.29 release](115-alpha29-release.md).
-  **Release verification in progress.** Consolidate the .25–.28 Maccor, cache-sharing
-  and BioLogic MB fixes since published Alpha .24.
+  **Complete; published and independently verified.** Maccor, cache-sharing and
+  BioLogic MB fixes since Alpha .24; local/Windows and signed native gates passed.
 
 - [114 — Alpha 0.29.0-alpha.24 release](114-alpha24-release.md).
   **Complete; published and independently verified.** Maccor support, normalization,
