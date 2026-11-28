@@ -321,7 +321,8 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   assert.match(liveSource, /timeCapacityPlotExportReady/);
   assert.match(liveSource, /timeCapacityScientificRequestSpec/);
   assert.match(liveSource, /const plotConfig = useMemo\(/);
-  assert.match(liveSource, /config=\{plotConfig\}/);
+  assert.match(liveSource, /const figure = \{ data: traces, layout, config: plotConfig,/);
+  assert.match(liveSource, /<Plot\s+\{\.\.\.\(heldFigure \?\? figure\)\}/);
   assert.match(liveSource, /voltageChannelAvailabilitySignature\(scientificRequestSpec,/);
   const queryStart = liveSource.indexOf("const timeResult = useQuery");
   assert.ok(queryStart >= 0);
@@ -391,6 +392,9 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   const updateSource = editorSource.slice(updateStart, updateEnd);
   assert.match(updateSource, /setSpec\(next\)/);
   assert.match(updateSource, /persistAnalysisSpec\(persistSpec, persistTitle\)/);
+  assert.match(updateSource, /afterUpdate\?\.\(next\)/);
+  assert.match(editorSource, /afterUpdate: saved => openSavedPlotDirect\(plot, saved\)/);
+  assert.match(editorSource, /afterUpdate: saved => applyTabWorkspace\(next, saved\)/);
   assert.match(editorSource, /dirty \? "Unsaved" : "Saved"/);
 });
 
