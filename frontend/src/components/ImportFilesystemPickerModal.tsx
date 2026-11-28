@@ -1654,8 +1654,10 @@ export function ImportFilesystemPickerModal({
                     />
                     <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, width: "var(--import-name-width)", minWidth: 0, boxSizing: "border-box", overflow: "hidden", background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
-                      {registeredFile && <RegisteredFileInfo filename={entry.name} cells={hint?.cells} />}
-                      {!isFolder && !registeredFile && (sourceRejection || headerError) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
+                      <Box w={22} style={{ display: "grid", placeItems: "center", flexShrink: 0 }}>
+                        {registeredFile && <RegisteredFileInfo filename={entry.name} cells={hint?.cells} />}
+                        {!isFolder && !registeredFile && (sourceRejection || headerError) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8 }} /></Tooltip>}
+                      </Box>
                       <Text size="md" truncate title={registeredFile ? `${entry.name} — ${importedSourceLabel(hint?.cells)}` : entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
                       {recoverableMpr && <Button size="compact-xs" color="orange" variant="light" style={{ flexShrink: 0 }} aria-label={`Try Permissive reading for ${entry.name}`} onClick={(event) => { event.stopPropagation(); tryPermissive(entry); }}>Try Permissive</Button>}
                     </Group>

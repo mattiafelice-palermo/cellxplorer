@@ -13,6 +13,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.39 - 2026-11-28
+
+### Bug fixes
+
+- Align warning icons and filenames in the import picker, including rows without a warning.
+
 ## 0.29.0-alpha.38 - 2026-11-28
 
 ### New features
