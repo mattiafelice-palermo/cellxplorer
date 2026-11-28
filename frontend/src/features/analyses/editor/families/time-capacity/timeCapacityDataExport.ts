@@ -246,6 +246,11 @@ export function consecutiveTimeCapacityExportColumns(
         { header: label("Charge throughput (mAh)"), values: take(trace.charge_throughput_mah ?? [], indices) },
         { header: label("Charge balance (mAh)"), values: take(trace.charge_balance_mah ?? [], indices) },
         { header: label("Voltage (V)"), values: take(trace.voltage_v, indices) });
+      const current = timeCapacityCurrentSeriesDescriptors(trace, config, name)[0];
+      if (current && !isSeriesHidden(spec, current.visibilityKey!) &&
+          !resolveSeriesStyle(resolved, current, style.series_rules, style.series_overrides).hidden) {
+        columns.push({ header: label("Current (mA)"), values: take(trace.current_ma, indices) });
+      }
       if (percent) {
         const count = indices?.length ?? x.length;
         const ref = config.balance?.references?.[trace.cell_id];

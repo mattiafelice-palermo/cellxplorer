@@ -4606,9 +4606,15 @@ def compute_time_capacity(
         with time_capacity_path.timed_stage(
             cell_diagnostics, "exact_cycle_filter_and_sort"
         ):
-            if paired and not include_display_only_rows:
+            balance_window = balance_view and not settings["cycles"] and bool(complete_cycles)
+            if paired and not include_display_only_rows and not balance_window:
                 raw = raw.loc[~raw["display_only_cycle"]]
-            if settings["cycles"]:
+            if balance_window:
+                raw = raw.loc[time_capacity_derived.recorded_cycle_window(
+                    raw["cycle"], int(settings["cycle_start"] or 1),
+                    int(settings["cycle_end"] if settings["cycle_end"] is not None else complete_cycles[-1]),
+                )]
+            elif settings["cycles"]:
                 raw = raw[
                     raw["cycle"].isin(settings["cycles"])
                     | (raw.get("display_only_cycle", False) & include_display_only_rows)
@@ -4992,7 +4998,7 @@ def compute_time_capacity(
             primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
             if balance_view:
                 primary_values = raw["charge_balance_mah"].to_numpy(dtype=float)
-                envelope_series = [primary_values, voltage]
+                envelope_series = [primary_values, voltage, current]
             if settings["view"] == "voltage_current" and voltage_by_channel:
                 visible_voltage_values = np.zeros(len(raw), dtype=bool)
                 for values in voltage_by_channel.values():
@@ -5007,7 +5013,11 @@ def compute_time_capacity(
             with time_capacity_path.timed_stage(
                 profile_diagnostics, "display_post_downsample_materialization"
             ):
-                boundaries = np.union1d(source_boundary_indices, balance_breaks) if balance_view else source_boundary_indices
+                boundaries = source_boundary_indices
+                if balance_view:
+                    measured_current = np.isfinite(current)
+                    current_edges = np.flatnonzero(measured_current[1:] != measured_current[:-1]) + 1
+                    boundaries = np.union1d(np.union1d(boundaries, balance_breaks), current_edges)
                 take = np.union1d(take, time_capacity_boundary_sample_rows(raw, boundaries))
                 raw = raw.iloc[take]
                 display_row_indices = take if display_row_indices is None else display_row_indices[take]

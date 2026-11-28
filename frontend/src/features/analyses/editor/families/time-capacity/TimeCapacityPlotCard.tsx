@@ -823,19 +823,20 @@ export function timeCapacityTracesForResult(
       style.line_dash,
     );
     if (resolved.hidden) continue;
-    if (cfg.view === "charge_balance") {
-      const curves = chargeBalanceTraces(trace, cfg.balance ?? {}, resolved, seriesKey, !legendShown.has(seriesKey),
-        legendRanks.get(seriesKey), interactiveWebGl, includeExportColumns);
-      if (curves.length) legendShown.add(seriesKey);
-      out.push(...curves);
-      continue;
-    }
     const name = resolved.name;
     const currentStyles = timeCapacityCurrentSeriesDescriptors(trace, cfg, name).flatMap((current) => {
       if (isSeriesHidden(spec, current.visibilityKey!)) return [];
       const currentStyle = resolveTrace(current, style.custom_colors[current.key] ?? color, style.line_dash);
       return currentStyle.hidden ? [] : [{ descriptor: current, resolved: currentStyle }];
     });
+    if (cfg.view === "charge_balance") {
+      const current = currentStyles[0];
+      const curves = chargeBalanceTraces(trace, cfg.balance ?? {}, resolved, seriesKey, legendShown,
+        legendRanks.get(seriesKey), interactiveWebGl, includeExportColumns, cfg.stacked,
+        current && { style: current.resolved, key: current.descriptor.key, rank: legendRanks.get(current.descriptor.key) });
+      out.push(...curves);
+      continue;
+    }
     const fullX = timeCapacityX(trace, spec).x;
     const channelStyles = selectedVoltageChannels.map((channel) => {
       const channelKey = `${seriesKey}|${channel}`;
@@ -994,18 +995,22 @@ export function timeCapacityLayout(
     const key = timeCapacityVisibilityKey(s.group_id ? `g${s.group_id}` : `c${s.cell_id}`);
     return !timeCapacityTraceIsHidden(s, spec) && visibleKeys.some((visible) => visible === key || visible.startsWith(key + "|"));
   }).map((s) => s.cell_id), cycleBased: cfg.x_axis !== "time" || cfg.view !== "voltage_current" };
-  const xTitle = result?.cell_traces[0] ? timeCapacityXAxisTitle(cfg) : "Time (min)";
-  const leftCurrentLabel = currentAxisLabel(cfg.current_left ?? "current_ma");
+  const balance = cfg.view === "charge_balance";
+  const voltageOverlay = balance && cfg.balance?.show_voltage;
+  const xTitle = balance || result?.cell_traces[0] ? timeCapacityXAxisTitle(cfg) : "Time (min)";
+  const leftCurrentQuantity = balance ? "current_ma" : cfg.current_left ?? "current_ma";
+  const leftCurrentLabel = currentAxisLabel(leftCurrentQuantity);
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
-  const hasRightCurrent = traces.length
+  const hasRightCurrent = !balance && (traces.length
     ? traces.some((trace) => (trace as Partial<Plotly.ScatterData>).yaxis === "y3")
-    : hasRightCurrentValues(result, spec);
+    : hasRightCurrentValues(result, spec));
+  const rightAxisVisible = hasRightCurrent || voltageOverlay;
   const lm = legendMargins(style, spec.presentation.legend);
   const leftGap = axisGapDelta(style.y_axis);
   const bottomGap = axisGapDelta(style.x_axis);
-  const rightGap = hasRightCurrent ? axisGapDelta(style.y2_axis) : 0;
+  const rightGap = rightAxisVisible ? axisGapDelta(style.y2_axis) : 0;
   const rightMargin = Math.max(
-    (hasRightCurrent ? 84 : 28) + rightGap,
+    (rightAxisVisible ? 84 : 28) + rightGap,
     lm.r ? lm.r + 24 : 0
   );
   const baseAxis = (axis: PlotStyle["x_axis"]) => ({
@@ -1025,10 +1030,8 @@ export function timeCapacityLayout(
       cfg.display_mode === "consecutive" && !timeCapacityUsesContinuousTime(cfg),
   };
   const yRange = numericTraceExtent(traces, "y", ["y"]);
-  const y2Range = numericTraceExtent(traces, "y", ["y2", "y3"]);
-  if (cfg.view !== "voltage_current") {
-    const balance = cfg.view === "charge_balance";
-    const voltageOverlay = balance && cfg.balance?.show_voltage;
+  const y2Range = numericTraceExtent(traces, "y", balance ? ["y2"] : ["y2", "y3"]);
+  if (cfg.view !== "voltage_current" && !(balance && cfg.stacked)) {
     const specific = cfg.derivative_specific;
     const xTitle = balance ? timeCapacityXAxisTitle(cfg) : cfg.view === "dqdv" ? "Voltage (V)" : specific ? "Specific capacity (mAh/g)" : "Capacity (mAh)";
     const yTitle = balance ? balanceAxisTitle(cfg.balance) :
@@ -1138,7 +1141,7 @@ export function timeCapacityLayout(
         // Keep the shared voltage axis compact when several independent
         // voltage channels are selected. Channel identity remains visible in
         // the legend, hover card, and export labels.
-        text: plotlySafeText(style.y_title ?? "Voltage (V)"),
+        text: plotlySafeText(style.y_title ?? (balance ? balanceAxisTitle(cfg.balance) : "Voltage (V)")),
         font: titleFont,
         standoff: style.y_axis.title_standoff,
       },
@@ -1174,6 +1177,13 @@ export function timeCapacityLayout(
             mirror: false,
             ...axisLayout(style.y2_axis, y2Range),
           },
+          ...(voltageOverlay ? {
+            yaxis3: {
+              ...baseAxis(style.y2_axis), overlaying: "y" as const, anchor: "x", side: "right" as const,
+              title: { text: "Voltage (V)", font: titleFont, standoff: style.y2_axis.title_standoff },
+              showgrid: false, showline: false, mirror: false, zeroline: false, autorange: true,
+            },
+          } : {}),
           ...(hasRightCurrent
             ? {
                 yaxis3: {
@@ -1214,9 +1224,12 @@ export function timeCapacityLayout(
         }
       : {}),
   }, style, [
-    referenceAxis("x", `time_capacity:${cfg.x_axis}:${cfg.display_mode}:${cfg.x_axis === "time" ? cfg.time_reference ?? "selected_range" : "capacity"}`, cfg.x_axis === "time" ? cfg.time_unit : referenceUnits(timeCapacityXAxisTitle(cfg)), timeCapacityXAxisTitle(cfg)),
-    referenceAxis("y", `time_capacity:voltage:${[...cfg.voltage_channels].sort().join(",")}`, "V", `Voltage (${voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)}) (V)`),
-    ...(cfg.stacked ? [referenceAxis("y2", `time_capacity:left:${cfg.current_left}`, referenceUnits(leftCurrentLabel), leftCurrentLabel)] : []),
+    referenceAxis("x", balance ? `time_capacity:charge_balance:x:${xTitle}` : `time_capacity:${cfg.x_axis}:${cfg.display_mode}:${cfg.x_axis === "time" ? cfg.time_reference ?? "selected_range" : "capacity"}`, cfg.x_axis === "time" ? cfg.time_unit : referenceUnits(xTitle), xTitle),
+    balance
+      ? referenceAxis("y", `time_capacity:charge_balance:y:${cfg.balance?.unit ?? "mah"}`, referenceUnits(balanceAxisTitle(cfg.balance)), balanceAxisTitle(cfg.balance))
+      : referenceAxis("y", `time_capacity:voltage:${[...cfg.voltage_channels].sort().join(",")}`, "V", `Voltage (${voltageChannelSelectionLabel(cfg.voltage_channels, result?.voltage_channels)}) (V)`),
+    ...(cfg.stacked ? [referenceAxis("y2", `time_capacity:left:${leftCurrentQuantity}`, referenceUnits(leftCurrentLabel), leftCurrentLabel)] : []),
+    ...(voltageOverlay ? [referenceAxis("y3", "time_capacity:charge_balance:voltage", "V", "Voltage (V)")] : []),
     ...(hasRightCurrent ? [referenceAxis(cfg.stacked ? "y3" : "y2", `time_capacity:right:${cfg.current_right}`, referenceUnits(rightCurrentLabel), rightCurrentLabel)] : []),
   ]), traces), result?.badges, limitationContext);
 }
@@ -1383,7 +1396,6 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
                       }
                       next.display_mode = "consecutive";
                       next.time_reference = "test_start";
-                      next.stacked = false;
                       next.voltage_channels = ["voltage"];
                       next.voltage_channel = "voltage";
                       if (next.x_axis !== "capacity_mah") next.x_axis = "time";
@@ -1416,6 +1428,8 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
                     s.computation.time_capacity = next;
                     if (previousUnit !== (next.balance.unit ?? "mah")) resetAxis(s, "y_axis");
                   })} />
+                  <Switch label="Show current below plot" checked={cfg.stacked}
+                    onChange={({ currentTarget: { checked } }) => updateTime(next => { next.stacked = checked; })} />
                 </>
               ) : cfg.view === "voltage_current" ? (
                 <>
@@ -2808,7 +2822,7 @@ function TimeCapacityPlotCardView({
   });
   const lastVisibleAutoFitSignatureRef = useRef<string | null>(null);
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.view === "charge_balance" ? JSON.stringify(cfg.balance) : ""}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}`;
-  const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
+  const zoom = useZoomMemory(zoomSignature, !cfg.stacked || (cfg.view !== "voltage_current" && cfg.view !== "charge_balance"));
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
   // Matched x axes cannot use Plotly uirevision. Retain a pointer-selected
@@ -3989,7 +4003,8 @@ function TimeCapacityPlotCardView({
         cycleShadingSupported={cycleShadingSupported(cfg.view, cfg.x_axis)}
         availableCycleMaximum={maxAvailableCycle}
         timeCapacityStacked={cfg.stacked}
-         yTitlePlaceholder={voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}
+        yTitlePlaceholder={cfg.view === "charge_balance" ? balanceAxisTitle(cfg.balance)
+          : voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}
       />
     </Group>
   );

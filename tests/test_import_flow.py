@@ -2472,11 +2472,11 @@ class ImportFlowTests(unittest.TestCase):
             self.assertEqual(missing.exception.status_code, 409)
 
     def test_time_window_preserves_uncounted_acquisitions_in_their_recorded_positions(self):
-        from app.services.continuation_preview import recorded_voltage_window
+        from app.services.time_capacity_derived import recorded_cycle_window
 
         cycles = pd.Series([0, 0, 1, 1, None, 0, 2, 2, 0, 3, 3, 0])
         def positions(first, last):
-            return cycles.index[recorded_voltage_window(cycles, first, last)].tolist()
+            return cycles.index[recorded_cycle_window(cycles, first, last)].tolist()
 
         self.assertEqual(positions(1, 2), list(range(8)))
         self.assertEqual(positions(2, 3), list(range(6, 12)))

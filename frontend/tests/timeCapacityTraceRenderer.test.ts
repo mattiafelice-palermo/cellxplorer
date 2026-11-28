@@ -150,6 +150,33 @@ function withoutExportColumns(traces: RenderedTrace[]) {
   return traces.map(({ cellxplorer_export_columns: _columns, ...trace }) => trace);
 }
 
+test("a late SOC window and its current share absolute coordinates and source gaps", async () => {
+  const result = makeResult();
+  const sample = result.cell_traces[0];
+  sample.display_x = [200, 210, 220, 230, 800, 810, 820, 830];
+  sample.charge_balance_mah = [-15, -14, -13, -14, -41, -40, -41, -42];
+  sample.estimated_soc_pct = sample.charge_balance_mah.map(v => 80 + v! / 10);
+  sample.source_boundary_indices = [4];
+  const render = await loadRenderer();
+  for (const unit of ["mah", "soc"] as const) {
+    const spec = makeSpec({ view: "charge_balance", stacked: true, balance: { unit, show_voltage: true } });
+    spec.presentation.plot_style.series_overrides = { "c1|current_left|current_ma": { show_in_legend: true } };
+    const plotted = render(result, spec);
+    const primary = plotted.filter(t => !t.yaxis);
+    const current = plotted.filter(t => t.yaxis === "y2");
+    const voltage = plotted.filter(t => t.yaxis === "y3");
+    assert.deepEqual(primary.flatMap(t => t.y), unit === "soc" ? sample.estimated_soc_pct : sample.charge_balance_mah);
+    assert.deepEqual(current.map(t => t.x), primary.map(t => t.x));
+    assert.deepEqual(voltage.map(t => t.x), primary.map(t => t.x));
+    assert.deepEqual(current.map(t => t.y), [sample.current_ma.slice(0, 4), sample.current_ma.slice(4)]);
+    assert.ok(current.every(t => t.xaxis === "x2" && t.connectgaps === false));
+    assert.equal(current.filter(t => t.showlegend).length, 1);
+    spec.computation.time_capacity!.stacked = false;
+    assert.deepEqual(render(result, spec).filter(t => !t.yaxis).map(t => t.y), primary.map(t => t.y));
+    assert.equal(render(result, spec).some(t => t.xaxis === "x2"), false);
+  }
+});
+
 test("stacked current has an independent style and visibility alongside three electrodes", async () => {
   const result = makeResult();
   result.cell_traces[0].voltage_v_by_channel!.counter_potential = Array(8).fill(0.5);

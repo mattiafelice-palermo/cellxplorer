@@ -30,6 +30,10 @@ Show values outside 0–100%. The model assumes recorded charge goes into or com
 the inventory. Corrosion, parasitic reactions and changes in accessible capacity can
 affect that interpretation. A voltage cutoff alone does not establish an empty or full
 electrode. Keep the aligned voltage accessible in hover and as an optional overlay.
+Offer recorded current in mA in a lower panel sharing the selected time or throughput
+axis. A contiguous cycle window retains uncounted measurements between its endpoints,
+including the lead-in when it starts at cycle one and the run-out when it ends at the
+final cycle. Explicit selections of individual cycles preserve gaps between them.
 
 Save the choice, inputs and target Cell with the plot. Preserve its axes, discontinuities
 and calibration in scientific exports and remap Cell references when importing a portable report.

@@ -79,7 +79,11 @@ Time/Capacity charge balance uses measured counter increments over the complete 
 Cell before applying cycle windows, protocol masks or display sampling. A plotted
 consecutive-capacity coordinate can rebase on the visible window and cannot supply this
 prefix. Calibration belongs to the plot and individual Cell. Portable import remaps its
-Cell IDs for both the active recipe and saved plots. See [Spec 116](../specs/116-time-capacity-charge-balance.md).
+Cell IDs for both the active recipe and saved plots. For a window regression, compare
+the same recorded point in the overview, a late cycle and the full-resolution export.
+Display sampling can retain different points at different scales. The balance, SOC,
+throughput and test time must agree at common points. The lower current panel shares
+the same sampled rows and gap boundaries. See [Spec 116](../specs/116-time-capacity-charge-balance.md).
 
 1. Keep deterministic calculations in backend services.
 2. Decide which scientific meaning changed. Bump `CALC_VERSION` for shared

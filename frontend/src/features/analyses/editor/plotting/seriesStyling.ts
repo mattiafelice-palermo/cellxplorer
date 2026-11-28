@@ -369,14 +369,17 @@ export function timeCapacityCurrentSeriesDescriptors(
   config: TimeCapacityCurrentConfig,
   sampleName?: string,
 ): SeriesDescriptor[] {
-  if (config.view !== "voltage_current" || !config.stacked ||
+  const balance = config.view === "charge_balance";
+  if ((!balance && config.view !== "voltage_current") || !config.stacked ||
     !trace.current_ma?.some((value, index) => value != null && Number.isFinite(value) &&
       (config.display_mode === "consecutive" || trace.phase?.[index] === "charge" || trace.phase?.[index] === "discharge"))) return [];
   const base = timeCapacitySeriesDescriptor(trace);
   const area = config.electrode_area_cm2 ?? trace.electrode_area_cm2;
   const nominal = trace.nominal_capacity_mah;
   const descriptors: SeriesDescriptor[] = [];
-  for (const [panel, quantity] of [["left", config.current_left], ["right", config.current_right]] as const) {
+  const axes = balance ? [["left", "current_ma"]] as const
+    : [["left", config.current_left], ["right", config.current_right]] as const;
+  for (const [panel, quantity] of axes) {
     if (!quantity || quantity === "none" ||
       (quantity === "current_density" && !(area != null && Number.isFinite(area) && area > 0)) ||
       (quantity === "c_rate" && !(nominal != null && Number.isFinite(nominal) && nominal > 0))) continue;

@@ -250,10 +250,13 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
         }
 
     if kind == "time_capacity":
+        time_capacity = computation.get("time_capacity") or {}
         return {
             "selection": selection,
+            # Only balance plots gained uncounted window rows and current extrema.
+            **({"balance_display_revision": 2} if time_capacity.get("view") == "charge_balance" else {}),
             "computation": {
-                "time_capacity": computation.get("time_capacity") or {},
+                "time_capacity": time_capacity,
                 # Time/Capacity retains the generic cycle-range fallback used
                 # by time_capacity_settings() for legacy specs without a
                 # dedicated time_capacity range.

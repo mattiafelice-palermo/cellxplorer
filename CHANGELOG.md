@@ -13,6 +13,16 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.45 - 2026-11-28
+
+### New features
+
+- Show recorded current below charge balance or estimated SOC on the same time or throughput axis.
+
+### Bug fixes
+
+- Keep uncounted measurements inside charge-balance cycle windows and preserve their position on the full Cell trajectory.
+
 ## 0.29.0-alpha.44 - 2026-11-28
 
 ### Bug fixes

@@ -39,7 +39,7 @@ export function ChargeBalanceControls({ settings, cells, onChange }: {
           {options.length > 1 && <Select label="Calibrate Cell" value={String(cell.id)}
             data={options.map(item => ({ value: String(item.id), label: item.name }))}
             searchable onChange={setChosen} allowDeselect={false} />}
-          <DebouncedNumberInput label="Starting SOC (%)" description="At the first recorded sample."
+          <DebouncedNumberInput label="Starting SOC (%)" description="At the Cell’s first recorded sample, across all cycle windows."
             min={0} max={100} value={entry.start_soc_pct ?? null} placeholder="Enter starting SOC"
             onCommit={value => changeReference({ start_soc_pct: value })} />
           <Select label="Capacity reference" value={measured ? "measured" : "mass"} allowDeselect={false}

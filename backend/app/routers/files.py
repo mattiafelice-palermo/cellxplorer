@@ -4141,7 +4141,7 @@ def _build_continuation_preview(
             mapping = voltage_cycle_rows.set_index(["segment", "source_cycle"])["cycle"]
             keys = pd.MultiIndex.from_frame(prepared_raw[["segment", "source_cycle"]])
             display_cycles = pd.Series(mapping.reindex(keys).to_numpy(), index=prepared_raw.index)
-            prepared_raw = prepared_raw.iloc[continuation_preview.recorded_voltage_window(
+            prepared_raw = prepared_raw.iloc[continuation_preview.recorded_cycle_window(
                 display_cycles, requested_start, requested_end,
             )]
             global_cycle_sources = {}
@@ -4364,7 +4364,7 @@ def _build_stitched_continuation_preview(
     voltage_window = None
     if (quantity == "voltage" and voltage_cycle_identity_available and "cycle" in merged
             and (cycle_start is not None or cycle_end is not None)):
-        voltage_window = continuation_preview.recorded_voltage_window(merged["cycle"], requested_start, requested_end)
+        voltage_window = continuation_preview.recorded_cycle_window(merged["cycle"], requested_start, requested_end)
 
     for segment_index, source in enumerate(ordered_sources):
         source_rows = prepared.segment_rows[segment_index]

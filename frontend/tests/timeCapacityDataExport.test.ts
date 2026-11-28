@@ -133,7 +133,7 @@ test("native export plan carries resolved visible names without scientific rows"
 });
 
 test("SOC export keeps one aligned row per observation and the Cell-specific calibration", () => {
-  const cfg = { ...config, view: "charge_balance", x_axis: "capacity_mah", balance: {
+  const cfg = { ...config, view: "charge_balance", x_axis: "capacity_mah", stacked: true, balance: {
     unit: "soc" as const, show_voltage: true, references: { 1: { basis: "mass" as const, mass_mg: 100 } },
   }};
   const result = makeResult();
@@ -146,6 +146,12 @@ test("SOC export keeps one aligned row per observation and the Cell-specific cal
   assert.deepEqual(columns.find(c => c.header.endsWith("Estimated SOC (%)"))?.values, [50.244]);
   assert.deepEqual(columns.find(c => c.header.endsWith("Reference capacity (mAh)"))?.values, [82]);
   assert.deepEqual(columns.find(c => c.header.endsWith("Specific capacity (mAh/g)"))?.values, [820]);
+  assert.deepEqual(columns.find(c => c.header.endsWith("Current (mA)"))?.values, [30]);
+  const hidden = makeSpec();
+  hidden.presentation.hidden_series_ids = ["time_capacity:c1|current_left|current_ma"];
+  const hiddenColumns = consecutiveTimeCapacityExportColumns(result, hidden, cfg, DEFAULT_PLOT_STYLE, [30, 32])!;
+  assert.equal(hiddenColumns.some(c => c.header.endsWith("Current (mA)")), false);
+  assert.deepEqual(hiddenColumns.find(c => c.header.endsWith("Estimated SOC (%)"))?.values, [50.244]);
   assert.deepEqual(columns.find(c => c.header === "Local cycle")?.values, [5]);
 });
 

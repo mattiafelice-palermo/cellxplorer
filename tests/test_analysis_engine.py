@@ -4281,6 +4281,69 @@ class MultiVoltageTimeCapacityTests(unittest.TestCase):
         for key in ("charge_balance_mah", "display_x", "estimated_soc_pct"):
             np.testing.assert_allclose(late[key], original[key][last:], atol=1e-6)
 
+    def test_balance_and_soc_are_crops_of_the_complete_record_in_both_coordinates(self):
+        cell_id = self.cells["two"].id
+        ref = engine.stitch.CachedSourceRef(self.HASHES["two"], parsing.parser_identity("two.ndax"))
+        raw, segments, missing = engine.stitch.stitch_raw([ref])
+        self.assertFalse(missing)
+        # A lead-in, an incomplete middle episode, and a run-out have measured
+        # transfer but no completed-cycle identity, as in a continued Cell.
+        uncounted = raw.cycle.eq(3)
+        uncounted.iloc[:2] = uncounted.iloc[-2:] = True
+        raw.loc[uncounted, "cycle"] = 0
+        raw["display_only_cycle"] = uncounted
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell_id}])
+        cfg = spec["computation"]["time_capacity"] = {"view": "charge_balance"}
+
+        def trace(start, end):
+            cfg.update(cycle_start=start, cycle_end=end)
+            return engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)["cell_traces"][0]
+
+        with patch.object(engine.stitch, "stitch_raw", return_value=(raw, segments, missing)):
+            for axis in ("time", "capacity_mah"):
+                for ref_capacity in ({"capacity_mah": 100}, {"basis": "mass", "mass_mg": 125}):
+                    with self.subTest(axis=axis, reference=ref_capacity):
+                        cfg.update(x_axis=axis, cycles=[], balance={"unit": "soc", "references": {
+                            str(cell_id): {"start_soc_pct": 80, **ref_capacity},
+                        }})
+                        full = trace(1, None)
+                        self.assertEqual((full["display_x"][0], full["estimated_soc_pct"][0]), (0, 80))
+                        for start, end in ((4, 5), (1, 4), (4, 4), (2, 4), (4, 5)):
+                            window = trace(start, end)
+                            positions = [i for i, cycle in enumerate(full["cycle"]) if start <= cycle <= end]
+                            left = 0 if start == 1 else positions[0]
+                            right = len(raw) if end == 5 else positions[-1] + 1
+                            for key in ("cycle", "display_x", "charge_throughput_mah", "charge_balance_mah",
+                                        "estimated_soc_pct", "voltage_v", "current_ma"):
+                                self.assertEqual(window[key], full[key][left:right], key)
+                            if start == 4:
+                                self.assertNotEqual(window["estimated_soc_pct"][0], 80)
+                        cfg["cycles"] = [2, 4]
+                        sparse = trace(None, None)
+                        self.assertEqual(set(sparse["cycle"]), {2, 4})
+                        self.assertIn(sparse["cycle"].index(4), sparse["display_break_before"])
+                        self.assertEqual(sparse["estimated_soc_pct"], [
+                            value for cycle, value in zip(full["cycle"], full["estimated_soc_pct"]) if cycle in (2, 4)
+                        ])
+
+    def test_sampled_balance_keeps_short_current_pulses_and_missing_current(self):
+        ref = engine.stitch.CachedSourceRef(self.HASHES["three"], parsing.parser_identity("three.ndax"))
+        raw, segments, missing = engine.stitch.stitch_raw([ref])
+        self.assertFalse(missing)
+        pulse = 59
+        raw.iloc[pulse, raw.columns.get_loc("current_ma")] = np.sign(raw.current_ma.iloc[pulse]) * 3000
+        raw.iloc[91, raw.columns.get_loc("current_ma")] = np.nan
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}], time_capacity={
+            "view": "charge_balance", "max_points_per_cell": 100, "cycle_end": None,
+        })
+        with patch.object(engine.stitch, "stitch_raw", return_value=(raw, segments, missing)):
+            trace = engine.compute_time_capacity(self.db, spec, None, compact=True)["cell_traces"][0]
+        self.assertLess(len(trace["current_ma"]), len(raw))
+        self.assertIn(raw.current_ma.iloc[pulse], trace["current_ma"])
+        gap = trace["current_ma"].index(None)
+        self.assertEqual(trace["current_ma"][gap - 1:gap + 2], [raw.current_ma.iloc[90], None, raw.current_ma.iloc[92]])
+        self.assertIsNotNone(trace["charge_balance_mah"][gap])
+
     def test_working_potential_request_returns_correct_values_and_availability(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
         spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}

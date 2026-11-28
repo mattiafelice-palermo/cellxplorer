@@ -18,6 +18,19 @@ from . import calc
 SECONDS_PER_PLOT_TIME_UNIT = {"s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}
 
 
+def recorded_cycle_window(cycles: pd.Series, start: int, end: int) -> np.ndarray:
+    """Select a chronological cycle window including its uncounted measurements."""
+    labels = pd.to_numeric(cycles, errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+    selected = (labels >= start) & (labels <= end)
+    positions = np.flatnonzero(selected)
+    if positions.size:
+        # Retain the lead-in at the first cycle and the run-out at the last.
+        left = 0 if start == 1 else positions[0]
+        right = len(labels) if not (labels > end).any() else positions[-1] + 1
+        selected[left:right] |= ~(labels[left:right] > 0)
+    return selected
+
+
 PHASE_CODE_REST = 0
 PHASE_CODE_CHARGE = 1
 PHASE_CODE_DISCHARGE = 2

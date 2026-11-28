@@ -24,6 +24,7 @@ from .time_capacity_derived import (
     consecutive_capacity_display,
     phase_capacity,
     phase_from_raw,
+    recorded_cycle_window,
 )
 
 from . import canonical_cycling
@@ -163,20 +164,6 @@ def has_unresolved_biologic_cycles(frame: pd.DataFrame) -> bool:
     from .biologic_quantities import UNRESOLVED_CYCLE_SOURCE
 
     return "measurement_type" in frame and frame["measurement_type"].eq(UNRESOLVED_CYCLE_SOURCE).any()
-
-
-def recorded_voltage_window(cycles: pd.Series, start: int, end: int) -> np.ndarray:
-    """Keep uncounted acquisitions inside the selected chronological interval."""
-    labels = pd.to_numeric(cycles, errors="coerce").to_numpy(dtype=float, na_value=np.nan)
-    selected = (labels >= start) & (labels <= end)
-    positions = np.flatnonzero(selected)
-    if positions.size:
-        # Include lead-in at the first cycle and run-out at the last. Unassigned
-        # measurements retain their own source and never become cycle capacity.
-        left = 0 if start == 1 else positions[0]
-        right = len(labels) if not (labels > end).any() else positions[-1] + 1
-        selected[left:right] |= ~(labels[left:right] > 0)
-    return selected
 
 
 class MissingPreviewRows(Exception):
