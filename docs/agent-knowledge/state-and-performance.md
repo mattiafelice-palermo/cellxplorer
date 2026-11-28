@@ -52,6 +52,10 @@ import dialog hands those IDs to the Cell Database when it closes. Use that
 batch identity for row feedback because a library refresh can also finish
 sorting, filtering, or updating an existing cell.
 
+The Cell Database keeps the import dialog mounted between imports. Reset both
+the synchronous handoff guard and the button's pending state when the dialog
+opens. Verify two successive imports from the same screen without reloading.
+
 ## Input events and deferred React updates
 
 Capture an input's `event.currentTarget.value` in the change handler before

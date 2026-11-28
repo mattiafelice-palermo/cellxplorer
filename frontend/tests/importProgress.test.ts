@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { BackgroundJob } from "../src/api.ts";
@@ -227,6 +228,15 @@ test("registration controls unlock from the explicit commit marker before cache 
     importRegistrationUiState(true, "failed", false, true, false),
     { showContinue: false, showDone: false, editingLocked: false, closeLocked: false },
   );
+});
+
+test("reopening the mounted import dialog resets both guards on the next handoff", () => {
+  const source = readFileSync(new URL("../src/pages/InboxPage.tsx", import.meta.url), "utf8");
+  const modal = source.slice(source.indexOf("function ImportModal("));
+  const onOpen = modal.match(/useEffect\(\(\) => \{\s*if \(opened\) \{([\s\S]*?)\} else \{/);
+  assert.ok(onOpen, "the import dialog initializes a new session when opened");
+  assert.match(onOpen[1], /handoffStarted\.current = false/);
+  assert.match(onOpen[1], /setHandoffPending\(false\)/);
 });
 
 test("Done shows when registration finished AND cache preparation is idle", () => {

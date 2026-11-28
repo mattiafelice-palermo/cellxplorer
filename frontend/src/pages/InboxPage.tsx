@@ -1227,6 +1227,7 @@ function ImportModal({
       setFolderTrackingSettingsOpen(false);
       setRegistrationAccepted(false);
       continuedSubmissionLocked.current = false;
+      setHandoffPending(false);
       handoffStarted.current = false;
       setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));

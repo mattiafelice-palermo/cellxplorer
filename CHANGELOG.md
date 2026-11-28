@@ -13,6 +13,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.30 - 2026-11-28
+
+### Bug fixes
+
+- Close the import dialog automatically after successive imports from the same Cell Database screen.
+
 ## 0.29.0-alpha.29 - 2026-11-25
 
 ### Bug fixes
