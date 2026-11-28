@@ -490,7 +490,9 @@ direction. Bound the chip area with an independently scrolling
 Avoid `ScrollArea.Autosize` for wrapping chip rows: its content sizing can create
 horizontal overflow. In the file picker, keep the selection count and review
 button inside the file-list pane. The indexed picker omits the strip for an
-empty selection. Review opens a sheet grouped by source folder. Keep full
+empty selection. Reviewing whole folders resolves them to screened, individually selected files.
+Use the shared import folder tree to retain subfolders and source roots. Continue submits the reviewed
+paths so removing a descendant cannot reintroduce it by scanning its parent. Keep full
 filenames readable there, and put browsing instructions in the title help popup.
 
 Field discovery uses the explicit vocabulary in `filterDiscovery.ts`, not section

@@ -1,3 +1,4 @@
+import { importSourcePathKey } from "./importSourceReadability.ts";
 import type { ImportBrowseEntry } from "./api";
 
 export type ImportSelection = ReadonlyMap<string, ImportBrowseEntry>;
@@ -35,7 +36,7 @@ export function isImportPathDescendant(folderPath: string, candidatePath: string
   const folder = normalizedPath(folderPath);
   const candidate = normalizedPath(candidatePath);
   if (folder === candidate) return false;
-  if (folder === "/") return candidate.startsWith("/");
+  if (folder.endsWith("/")) return candidate.startsWith(folder);
   return candidate.startsWith(`${folder}/`);
 }
 
@@ -102,9 +103,10 @@ export function importSelectableEntries(
 function isShownEntrySelected(
   entry: ImportBrowseEntry,
   selected: ImportSelection,
+  members?: readonly ImportBrowseEntry[],
 ): boolean {
   return entry.kind === "folder"
-    ? folderSelectionState(entry, selected) === "all"
+    ? folderSelectionState(entry, selected, members?.map(file => file.path)) === "all"
     : isImportFileSelected(selected, entry.path);
 }
 
@@ -112,9 +114,10 @@ export function importShownSelectionState(
   visibleEntries: readonly ImportBrowseEntry[],
   selected: ImportSelection,
   isFolderSelectable: (entry: ImportBrowseEntry) => boolean = () => true,
+  members?: ReadonlyMap<string, ImportBrowseEntry[]>,
 ): ImportShownSelectionState {
   const entries = importSelectableEntries(visibleEntries, isFolderSelectable);
-  const selectedCount = entries.filter((entry) => isShownEntrySelected(entry, selected)).length;
+  const selectedCount = entries.filter((entry) => isShownEntrySelected(entry, selected, members?.get(importSourcePathKey(entry.path)))).length;
   const partiallySelected = entries.some(
     (entry) => entry.kind === "folder" && folderSelectionState(entry, selected) === "some",
   );
@@ -130,20 +133,23 @@ export function toggleImportShownSelection(
   selected: ImportSelection,
   visibleEntries: readonly ImportBrowseEntry[],
   isFolderSelectable: (entry: ImportBrowseEntry) => boolean = () => true,
+  members?: ReadonlyMap<string, ImportBrowseEntry[]>,
 ): Map<string, ImportBrowseEntry> {
-  const state = importShownSelectionState(visibleEntries, selected, isFolderSelectable);
+  const state = importShownSelectionState(visibleEntries, selected, isFolderSelectable, members);
   const next = new Map(selected);
   if (state.allSelected) {
     state.entries.forEach((entry) => {
       // Clearing the shown scope must not remove independently selected paths
       // hidden by the current search or directory. A folder's own path is the
       // visible selection representation; its descendants remain untouched.
+      if (!next.has(entry.path)) for (const file of members?.get(importSourcePathKey(entry.path)) ?? []) deleteSelectedPath(next, file.path);
       deleteSelectedPath(next, entry.path);
     });
     return next;
   }
   state.entries.forEach((entry) => {
     if (entry.kind === "folder") {
+      if (isShownEntrySelected(entry, next, members?.get(importSourcePathKey(entry.path)))) return;
       const selectedFolder = toggleImportFolderSelection(next, entry);
       next.clear();
       selectedFolder.forEach((value, key) => next.set(key, value));

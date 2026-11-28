@@ -13,6 +13,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.40 - 2026-11-28
+
+### New features
+
+- Expand selected folders in Review selection and remove individual files before continuing with the reviewed selection.
+
 ## 0.29.0-alpha.39 - 2026-11-28
 
 ### Bug fixes

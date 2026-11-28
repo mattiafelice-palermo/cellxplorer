@@ -1,5 +1,5 @@
+import { importSourcePathKey } from "./importSourceReadability.ts";
 import type { ImportBrowseEntry } from "./api";
-import { importPathsEqual } from "./importPathBreadcrumbs.ts";
 
 export interface SearchRoot { id: string; path: string; enabled: boolean; refresh_hours?: number; network_load_acknowledged?: boolean }
 export interface FileSearchConfig {
@@ -80,10 +80,13 @@ export function searchMonitorStatus(status: string) {
 /** Cross-scope staging keeps the existing map keys but coalesces Windows path aliases. */
 export function mergeIndexedSelection(current: ReadonlyMap<string, ImportBrowseEntry>, next: ReadonlyMap<string, ImportBrowseEntry>) {
   const result = new Map(current);
+  const keys = new Map([...current.keys()].map(path => [importSourcePathKey(path), path]));
   for (const entry of next.values()) {
-    const previous = [...result.keys()].find((path) => importPathsEqual(path, entry.path));
-    if (previous) result.delete(previous);
+    const key = importSourcePathKey(entry.path);
+    const previous = keys.get(key);
+    if (previous !== undefined) result.delete(previous);
     result.set(entry.path, entry);
+    keys.set(key, entry.path);
   }
   return result;
 }

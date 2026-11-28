@@ -1,3 +1,5 @@
+import { importSourcePathKey } from "../importSourceReadability";
+import { buildImportFolderTree, flattenImportFolderTree, type FolderImportNode } from "../importFolderTree";
 import { CellMassInput } from "../components/CellMassInput";
 import { inspectPathsWithReadModes, mprReadModeForPath, type MprReadModes } from "../mprReadMode";
 import {
@@ -281,13 +283,6 @@ type ImportReplicateDraft = {
 
 type FolderImportCandidate = ImportFolderFile;
 
-type FolderImportNode = {
-  key: string;
-  name: string;
-  files: FolderImportCandidate[];
-  children: FolderImportNode[];
-};
-
 type FolderImportTreeRow =
   | { kind: "folder"; node: FolderImportNode; depth: number }
   | { kind: "file"; candidate: FolderImportCandidate; depth: number };
@@ -299,57 +294,6 @@ const IMPORT_DRAFT_ROW_OVERSCAN = 6;
 
 function folderCandidateKey(candidate: FolderImportCandidate) {
   return candidate.path ?? candidate.relative_path;
-}
-
-function buildImportFolderTree(rootName: string, candidates: FolderImportCandidate[]): FolderImportNode {
-  const root: FolderImportNode = { key: "", name: rootName, files: [], children: [] };
-  const nodes = new Map<string, FolderImportNode>([["", root]]);
-  for (const candidate of candidates) {
-    const selectionRoot = candidate.selection_root;
-    const rootKey = selectionRoot
-      ? selectionRoot.kind === "folder"
-        ? `root:${selectionRoot.path.toLocaleLowerCase()}`
-        : "root:loose-files"
-      : "root:legacy";
-    let parent = nodes.get(rootKey);
-    if (!parent) {
-      parent = {
-        key: rootKey,
-        name: selectionRoot?.label || "Selected files",
-        files: [],
-        children: [],
-      };
-      nodes.set(rootKey, parent);
-      root.children.push(parent);
-    }
-    const parts = candidate.relative_path.replaceAll("\\", "/").split("/").filter(Boolean);
-    let key = rootKey;
-    for (const part of parts.slice(0, -1)) {
-      key = key ? `${key}/${part}` : part;
-      let node = nodes.get(key);
-      if (!node) {
-        node = { key, name: part, files: [], children: [] };
-        nodes.set(key, node);
-        parent.children.push(node);
-      }
-      parent = node;
-    }
-    parent.files.push(candidate);
-  }
-  const sort = (node: FolderImportNode) => {
-    node.children.sort((a, b) => a.name.localeCompare(b.name));
-    node.files.sort((a, b) => a.filename.localeCompare(b.filename));
-    node.children.forEach(sort);
-  };
-  sort(root);
-  return root;
-}
-
-function flattenImportFolderTree(node: FolderImportNode): FolderImportCandidate[] {
-  return [
-    ...node.children.flatMap(flattenImportFolderTree),
-    ...node.files,
-  ];
 }
 
 function FolderImportSelectionModal({
@@ -2836,6 +2780,7 @@ function useImportRequestControl(
   const runList = useCallback(({
     filePaths,
     folderPaths,
+    reviewedFiles = [],
     append,
     jobToken,
     readModes = {},
@@ -2843,21 +2788,30 @@ function useImportRequestControl(
     readModes?: MprReadModes;
     filePaths: string[];
     folderPaths: string[];
+    reviewedFiles?: ImportFolderFile[];
     append: boolean;
     jobToken: string;
   }) => {
     const controller = beginRequest(jobToken);
+    const fromFolders = folderPaths.length > 0 || reviewedFiles.length > 0;
+    const origins = new Map(reviewedFiles.map(file => [importSourcePathKey(file.path!), file]));
     return post<ImportFolderSelectionResult>(
       "/api/imports/list-sources",
       {
         file_paths: filePaths,
         folder_paths: folderPaths,
         job_token: jobToken,
-        screen_sources: folderPaths.length > 0,
+        screen_sources: fromFolders,
       },
       { signal: controller.signal },
     )
-      .then((result) => ({ result, append, folderPaths, readModes }))
+      .then(result => ({
+        result: { ...result, files: result.files.map(file => {
+          const original = file.path && origins.get(importSourcePathKey(file.path));
+          return original ? { ...file, selection_root: original.selection_root, relative_path: original.relative_path } : file;
+        }) },
+        append, fromFolders, readModes,
+      }))
       .finally(() => clearRequest(controller));
   }, [beginRequest, clearRequest]);
 
@@ -2970,13 +2924,13 @@ export function ImportCellsLauncher({
 
   const listSources = useMutation({
     mutationFn: requestControl.runList,
-    onSuccess: ({ result, append, folderPaths, readModes }) => {
+    onSuccess: ({ result, append, fromFolders, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
         setFolderSkipped(null);
-        if (folderPaths.length > 0) {
+        if (fromFolders) {
           setNoImportableCounts({
             registered: result.skipped?.registered ?? null,
             rejected: result.skipped?.unsupported ?? 0,
@@ -2989,8 +2943,8 @@ export function ImportCellsLauncher({
       }
       setSourceAppend(append);
       setInspectionFailures([]);
-      setFolderReviewRequired(folderPaths.length > 0);
-      if (folderPaths.length === 0) {
+      setFolderReviewRequired(fromFolders);
+      if (!fromFolders) {
         const jobToken = newImportJobToken();
         inspectionStartedAt.current = Date.now();
         setProgressStage("inspect");
@@ -3039,13 +2993,13 @@ export function ImportCellsLauncher({
     setSourcePickerOpen(true);
   };
 
-  const continueSourceSelection = ({ filePaths, folderPaths, readModes }: ImportSourceSelection) => {
+  const continueSourceSelection = (selection: ImportSourceSelection) => {
     setFolderSkipped(null);
-    setSourceSelection({ filePaths, folderPaths, readModes });
+    setSourceSelection(selection);
     const jobToken = newImportJobToken();
     setProgressStage("scan");
     setProgressToken(jobToken);
-    listSources.mutate({ filePaths, folderPaths, readModes, append: sourceAppend, jobToken });
+    listSources.mutate({ ...selection, append: sourceAppend, jobToken });
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
@@ -3053,6 +3007,7 @@ export function ImportCellsLauncher({
     setSourceSelection((current) => ({
       filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
       folderPaths: [],
+      reviewedFiles: selected.filter(file => file.selection_root?.kind === "folder"),
       readModes: current?.readModes,
     }));
     const jobToken = newImportJobToken();
@@ -3115,6 +3070,7 @@ export function ImportCellsLauncher({
           setSourceSelection((current) => ({
             filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
             folderPaths: [],
+            reviewedFiles: selected.filter(file => file.selection_root?.kind === "folder"),
             readModes: current?.readModes,
           }));
           setSourcePickerKey((current) => current + 1);
@@ -3293,13 +3249,13 @@ export function InboxPage() {
 
   const listSources = useMutation({
     mutationFn: requestControl.runList,
-    onSuccess: ({ result, append, folderPaths, readModes }) => {
+    onSuccess: ({ result, append, fromFolders, readModes }) => {
       setProgressStage(null);
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
         setFolderSkipped(null);
-        if (folderPaths.length > 0) {
+        if (fromFolders) {
           setNoImportableCounts({
             registered: result.skipped?.registered ?? null,
             rejected: result.skipped?.unsupported ?? 0,
@@ -3312,8 +3268,8 @@ export function InboxPage() {
       }
       setSourceAppend(append);
       setInspectionFailures([]);
-      setFolderReviewRequired(folderPaths.length > 0);
-      if (folderPaths.length === 0) {
+      setFolderReviewRequired(fromFolders);
+      if (!fromFolders) {
         const jobToken = newImportJobToken();
         inspectionStartedAt.current = Date.now();
         setProgressStage("inspect");
@@ -3362,13 +3318,13 @@ export function InboxPage() {
     setSourcePickerOpen(true);
   };
 
-  const continueSourceSelection = ({ filePaths, folderPaths, readModes }: ImportSourceSelection) => {
+  const continueSourceSelection = (selection: ImportSourceSelection) => {
     setFolderSkipped(null);
-    setSourceSelection({ filePaths, folderPaths, readModes });
+    setSourceSelection(selection);
     const jobToken = newImportJobToken();
     setProgressStage("scan");
     setProgressToken(jobToken);
-    listSources.mutate({ filePaths, folderPaths, readModes, append: sourceAppend, jobToken });
+    listSources.mutate({ ...selection, append: sourceAppend, jobToken });
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
@@ -3376,6 +3332,7 @@ export function InboxPage() {
     setSourceSelection((current) => ({
       filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
       folderPaths: [],
+      reviewedFiles: selected.filter(file => file.selection_root?.kind === "folder"),
       readModes: current?.readModes,
     }));
     const jobToken = newImportJobToken();
@@ -3447,6 +3404,7 @@ export function InboxPage() {
           setSourceSelection((current) => ({
             filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
             folderPaths: [],
+            reviewedFiles: selected.filter(file => file.selection_root?.kind === "folder"),
             readModes: current?.readModes,
           }));
           setSourcePickerKey((current) => current + 1);

@@ -1,3 +1,5 @@
+import { newImportJobToken } from "../importProgress";
+import { reviewFolderMembers, materializeFolderSelection } from "../importFolderTree";
 import { ImportedSourceIdentity } from "./ImportedSourceIdentity";
 import { MprReadingHelp, RegisteredFileInfo } from "./ImportPickerInfo";
 import { importedSourceLabel, renamedImportedCells, subscribeImportedCellNames } from "../importedSourceIdentity";
@@ -69,6 +71,8 @@ import {
   ApiError,
   type MprReadMode,
   ImportBrowseEntry,
+  type ImportFolderFile,
+  type ImportFolderSelectionResult,
   ImportBrowseResult,
   ImportNavigationResult,
   ImportQuickAccessItem,
@@ -101,6 +105,7 @@ import {
   toggleImportFileSelection,
   isImportFileSelected,
   toggleImportFolderSelection,
+  isImportPathDescendant,
   IMPORT_BROWSER_LEFT_PANE_MAX,
   IMPORT_BROWSER_LEFT_PANE_MIN,
 } from "../importBrowserSelection";
@@ -128,6 +133,7 @@ import {
 import { canTryPermissiveMpr, mprReadModeForPath, withMprReadMode, type MprReadModes } from "../mprReadMode";
 
 export type ImportSourceSelection = {
+  reviewedFiles?: ImportFolderFile[];
   readModes?: MprReadModes;
   filePaths: string[];
   folderPaths: string[];
@@ -311,6 +317,42 @@ export function ImportFilesystemPickerModal({
     setSelected((current) => pruneRejectedImportSelection(current, sourceRejections));
   }, [sourceRejections, setSelected]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewOrigins, setReviewOrigins] = useState(() => new Map(
+    (initialSelection?.reviewedFiles ?? []).map(file => [importSourcePathKey(file.path!), file]),
+  ));
+  const [scanNote, setScanNote] = useState<string | null>(null);
+  const reviewMembers = useMemo(() => reviewFolderMembers(reviewOrigins.values()), [reviewOrigins]);
+  const selectedFolders = useMemo(() => [...selected.values()].filter(entry => entry.kind === "folder").map(entry => entry.path), [selected]);
+  const scanFolders = useMemo(() => selectedFolders.filter(path =>
+    !selectedFolders.some(parent => isImportPathDescendant(parent, path))), [selectedFolders]);
+  const scan = useQuery({
+    queryKey: ["import-selection-review", scanFolders],
+    enabled: opened && reviewOpen && scanFolders.length > 0,
+    retry: false, gcTime: 0, refetchOnWindowFocus: false,
+    queryFn: async ({ signal }) => {
+      const token = newImportJobToken();
+      const cancel = () => { void post("/api/background-jobs/by-token/" + encodeURIComponent(token) + "/cancel").catch(() => {}); };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        return await post<ImportFolderSelectionResult>("/api/imports/list-sources", {
+          folder_paths: scanFolders, file_paths: [], screen_sources: true, job_token: token,
+        }, { signal });
+      } finally { signal.removeEventListener("abort", cancel); }
+    },
+  });
+  useEffect(() => {
+    if (!opened || !reviewOpen || !scanFolders.length || !scan.data || scan.isFetching || scan.isError) return;
+    const { files, skipped } = scan.data;
+    setReviewOrigins(current => {
+      const next = new Map(current);
+      for (const [key, file] of next) if (selectedFolders.some(path => importPathsEqual(path, file.selection_root.path) || isImportPathDescendant(path, file.selection_root.path))) next.delete(key);
+      for (const file of files) if (file.path) next.set(importSourcePathKey(file.path), file);
+      return next;
+    });
+    setSelected(current => materializeFolderSelection(current, selectedFolders, files));
+    const skippedCount = (skipped?.registered ?? 0) + (skipped?.unsupported ?? 0);
+    setScanNote(skippedCount ? `${skippedCount} already-imported or unsupported files were left out.` : !files.length ? "No importable files in the selected folders." : null);
+  }, [opened, reviewOpen, selectedFolders, scanFolders, scan.data, scan.isFetching, scan.isError, setSelected]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [previewWarningsOpen, setPreviewWarningsOpen] = useState(false);
   const reviewButton = useRef<HTMLButtonElement>(null);
@@ -665,6 +707,8 @@ export function ImportFilesystemPickerModal({
     setEntryScrollTop(0);
     if (selectionKey === undefined) {
       setSelected(new Map());
+      setReviewOrigins(new Map());
+      setScanNote(null);
       setLastSelectedPath(null);
       setSelectedPreviewPath(null);
     }
@@ -981,7 +1025,7 @@ export function ImportFilesystemPickerModal({
   };
 
   const activateFolderCheckbox = (entry: ImportBrowseEntry) => {
-    setSelected((current) => toggleImportFolderSelection(current, entry));
+    setSelected((current) => toggleImportFolderSelection(current, entry, reviewMembers.get(importSourcePathKey(entry.path))));
     setLastSelectedPath(null);
   };
 
@@ -1012,14 +1056,14 @@ export function ImportFilesystemPickerModal({
   }, [browseData?.entries, indexedPreviewEntry, selected, selectedPreviewPath]);
   const selectedFileResolutionPending = selectedEntries.some((entry) =>
     entry.kind === "file"
-    && !headerHints.has(entry.path)
+    && !headerHints.has(entry.path) && !reviewOrigins.has(importSourcePathKey(entry.path))
     && !headerHintFailed.current.has(entry.path),
   );
   const fileCount = selectedEntries.filter((entry) => entry.kind === "file").length;
   const folderCount = selectedEntries.filter((entry) => entry.kind === "folder").length;
   const isFolderSelectable = (entry: ImportBrowseEntry) =>
     !isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
-  const shownSelection = importShownSelectionState(selectableVisibleEntries, selected, isFolderSelectable);
+  const shownSelection = importShownSelectionState(selectableVisibleEntries, selected, isFolderSelectable, reviewMembers);
   const allVisibleSelected = shownSelection.allSelected;
   const someVisibleSelected = shownSelection.someSelected;
   const firstRenderedEntry = Math.max(
@@ -1040,7 +1084,7 @@ export function ImportFilesystemPickerModal({
   useEffect(() => {
     const directory = browseData?.current_path;
     if (!opened || mode !== "files" || headerHintsPending) return;
-    const unresolvedSelection = selectedEntries.filter((entry) => entry.kind === "file" && !headerHints.has(entry.path)
+    const unresolvedSelection = selectedEntries.filter((entry) => entry.kind === "file" && !headerHints.has(entry.path) && !reviewOrigins.has(importSourcePathKey(entry.path))
       && !headerHintInFlight.current.has(entry.path) && !headerHintFailed.current.has(entry.path)).map((entry) => entry.path);
     const canScanDirectory = !indexedScope && directory && !browseQuery.isPlaceholderData && !browseQuery.isFetching
       && headerHintDirectory.current === directory;
@@ -1120,7 +1164,7 @@ export function ImportFilesystemPickerModal({
     pinnedMutation.mutate(next);
   };
   const toggleShownSelection = () => {
-    setSelected((current) => toggleImportShownSelection(current, selectableVisibleEntries, isFolderSelectable));
+    setSelected((current) => toggleImportShownSelection(current, selectableVisibleEntries, isFolderSelectable, reviewMembers));
     setLastSelectedPath(null);
   };
   const resizeFileColumn = (key: ImportBrowserSortKey, event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1273,6 +1317,7 @@ export function ImportFilesystemPickerModal({
     folderCount ? `${folderCount} folder${folderCount === 1 ? "" : "s"}` : "",
   ].filter(Boolean).join(", ");
   const closeReview = () => {
+    if (scan.isFetching) void queryClient.cancelQueries({ queryKey: ["import-selection-review", scanFolders], exact: true });
     setReviewOpen(false);
     requestAnimationFrame(() => reviewButton.current?.focus());
   };
@@ -1334,6 +1379,7 @@ export function ImportFilesystemPickerModal({
                   if (!current.length || selectedFileResolutionPending) return;
                   onConfirm?.({
                     readModes,
+                    reviewedFiles: current.flatMap(entry => reviewOrigins.get(importSourcePathKey(entry.path)) ?? []),
                     filePaths: current.filter((entry) => entry.kind === "file").map((entry) => entry.path),
                     folderPaths: current.filter((entry) => entry.kind === "folder").map((entry) => entry.path),
                   });
@@ -1563,7 +1609,7 @@ export function ImportFilesystemPickerModal({
                   {renderedEntries.map((entry, renderedIndex) => {
                   const isFolder = entry.kind === "folder";
                   const hint = headerHints.get(entry.path);
-                  const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
+                  const folderState = isFolder ? folderSelectionState(entry, selected, reviewMembers.get(importSourcePathKey(entry.path))?.map(file => file.path)) : "none";
                   const rowSelected = isImportFileSelected(selected, entry.path) || folderState !== "none";
                   const previewActive = selectedPreviewPath === entry.path;
                   const rowFocused = focusedEntryPath === entry.path;
@@ -1771,9 +1817,11 @@ export function ImportFilesystemPickerModal({
         </Group>
       </Stack>
       {reviewOpen && <ImportSelectionReview entries={selectedEntries} summary={selectionSummary}
+        origins={reviewOrigins} scanning={scanFolders.length > 0 && !scan.isError} scanNote={scanNote}
+        scanError={scan.isError ? scan.error.message : null} onRetry={() => void scan.refetch()}
         activePath={selectedPreviewPath} onClose={closeReview}
-        onClear={() => { setSelected(new Map()); setSelectedPreviewPath(null); }}
-        onRemove={path => setSelected(current => { const next = new Map(current); next.delete(path); return next; })}
+        onClear={() => { setSelected(new Map()); setScanNote(null); setSelectedPreviewPath(null); }}
+        onRemove={paths => setSelected(current => { const next = new Map(current); for (const path of paths) next.delete(path); return next; })}
         onPreview={path => {
           setSelectedPreviewPath(path);
           setPreviewCollapsed(false);
