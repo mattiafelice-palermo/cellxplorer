@@ -3954,7 +3954,14 @@ def _build_continuation_preview(
         if missing_phases and cycles.empty:
             return _build_stitched_continuation_preview(ordered_sources, quantity=quantity,
                 cycle_start=cycle_start, cycle_end=cycle_end)
-        if initial_discharge and not cycles.empty:
+        mixed_runs = (analysis_cycle_pairing.supplement_programmed_runs(refs, cycles, stitched_segments)
+                      if missing_phases and not cycles.empty else None)
+        if mixed_runs is not None:
+            cycles, stitched_segments, cycle_note = mixed_runs.cycles.copy(), mixed_runs.segments, mixed_runs.note
+            # Draw pairs spanning two sources once, at their completing source.
+            ends = mixed_runs.raw.loc[mixed_runs.raw.cycle.gt(0)].groupby("cycle").segment.last()
+            cycles["segment"] = cycles.segment.fillna(cycles.cycle.map(ends))
+        elif initial_discharge and not cycles.empty:
             cycle_note = "The initial discharge is excluded from programmed cycle totals and remains in the time plot."
         elif missing_phases:
             cycle_note = "Some measured phases have no programmed cycle."

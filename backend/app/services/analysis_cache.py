@@ -43,7 +43,7 @@ RESULT_SCHEMA_VERSIONS = {
     # Spec 040.3: each kind's persisted "sources" entries gained a "files"
     # array (per-source {hash, position, parser_version}), so a legacy
     # cached payload missing that array must not be served as if it had it.
-    "cycles": 6,  # Current-detected summaries when programmed cycles are absent.
+    "cycles": 7,  # Select programmed or measured pairs per BioLogic acquisition.
     # Specs 040.4/041.5: the payload gained a top-level "voltage_channels"
     # availability map, "settings" gained "voltage_channel", and the channel
     # entries now carry resolved role/reference presentation context. Legacy

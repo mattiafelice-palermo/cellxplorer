@@ -136,3 +136,10 @@ precedence. Verify detected cycle summaries against measured phase pairs on
 both sides of a restart. Linked EC-Lab techniques can share a clock origin
 (timestamp minus acquisition elapsed time), while a relaunched program can
 establish a new one. A half-cycle cannot complete across two known origins.
+
+For the standard Cycles analysis of a mixed continued Cell, compare each run
+with its standalone result. Runs with programmed cycles retain their summaries
+and energy evidence. A separate run without any programmed cycle can contribute
+charge-followed-by-discharge pairs. Confirm dense numbering, source positions
+and cumulative quantities across the join. A new technique file on the same
+acquisition clock is insufficient evidence of a restart.

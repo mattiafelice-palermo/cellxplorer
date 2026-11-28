@@ -2730,6 +2730,7 @@ def compute(
             source_bookkeeping_started,
         )
         paired_raw = None
+        mixed_runs = None
         explicit_pairing = analysis_cycle_pairing.enabled(computation)
         charge_first = computation.get("cycle_pairing") == "charge_discharge"
         if not explicit_pairing:
@@ -2739,7 +2740,14 @@ def compute(
                     stitched.attrs.get("cross_source_cp_cycle_ids", []) + stitched.attrs.get("cross_source_gcpl_cycle_ids", []))
                 if not missing else (False, False)
             )
-            if missing_cycles or (initial_discharge and not stitched.empty):
+            if missing_cycles and not stitched.empty:
+                mixed_runs = analysis_cycle_pairing.supplement_programmed_runs(refs, stitched, segments)
+            if mixed_runs is not None:
+                programmed = stitched
+                stitched, segments, paired_raw = mixed_runs.cycles, mixed_runs.segments, mixed_runs.raw
+                badges.append({"kind": "cycles_detected", "cell_id": cell.id,
+                               "cell_name": cell.name, "detail": mixed_runs.note})
+            elif missing_cycles or (initial_discharge and not stitched.empty):
                 charge_first = stitched.empty
                 if not charge_first:
                     detail = ("The initial discharge is excluded from programmed cycle totals and remains in the time plot."
@@ -2866,7 +2874,17 @@ def compute(
             source_values = {key: [] for key in ("source_cycle", "source_position", "source_filename", "source_hash")}
         else:
             protocol_mask_started = _cycles_profile_started(profiling)
-            if paired_raw is None:
+            if mixed_runs is not None:
+                qualified = cycle_throughput.proven_increments(programmed, refs)
+                qualified["cycle"] = qualified.cycle.map(mixed_runs.programmed_ids)
+                inferred = stitched.loc[~stitched.cycle.isin(qualified.cycle)]
+                qualified = pd.concat([qualified, inferred], ignore_index=True).sort_values("cycle").reset_index(drop=True)
+                detected_rows = paired_raw.loc[paired_raw.segment.isin(mixed_runs.detected_segments)]
+                resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve(
+                    stitched, refs, qualified, segments, paired_segments=mixed_runs.detected_segments,
+                    candidates=cycle_energy.paired_candidates(detected_rows, refs),
+                )
+            elif paired_raw is None:
                 resolved_energy, cumulative_inputs, energy_provenance = cycle_energy.resolve(
                     stitched, refs, cycle_throughput.proven_increments(stitched, refs), segments,
                 )

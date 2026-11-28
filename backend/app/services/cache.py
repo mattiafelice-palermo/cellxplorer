@@ -1059,6 +1059,10 @@ def _build_raw_layout_index(
     )
     if isinstance(biologic_attrs, dict) and "cell_dimensions" in biologic_attrs:
         result["gcpl_cell_dimensions"] = biologic_attrs["cell_dimensions"]
+    if parser_version.startswith("bm:"):
+        from .biologic_quantities import acquisition_origin
+
+        result["biologic_acquisition_origin"] = acquisition_origin(frame)
     if isinstance(biologic_attrs, dict):
         from .biologic_quantities import measured_phase_facts
 

@@ -1,10 +1,14 @@
 """Pair measured phases for analysis and preview without changing recorded cycle identities."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from itertools import groupby
+
 import numpy as np
 import pandas as pd
 
 from . import cache, calc, stitch, time_capacity_derived
+from .biologic_quantities import acquisition_origin
 
 
 def enabled(computation: dict) -> bool:
@@ -48,6 +52,91 @@ def run_boundaries(raw, biologic_segments):
               - pd.to_timedelta(first.total_time_s, unit="s")).dt.round("ms")
     origin = origin.where(origin.index.isin(biologic_segments))
     return origin.index[origin.notna() & origin.shift().notna() & origin.ne(origin.shift())]
+
+
+def _source_origin(ref):
+    index = cache.try_load_raw_layout_index(ref.file_hash, ref.parser_version) or {}
+    if "biologic_acquisition_origin" in index:
+        return index["biologic_acquisition_origin"]
+    # Older pinned caches lack the scalar. Read just the two clock columns.
+    clocks = cache.load_raw_columns(ref.file_hash, ref.parser_version, ["timestamp", "total_time_s"])
+    return acquisition_origin(clocks) if clocks is not None else None
+
+
+@dataclass
+class MixedRunCycles:
+    cycles: pd.DataFrame
+    segments: list[dict]
+    raw: pd.DataFrame
+    detected_segments: set[int]
+    programmed_ids: dict[int, int]
+    note: str
+
+
+def supplement_programmed_runs(refs, cycles, segments):
+    """Only infer in a distinct acquisition with no programmed cycles of its own."""
+    if cycles.empty or len(refs) < 2 or not all(r.parser_version.startswith("bm:") for r in refs):
+        return None
+    origins = [_source_origin(ref) for ref in refs]
+    if None in origins or len(set(origins)) < 2:
+        return None
+    runs = [list(positions) for _, positions in groupby(range(len(refs)), key=origins.__getitem__)]
+    if all(any(segments[i].get("cycle_start") for i in run) for run in runs):
+        return None
+    raw, _, missing = stitch.stitch_raw(refs)
+    if missing or raw.empty:
+        return None
+    parts, rows, programmed_ids, detected_segments = [], [], {}, set()
+    descriptors = [dict(segment) for segment in segments]
+    offset = detected_count = 0
+    initial_discharge = False
+    for run in runs:
+        samples = raw.loc[raw.segment.isin(run)].copy()
+        recorded = {c for i in run if segments[i].get("cycle_start")
+                    for c in range(segments[i]["cycle_start"], segments[i]["cycle_end"] + 1)}
+        if recorded:
+            if recorded.intersection(programmed_ids):
+                # The stitcher already assigned a cycle across the proposed boundary.
+                return None
+            part = cycles.loc[cycles.cycle.isin(recorded)].copy()
+            ids = {int(c): offset + n for n, c in enumerate(sorted(recorded), 1)}
+            programmed_ids.update(ids)
+            samples["cycle"] = samples.cycle.map(ids).fillna(0).astype(int)
+            part["cycle"] = part.cycle.map(ids)
+            for i in run:
+                desc = descriptors[i]
+                for key in ("cycle_start", "cycle_end"):
+                    desc[key] = ids.get(desc[key])
+                if "cycle_mapping" in desc:
+                    desc["cycle_mapping"] = {k: ids[v] for k, v in desc["cycle_mapping"].items()}
+        else:
+            samples = label_pairs(samples, charge_first=True)
+            samples.loc[samples.cycle_complete, "cycle"] += offset
+            part = summary(samples)
+            if not part.empty:
+                detected_count += len(part)
+                detected_segments.update(run)
+                initial_discharge |= samples.attrs.get("initial_discharge_omitted", False)
+                for i, group in samples.loc[samples.cycle_complete].groupby("segment"):
+                    descriptors[i].update(cycle_start=int(group.cycle.min()), cycle_end=int(group.cycle.max()))
+        if not part.empty:
+            parts.append(part)
+            offset += len(part)
+        rows.append(samples)
+    if not detected_count:
+        return None
+    combined = pd.concat(parts, ignore_index=True)
+    combined.attrs.update(cycles.attrs)
+    for key in ("cross_source_cp_cycle_ids", "cross_source_gcpl_cycle_ids"):
+        if key in combined.attrs:
+            combined.attrs[key] = [programmed_ids[c] for c in cycles.attrs[key]]
+    note = (f"Kept {len(programmed_ids)} programmed cycle{'s' if len(programmed_ids) != 1 else ''}. "
+            f"Detected {detected_count} more from current in runs without programmed cycles, "
+            "pairing each charge with the following discharge.")
+    if initial_discharge:
+        note += " An unpaired opening discharge remains visible in the time plot."
+    return MixedRunCycles(combined, descriptors, pd.concat(rows, ignore_index=True),
+                          detected_segments, programmed_ids, note)
 
 
 def measurements(refs, *, charge_first=False):

@@ -33,6 +33,18 @@ def record_limitations(frame: pd.DataFrame, technique: str, limitations: dict[st
         if "biologic_mb_time_s" not in frame:
             frame["mpr_elapsed_time_s"] = frame["total_time_s"]
 
+def acquisition_origin(rows: pd.DataFrame) -> str | None:
+    """Compare the recorded wall clock and elapsed clock on the same sample."""
+    if rows.empty or not {"timestamp", "total_time_s"}.issubset(rows):
+        return None
+    first = rows.iloc[0]
+    stamp = pd.to_datetime(first.timestamp, utc=True, errors="coerce")
+    elapsed = pd.to_numeric(first.total_time_s, errors="coerce")
+    if pd.isna(stamp) or not np.isfinite(elapsed):
+        return None
+    return (stamp - pd.to_timedelta(elapsed, unit="s")).round("ms").isoformat()
+
+
 def measured_phase_facts(rows: pd.DataFrame) -> dict:
     """Compact evidence for offering pairing and identifying an unmatched first discharge."""
     if not {"status", "current_ma"}.issubset(rows):

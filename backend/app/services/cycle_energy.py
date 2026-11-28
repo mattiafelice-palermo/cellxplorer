@@ -146,7 +146,7 @@ def _outcomes(ref, names):
     return outcomes
 
 
-def resolve_pairs(frame, raw, refs):
+def paired_candidates(raw, refs):
     """Derive absent GCPL energy only from the rows of the selected pair."""
     candidates = {}
     for segment, rows in raw.loc[raw.cycle_complete].groupby("segment"):
@@ -169,15 +169,21 @@ def resolve_pairs(frame, raw, refs):
                 candidates.setdefault((int(cycle), direction), []).append(
                     {"basis": "calculated", "value": value, "capacity": capacity, "reason": reason}
                 )
-    return resolve(frame, [], frame, candidates=candidates)
+    return candidates
 
 
-def resolve(frame: pd.DataFrame, refs: list, qualified: pd.DataFrame, segments=None, *, candidates=None):
+def resolve_pairs(frame, raw, refs):
+    return resolve(frame, [], frame, candidates=paired_candidates(raw, refs))
+
+
+def resolve(frame: pd.DataFrame, refs: list, qualified: pd.DataFrame, segments=None, *, candidates=None, paired_segments=()):
     """Resolve source-local evidence before masks and prefixes, preserving natives."""
     result, cumulative = frame.copy(), qualified.copy()
     provenance = {direction: [] for direction in DIRECTIONS}
     candidates = {} if candidates is None else candidates
     for segment, ref in enumerate(refs):
+        if segment in paired_segments:
+            continue
         names = _descriptor(ref)
         if names is None:
             continue

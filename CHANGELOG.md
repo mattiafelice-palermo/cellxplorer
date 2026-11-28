@@ -13,6 +13,10 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.34 - 2026-11-28
+
+- Standard BioLogic cycle plots keep programmed cycles and detect complete charge and discharge pairs in separate runs that lack cycle labels.
+
 ## 0.29.0-alpha.33 - 2026-11-28
 
 - New BioLogic cells prefer the recorded characteristic mass. Continued-cell previews and cycle plots can detect charge/discharge pairs from measured current and explain an omitted initial discharge.
