@@ -206,7 +206,7 @@ def _continuation_read_path(draft) -> Path:
     return resolve_import_source_path(draft.staged_name, draft.source_path)
 
 
-def _continuation_stat(path: Path) -> header_io.Fingerprint | os.stat_result:
+def _import_file_stat(path: Path) -> header_io.Fingerprint | os.stat_result:
     try:
         return header_io.path_fingerprint(path)
     except header_io.UnsafeSourceError:
@@ -250,7 +250,9 @@ def _inspect_import_path(
     file_hash = inspected.hash
     selected_path = str(path)
     path = source_io_path(path)
-    meta = parsing.metadata_for_read_mode(path, inspected.metadata, read_mode)
+    meta = inspected.metadata
+    if read_mode != parsing.source_read_mode(meta):
+        meta = parsing.metadata_for_read_mode(path, meta, read_mode)
     if (mass := parsing.characteristic_mass_mg(meta)) is not None:
         meta = {**meta, "active_mass_mg": mass}
     preview_meta = _metadata_preview(meta)
@@ -258,7 +260,7 @@ def _inspect_import_path(
     canonical_cycling_pending = parsing.source_metadata_cycling_pending(meta)
     mpr_facts = {}
     if inspected.ext == "mpr":
-        mpr_facts = parsing.staged_mpr_measurements(path, meta)
+        mpr_facts = dict(inspected.measurement_times) if inspected.measurement_times is not None else parsing.staged_mpr_measurements(path, meta)
         mpr_facts["recorded_masses"] = parsing.recorded_biologic_masses(meta)
     metadata_facts = _bounded_staged_metadata_fields(
         {
@@ -2564,7 +2566,7 @@ def list_import_sources(
         if key in seen:
             continue
         seen.add(key)
-        size = io_path.stat().st_size
+        size = _import_file_stat(io_path).st_size
         discovered_files += 1
         total_bytes += size
         files.append(
@@ -3095,7 +3097,7 @@ def _continuation_staged_source(
     inspection_values = _inspection_identity_values(draft.inspection)
     if inspection_values:
         try:
-            source_stat = _continuation_stat(source_path)
+            source_stat = _import_file_stat(source_path)
         except OSError as exc:
             integrity = {
                 "missing": not source_path.exists(),
@@ -3452,7 +3454,7 @@ def _preview_source_fingerprint(
     values = _inspection_identity_values(inspection)
     expected_hash = str(values.get("hash") or "").strip().lower() or None
     try:
-        source_stat = _continuation_stat(source_path)
+        source_stat = _import_file_stat(source_path)
     except OSError as exc:
         raise HTTPException(404, "Source file is unavailable") from exc
 
@@ -4132,6 +4134,17 @@ def _build_continuation_preview(
             [frame for frame in raw_frames if frame is not None],
             time_origins_s=time_origins,
         )
+        if (len(refs) > 1 and bounded_cycle_range and not voltage_cycle_rows.empty
+                and {"segment", "source_cycle", "cycle"}.issubset(voltage_cycle_rows.columns)
+                and "source_cycle" in prepared_raw):
+            # A source may have measured voltage but no row in the cycle summary.
+            mapping = voltage_cycle_rows.set_index(["segment", "source_cycle"])["cycle"]
+            keys = pd.MultiIndex.from_frame(prepared_raw[["segment", "source_cycle"]])
+            display_cycles = pd.Series(mapping.reindex(keys).to_numpy(), index=prepared_raw.index)
+            prepared_raw = prepared_raw.iloc[continuation_preview.recorded_voltage_window(
+                display_cycles, requested_start, requested_end,
+            )]
+            global_cycle_sources = {}
         raw_by_segment = {
             segment_index: prepared_raw[prepared_raw["segment"] == segment_index]
             for segment_index in range(len(ordered_sources))
@@ -4348,15 +4361,15 @@ def _build_stitched_continuation_preview(
     response_segments = []
     complete_bundle = quantity == "capacity_bundle" and cycle_start is None and cycle_end is None
 
+    voltage_window = None
+    if (quantity == "voltage" and voltage_cycle_identity_available and "cycle" in merged
+            and (cycle_start is not None or cycle_end is not None)):
+        voltage_window = continuation_preview.recorded_voltage_window(merged["cycle"], requested_start, requested_end)
+
     for segment_index, source in enumerate(ordered_sources):
-        full_segment_frame = merged.iloc[prepared.segment_rows[segment_index]]
-        segment_frame = full_segment_frame
-        if (cycle_start is not None or cycle_end is not None) and selected_quantity == "voltage" and voltage_cycle_identity_available and "cycle" in segment_frame.columns:
-            labels = pd.to_numeric(segment_frame["cycle"], errors="coerce")
-            in_range = labels.between(requested_start, requested_end)
-            if detected and requested_start == 1 and requested_end >= (cycle_count or 0):
-                in_range |= labels.eq(0)
-            segment_frame = segment_frame[in_range]
+        source_rows = prepared.segment_rows[segment_index]
+        full_segment_frame = merged.iloc[source_rows]
+        segment_frame = full_segment_frame if voltage_window is None else full_segment_frame.iloc[voltage_window[source_rows]]
         local_start, local_end, local_count = prepared.local_cycles[segment_index]
         global_cycles = (
             pd.to_numeric(full_segment_frame["cycle"], errors="coerce").dropna()

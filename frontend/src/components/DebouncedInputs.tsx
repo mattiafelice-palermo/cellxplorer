@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ComponentProps } from "react";
 
 const COMMIT_DELAY_MS = 450;
 
-export function useDebouncedCommit<T>(value: T, onCommit: (value: T) => void) {
+export function useDebouncedCommit<T>(value: T, onCommit: (value: T) => void, delayMs = COMMIT_DELAY_MS) {
   const [local, setLocal] = useState<T>(value);
   const focusedRef = useRef(false);
   const timerRef = useRef<number | null>(null);
@@ -33,13 +33,17 @@ export function useDebouncedCommit<T>(value: T, onCommit: (value: T) => void) {
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       commitRef.current(next);
-    }, COMMIT_DELAY_MS);
+    }, delayMs);
   };
   const flush = () => {
     clearTimer();
     commitRef.current(local);
   };
-  return { local, change, flush, focusedRef };
+  const reset = (next: T) => {
+    clearTimer();
+    setLocal(next);
+  };
+  return { local, change, flush, reset, focusedRef };
 }
 
 export function DebouncedTextInput({

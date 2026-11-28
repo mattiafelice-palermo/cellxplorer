@@ -31,7 +31,16 @@ _HEADER_CACHE_LIMIT = 1024
 INSPECTION_PROCESS_THRESHOLD = 25
 INSPECTION_READING_START_PERCENT = 10.0
 INSPECTION_READING_END_PERCENT = 90.0
-_header_cache: OrderedDict[tuple[str, int, int, str], dict] = OrderedDict()
+
+
+@dataclass(frozen=True)
+class _InspectedHeader:
+    metadata: dict
+    path: str | None
+    measurement_times: dict | None
+
+
+_header_cache: OrderedDict[tuple[str, int, int, str], _InspectedHeader] = OrderedDict()
 _header_cache_lock = threading.Lock()
 
 
@@ -47,22 +56,30 @@ class ImportInspectionCancelled(Exception):
     """Raised when an active import inspection batch is cancelled."""
 
 
-def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata: dict) -> None:
+def remember_header_metadata(
+    file_hash: str, size: int, mtime_ns: int, metadata: dict, *,
+    path: str | None = None, measurement_times: dict | None = None,
+) -> None:
     key = (file_hash, size, mtime_ns, parsing.source_read_mode(metadata))
     with _header_cache_lock:
-        _header_cache[key] = metadata
+        _header_cache[key] = _InspectedHeader(metadata, path, measurement_times)
         _header_cache.move_to_end(key)
         while len(_header_cache) > _HEADER_CACHE_LIMIT:
             _header_cache.popitem(last=False)
 
 
-def cached_header_metadata(file_hash: str, size: int, mtime_ns: int, *, read_mode: str = "safe") -> dict | None:
+def _cached_header(file_hash: str, size: int, mtime_ns: int, read_mode: str) -> _InspectedHeader | None:
     key = (file_hash, size, mtime_ns, read_mode)
     with _header_cache_lock:
         metadata = _header_cache.get(key)
         if metadata is not None:
             _header_cache.move_to_end(key)
         return metadata
+
+
+def cached_header_metadata(file_hash: str, size: int, mtime_ns: int, *, read_mode: str = "safe") -> dict | None:
+    entry = _cached_header(file_hash, size, mtime_ns, read_mode)
+    return entry.metadata if entry is not None else None
 
 
 def inspection_worker_count(path_count: int) -> int:
@@ -126,6 +143,7 @@ class FileInspection:
     ext: str
     hash: str
     metadata: dict
+    measurement_times: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -297,7 +315,14 @@ def inspect_file(
         ) from exc
     if is_cancelled is not None and is_cancelled():
         raise ImportInspectionCancelled("Import inspection cancelled.")
-    metadata = parsing.metadata_for_read_mode(path, parsing.read_header_metadata(path), read_mode)
+    is_mpr = path.suffix.lower() == ".mpr"
+    cached = _cached_header(fingerprint.hash, fingerprint.size, fingerprint.mtime_ns, read_mode) if is_mpr else None
+    if cached is not None and cached.path == path_string and cached.measurement_times is not None:
+        metadata = cached.metadata
+        measurement_times = cached.measurement_times
+    else:
+        metadata = parsing.metadata_for_read_mode(path, parsing.read_header_metadata(path), read_mode)
+        measurement_times = None
     if is_cancelled is not None and is_cancelled():
         raise ImportInspectionCancelled("Import inspection cancelled.")
     try:
@@ -305,6 +330,8 @@ def inspect_file(
     except ValueError as exc:
         kind = "unsupported" if isinstance(exc, parsing.UnsupportedSourceFormatError) else "invalid" if isinstance(exc, parsing.InvalidSourceFormatError) else None
         raise SourceInspectionRejection(str(exc), kind=kind) from exc
+    if is_mpr and measurement_times is None:
+        measurement_times = parsing.staged_mpr_measurements(path, metadata)
     try:
         # capture_source_fingerprint already performed the single digest read
         # for this inspection; this boundary only needs a cheap stat guard.
@@ -313,7 +340,10 @@ def inspect_file(
         raise SourceInspectionRejection(
             f"Source changed during inspection: {filename}"
         ) from exc
-    remember_header_metadata(fingerprint.hash, fingerprint.size, fingerprint.mtime_ns, metadata)
+    remember_header_metadata(
+        fingerprint.hash, fingerprint.size, fingerprint.mtime_ns, metadata,
+        path=path_string, measurement_times=measurement_times,
+    )
     return FileInspection(
         path=path_string,
         filename=filename,
@@ -322,6 +352,7 @@ def inspect_file(
         ext=source_suffix(path).lstrip("."),
         hash=fingerprint.hash,
         metadata=metadata,
+        measurement_times=measurement_times,
     )
 
 
@@ -522,6 +553,7 @@ def inspect_files(
                 inspected.size,
                 inspected.mtime_ns,
                 inspected.metadata,
+                path=inspected.path, measurement_times=inspected.measurement_times,
             )
         results[index] = outcome
         if on_outcome is not None:

@@ -197,6 +197,20 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(preview["raw_metadata"]["modules.count"], "3")
         self.assertEqual(preview["raw_metadata"]["data.n_datapoints"], "1")
 
+    def test_repeated_mpr_inspection_rechecks_bytes_and_reuses_only_matching_reader_facts(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "repeat.mpr"
+            _write_importable_biologic_mpr(path)
+            with patch.object(parsing, "capture_source_fingerprint", wraps=parsing.capture_source_fingerprint) as digest, patch.object(
+                parsing, "read_header_metadata", wraps=parsing.read_header_metadata
+            ) as header, patch.object(parsing, "staged_mpr_measurements", wraps=parsing.staged_mpr_measurements) as times:
+                first = import_inspection.inspect_file(str(path))
+                second = import_inspection.inspect_file(str(path))
+                self.assertEqual(first, second)
+                self.assertEqual((digest.call_count, header.call_count, times.call_count), (2, 1, 1))
+                import_inspection.inspect_file(str(path), read_mode="permissive")
+                self.assertEqual((digest.call_count, header.call_count, times.call_count), (3, 2, 2))
+
     def test_import_uses_characteristic_mass_in_recorded_units_and_preserves_override(self):
         import struct
 
@@ -2456,6 +2470,19 @@ class ImportFlowTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as missing:
                 build(sources, quantity="voltage")
             self.assertEqual(missing.exception.status_code, 409)
+
+    def test_time_window_preserves_uncounted_acquisitions_in_their_recorded_positions(self):
+        from app.services.continuation_preview import recorded_voltage_window
+
+        cycles = pd.Series([0, 0, 1, 1, None, 0, 2, 2, 0, 3, 3, 0])
+        def positions(first, last):
+            return cycles.index[recorded_voltage_window(cycles, first, last)].tolist()
+
+        self.assertEqual(positions(1, 2), list(range(8)))
+        self.assertEqual(positions(2, 3), list(range(6, 12)))
+        self.assertEqual(positions(2, 2), [6, 7])
+        self.assertEqual(positions(1, 3), list(range(12)))
+        self.assertEqual(positions(4, 5), [])
 
     def test_continuation_preview_stitched_interpretation_infers_contiguous_file_fragments(self):
         with TemporaryDirectory() as tmp:

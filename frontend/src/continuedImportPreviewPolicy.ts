@@ -211,8 +211,10 @@ export function buildContinuationPreviewProvenanceLayout(
       const previous = spans[index];
       const join = (previous.end + next.start) / 2;
       if (previous.end > next.start || join < start || join > end) return;
+      // A guide drawn from the measured viewport must never feed Plotly's next autorange.
+      const fraction = (join - start) / (end - start);
       shapes.push({
-        type: "line", xref: "x", x0: join, x1: join, yref: "paper", y0: 0, y1: 1,
+        type: "line", xref: "paper", x0: fraction, x1: fraction, yref: "paper", y0: 0, y1: 1,
         line: { color: previous.color, width: 1.5, dash: "dash" },
       });
     });

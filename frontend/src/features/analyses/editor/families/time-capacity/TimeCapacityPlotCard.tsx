@@ -1711,10 +1711,10 @@ function TimeCapacityPlotCardView({
   const familyActivity = usePlotFamilyActivity();
   const pairingMode = spec.computation.cycle_pairing ?? "programmed";
   const pairingSelection = JSON.stringify([spec.selection.entries, pairingMode]);
-  const [pairedMaximum, setPairedMaximum] = useState<{ selection: string; maximum: number } | null>(null);
-  const maxAvailableCycle = pairedMaximum?.selection === pairingSelection
-    ? pairedMaximum.maximum
-    : pairingMode === "programmed" ? programmedMaximum : null;
+  const [pairedMaximum, setPairedMaximum] = useState<{ selection: string; maximum: number | null } | null>(null);
+  const extentConfirmed = pairedMaximum?.selection === pairingSelection;
+  const maxAvailableCycle = (extentConfirmed ? pairedMaximum.maximum : null)
+    ?? (pairingMode === "programmed" ? programmedMaximum : null);
   const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -2292,9 +2292,10 @@ function TimeCapacityPlotCardView({
     gcTime: 30 * 60_000,
   });
   useEffect(() => {
-    const maximum = timeResult.data?.paired_cycle_max;
+    const maximum = timeResult.data?.paired_cycle_max ?? null;
     if (timeResult.data && !timeResult.isPlaceholderData) {
-      setPairedMaximum(maximum === undefined ? null : { selection: pairingSelection, maximum });
+      setPairedMaximum(previous => previous?.selection === pairingSelection && previous.maximum === maximum
+        ? previous : { selection: pairingSelection, maximum });
     }
   }, [timeResult.data, timeResult.isPlaceholderData, pairingSelection]);
   usePlotFamilyQuerySettled(timeResult);
@@ -3846,6 +3847,7 @@ function TimeCapacityPlotCardView({
           maxAvailableCycle={maxAvailableCycle}
           viewportCycleRange={plotViewportCycleRange}
           isVirgin={isVirginNavigation}
+          defaultExtentReady={extentConfirmed}
           navigationResetKey={navigationResetKey}
           viewportChangeKey={plotViewportChangeKey}
           onCommitRange={commitCycleRange}

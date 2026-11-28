@@ -13,6 +13,13 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.44 - 2026-11-28
+
+### Bug fixes
+
+- Preserve uncounted recordings in voltage windows, keep rapid range edits responsive, and open new Time/Capacity plots on the latest completed cycles.
+- Reuse verified BioLogic inspection results when selecting the same network files again.
+
 ## 0.29.0-alpha.43 - 2026-11-28
 
 ### Bug fixes

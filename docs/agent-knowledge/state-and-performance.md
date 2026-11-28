@@ -401,6 +401,16 @@ and retains its post-read stamps. Receipt-backed network previews reuse resolved
 An alternate spelling is checked against the selected file's filesystem identity. On Windows
 the regular-file size and modification-time check uses the shared header fingerprint reader
 to avoid opening a network handle just to validate an existing receipt.
+Repeated MPR selection still hashes the file and checks it for change. With the same path,
+fingerprint and reader mode, the inspection worker can reuse the verified header and first/last
+measurement timestamps. The serial review stage consumes those worker results.
+
+In a ranged voltage preview, uncounted measurements follow acquisition order. Include the
+lead-in for a window starting at cycle one, intervening measurements between selected cycles,
+and the run-out when the last cycle is selected. Their scientific cycle assignments stay untouched.
+The editor keeps one plot mounted and admits only the newest pending window when a request finishes.
+For a new Time/Capacity analysis plot, the first completed result confirms the cycle extent:
+mixed BioLogic runs can supplement the library's programmed count with measured pairs.
 
 Voltage preview uses raw elapsed-time rows and remains available when
 cycle summaries are unavailable; raw-data inspection is gated by raw-row availability, not by the

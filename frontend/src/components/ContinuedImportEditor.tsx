@@ -79,6 +79,7 @@ import { ContinuationSourceList } from "./ContinuationSourceList";
 import { AddScientificPresetButton } from "./AddScientificPresetButton";
 import { CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
 import { ContinuedImportPlot } from "./ContinuedImportPlot";
+import { PreviewCycleInput } from "./PreviewCycleInput";
 import {
   cellPreviewCapacityLayout,
   cellPreviewCapacityTraces,
@@ -177,6 +178,8 @@ function inlineFindingLabel(
     .join(" → ");
   return `${finding.title}: ${finding.message}${sourceLabel ? ` (${sourceLabel})` : ""}`;
 }
+
+const COMBINED_PLOT_CONFIG = { displayModeBar: false, responsive: true };
 
 export function ContinuedImportEditor({
   opened,
@@ -308,21 +311,33 @@ export function ContinuedImportEditor({
     previewQuantity === "voltage" ? previewVoltageXAxis : null,
   ];
   const overview = queryClient.getQueryData<ContinuationPreviewResult>([...previewKey, null, null]);
-  const requestRange = previewQuantity === "voltage" ? previewVoltageCycleRange
+  const desiredRange = previewQuantity === "voltage" ? previewVoltageCycleRange
     : overview?.cycle_points_complete ? null : previewCapacityCycleRange;
-  const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
+  const context = JSON.stringify(previewKey);
+  const [admitted, setAdmitted] = useState({ context, range: desiredRange });
+  const requestRange = admitted.context === context ? admitted.range : desiredRange;
+  const waitingForRange = requestRange?.start !== desiredRange?.start || requestRange?.end !== desiredRange?.end;
+  const combinedPreviewQuery = useQuery<ContinuationPreviewResult & { shownRange: typeof requestRange }>({
     queryKey: [...previewKey, requestRange?.start ?? null, requestRange?.end ?? null],
-    queryFn: ({ signal }) => previewContinuationSources({
+    queryFn: async ({ signal }) => ({ ...await previewContinuationSources({
       ...continuationPreviewRequest(orderedDrafts, order, previewQuantity, effectivePreviewInterpretation),
       discharge_first: detectDischargeFirst,
       voltage_x_axis: previewVoltageXAxis,
       ...(requestRange ? { cycle_start: requestRange.start, cycle_end: requestRange.end } : {}),
-    }, { signal }),
+    }, { signal }), shownRange: requestRange }),
     enabled: opened && previewMode === "combined" && Boolean(result?.inspection_complete)
       && !sourceInspectionFailed && !orderNeedsAutomaticCorrection && orderedDrafts.length >= 1,
     staleTime: Infinity,
-    placeholderData: (previous) => previous,
+    placeholderData: (previous, query) => JSON.stringify(query?.queryKey.slice(0, -2)) === context
+      ? previous : undefined,
   });
+  useEffect(() => {
+    // A cancelled HTTP client cannot stop a synchronous scientific calculation.
+    // Finish the current window, then issue only the newest outstanding edit.
+    if (admitted.context !== context || (waitingForRange && !combinedPreviewQuery.isFetching)) {
+      setAdmitted({ context, range: desiredRange });
+    }
+  }, [admitted.context, context, waitingForRange, combinedPreviewQuery.isFetching, desiredRange]);
   const displayCombinedPreview = useMemo(
     () => combinedPreviewQuery.data
       ? previewQuantity === "voltage" && previewVoltageXAxis === "time"
@@ -451,7 +466,7 @@ export function ContinuedImportEditor({
   const previewRevision = JSON.stringify([
     order, effectivePreviewInterpretation, detectDischargeFirst, previewQuantity,
     previewQuantity === "voltage" ? previewVoltageXAxis : previewNormalizeByMass && normalizableByMass,
-    selectedRange,
+    previewQuantity === "voltage" ? combinedPreviewQuery.data?.shownRange : selectedRange,
   ]);
   const combinedPlotLayout = useMemo(() => {
     return previewQuantity === "voltage"
@@ -477,24 +492,15 @@ export function ContinuedImportEditor({
     combinedEfficiencyRange,
     previewRevision,
   ]);
-  const combinedPlotReady = Boolean(
-    result?.inspection_complete
-    && !sourceInspectionFailed
-    && !inspectionQuery.isFetching
-    && !orderNeedsAutomaticCorrection
-    && !combinedPreviewLoading
-    && !combinedPreviewError
-    && !combinedPreviewQuery.isPlaceholderData
-    && combinedPlotData.length > 0
-    && combinedPlotPreview,
-  );
+  const busy = !result?.inspection_complete || inspectionQuery.isFetching || orderNeedsAutomaticCorrection
+    || combinedPreviewLoading || combinedPreviewQuery.isFetching || waitingForRange;
   const combinedPlotElement: ReactNode = combinedPlotPreview && combinedPlotData.length > 0 ? (
     <ContinuedImportPlot
       data={combinedPlotData}
       layout={combinedPlotLayout}
       spans={spans}
       sequentialAxis={previewQuantity !== "voltage" || previewVoltageXAxis === "time"}
-      config={{ displayModeBar: false, responsive: true }}
+      config={COMBINED_PLOT_CONFIG}
       style={{ width: "100%", height: 352, fontWeight: 400 }}
       surfaceMode={previewSurfaceMode}
       onSurfaceModeChange={setPreviewSurfaceMode}
@@ -502,21 +508,17 @@ export function ContinuedImportEditor({
       legend={!multipleSources && previewQuantity === "voltage" && combinedPlotData.some((trace) => trace.name.startsWith("Current"))
         ? [{ name: "Voltage", color: "#12b886" }, { name: "Current", color: "#2E86AB" }]
         : []}
-      updating={combinedPreviewQuery.isFetching && Boolean(combinedPreviewQuery.data)}
+      updating={busy}
     />
   ) : null;
   const combinedCycleNavigator = (
     <Group gap="xs" justify="center" wrap="nowrap" mt="xs" h={40}>
       <Tooltip label="Previous cycle window"><Button variant="default" size="compact-sm" aria-label="Previous cycle window" disabled={!previewCycleRange || previewCycleRange.start <= 1} onClick={() => previewCycleRange && setPreviewCycleRange(shiftPreviewCycleWindow(previewCycleRange, combinedCycleCount, -1))}><IconChevronLeft size={15} /></Button></Tooltip>
-      <NumberInput aria-label="First preview cycle" min={1} max={combinedCycleCount || undefined} value={previewCycleRange?.start ?? ""} disabled={combinedCycleCount === 0} onChange={(value) => {
-        const start = Math.max(1, Math.min(Math.trunc(Number(value) || 1), previewCycleRange?.end ?? combinedCycleCount));
-        setPreviewCycleRange({ start, end: previewCycleRange?.end ?? combinedCycleCount });
-      }} w={86} />
+      <PreviewCycleInput key={`first-${context}`} label="First preview cycle" min={1} max={previewCycleRange?.end ?? combinedCycleCount}
+        value={previewCycleRange?.start} onCommit={(start) => setPreviewCycleRange({ start, end: previewCycleRange?.end ?? combinedCycleCount })} />
       <Text size="sm" c="dimmed">–</Text>
-      <NumberInput aria-label="Last preview cycle" min={previewCycleRange?.start ?? 1} max={combinedCycleCount || undefined} value={previewCycleRange?.end ?? ""} disabled={combinedCycleCount === 0} onChange={(value) => {
-        const end = Math.max(previewCycleRange?.start ?? 1, Math.min(Math.trunc(Number(value) || 1), combinedCycleCount));
-        setPreviewCycleRange({ start: previewCycleRange?.start ?? 1, end });
-      }} w={86} />
+      <PreviewCycleInput key={`last-${context}`} label="Last preview cycle" min={previewCycleRange?.start ?? 1} max={combinedCycleCount}
+        value={previewCycleRange?.end} onCommit={(end) => setPreviewCycleRange({ start: previewCycleRange?.start ?? 1, end })} />
       <Tooltip label="Next cycle window"><Button variant="default" size="compact-sm" aria-label="Next cycle window" disabled={!previewCycleRange || previewCycleRange.end >= combinedCycleCount} onClick={() => previewCycleRange && setPreviewCycleRange(shiftPreviewCycleWindow(previewCycleRange, combinedCycleCount, 1))}><IconChevronRight size={15} /></Button></Tooltip>
       {multipleSources && combinedCycleCount > 0 && (
         <Button size="compact-sm" variant="subtle" disabled={!selectedRange} onClick={() => setPreviewCycleRange(null)}>All cycles</Button>
@@ -583,41 +585,6 @@ export function ContinuedImportEditor({
       </Box>
       {combinedCycleNavigator}
     </Paper>
-  );
-  const [retainedCombinedPlot, setRetainedCombinedPlot] = useState<ReactNode>(null);
-  useEffect(() => {
-    if (combinedPlotReady && combinedPlotElement) setRetainedCombinedPlot(combinedPlotElement);
-  }, [
-    previewMode,
-    previewQuantity,
-    previewCapacityView,
-    previewVoltageXAxis,
-    effectivePreviewInterpretation,
-    previewNormalizeByMass,
-    previewCycleRange?.start,
-    previewCycleRange?.end,
-    previewSurfaceMode,
-    combinedPlotReady,
-    combinedPreviewQuery.data,
-    combinedPreviewQuery.isPlaceholderData,
-    combinedPlotData,
-    cellDraft.active_mass_mg_override,
-    colors,
-    selectedSourceKey,
-    previewColors.background,
-    previewColors.text,
-    previewColors.grid,
-    previewColors.border,
-  ]);
-  const combinedPreviewUpdatingPanel = renderCombinedPlotPanel(
-    <>
-      {retainedCombinedPlot ? (
-        <Box style={{ opacity: 0.46, transition: "opacity 100ms linear" }}>{retainedCombinedPlot}</Box>
-      ) : (
-        <Center h={372}><Loader size="sm" /></Center>
-      )}
-      {retainedCombinedPlot && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
-    </>,
   );
   const orderedSources = useMemo(
     () => result?.sources.length
@@ -1006,10 +973,6 @@ export function ContinuedImportEditor({
                     <Text size="sm" c="dimmed">Continuity inspection failed. Open Errors below for details.</Text>
                   ) : inspectionQuery.isError ? (
                     <Text size="sm" c="dimmed">The combined preview is unavailable. Open Errors below for details.</Text>
-                  ) : !result?.inspection_complete || inspectionQuery.isFetching || orderNeedsAutomaticCorrection ? (
-                    combinedPreviewUpdatingPanel
-                  ) : combinedPreviewLoading ? (
-                    combinedPreviewUpdatingPanel
                   ) : combinedPreviewError ? (
                     <Alert
                       color="gray"
@@ -1034,13 +997,9 @@ export function ContinuedImportEditor({
                         )}
                       </Group>
                     </Alert>
-                  ) : combinedPlotReady && combinedPlotElement ? (
-                    renderCombinedPlotPanel(combinedPlotElement)
-                  ) : (
-                    <Alert color="gray">
-                      No {previewQuantity === "voltage" ? "voltage" : "capacity"} preview points were found for this chain.
-                    </Alert>
-                  )
+                  ) : renderCombinedPlotPanel(combinedPlotElement ?? (busy
+                    ? <Center h={352}><Loader size="sm" /></Center>
+                    : <Center h={352}><Text size="sm" c="dimmed">No {previewQuantity === "voltage" ? "voltage" : "capacity"} points in this cycle window.</Text></Center>))
                 ) : selectedDraft ? (
                   <ImportSourcePreview source={selectedDraft} />
                 ) : (

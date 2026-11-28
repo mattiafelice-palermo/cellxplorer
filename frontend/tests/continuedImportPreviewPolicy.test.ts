@@ -261,7 +261,8 @@ test("short recordings keep separate badges and their exact joins on the full ti
   const labels = guides.annotations!;
   assert.deepEqual(labels.map((a) => a.text), ["1", "2", "3", "4", "5", "6"]);
   assert.deepEqual(labels.map((a) => a.bordercolor), spans.map((span) => span.color));
-  assert.deepEqual(guides.shapes!.map((s) => s.x0), edges.slice(1, -1));
+  assert.deepEqual(guides.shapes!.map((s) => s.x0), edges.slice(1, -1).map(x => x / 7500));
+  assert.ok(guides.shapes!.every(s => s.xref === "paper"));
   const centers = labels.map((a) => Number(a.x) * width + Number(a.ax));
   assert.ok(centers.every((x, i) => i === 0 || x - centers[i - 1] >= 21));
   assert.equal(labels[1].x, (60 + 60.2) / 2 / 7500);
@@ -290,7 +291,7 @@ test("cycle points mark visible joins, while file-local capacity coordinates hav
   const cycles = [source(3, 1, 1), source(6, 2, 51)];
   const guides = buildContinuationPreviewProvenanceLayout(cycles, viewport, true);
   assert.deepEqual(guides.annotations!.map((a) => a.text), ["3", "6"]);
-  assert.deepEqual(guides.shapes!.map((shape) => shape.x0), [1.5]);
+  assert.deepEqual(guides.shapes!.map((shape) => shape.x0), [1.5 / 51]);
   const overlaid = buildContinuationPreviewProvenanceLayout([source(1, 0, 12), source(2, 0, 30)], viewport, false);
   assert.deepEqual(overlaid.annotations!.map((a) => a.text), ["1", "2"]);
   assert.deepEqual(overlaid.shapes, []);

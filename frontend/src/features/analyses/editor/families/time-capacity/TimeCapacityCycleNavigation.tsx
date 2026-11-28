@@ -668,6 +668,7 @@ export function TimeCapacityCycleNavigation({
   onPreviewRangeChange,
   onWarmRange,
   isVirgin = false,
+  defaultExtentReady = true,
   navigationResetKey = "",
   viewportChangeKey,
   spec,
@@ -684,6 +685,7 @@ export function TimeCapacityCycleNavigation({
   ) => void;
   onWarmRange?: (range: TimeCapacityCycleRange) => void;
   isVirgin?: boolean;
+  defaultExtentReady?: boolean;
   navigationResetKey?: string | number;
   viewportChangeKey?: number;
   spec: AnalysisSpec;
@@ -856,7 +858,7 @@ export function TimeCapacityCycleNavigation({
       virginDefaultPendingRef.current,
       virginDefaultAppliedRef.current,
       specificCyclesActive,
-      maxAvailableCycle,
+      defaultExtentReady ? maxAvailableCycle : null,
     )) return;
     const next = timeCapacityVirginCycleRange(maxAvailableCycle);
     if (!next) return;
@@ -865,7 +867,7 @@ export function TimeCapacityCycleNavigation({
     applyingVirginDefaultRef.current = false;
     virginDefaultAppliedRef.current = true;
     virginDefaultPendingRef.current = false;
-  }, [commitRange, hasBound, isVirgin, maxAvailableCycle, specificCyclesActive]);
+  }, [commitRange, defaultExtentReady, isVirgin, maxAvailableCycle, specificCyclesActive]);
 
   const commitManualStart = useCallback(
     (value: number | null) => {
