@@ -594,6 +594,8 @@ def load_parser_warnings(file_hash: str, parser_version: str) -> list[dict[str, 
                 "count": count,
                 "message": item["message"][:500],
             }
+            if item.get("quantity") in ("current", "capacity", "cycles"):
+                warning["quantity"] = item["quantity"]
             if item["code"] in {"biologic_replayed_records_skipped", "biologic_mb_eis_exclusion"}:
                 warning["severity"] = "info"
             raw_examples = item.get("examples")
@@ -656,6 +658,8 @@ def _write_parser_diagnostics(
             "count": count,
             "message": str(item["message"])[:500],
         }
+        if item.get("quantity") in ("current", "capacity", "cycles"):
+            diagnostic["quantity"] = item["quantity"]
         if item["code"] in {"biologic_replayed_records_skipped", "biologic_mb_eis_exclusion"}:
             diagnostic["severity"] = "info"
         examples: list[dict[str, object]] = []

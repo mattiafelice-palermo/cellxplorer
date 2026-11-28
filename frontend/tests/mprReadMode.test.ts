@@ -48,9 +48,9 @@ test("figure notice persists in export layout without changing scientific traces
   const layout = { margin: { t: 20, l: 70 }, annotations: [{ text: "Reference", x: 1, y: 1 }] };
   assert.equal(withMprReadNotice(layout, []), layout);
   const marked = withMprReadNotice(layout, [{ kind: "exploratory_mpr", detail: "Source interpretation uncertain" }]);
-  assert.equal(marked.annotations?.length, 2);
+  assert.equal(marked.annotations?.length, 1);
   assert.equal(marked.annotations?.[0].text, "Reference");
-  assert.match(marked.annotations?.[1].text ?? "", /unverified cycle identity/);
-  assert.equal(marked.margin?.t, 40);
+  assert.match(marked.meta.cellxplorer_source_note, /unverified cycle identity/);
+  assert.equal(marked.margin?.t, 20);
   assert.equal(layout.annotations.length, 1);
 });

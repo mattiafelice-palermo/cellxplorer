@@ -2735,13 +2735,9 @@ def compute(
         charge_first = computation.get("cycle_pairing") == "charge_discharge"
         if not explicit_pairing:
             stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
-            missing_cycles, initial_discharge = (
-                analysis_cycle_pairing.missing_programmed_phases(refs, segments,
-                    stitched.attrs.get("cross_source_cp_cycle_ids", []) + stitched.attrs.get("cross_source_gcpl_cycle_ids", []))
-                if not missing else (False, False)
+            missing_cycles, initial_discharge, mixed_runs = analysis_cycle_pairing.standard_fallback(
+                refs, stitched, segments, missing
             )
-            if missing_cycles and not stitched.empty:
-                mixed_runs = analysis_cycle_pairing.supplement_programmed_runs(refs, stitched, segments)
             if mixed_runs is not None:
                 programmed = stitched
                 stitched, segments, paired_raw = mixed_runs.cycles, mixed_runs.segments, mixed_runs.raw
@@ -4217,7 +4213,8 @@ def compute_time_capacity(
             visible_cell_count,
         )
     )
-    max_paired_cycle = 0
+    navigation_maximum = 0
+    has_paired_navigation = analysis_cycle_pairing.enabled(computation)
     total_returned_points = 0
     if access_diagnostics is not None:
         access_diagnostics.setdefault("cells", [])
@@ -4301,6 +4298,16 @@ def compute_time_capacity(
         time_prepared_before_filter = False
         source_facts: dict[str, dict] | None = None
         paired = analysis_cycle_pairing.enabled(computation)
+        mixed_runs = None
+        charge_first = computation.get("cycle_pairing") == "charge_discharge"
+        if not paired and analysis_cycle_pairing.needs_cycle_check(plan):
+            cycles, cycle_segments, cycle_missing = stitch.stitch_cycles(refs, calc_version)
+            uncounted, _, mixed_runs = analysis_cycle_pairing.standard_fallback(
+                refs, cycles, cycle_segments, cycle_missing
+            )
+            charge_first = uncounted and cycles.empty
+            paired = charge_first or mixed_runs is not None
+        has_paired_navigation |= paired
         indexed_path = not paired and plan.path in {"indexed", "missing"}
         # A legacy index without time prefixes must use the complete timeline;
         # silently zeroing the selected range would produce false coordinates.
@@ -4350,11 +4357,12 @@ def compute_time_capacity(
                 source_facts = plan.source_facts
         else:
             with time_capacity_path.timed_stage(cell_diagnostics, "legacy_full_raw_read"):
-                raw, segments, missing = (
-                    analysis_cycle_pairing.measurements(
-                        refs, charge_first=computation.get("cycle_pairing") == "charge_discharge",
-                    ) if paired else stitch.stitch_raw(refs)
-                )
+                if mixed_runs is not None:
+                    raw, segments, missing = mixed_runs.raw, mixed_runs.segments, []
+                elif paired:
+                    raw, segments, missing = analysis_cycle_pairing.measurements(refs, charge_first=charge_first)
+                else:
+                    raw, segments, missing = stitch.stitch_raw(refs)
 
         cell_diagnostics["raw_rows_loaded_before_filter"] = len(raw)
         if not indexed_path:
@@ -4384,8 +4392,9 @@ def compute_time_capacity(
                 requested_cycles,
                 available_cycles=complete_cycles,
             )
-        if paired:
-            max_paired_cycle = max(max_paired_cycle, max(complete_cycles, default=0))
+        cell_maximum = (max((segment.get("cycle_end") or 0 for segment in segments), default=0)
+                        if indexed_path else max(complete_cycles, default=0))
+        navigation_maximum = max(navigation_maximum, cell_maximum)
         if indexed_path:
             matched_files_by_quantity = {
                 quantity: [] for quantity in canonical_cycling.VOLTAGE_QUANTITIES
@@ -5160,7 +5169,7 @@ def compute_time_capacity(
         "current_calc_version": CALC_VERSION,
         "settings": settings,
         "cell_traces": traces,
-        **({"paired_cycle_max": max_paired_cycle} if analysis_cycle_pairing.enabled(computation) else {}),
+        **({"paired_cycle_max": navigation_maximum} if has_paired_navigation else {}),
         "badges": badges,
         # Spec 040.4: data-driven, per-selection availability — never a
         # static per-format declaration — so the frontend can offer exactly

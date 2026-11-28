@@ -4460,7 +4460,6 @@ function AnalysisEditorView({
     if (note.cell_name && !names.includes(note.cell_name)) names.push(note.cell_name);
     cycleNoteGroups.set(note.detail, names);
   }
-  const suggestDischargeFirst = cycleNotes.some(b => b.kind !== "cycle_detection_available");
   const activePlot = spec
     ? (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
     : null;
@@ -5513,37 +5512,43 @@ function AnalysisEditorView({
         />
       )}
       {(activeTab === "cycles" || activeTab === "time_capacity") && (
-        <Select
-          label="Cycle pairing"
-          description={analysisCapabilities.isSuccess && !analysisCapabilities.data.capabilities?.discharge_charge_pairing
-            ? "Restart CellXplorer to use discharge-first pairing." : undefined}
-          size="xs"
-          allowDeselect={false}
-          data={[
-            { value: "programmed", label: "Programmed cycles" },
-            { value: "charge_discharge", label: "Detect charge followed by discharge", disabled: !analysisCapabilities.data?.capabilities?.charge_discharge_pairing },
-            { value: "discharge_charge", label: "Discharge followed by charge", disabled: !analysisCapabilities.data?.capabilities?.discharge_charge_pairing },
-          ]}
-          value={spec.computation.cycle_pairing ?? "programmed"}
-          onChange={(value) => update((draft) => {
-            draft.computation.cycle_pairing = value === "discharge_charge" || value === "charge_discharge" ? value : "programmed";
-          })}
-        />
-      )}
-      {activeTab === "cycles" && Array.from(cycleNoteGroups, ([detail, names]) => (
-        <Text key={detail} size="xs" c="dimmed" title={names.join(", ")}>
-          {names.length > 1 ? `${names.length} cells - ` : ""}{detail}
-        </Text>
-      ))}
-      {activeTab === "cycles" && (!spec.computation.cycle_pairing || spec.computation.cycle_pairing === "programmed") &&
-        cycleNotes.length > 0 &&
-        analysisCapabilities.data?.capabilities?.charge_discharge_pairing && (
-          <Button size="compact-xs" variant="subtle" onClick={() => update(draft => {
-            draft.computation.cycle_pairing = suggestDischargeFirst ? "discharge_charge" : "charge_discharge";
-          })}>
-            {suggestDischargeFirst
-              ? "Pair discharge first" : "Detect cycles from current"}
-          </Button>
+        <Group gap={4} align="flex-end" wrap="nowrap">
+          <Select
+            style={{ flex: 1, minWidth: 0 }}
+            label="Cycle pairing"
+            size="xs"
+            allowDeselect={false}
+            data={[
+              { value: "programmed", label: "Programmed cycles" },
+              { value: "charge_discharge", label: "Charge then discharge", disabled: !analysisCapabilities.data?.capabilities?.charge_discharge_pairing },
+              { value: "discharge_charge", label: "Discharge then charge", disabled: !analysisCapabilities.data?.capabilities?.discharge_charge_pairing },
+            ]}
+            value={spec.computation.cycle_pairing ?? "programmed"}
+            onChange={(value) => update((draft) => {
+              draft.computation.cycle_pairing = value === "discharge_charge" || value === "charge_discharge" ? value : "programmed";
+            })}
+          />
+          <Popover position="bottom-end" withArrow shadow="md" width={310} trapFocus returnFocus>
+            <Popover.Target>
+              <ActionIcon size="sm" mb={3} variant="subtle" aria-label="About cycle pairing" title="About cycle pairing">
+                <IconInfoCircle size={16} />
+              </ActionIcon>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack gap="xs" tabIndex={0} data-autofocus mah="60vh" style={{ overflowY: "auto" }}>
+                <Text size="sm"><b>Programmed cycles.</b> Use the cycles recorded by the instrument. If a BioLogic run has no cycle numbers, count each charge and its following discharge as one cycle.</Text>
+                <Text size="sm"><b>Charge then discharge.</b> Count one cycle each time a charge is followed by a discharge. An opening discharge stays in the time plot.</Text>
+                <Text size="sm"><b>Discharge then charge.</b> Count one cycle each time a discharge is followed by a charge. Choose this to include an opening discharge in cycle 1.</Text>
+                {analysisCapabilities.isSuccess && !analysisCapabilities.data.capabilities?.discharge_charge_pairing &&
+                  <Text size="xs" c="dimmed">Restart CellXplorer to enable discharge-first pairing.</Text>}
+                {cycleNoteGroups.size > 0 && <Divider label="Current selection" />}
+                {Array.from(cycleNoteGroups, ([detail, names]) => (
+                  <Text key={detail} size="xs" c="dimmed">{names.length > 0 && <b>{names.join(", ")}. </b>}{detail}</Text>
+                ))}
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+        </Group>
       )}
       {activeTab === "time_capacity" && (
         <TimeCapacitySettings

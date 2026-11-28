@@ -59,7 +59,7 @@ RESULT_SCHEMA_VERSIONS = {
     # entries produced before that worker parity fix.
     # Consecutive time uses the Cell timeline, including skipped-cycle gaps.
     # Display sampling topology and completeness; voltage/current extrema.
-    "time_capacity": 16,  # Uncounted measurements retain their acquisition position.
+    "time_capacity": 17,  # Navigation shares the Cycles analysis run-specific labels.
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

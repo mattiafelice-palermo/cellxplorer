@@ -13,6 +13,11 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.35 - 2026-11-28
+
+- Time / capacity uses the same cycle numbers as Cycles after a BioLogic restart. Both views explain the pairing options in a compact help popup.
+- Analysis graphs show source notes above the tabs. Open the note to see what the measurement file supports.
+
 ## 0.29.0-alpha.34 - 2026-11-28
 
 - Standard BioLogic cycle plots keep programmed cycles and detect complete charge and discharge pairs in separate runs that lack cycle labels.

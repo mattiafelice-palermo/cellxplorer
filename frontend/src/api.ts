@@ -557,6 +557,7 @@ export interface MprReadPresentation {
   interpretation_warnings?: {
     code: string;
     message: string;
+    quantity?: string;
     count?: number;
     examples?: Record<string, number | string | boolean | null>[];
   }[];

@@ -1,19 +1,24 @@
 import { Button, Stack, Text } from "@mantine/core";
 import { Link } from "react-router-dom";
 import type { Badge } from "../api";
-import { sourceLimitations, sourceDetailsHref } from "../sourceLimitations";
+import { affectedQuantity, sourceLimitations, sourceDetailsHref, sourceWarningText } from "../sourceLimitations";
 import { mprWarningExample } from "../mprWarningExample";
 export function AnalysisSourceLimitations({ badges }: { badges: readonly Badge[] }) {
   const sources = sourceLimitations(badges);
   if (!sources.length) return null;
+  const cyclesOnly = sources.every(s => s.scientific_interpretation === "verified" &&
+    s.limitations?.every(w => affectedQuantity(w) === "cycles"));
+  const label = cyclesOnly ? "About the cycle numbers" : "About the measurements";
   return <details style={{ color: "var(--mantine-color-orange-text)", fontSize: "var(--mantine-font-size-xs)" }}>
-    <summary style={{ cursor: "pointer", width: "fit-content" }}>{sources.length} source{sources.length === 1 ? " has" : "s have"} data limitations</summary>
+    <summary style={{ cursor: "pointer", width: "fit-content" }}>{label} · {sources.length} {sources.length === 1 ? "file" : "files"}</summary>
     <Stack gap="xs" mt="xs" style={{ maxHeight: 240, overflowY: "auto" }}>
       {sources.map((source, index) => <div key={`${source.cell_id}:${source.source_id ?? source.file ?? index}`}>
         <Text size="xs" fw={600}>{source.cell_name}{source.file ? ` · ${source.file}` : ""}</Text>
         {source.scientific_interpretation !== "verified" && <Text size="xs">{source.detail}</Text>}
         {source.limitations?.map((warning, i) => <div key={i}>
-          <Text size="xs">{warning.message}{warning.count && warning.count > 1 ? ` (${warning.count})` : ""}</Text>
+          <Text size="xs">{sourceWarningText(warning)}{warning.count && warning.count > 1 ? ` (${warning.count})` : ""}</Text>
+          {affectedQuantity(warning) === "cycles" && badges.some(b => b.cell_id === source.cell_id && b.kind === "cycles_detected") &&
+            <Text size="xs">For this cell, the Cycles view also counts complete pairs of charges and discharges from the measured current.</Text>}
           {warning.examples?.map(mprWarningExample).filter(Boolean).map((example, j) => <Text key={j} size="xs" c="dimmed">{example}</Text>)}
         </div>)}
         {source.cell_id != null && <Button component={Link} to={sourceDetailsHref(source)} size="compact-xs" variant="subtle">Open source details</Button>}

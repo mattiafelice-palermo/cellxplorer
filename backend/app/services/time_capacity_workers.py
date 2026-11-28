@@ -1291,6 +1291,9 @@ def _build_jobs(
         plan = time_capacity_path.build_time_capacity_stitch_plan(refs, diagnostics=plan_diagnostics)
         if plan.path != "indexed" or not plan.complete:
             return None
+        if analysis_engine.analysis_cycle_pairing.needs_cycle_check(plan):
+            # Resolve run-specific labels before selecting records by cycle.
+            return None
         requested_cycles = time_capacity_path.requested_global_cycles(
             plan,
             explicit_cycles=settings["cycles"],

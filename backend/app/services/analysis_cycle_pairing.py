@@ -73,15 +73,22 @@ class MixedRunCycles:
     note: str
 
 
-def supplement_programmed_runs(refs, cycles, segments):
-    """Only infer in a distinct acquisition with no programmed cycles of its own."""
-    if cycles.empty or len(refs) < 2 or not all(r.parser_version.startswith("bm:") for r in refs):
-        return None
+def _runs_with_uncounted_acquisition(refs, segments):
+    if len(refs) < 2 or not all(r.parser_version.startswith("bm:") for r in refs):
+        return []
     origins = [_source_origin(ref) for ref in refs]
     if None in origins or len(set(origins)) < 2:
-        return None
+        return []
     runs = [list(positions) for _, positions in groupby(range(len(refs)), key=origins.__getitem__)]
     if all(any(segments[i].get("cycle_start") for i in run) for run in runs):
+        return []
+    return runs
+
+
+def supplement_programmed_runs(refs, cycles, segments):
+    """Only infer in a distinct acquisition with no programmed cycles of its own."""
+    runs = _runs_with_uncounted_acquisition(refs, segments) if not cycles.empty else []
+    if not runs:
         return None
     raw, _, missing = stitch.stitch_raw(refs)
     if missing or raw.empty:
@@ -135,8 +142,37 @@ def supplement_programmed_runs(refs, cycles, segments):
             "pairing each charge with the following discharge.")
     if initial_discharge:
         note += " An unpaired opening discharge remains visible in the time plot."
-    return MixedRunCycles(combined, descriptors, pd.concat(rows, ignore_index=True),
+    combined_raw = pd.concat(rows, ignore_index=True)
+    # Each inferred run was labelled locally. Restore one acquisition order
+    # for plotting and keep the stitcher's clock and completeness metadata.
+    combined_raw["_stitch_order"] = np.arange(len(combined_raw))
+    combined_raw.attrs.update(raw.attrs)
+    return MixedRunCycles(combined, descriptors, combined_raw,
                           detected_segments, programmed_ids, note)
+
+
+def standard_fallback(refs, cycles, segments, missing):
+    if missing:
+        return False, False, None
+    cross_source = cycles.attrs.get("cross_source_cp_cycle_ids", []) + cycles.attrs.get("cross_source_gcpl_cycle_ids", [])
+    uncounted, initial_discharge = missing_programmed_phases(refs, segments, cross_source)
+    mixed = supplement_programmed_runs(refs, cycles, segments) if uncounted and not cycles.empty else None
+    return uncounted, initial_discharge, mixed
+
+
+def needs_cycle_check(plan):
+    """The raw index can only address programmed labels, even on a complete cache."""
+    if not plan.complete or not any(ref.parser_version.startswith("bm:") for ref in plan.refs):
+        return False
+    if plan.path != "indexed":
+        return True
+    if not any(ref.parser_version.startswith("bm:") and not seg.get("source_cycle_count")
+               for ref, seg in zip(plan.refs, plan.segments)):
+        return False
+    if not missing_programmed_phases(plan.refs, plan.segments)[0]:
+        return False
+    return (not any(s.get("cycle_start") for s in plan.segments)
+            or bool(_runs_with_uncounted_acquisition(plan.refs, plan.segments)))
 
 
 def measurements(refs, *, charge_first=False):

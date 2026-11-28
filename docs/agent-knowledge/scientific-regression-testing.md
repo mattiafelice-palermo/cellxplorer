@@ -143,3 +143,13 @@ and energy evidence. A separate run without any programmed cycle can contribute
 charge-followed-by-discharge pairs. Confirm dense numbering, source positions
 and cumulative quantities across the join. A new technique file on the same
 acquisition clock is insufficient evidence of a restart.
+
+Time / capacity must resolve the same cycle labels before it selects raw
+records. Its ordinary row-group index contains programmed labels only. Check
+both compact display and full export against the first complete pair after
+the restart, and verify that the navigation limit covers the whole Cell.
+
+Source limitations belong in the analysis disclosure outside the graph.
+The live Plotly layout carries relevant source notes as metadata so an image
+export can add a caption below the axes. Verify both paths with an older MPR
+cache as well as structured warnings from newly parsed data.

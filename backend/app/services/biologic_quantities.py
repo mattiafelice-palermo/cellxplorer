@@ -17,7 +17,7 @@ def record_limitations(frame: pd.DataFrame, technique: str, limitations: dict[st
     for quantity, reason in limitations.items():
         if quantity != "phases":
             warnings.append({
-                "code": "biologic_quantity_unavailable", "scope": "source", "count": 1,
+                "code": "biologic_quantity_unavailable", "scope": "source", "quantity": quantity, "count": 1,
                 "message": f"{technique} {quantity} could not be fully verified. {reason}",
             })
     if "capacity" in limitations:

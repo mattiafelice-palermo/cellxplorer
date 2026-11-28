@@ -450,7 +450,9 @@ test("figure limitations follow actual primary and CE series visibility",async()
  (result as any).badges=[{kind:"exploratory_mpr",cell_id:1,scientific_interpretation:"verified",detail:"EIS executions excluded",limitations:[{code:"biologic_mb_eis_exclusion",message:"EIS executions excluded"}]}];
  const spec=cycleSpec();spec.selection.entries=[{kind:"cell",ref_id:1},{kind:"cell",ref_id:2}];
  const layout=(render as any).layout;
- assert.ok(layout(result,spec,render(result,spec)).annotations.some((a:any)=>a.text.includes("EIS executions excluded")));
+ const visible = layout(result,spec,render(result,spec));
+ assert.match(visible.meta.cellxplorer_source_note,/EIS executions excluded/);
+ assert.ok(!(visible.annotations??[]).some((a:any)=>a.text.includes("EIS executions excluded")));
  spec.presentation.hidden_series_ids=["cycles:c1",cycleCeVisibilityKey("c1")];
- assert.ok(!(layout(result,spec,render(result,spec)).annotations??[]).some((a:any)=>a.text.includes("EIS executions excluded")));
+ assert.equal(layout(result,spec,render(result,spec)).meta?.cellxplorer_source_note,undefined);
 });

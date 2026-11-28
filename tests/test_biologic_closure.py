@@ -477,7 +477,9 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         spec["selection"]["entries"] = [{"kind": "cell", "ref_id": cell.id}]
         trace = analysis_engine.compute_time_capacity(self.db, spec, None)["cell_traces"][0]
         self.assertTrue(trace["display_only_cycle"])
-        self.assertEqual(set(trace["cycle"]), {0})
+        # The parser still has no programmed cycles. Both analysis views
+        # label the measured pair and leave the opening rest and final half visible.
+        self.assertEqual(trace["cycle"], [0, 1, 1, 1, 1, 0, 0])
         self.assertEqual(trace["current_ma"], [row["control"] for row in rows])
         self.assertEqual(trace["time_s"], [row["total_time_s"] for row in rows])
         for voltage, row in zip(trace["voltage_v"], rows, strict=True):

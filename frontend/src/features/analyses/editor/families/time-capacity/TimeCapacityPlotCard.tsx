@@ -1650,11 +1650,12 @@ function TimeCapacityPlotCardView({
   const refinementAbortRef = useRef<AbortController | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const familyActivity = usePlotFamilyActivity();
-  const pairingSelection = JSON.stringify(spec.selection.entries);
+  const pairingMode = spec.computation.cycle_pairing ?? "programmed";
+  const pairingSelection = JSON.stringify([spec.selection.entries, pairingMode]);
   const [pairedMaximum, setPairedMaximum] = useState<{ selection: string; maximum: number } | null>(null);
-  const maxAvailableCycle = (spec.computation.cycle_pairing && spec.computation.cycle_pairing !== "programmed")
-    ? (pairedMaximum?.selection === pairingSelection ? pairedMaximum.maximum : null)
-    : programmedMaximum;
+  const maxAvailableCycle = pairedMaximum?.selection === pairingSelection
+    ? pairedMaximum.maximum
+    : pairingMode === "programmed" ? programmedMaximum : null;
   const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -2233,8 +2234,8 @@ function TimeCapacityPlotCardView({
   });
   useEffect(() => {
     const maximum = timeResult.data?.paired_cycle_max;
-    if (maximum !== undefined && !timeResult.isPlaceholderData) {
-      setPairedMaximum({ selection: pairingSelection, maximum });
+    if (timeResult.data && !timeResult.isPlaceholderData) {
+      setPairedMaximum(maximum === undefined ? null : { selection: pairingSelection, maximum });
     }
   }, [timeResult.data, timeResult.isPlaceholderData, pairingSelection]);
   usePlotFamilyQuerySettled(timeResult);

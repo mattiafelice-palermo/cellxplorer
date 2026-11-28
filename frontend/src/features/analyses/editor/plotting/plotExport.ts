@@ -1,6 +1,7 @@
 import { notifications } from "@mantine/notifications";
 import type { PlotAspectRatioKey, PlotExportFormat, PlotStyle } from "../../../../api";
 import type { SourceExportColumn, SourceExportValue } from "./sourceChainPlot";
+import type { SourceNoteLayout } from "./mprReadNotice";
 
 export type DataColumn = SourceExportColumn;
 
@@ -472,7 +473,7 @@ export function resolveExportPlan(
 
 export function exportFigure(
   traces: Plotly.Data[],
-  layout: Partial<Plotly.Layout>,
+  layout: SourceNoteLayout,
   style: PlotStyle,
   plotName: string,
   plan: ExportPlan
@@ -486,6 +487,23 @@ export function exportFigure(
   });
   if (style.export_include_title) {
     exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
+  }
+  const note = layout.meta?.cellxplorer_source_note;
+  if (typeof note === "string" && note) {
+    const charsPerLine = Math.max(16, Math.floor((plan.layoutWidth - plan.margin.l - plan.margin.r) / 6.5));
+    const lines: string[] = [];
+    for (const word of note.split(/\s+/)) {
+      const last = lines.length - 1;
+      if (last < 0 || lines[last].length + word.length + 1 > charsPerLine) lines.push(word);
+      else lines[last] += " " + word;
+    }
+    const bottom = plan.margin.b + 14 * lines.length + 10;
+    exportLayout.margin = { ...plan.margin, b: bottom };
+    exportLayout.annotations = [...(exportLayout.annotations ?? []), {
+      text: lines.map(line => line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")).join("<br>"),
+      xref: "paper", yref: "paper", x: 0, y: 0, yshift: 4 - bottom,
+      xanchor: "left", yanchor: "bottom", align: "left", showarrow: false, font: { size: 11 },
+    }];
   }
   return { data: cloneExportInput(traces), layout: exportLayout };
 }

@@ -25,6 +25,17 @@ test("standard data precision preserves fractional equivalent full cycles", () =
   assert.ok(text.includes("1.234568"));
 });
 
+test("source notes become a caption below the axes only on standalone exports", () => {
+  const layout = { margin: { b: 64 }, meta: { cellxplorer_source_note: "Cycle numbers were unavailable in one file." } };
+  const plan = resolveExportPlan(DEFAULT_PLOT_STYLE, null, layout);
+  const figure = exportFigure([], layout, DEFAULT_PLOT_STYLE, "Cell", plan);
+  const caption = figure.layout.annotations?.[0];
+  assert.equal(caption?.y, 0);
+  assert.ok(Number(caption?.yshift) < -64);
+  assert.match(String(caption?.text), /Cycle numbers/);
+  assert.equal(layout.margin.b, 64);
+});
+
 test("all export aspects preserve authored fonts and styling relative to plot height", () => {
   const layout: Partial<Plotly.Layout> = {
     height: 500,

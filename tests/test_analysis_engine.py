@@ -1114,6 +1114,46 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertTrue(trace["display_only_cycle"])
         self.assertGreater(len(trace["time_s"]), 0)
 
+    def test_default_time_window_selects_first_detected_pair_after_programmed_run(self):
+        with TemporaryDirectory() as tmp, patch.object(cache, "CACHE_DIR", Path(tmp)):
+            cell = Cell(name="Restarted BioLogic cell")
+            test = Test(cell=cell, name="internal")
+            self.db.add(test)
+            self.db.flush()
+            version = parsing.current_parser_identity_for_extension("mpr")
+            for position, count in enumerate((1, 3)):
+                frame = synth_raw(count, 2.0 + position, 0.1)
+                # Record a zero counter at the start of each measured half.
+                frame.loc[~frame.step.duplicated(), ["charge_capacity_mah", "discharge_capacity_mah"]] = 0.
+                frame["total_time_s"] = frame.record_index * 1800.
+                frame["timestamp"] += pd.Timedelta(days=position)
+                frame["cycle_complete"] = position == 0
+                frame.attrs["biologic_gcpl"] = {}
+                if position:
+                    frame["cycle"] = 1  # Storage label used for an unnumbered run.
+                source_hash = str(position + 1) * 64
+                source = SourceFile(hash=source_hash, path=f"{source_hash}.mpr", filename=f"{position}.mpr",
+                                    size=1, ext="mpr", parse_status="parsed", parser_version=version)
+                self.db.add(source)
+                self.db.flush()
+                self.db.add(TestFile(test_id=test.id, file_id=source.id, position=position))
+                cache._publish_optimized_raw(frame, cache.raw_path(source_hash, version), version)
+                cache.calc.per_cycle(frame).to_parquet(cache.cycles_path(source_hash, version))
+            self.db.commit()
+            spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+            result = engine.compute(self.db, spec, None)["cell_series"][0]
+            self.assertEqual(result["x"], [1, 2, 3, 4])
+            spec["computation"]["time_capacity"] = {"cycle_start": 2, "cycle_end": 2}
+            for precision, compact in (("full", False), ("standard", True)):
+                view = engine.compute_time_capacity(self.db, spec, None, precision=precision, compact=compact)
+                trace = view["cell_traces"][0]
+                self.assertEqual(view["paired_cycle_max"], 4)
+                self.assertEqual(trace["cycle"], [2] * 4)
+                self.assertEqual(trace["current_ma"], [1000, 1000, -1000, -1000])
+                if not compact:
+                    self.assertEqual(trace["source_hash"], ["2" * 64] * 4)
+                self.assertAlmostEqual(result["quantities"]["discharge_capacity_mah"][1], 3.0 * .99)
+
     def test_trailing_uncounted_measurements_keep_their_acquisition_position(self):
         raw = synth_raw(3, 2.0, 0.0)
         raw["cycle_complete"] = raw["cycle"] != 3
