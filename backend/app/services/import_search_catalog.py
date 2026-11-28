@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..config import APP_DATA_DIR
 from .source_extensions import MACCOR_CHANNEL_FORMAT
+from .source_paths import display_source_path
 
 CATALOG_PATH = APP_DATA_DIR / "search-index" / "catalog.sqlite"
 SCHEMA_VERSION = 7
@@ -27,6 +28,7 @@ def now() -> str:
 
 
 def path_key(path: str) -> str:
+    path = display_source_path(path)
     if ntpath.splitdrive(path)[0] or "\\" in path:
         return ntpath.normpath(path.replace("/", "\\")).casefold()
     return os.path.normpath(path).casefold()

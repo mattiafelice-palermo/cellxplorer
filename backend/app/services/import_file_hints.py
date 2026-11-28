@@ -15,6 +15,7 @@ from typing import Any
 from .lazy_module import LazyModule
 from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 from .source_format_errors import SourceFormatError, source_rejection_kind
+from .source_paths import source_io_path
 
 
 def _load_parsing():
@@ -87,9 +88,10 @@ def inspect_header_hint(
     hash_if_size_matches: set[int] | None = None,
 ) -> dict[str, object]:
     """Read normalized header metadata only; return a safe per-file outcome."""
-    path = Path(path_string).expanduser()
+    selected = Path(path_string).expanduser()
+    path = source_io_path(selected)
     result: dict[str, object] = {
-        "path": str(path),
+        "path": str(selected),
         "source_format": None,
         "supplier": None,
         "technique": None,

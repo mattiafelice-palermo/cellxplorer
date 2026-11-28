@@ -18,6 +18,7 @@ from typing import Callable, Literal
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 from ..services import import_inspection
 from ..services import import_file_hints
+from ..services.source_paths import display_source_path, resolved_source_io_path, source_io_path
 from ..services.source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -194,7 +195,7 @@ def resolve_import_staged_path(staged_name: str) -> Path:
 
 def resolve_import_source_path(staged_name: str, source_path: str | None = None) -> Path:
     if source_path:
-        return Path(source_path).expanduser().resolve()
+        return resolved_source_io_path(source_path)
     return resolve_import_staged_path(staged_name)
 
 
@@ -215,6 +216,8 @@ def _inspect_import_path(
             raise HTTPException(400, str(exc)) from exc
     original = _clean_filename(inspected.filename)
     file_hash = inspected.hash
+    selected_path = str(path)
+    path = source_io_path(path)
     meta = parsing.metadata_for_read_mode(path, inspected.metadata, read_mode)
     if (mass := parsing.characteristic_mass_mg(meta)) is not None:
         meta = {**meta, "active_mass_mg": mass}
@@ -262,7 +265,7 @@ def _inspect_import_path(
     )
     return {
         "staged_name": staged_name or f"path:{uuid.uuid4().hex}",
-        "source_path": str(path) if expose_source_path else None,
+        "source_path": selected_path if expose_source_path else None,
         "filename": original,
         "size": inspected.size,
         "ext": inspected.ext,
@@ -1789,10 +1792,10 @@ def _normalized_unique_paths(paths: list[str], require_existing: bool = False) -
     seen: set[str] = set()
     for raw in paths:
         try:
-            path = Path(raw).expanduser().resolve()
+            path = Path(display_source_path(resolved_source_io_path(raw)))
         except OSError:
             path = Path(raw).expanduser()
-        if require_existing and not path.is_dir():
+        if require_existing and not source_io_path(path).is_dir():
             continue
         key = os.path.normcase(str(path))
         if key in seen:
@@ -1986,13 +1989,13 @@ def import_browse_roots() -> list[dict[str, str]]:
 def browse_import_directory(path: str | None = None, db: Session | None = None) -> dict:
     requested = Path(path).expanduser() if path else _default_import_directory()
     try:
-        current = requested.resolve()
+        current = Path(display_source_path(source_io_path(requested).resolve()))
     except OSError as exc:
         raise HTTPException(400, f"Could not resolve directory: {exc}") from exc
 
     entries: list[dict] = []
     try:
-        with os.scandir(current) as scan:
+        with os.scandir(source_io_path(current)) as scan:
             for entry in scan:
                 try:
                     if entry.is_dir(follow_symlinks=False):
@@ -2006,7 +2009,7 @@ def browse_import_directory(path: str | None = None, db: Session | None = None) 
                     continue
                 entries.append(
                     {
-                        "path": entry.path,
+                        "path": display_source_path(entry.path),
                         "name": entry.name,
                         "kind": kind,
                         "size": stat.st_size if kind == "file" else None,
@@ -2049,7 +2052,7 @@ def _normalize_import_folder_path(raw_folder: str | Path) -> Path:
     expanded = Path(raw_folder).expanduser()
     if _is_likely_network_path(expanded):
         return Path(os.path.abspath(str(expanded)))
-    return expanded.resolve()
+    return Path(display_source_path(source_io_path(expanded).resolve()))
 
 
 def _shutdown_pool_cancelled(pool: object) -> None:
@@ -2078,7 +2081,10 @@ def list_import_folder_files(
         root = _normalize_import_folder_path(root)
     root_path = str(root)
     root_name = root.name or root_path
-    accept_file = parsing.source_filename_allowed if defer_header_recognition else parsing.discoverable_source_path
+    def accept_file(entry: os.DirEntry) -> bool:
+        if defer_header_recognition:
+            return parsing.source_filename_allowed(entry.name)
+        return parsing.discoverable_source_path(source_io_path(entry.path))
 
     def check_cancelled() -> None:
         if is_cancelled is not None and is_cancelled():
@@ -2088,12 +2094,12 @@ def list_import_folder_files(
         check_cancelled()
         directories: list[os.DirEntry[str]] = []
         filenames: list[os.DirEntry[str]] = []
-        with os.scandir(directory) as scan:
+        with os.scandir(source_io_path(directory)) as scan:
             for entry in scan:
                 try:
                     if entry.is_dir(follow_symlinks=False):
                         directories.append(entry)
-                    elif entry.is_file(follow_symlinks=False) and accept_file(entry.path):
+                    elif entry.is_file(follow_symlinks=False) and accept_file(entry):
                         filenames.append(entry)
                 except OSError:
                     continue
@@ -2108,7 +2114,7 @@ def list_import_folder_files(
             dir_bytes += stat.st_size
             dir_files.append(
                 {
-                    "path": entry.path,
+                    "path": display_source_path(entry.path),
                     "relative_path": (relative_directory / entry.name).as_posix(),
                     "filename": entry.name,
                     "size": stat.st_size,
@@ -2138,7 +2144,7 @@ def list_import_folder_files(
     except (FileNotFoundError, NotADirectoryError) as exc:
         raise HTTPException(400, f"Not a directory: {root}") from exc
     except OSError as exc:
-        if not root.is_dir():
+        if not source_io_path(root).is_dir():
             raise HTTPException(400, f"Not a directory: {root}") from exc
         return {
             "root_path": root_path,
@@ -2362,7 +2368,10 @@ def _screen_import_source_candidates(
     from ..services import source_readability
 
     if db is not None:
-        requested_keys = sorted({path_key(str(item["path"])) for item in files if item.get("path")})
+        requested_keys = sorted({
+            key for item in files if item.get("path")
+            for key in (path_key(item["path"]), str(source_io_path(item["path"])).casefold())
+        })
         for start in range(0, len(requested_keys), 500):
             chunk = requested_keys[start : start + 500]
             rows = (
@@ -2511,7 +2520,8 @@ def list_import_sources(
                 current_item_id="loose-files",
                 current_item_label="Loose files",
             )
-        if not path.is_file():
+        io_path = source_io_path(path)
+        if not io_path.is_file():
             raise HTTPException(404, f"File is missing: {path}")
         if not import_filename_allowed(path.name):
             raise HTTPException(
@@ -2522,7 +2532,7 @@ def list_import_sources(
         if key in seen:
             continue
         seen.add(key)
-        size = path.stat().st_size
+        size = io_path.stat().st_size
         discovered_files += 1
         total_bytes += size
         files.append(
@@ -3489,7 +3499,7 @@ _CONTINUATION_PREVIEW_MAX_POINTS = 600
 @router.post("/imports/quick-voltage-preview")
 def quick_import_voltage_preview(req: ImportQuickVoltagePreviewRequest):
     """Display-only voltage plot before identity/header/cache inspection finishes."""
-    source_path = Path(req.source_path).expanduser().resolve()
+    source_path = resolved_source_io_path(req.source_path)
     if source_path.suffix.casefold() != ".ndax":
         raise HTTPException(400, "Quick voltage preview requires a Neware NDAX source.")
     try:
@@ -3521,7 +3531,7 @@ def quick_import_voltage_preview(req: ImportQuickVoltagePreviewRequest):
 @router.post("/imports/quick-excel-preview")
 def quick_import_excel_preview(req: ImportQuickExcelPreviewRequest):
     """Preview a Neware workbook without waiting for identity or cache preparation."""
-    source_path = Path(req.source_path).expanduser().resolve()
+    source_path = resolved_source_io_path(req.source_path)
     if source_path.suffix.casefold() != ".xlsx":
         raise HTTPException(400, "Quick Excel preview requires a Neware .xlsx source.")
     try:
@@ -5331,7 +5341,7 @@ def inspect_import_header_hints(
                 candidate_sizes.add(known_size)
                 continue
             try:
-                candidate_sizes.add(Path(value).expanduser().stat().st_size)
+                candidate_sizes.add(source_io_path(Path(value).expanduser()).stat().st_size)
             except OSError:
                 continue
         # Scalar bulk lookup: never materialize SourceFile.header_meta or walk a

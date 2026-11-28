@@ -2084,6 +2084,58 @@ class ImportFlowTests(unittest.TestCase):
         )
         self.assertEqual(result["parent_path"], str(root.resolve().parent))
 
+    def test_long_source_paths_survive_browsing_screening_inspection_and_registration(self):
+        from app.services.source_paths import display_source_path, source_io_path
+
+        with TemporaryDirectory() as tmp, self.make_session() as db:
+            root = Path(tmp).resolve()
+            folder = root / ("experiment-" * 9) / ("relaunch-" * 10) / ("channel-" * 10)
+            io_folder = source_io_path(folder)
+            io_folder.mkdir(parents=True)
+            try:
+                good = folder / "cell.mpr"
+                peis = folder / "impedance.mpr"
+                loop = folder / "loop.txt"
+                _write_importable_biologic_mpr(source_io_path(good))
+                write_gcpl_mpr(source_io_path(peis), [{}], settings_payload=b"\x1d")
+                source_io_path(loop).write_text("Number of loops : 1\n")
+                listing = files.browse_import_directory(str(folder))
+                paths = [row["path"] for row in listing["entries"]]
+                self.assertEqual(listing["current_path"], str(folder))
+                self.assertCountEqual(paths, [str(good), str(peis), str(loop)])
+                hints = files.inspect_import_header_hints(files.ImportHeaderHintsRequest(paths=paths), db)["files"]
+                self.assertEqual({h["path"]: h["compatible"] for h in hints},
+                                 {str(good): True, str(peis): False, str(loop): False})
+                self.assertTrue(next(h for h in hints if h["path"] == str(peis))["permissive_error"])
+                scan = files.list_import_sources([str(good)], [str(folder)], screen_sources=True)
+                self.assertEqual([row["path"] for row in scan["files"]], [str(good)])
+                reviewed = files.inspect_import_paths(files.ImportPathInspectRequest(
+                    paths=[str(good)], read_mode="permissive"), db)
+                self.assertEqual(reviewed["failures"], [])
+                source, = reviewed["files"]
+                self.assertEqual(source["source_path"], str(good))
+                draft = files.ImportCellDraft(cell_name="Long source", staged_name=source["staged_name"],
+                                             source_path=str(good), filename=good.name, read_mode="permissive")
+                files._create_imported_cells_impl(files.ImportCellsRequest(cells=[draft]), db)
+                registered = db.query(SourceFile).one()
+                self.assertEqual(display_source_path(registered.path), str(good))
+                self.assertEqual(parsing.compute_hash(registered.path), source["hash"])
+                repeated = files.list_import_sources([str(good)], [], db=db, screen_sources=True)
+                self.assertEqual(repeated["skipped"]["registered"], 1)
+            finally:
+                remove_tree(io_folder)
+
+    @unittest.skipUnless(os.name == "nt", "Windows path namespaces")
+    def test_extended_unc_source_path_round_trips_without_accessing_share(self):
+        from app.services.source_paths import display_source_path, source_io_path
+
+        folder = Path(r"\\server\share") / ("x" * 120) / ("y" * 120)
+        filename = folder / "recording.mpr"
+        native = source_io_path(filename)
+        self.assertTrue(str(native).startswith("\\\\?\\UNC\\server\\share\\"))
+        self.assertEqual(source_io_path(native), native)
+        self.assertEqual(display_source_path(native), str(filename))
+
     def test_import_directory_browser_avoids_per_entry_resolve_and_handles_missing_and_file_paths(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

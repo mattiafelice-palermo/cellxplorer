@@ -1845,3 +1845,15 @@ Keep `useTimeCapacityProgressiveWarmup` event-driven (never restore a permanent
 `setInterval`), `startupQueryPersistence` idle-scheduled and
 `dataUpdatedAt`-deduplicated, and slow folder-navigation feedback gated behind
 `useDelayedFlag(180, 280)` so fast local folder switches never flash spinners.
+
+### Windows source paths
+
+Directory enumeration on Windows can return filenames whose full paths exceed
+the legacy limit. Subsequent ordinary stat and open calls can then report an
+existing file as missing. Use `source_paths.source_io_path` at filesystem
+boundaries and `resolved_source_io_path` when resolving a selected source.
+A mapped drive can resolve to a longer UNC name. Keep the picker path on
+header hints, inspection responses and selection rows so they match the
+original request. Registered long paths use the extended Windows spelling so
+background readers can reopen them. Use `display_source_path` when comparing
+those paths with browser entries.

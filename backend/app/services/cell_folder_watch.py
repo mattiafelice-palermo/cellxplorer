@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..models import CellFolderWatch, CellFolderWatchCandidate, SourceFile, Test, TestFile
 from . import import_inspection, parsing
 from .source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
+from .source_paths import display_source_path, resolved_source_io_path, source_io_path
 
 DEFAULT_PATTERN = "*"
 DEFAULT_ORDERING = "timestamp_filename_hash"
@@ -52,7 +53,7 @@ def normalize_folder_path(value: str) -> str:
     path = str(value or "").strip()
     if not path:
         raise ValueError("A folder is required for folder tracking.")
-    return str(Path(path).expanduser().resolve())
+    return display_source_path(resolved_source_io_path(path))
 
 
 def normalize_extensions(value: object) -> list[str]:
@@ -130,14 +131,14 @@ def validate_import_watch(
 ) -> dict[str, Any]:
     """Validate the import-time watch against every staged source."""
     clean = validate_watch_config(config)
-    folder = Path(clean["folder_path"]).resolve()
+    folder = Path(clean["folder_path"])
     sources = list(source_names_and_paths)
     if not sources:
         raise ValueError("Folder tracking requires at least one staged source.")
     for filename, source_path in sources:
         if not source_path:
             raise ValueError("Folder tracking requires source paths from one local folder.")
-        path = Path(source_path).expanduser().resolve()
+        path = Path(display_source_path(resolved_source_io_path(source_path)))
         if path.parent != folder:
             raise ValueError("All tracked sources must be in the same parent folder.")
         if not _matches_extension(path, clean["extensions"]):
@@ -200,9 +201,12 @@ def candidate_order_key(
 
 
 def _iter_files(watch: CellFolderWatch) -> Iterable[Path]:
-    root = Path(watch.folder_path)
+    root = source_io_path(watch.folder_path)
     try:
-        yield from (entry for entry in root.iterdir() if entry.is_file())
+        for entry in root.iterdir():
+            path = source_io_path(entry)
+            if path.is_file():
+                yield path
     except OSError:
         return
 
@@ -210,7 +214,7 @@ def _iter_files(watch: CellFolderWatch) -> Iterable[Path]:
 def preview_watch_files(config: dict[str, Any], *, limit: int = 200) -> dict[str, Any]:
     """Return a bounded display-only listing for the settings dialog."""
     clean = validate_watch_config(config)
-    root = Path(clean["folder_path"])
+    root = source_io_path(clean["folder_path"])
     if not root.is_dir():
         return {
             "files": [],
@@ -218,7 +222,7 @@ def preview_watch_files(config: dict[str, Any], *, limit: int = 200) -> dict[str
             "error": f"Folder is missing or unavailable: {clean['folder_path']}",
         }
     try:
-        paths = [path for path in root.iterdir() if path.is_file()]
+        paths = [path for path in root.iterdir() if source_io_path(path).is_file()]
     except OSError:
         paths = []
     matching = sorted(
@@ -234,7 +238,7 @@ def preview_watch_files(config: dict[str, Any], *, limit: int = 200) -> dict[str
     return {
         "files": [
             {
-                "path": str(path.resolve()),
+                "path": display_source_path(resolved_source_io_path(path)),
                 "filename": path.name,
                 "relative_path": path.relative_to(root).as_posix(),
             }
@@ -316,7 +320,7 @@ def initialize_watch_baseline(db: Session, watch: CellFolderWatch) -> int:
     """
     _test, links = _source_chain(db, watch.cell_id)
     existing_paths = {
-        str(Path(link.file.path).expanduser().resolve())
+        str(resolved_source_io_path(link.file.path))
         for link in links
         if link.file is not None
     }
@@ -468,7 +472,7 @@ def _scan_one_watch(
     stability_seconds: float,
     retry_count: int,
 ) -> dict[str, int | str]:
-    root = Path(watch.folder_path)
+    root = source_io_path(watch.folder_path)
     if not root.is_dir():
         watch.last_scan_at = now
         watch.last_status = "folder_missing"
@@ -480,7 +484,7 @@ def _scan_one_watch(
     watch.last_error = None
     _test, links = _source_chain(db, watch.cell_id)
     existing_paths = {
-        str(Path(link.file.path).expanduser().resolve())
+        str(resolved_source_io_path(link.file.path))
         for link in links
         if link.file is not None
     }

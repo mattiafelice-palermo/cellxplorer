@@ -16,6 +16,7 @@ from ..models import Cell, SourceFile, Test, TestFile
 from .lazy_module import LazyModule
 from .process_priority import process_pool_executor
 from .source_extensions import source_suffix
+from .source_paths import source_io_path
 
 
 def _load_parsing():
@@ -272,7 +273,7 @@ def inspect_file(
     """Inspect one file using filesystem/parser work only; no DB/session."""
     if is_cancelled is not None and is_cancelled():
         raise ImportInspectionCancelled("Import inspection cancelled.")
-    path = Path(path_string)
+    path = source_io_path(path_string)
     filename = path.name
     if not parsing.source_filename_allowed(filename):
         raise SourceInspectionRejection(
@@ -314,7 +315,7 @@ def inspect_file(
         ) from exc
     remember_header_metadata(fingerprint.hash, fingerprint.size, fingerprint.mtime_ns, metadata)
     return FileInspection(
-        path=str(path),
+        path=path_string,
         filename=filename,
         size=fingerprint.size,
         mtime_ns=fingerprint.mtime_ns,

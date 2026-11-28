@@ -15,6 +15,7 @@ import threading
 
 from .source_format_errors import SourceFormatError, source_rejection_kind
 from .source_error_messages import source_error_message
+from .source_paths import display_source_path, resolved_source_io_path
 
 MAX_REJECTIONS = 1024
 
@@ -43,12 +44,12 @@ _lock = threading.Lock()
 
 
 def _key(path: str | Path) -> str:
-    return os.path.normcase(os.path.abspath(path))
+    return os.path.normcase(os.path.abspath(display_source_path(path)))
 
 
 def file_identity(path: str | Path) -> FileIdentity | None:
     try:
-        resolved = Path(path).expanduser().resolve(strict=True)
+        resolved = resolved_source_io_path(path, strict=True)
         stat = resolved.stat()
         return FileIdentity(_key(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
     except (OSError, RuntimeError, ValueError):
