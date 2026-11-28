@@ -1025,6 +1025,21 @@ def recorded_biologic_masses(header: object) -> list[dict]:
     return []
 
 
+def characteristic_mass_mg(header: object) -> float | None:
+    for mass in recorded_biologic_masses(header):
+        if mass["kind"] == "characteristic":
+            return mass["value"] * (1000 if mass["unit"] == "g" else 1)
+    return None
+
+
+def first_characteristic_mass_mg(headers) -> float | None:
+    for header in headers:
+        mass = characteristic_mass_mg(header)
+        if mass is not None:
+            return mass
+    return None
+
+
 def _biologic_mpr_header_containers(header_meta: object) -> list[dict]:
     if not isinstance(header_meta, dict):
         return []

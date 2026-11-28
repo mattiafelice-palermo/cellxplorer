@@ -216,6 +216,8 @@ def _inspect_import_path(
     original = _clean_filename(inspected.filename)
     file_hash = inspected.hash
     meta = parsing.metadata_for_read_mode(path, inspected.metadata, read_mode)
+    if (mass := parsing.characteristic_mass_mg(meta)) is not None:
+        meta = {**meta, "active_mass_mg": mass}
     preview_meta = _metadata_preview(meta)
     metadata_only = parsing.source_metadata_only(meta)
     canonical_cycling_pending = parsing.source_metadata_cycling_pending(meta)
@@ -1725,6 +1727,7 @@ class ContinuationInspectRequest(BaseModel):
 
 
 class ContinuationPreviewRequest(BaseModel):
+    discharge_first: bool = False
     sources: list[ContinuationInspectSourceRequest]
     proposed_order: list[str]
     quantity: Literal[
@@ -3942,6 +3945,19 @@ def _build_continuation_preview(
         cycle_cache_complete = not missing and stitch.stitch_metadata(cycles)["complete"]
         voltage_cycle_rows = pd.DataFrame()
         voltage_cycle_segments = []
+    cycle_note = None
+    if quantity != "voltage" and cycle_cache_complete:
+        from ..services import analysis_cycle_pairing
+
+        missing_phases, initial_discharge = analysis_cycle_pairing.missing_programmed_phases(
+            refs, stitched_segments, cycles.attrs.get("cross_source_cp_cycle_ids", []))
+        if missing_phases and cycles.empty:
+            return _build_stitched_continuation_preview(ordered_sources, quantity=quantity,
+                cycle_start=cycle_start, cycle_end=cycle_end)
+        if initial_discharge and not cycles.empty:
+            cycle_note = "The initial discharge is excluded from programmed cycle totals and remains in the time plot."
+        elif missing_phases:
+            cycle_note = "Some measured phases have no programmed cycle."
     if quantity != "voltage" and not cycle_cache_complete:
         missing_hashes = set(missing)
         missing_sources = [
@@ -4213,6 +4229,7 @@ def _build_continuation_preview(
             else f"Cycle number ({interpretation})"
         ),
         "interpretation": interpretation,
+        **({"cycle_note": cycle_note} if cycle_note else {}),
         "segments": response_segments,
     }
 
@@ -4224,6 +4241,7 @@ def _build_stitched_continuation_preview(
     voltage_x_axis: Literal["time", "capacity"] = "time",
     cycle_start: int | None = None,
     cycle_end: int | None = None,
+    discharge_first: bool = False,
 ) -> dict:
     """Build the explicit preview-only contiguous-cycle interpretation."""
 
@@ -4234,6 +4252,8 @@ def _build_stitched_continuation_preview(
         )
         for source in ordered_sources
     ]
+    from ..services import analysis_cycle_pairing
+
     raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
     missing_sources = [
         {
@@ -4258,14 +4278,14 @@ def _build_stitched_continuation_preview(
         voltage_cycle_identity_available = True
         if quantity == "voltage":
             try:
-                merged = continuation_preview.prepare_stitched_raw(prepared_frames)
+                merged = continuation_preview.prepare_stitched_raw(prepared_frames, discharge_first=discharge_first)
             except ValueError:
                 # Preserve voltage preview for sources whose rows do not carry
                 # enough status information for preview-only cycle inference.
                 merged = continuation_preview.prepare_segmented_raw(prepared_frames)
                 voltage_cycle_identity_available = False
         else:
-            merged = continuation_preview.prepare_stitched_raw(prepared_frames)
+            merged = continuation_preview.prepare_stitched_raw(prepared_frames, discharge_first=discharge_first)
     except ValueError as exc:
         raise _continuation_preview_unavailable(
             code="continuation_cycle_inference_unavailable",
@@ -4291,7 +4311,10 @@ def _build_stitched_continuation_preview(
     # therefore attributed to exactly one segment -- the segment holding
     # that cycle's first merged row -- so it contributes one point, with the
     # value it would have if the chain were a single file.
-    merged_cycles = pd.DataFrame() if quantity == "voltage" else calc.per_cycle(merged)
+    detected = merged.attrs.get("current_detected", False)
+    merged_cycles = pd.DataFrame()
+    if quantity != "voltage":
+        merged_cycles = analysis_cycle_pairing.summary(merged) if detected else calc.per_cycle(merged)
     if quantity == "voltage" and voltage_cycle_identity_available and "cycle" in merged.columns:
         full_cycle_ids = pd.to_numeric(merged["cycle"], errors="coerce").dropna()
         cycle_count: int | None = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
@@ -4333,9 +4356,11 @@ def _build_stitched_continuation_preview(
         full_segment_frame = merged[merged["segment"] == segment_index]
         segment_frame = full_segment_frame
         if (cycle_start is not None or cycle_end is not None) and selected_quantity == "voltage" and voltage_cycle_identity_available and "cycle" in segment_frame.columns:
-            segment_frame = segment_frame[
-                pd.to_numeric(segment_frame["cycle"], errors="coerce").between(requested_start, requested_end)
-            ]
+            labels = pd.to_numeric(segment_frame["cycle"], errors="coerce")
+            in_range = labels.between(requested_start, requested_end)
+            if detected and requested_start == 1 and requested_end >= (cycle_count or 0):
+                in_range |= labels.eq(0)
+            segment_frame = segment_frame[in_range]
         local_labels, _ = stitch.observed_local_cycles(
             raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
         )
@@ -4345,9 +4370,10 @@ def _build_stitched_continuation_preview(
             else pd.Series(dtype="float64")
         )
         if continuation_preview.has_unresolved_biologic_cycles(raw_frame):
-            global_cycles = global_cycles.iloc[:0]
+            if not detected:
+                global_cycles = global_cycles.iloc[:0]
             local_labels = []
-        if merged.attrs.get("cross_source_gcpl_cycle_ids"):
+        if detected or merged.attrs.get("cross_source_gcpl_cycle_ids"):
             global_cycles = global_cycles[global_cycles.gt(0)]
         if selected_quantity == "voltage":
             segment_preview = continuation_preview.voltage_preview_from_raw(
@@ -4432,6 +4458,8 @@ def _build_stitched_continuation_preview(
             else "Cycle number (stitched)"
         ),
         "interpretation": "stitched",
+        **({"cycle_note": analysis_cycle_pairing.detection_note(merged, charge_first=not discharge_first),
+            "detected_order": "discharge_charge" if discharge_first else "charge_discharge"} if detected else {}),
         "segments": response_segments,
     }
 
@@ -5179,6 +5207,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
         if req.interpretation == "stitched":
             return _build_stitched_continuation_preview(
                 ordered_sources,
+                discharge_first=req.discharge_first,
                 quantity=req.quantity,
                 voltage_x_axis=req.voltage_x_axis,
                 cycle_start=req.cycle_start,
@@ -5689,6 +5718,9 @@ def _create_imported_cells_impl_raw(
                 first_prepared["meta"],
                 draft.metadata,
             )
+            headers = (prepared_sources_by_staged_name[source.staged_name]["meta"] for source in sources)
+            if (mass := parsing.first_characteristic_mass_mg(headers)) is not None:
+                imported_metadata["active_material_mg"] = str(mass)
             override_values = {
                 "override.active_mass_mg": draft.active_mass_mg_override,
                 "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
@@ -6362,6 +6394,9 @@ def register_files(req: RegisterRequest, db: Session = Depends(get_db)):
         db.add(test)
         db.flush()
 
+    characteristic = parsing.first_characteristic_mass_mg(file.header_meta for file in files)
+    if characteristic is not None and not any(entry.key == "active_material_mg" for entry in cell.metadata_entries):
+        db.add(CellMetadata(cell=cell, key="active_material_mg", value=str(characteristic)))
     base = max((l.position for l in test.file_links), default=-1) + 1
     for i, f in enumerate(files):
         db.add(TestFile(test_id=test.id, file_id=f.id, position=base + i))

@@ -1059,6 +1059,10 @@ def _build_raw_layout_index(
     )
     if isinstance(biologic_attrs, dict) and "cell_dimensions" in biologic_attrs:
         result["gcpl_cell_dimensions"] = biologic_attrs["cell_dimensions"]
+    if isinstance(biologic_attrs, dict):
+        from .biologic_quantities import measured_phase_facts
+
+        result["biologic_measured_phases"] = measured_phase_facts(frame)
     if biologic_cycle_source in BIOLOGIC_CYCLE_IDENTITY_SOURCES:
         result["biologic_cycle_identity_source"] = biologic_cycle_source
     step_column = next(

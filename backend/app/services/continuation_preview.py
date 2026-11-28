@@ -161,13 +161,12 @@ def has_unresolved_biologic_cycles(frame: pd.DataFrame) -> bool:
     return "measurement_type" in frame and frame["measurement_type"].eq(UNRESOLVED_CYCLE_SOURCE).any()
 
 
-def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
+def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame], *, discharge_first=False) -> pd.DataFrame:
     """Return ordered raw rows with preview-only inferred cycles and provenance."""
 
     from . import biologic_gcpl_executions as executions
+    from .biologic_quantities import measured_phase_facts
 
-    if any(has_unresolved_biologic_cycles(frame) for frame in source_frames):
-        raise ValueError("The BioLogic recording has unresolved cycles. Its measured time series is available.")
     summaries = [executions.pairing_summary_from_frame(frame) for frame in source_frames]
     if executions.eligible_pair_positions(summaries):
         # The acquisition-backed interpretation is scientific and shared with
@@ -189,6 +188,25 @@ def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
         return merged
     if "status" not in merged.columns:
         raise ValueError("The raw source chain has no status column to infer cycles.")
+    def needs_detected_pairs(frame):
+        if has_unresolved_biologic_cycles(frame):
+            return True
+        if frame.attrs.get("biologic_gcpl", {}).get("step_index_source") != "Ns":
+            return False
+        if "cycle_complete" not in frame or frame.cycle_complete.all():
+            return False
+        first = measured_phase_facts(frame)
+        return bool(first) and (not frame.cycle_complete.any()
+                                or (first["first"] == "discharge" and not first["first_complete"]))
+
+    if discharge_first or any(needs_detected_pairs(frame) for frame in source_frames):
+        from . import analysis_cycle_pairing
+
+        biologic = [i for i, frame in enumerate(source_frames) if "biologic_gcpl" in frame.attrs]
+        merged = analysis_cycle_pairing.label_pairs(merged, charge_first=not discharge_first, measured_only=True,
+            boundaries=analysis_cycle_pairing.run_boundaries(merged, biologic))
+        merged.attrs["current_detected"] = True
+        return merged
     merged["cycle"] = infer_contiguous_cycle_ids(merged["status"])
     if {"segment", "measurement_type", "cycle_complete", "current_ma"}.issubset(merged.columns):
         candidates: dict[int, tuple[pd.Index, str]] = {}

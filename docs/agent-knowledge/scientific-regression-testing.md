@@ -128,3 +128,11 @@ between two counted runs. Stitched cycle zero is shared by all such rows. Use
 source position and record index to check the identity of the last plotted
 sample. A plausible endpoint time or a correct total row count can conceal
 an earlier sample occupying the last position.
+
+For BioLogic imports, exercise an OCV followed by a GCPL carrying both recorded
+masses. The new Cell's normalization default is the first unit-labelled
+characteristic mass. Existing Cell metadata and explicit overrides keep their
+precedence. Verify detected cycle summaries against measured phase pairs on
+both sides of a restart. Linked EC-Lab techniques can share a clock origin
+(timestamp minus acquisition elapsed time), while a relaunched program can
+establish a new one. A half-cycle cannot complete across two known origins.

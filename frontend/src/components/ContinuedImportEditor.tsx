@@ -257,6 +257,7 @@ export function ContinuedImportEditor({
     if (previewQuantity === "voltage") setPreviewVoltageCycleRange(next);
     else setPreviewCapacityCycleRange(next);
   };
+  const [detectDischargeFirst, setDetectDischargeFirst] = useState(false);
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
   const [userChosePreviewInterpretation, setUserChosePreviewInterpretation] = useState(false);
   const previousOrderRef = useRef<string[]>(order);
@@ -306,6 +307,7 @@ export function ContinuedImportEditor({
   }, [allOcvSources]);
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
     queryKey: [
+      detectDischargeFirst,
       ...continuationPreviewQueryKey(
         order,
         orderedDrafts,
@@ -321,6 +323,7 @@ export function ContinuedImportEditor({
     ],
     queryFn: ({ signal }) => previewContinuationSources({
       ...continuationPreviewRequest(orderedDrafts, order, previewQuantity, effectivePreviewInterpretation),
+      discharge_first: detectDischargeFirst,
       voltage_x_axis: previewVoltageXAxis,
       ...(previewQuantity === "voltage" && previewVoltageCycleRange
         ? { cycle_start: previewVoltageCycleRange.start, cycle_end: previewVoltageCycleRange.end }
@@ -339,6 +342,7 @@ export function ContinuedImportEditor({
   });
   const chargePreviewQuery = useQuery<ContinuationPreviewResult>({
     queryKey: [
+      detectDischargeFirst,
       ...continuationPreviewQueryKey(
         order,
         orderedDrafts,
@@ -352,6 +356,7 @@ export function ContinuedImportEditor({
     queryFn: ({ signal }) => previewContinuationSources(
       {
         ...continuationPreviewRequest(orderedDrafts, order, "charge_capacity_mah", effectivePreviewInterpretation),
+        discharge_first: detectDischargeFirst,
         ...(previewCapacityCycleRange
           ? { cycle_start: previewCapacityCycleRange.start, cycle_end: previewCapacityCycleRange.end }
           : {}),
@@ -381,10 +386,11 @@ export function ContinuedImportEditor({
     [activeCombinedQuery.data, previewQuantity, previewVoltageXAxis],
   );
   const displayChargePreview = chargePreviewQuery.data;
-  const normalizableByMass = orderedDrafts.length > 0 && orderedDrafts.every((draft) => {
-    const massMg = cellDraft.active_mass_mg_override ?? draft.active_mass_mg;
-    return massMg !== null && massMg !== undefined && massMg > 0;
-  });
+  const firstMassSource = orderedDrafts.find(draft => draft.recorded_masses?.some(mass => mass.kind === "characteristic"))
+    ?? orderedDrafts.find(draft => (draft.active_mass_mg ?? 0) > 0);
+  const sourceMassMg = firstMassSource?.active_mass_mg;
+  const cellMassMg = cellDraft.active_mass_mg_override ?? sourceMassMg;
+  const normalizableByMass = (cellMassMg ?? 0) > 0;
   const inspectedCycleExtent = effectivePreviewInterpretation === "stitched"
     ? (result?.sources.reduce((sum, source) => sum + (source.local_cycle_count ?? 0), 0) ?? 0)
     : Math.max(0, ...(result?.sources.map((source) => source.local_cycle_count ?? 0) ?? []));
@@ -448,9 +454,7 @@ export function ContinuedImportEditor({
       const chargeX = charge?.x ?? [];
       const efficiencyX = efficiency?.coulombic_efficiency_x ?? [];
       const efficiencyPct = efficiency?.coulombic_efficiency_pct ?? [];
-      const draft = orderedDrafts.find((item) => item.staged_name === key);
-      const massMg = cellDraft.active_mass_mg_override ?? draft?.active_mass_mg;
-      const massG = massMg && massMg > 0 ? massMg / 1000 : null;
+      const massG = cellMassMg && cellMassMg > 0 ? cellMassMg / 1000 : null;
       const sourceColor = colors[key] ?? "#12b886";
       return {
         x: [],
@@ -475,8 +479,7 @@ export function ContinuedImportEditor({
     displayChargePreview,
     previewCycleRange?.start,
     previewCycleRange?.end,
-    orderedDrafts,
-    cellDraft.active_mass_mg_override,
+    cellMassMg,
     colors,
     selectedSourceKey,
   ]);
@@ -1045,6 +1048,19 @@ export function ContinuedImportEditor({
                       </Tabs.List>
                     </Tabs>
                 )}
+                {previewMode === "combined" && previewQuantity !== "voltage" && !combinedPreviewLoading && displayCombinedPreview?.cycle_note && (
+                  <Group gap={4}>
+                    <Text size="xs" c="dimmed">{displayCombinedPreview.cycle_note}</Text>
+                    <Button size="compact-xs" variant="subtle" onClick={() => {
+                      setUserChosePreviewInterpretation(true);
+                      setPreviewInterpretation("stitched");
+                      setDetectDischargeFirst(displayCombinedPreview.detected_order === "charge_discharge");
+                    }}>
+                      {displayCombinedPreview.detected_order === "charge_discharge" ? "Pair discharge first"
+                        : displayCombinedPreview.detected_order ? "Pair charge first" : "Detect cycles from current"}
+                    </Button>
+                  </Group>
+                )}
                 {previewMode === "combined" ? (
                 sourceInspectionFailed ? (
                     <Text size="sm" c="dimmed">Continuity inspection failed. Open Errors below for details.</Text>
@@ -1106,6 +1122,7 @@ export function ContinuedImportEditor({
                     checked={effectivePreviewInterpretation === "stitched"}
                     onChange={(event) => {
                       setUserChosePreviewInterpretation(true);
+                      setDetectDischargeFirst(false);
                       setPreviewInterpretation(event.currentTarget.checked ? "stitched" : "source_chain");
                     }}
                   />
@@ -1143,18 +1160,18 @@ export function ContinuedImportEditor({
               <TextInput label="Cell name" value={cellDraft.cell_name} onChange={(event) => updateDraft({ cell_name: event.currentTarget.value })} />
               <Textarea label="Cell notes" autosize minRows={3} value={cellDraft.description} onChange={(event) => updateDraft({ description: event.currentTarget.value })} />
               <Divider label="Scientific overrides and presets" labelPosition="left" />
-              <CellMassInput sources={drafts} label="Active material mass (mg)" min={0.000001} decimalScale={6} value={cellDraft.active_mass_mg_override ?? ""} placeholder={cellDraft.source_metadata?.active_mass_mg?.toString() ?? "Source value"} onChange={(value) => {
+              <CellMassInput sources={orderedDrafts} defaultMassMg={sourceMassMg} label="Active material mass (mg)" min={0.000001} decimalScale={6} value={cellDraft.active_mass_mg_override ?? ""} placeholder={sourceMassMg?.toString() ?? "Source value"} onChange={(value) => {
                 const mass = value === "" ? null : Number(value);
                 const specific = cellDraft.active_material_specific_capacity_mah_g;
                 updateDraft({
                   active_mass_mg_override: mass,
                   nominal_capacity_mah_override: cellDraft.active_material_selection !== "custom" && specific
-                    ? nominalCapacityFromMass(mass ?? cellDraft.source_metadata?.active_mass_mg ?? null, specific)
+                    ? nominalCapacityFromMass(mass ?? sourceMassMg ?? null, specific)
                     : cellDraft.nominal_capacity_mah_override,
                 });
               }} />
-              <Select label="Active material preset" data={materialOptions} value={cellDraft.active_material_selection} searchable onChange={(value) => { const preset = materialPresets.find((item) => item.id === value); updateDraft({ active_material_selection: value ?? "custom", active_material_preset_id: preset?.id ?? null, active_material_name: preset?.name ?? null, active_material_specific_capacity_mah_g: preset?.specific_capacity_mah_g ?? null, nominal_capacity_mah_override: preset ? (cellDraft.active_mass_mg_override ?? cellDraft.source_metadata?.active_mass_mg) ? ((cellDraft.active_mass_mg_override ?? cellDraft.source_metadata?.active_mass_mg)! * preset.specific_capacity_mah_g) / 1000 : null : cellDraft.nominal_capacity_mah_override }); }} />
-              <AddScientificPresetButton kind="material" disabled={importing} onCreated={(preset) => { const mass = cellDraft.active_mass_mg_override ?? cellDraft.source_metadata?.active_mass_mg; updateDraft({ active_material_selection: preset.id, active_material_preset_id: preset.id, active_material_name: preset.name, active_material_specific_capacity_mah_g: preset.specific_capacity_mah_g, nominal_capacity_mah_override: mass ? mass * preset.specific_capacity_mah_g / 1000 : null }); }} />
+              <Select label="Active material preset" data={materialOptions} value={cellDraft.active_material_selection} searchable onChange={(value) => { const preset = materialPresets.find((item) => item.id === value); updateDraft({ active_material_selection: value ?? "custom", active_material_preset_id: preset?.id ?? null, active_material_name: preset?.name ?? null, active_material_specific_capacity_mah_g: preset?.specific_capacity_mah_g ?? null, nominal_capacity_mah_override: preset ? (cellDraft.active_mass_mg_override ?? sourceMassMg) ? ((cellDraft.active_mass_mg_override ?? sourceMassMg)! * preset.specific_capacity_mah_g) / 1000 : null : cellDraft.nominal_capacity_mah_override }); }} />
+              <AddScientificPresetButton kind="material" disabled={importing} onCreated={(preset) => { const mass = cellDraft.active_mass_mg_override ?? sourceMassMg; updateDraft({ active_material_selection: preset.id, active_material_preset_id: preset.id, active_material_name: preset.name, active_material_specific_capacity_mah_g: preset.specific_capacity_mah_g, nominal_capacity_mah_override: mass ? mass * preset.specific_capacity_mah_g / 1000 : null }); }} />
               <NumberInput label="Nominal capacity (mAh)" min={0.000001} decimalScale={6} value={cellDraft.nominal_capacity_mah_override ?? ""} placeholder={cellDraft.source_metadata?.nominal_capacity_mah?.toString() ?? "Source value"} disabled={cellDraft.active_material_selection !== "custom"} onChange={(value) => updateDraft({ nominal_capacity_mah_override: value === "" ? null : Number(value) })} />
               <Group grow align="end">
                 <Select label="Electrode-area preset" data={areaOptions} value={cellDraft.electrode_area_selection} searchable onChange={(value) => { const preset = areaPresets.find((item) => item.id === value); updateDraft({ electrode_area_selection: value ?? "custom", electrode_area_preset_id: preset?.id ?? null, electrode_area_preset_name: preset?.name ?? null, electrode_area_cm2_override: preset?.area_cm2 ?? cellDraft.electrode_area_cm2_override }); }} />

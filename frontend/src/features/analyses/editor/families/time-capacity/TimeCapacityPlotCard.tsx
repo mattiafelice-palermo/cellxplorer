@@ -1652,7 +1652,7 @@ function TimeCapacityPlotCardView({
   const familyActivity = usePlotFamilyActivity();
   const pairingSelection = JSON.stringify(spec.selection.entries);
   const [pairedMaximum, setPairedMaximum] = useState<{ selection: string; maximum: number } | null>(null);
-  const maxAvailableCycle = spec.computation.cycle_pairing === "discharge_charge"
+  const maxAvailableCycle = (spec.computation.cycle_pairing && spec.computation.cycle_pairing !== "programmed")
     ? (pairedMaximum?.selection === pairingSelection ? pairedMaximum.maximum : null)
     : programmedMaximum;
   const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;

@@ -1275,11 +1275,13 @@ export function LibraryPage() {
         "Saved area preset",
     });
   }
+  const massMetadata = detail.data?.scientific_metadata.active_mass_mg;
+  const defaultMassMg = massMetadata?.legacy_value ?? massMetadata?.source_value;
   const editScientificValid =
     editMaterialSelection === "custom" ||
     Boolean(
       (editActiveMass ??
-        detail.data?.scientific_metadata.active_mass_mg.source_value) &&
+        defaultMassMg) &&
         editNominalCapacity
     );
 
@@ -2806,23 +2808,22 @@ export function LibraryPage() {
                   in the Metadata tab. Clear a field to restore the source value.
                 </Alert>
                 <Group grow align="start">
-                  <CellMassInput sources={detail.data.sources}
+                  <CellMassInput sources={detail.data.sources} defaultMassMg={defaultMassMg}
                     label="Active material mass (mg)"
                     description={`Source: ${
-                      detail.data.scientific_metadata.active_mass_mg.source_value ?? "not detected"
+                      defaultMassMg ?? "not detected"
                     }`}
                     min={0.000001}
                     decimalScale={6}
                     value={editActiveMass ?? ""}
                     placeholder={
-                      (detail.data.scientific_metadata.active_mass_mg.legacy_value ??
-                        detail.data.scientific_metadata.active_mass_mg.source_value)?.toString() ??
+                      defaultMassMg?.toString() ??
                       "Custom value"
                     }
                     error={
                       editMaterialSelection !== "custom" &&
                       !(editActiveMass ??
-                        detail.data.scientific_metadata.active_mass_mg.source_value)
+                        defaultMassMg)
                         ? "Enter a mass to calculate nominal capacity"
                         : undefined
                     }
@@ -2839,7 +2840,7 @@ export function LibraryPage() {
                             .specific_capacity_mah_g;
                         const effectiveMass =
                           mass ??
-                          detail.data.scientific_metadata.active_mass_mg.source_value;
+                          defaultMassMg;
                         setEditNominalCapacity(
                           nominalCapacityFromMass(effectiveMass, specificCapacity)
                         );
@@ -2865,7 +2866,7 @@ export function LibraryPage() {
                           .specific_capacity_mah_g;
                       const mass =
                         editActiveMass ??
-                        detail.data.scientific_metadata.active_mass_mg.source_value;
+                        defaultMassMg;
                       setEditNominalCapacity(
                         nominalCapacityFromMass(mass, specificCapacity)
                       );
@@ -2874,7 +2875,7 @@ export function LibraryPage() {
                 </Group>
                 <AddScientificPresetButton kind="material" onCreated={(preset) => {
                   setEditMaterialSelection(preset.id);
-                  const mass = editActiveMass ?? detail.data!.scientific_metadata.active_mass_mg.source_value;
+                  const mass = editActiveMass ?? defaultMassMg;
                   setEditNominalCapacity(nominalCapacityFromMass(mass, preset.specific_capacity_mah_g));
                 }} />
                 <NumberInput

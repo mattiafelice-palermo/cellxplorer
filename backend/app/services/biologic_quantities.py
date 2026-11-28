@@ -32,3 +32,20 @@ def record_limitations(frame: pd.DataFrame, technique: str, limitations: dict[st
         frame["measurement_type"] = UNRESOLVED_CYCLE_SOURCE
         if "biologic_mb_time_s" not in frame:
             frame["mpr_elapsed_time_s"] = frame["total_time_s"]
+
+def measured_phase_facts(rows: pd.DataFrame) -> dict:
+    """Compact evidence for offering pairing and identifying an unmatched first discharge."""
+    if not {"status", "current_ma"}.issubset(rows):
+        return {}
+    from .calc import status_matches
+
+    current = pd.to_numeric(rows.current_ma, errors="coerce")
+    discharge = status_matches(rows.status, "dchg", "discharge") & current.lt(0)
+    charge = ~discharge & status_matches(rows.status, "chg", "charge") & current.gt(0)
+    active = np.flatnonzero(np.isfinite(current) & (charge | discharge))
+    if not len(active):
+        return {}
+    first = int(active[0])
+    return {"first": "discharge" if discharge.iloc[first] else "charge",
+            "first_complete": bool(rows.cycle_complete.iloc[first]) if "cycle_complete" in rows else True,
+            "charge": bool(charge.any()), "discharge": bool(discharge.any())}

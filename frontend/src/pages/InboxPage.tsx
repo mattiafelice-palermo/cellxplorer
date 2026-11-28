@@ -2364,7 +2364,7 @@ function ImportModal({
                 labelPosition="left"
               />
               <Group grow align="start">
-                <CellMassInput sources={[draft]}
+                <CellMassInput sources={[draft]} defaultMassMg={draft.active_mass_mg}
                   label="Active material mass (mg)"
                   description={
                     draft.active_mass_mg === null

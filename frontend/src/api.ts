@@ -144,7 +144,7 @@ export const post = <T>(url: string, body?: unknown, options?: Pick<RequestInit,
 // A Vite session can outlive its Python backend. Older servers accept "d"
 // but return seconds, so use their supported seconds protocol explicitly.
 export interface AnalysisCapabilities {
-  capabilities?: { time_capacity_days?: boolean; discharge_charge_pairing?: boolean; analysis_cache_only?: boolean };
+  capabilities?: { time_capacity_days?: boolean; discharge_charge_pairing?: boolean; charge_discharge_pairing?: boolean; analysis_cache_only?: boolean };
 }
 
 let pendingHealth: { until: number; request: Promise<AnalysisCapabilities> } | undefined;
@@ -1395,7 +1395,7 @@ export interface AnalysisSpec {
   /** DCIR-only rest/pulse definitions. Never shared with other analysis tabs. */
   dcir_segments?: DcirSegment[];
   computation: {
-    cycle_pairing?: "programmed" | "discharge_charge";
+    cycle_pairing?: "programmed" | "discharge_charge" | "charge_discharge";
     cycle_range: { start: number | null; end: number | null };
     exclude_check_cycles_every_n: number;
     retention_reference: { mode: "max_first_n" | "cycle"; n: number; cycle: number | null };
@@ -2394,6 +2394,7 @@ export interface ContinuationInspectRequest {
 }
 
 export interface ContinuationPreviewRequest {
+  discharge_first?: boolean;
   sources: ContinuationInspectSourceRequest[];
   proposed_order: string[];
   quantity?: "voltage" | "discharge_capacity_mah" | "charge_capacity_mah" | "capacity_bundle" | null;
@@ -2431,6 +2432,8 @@ export interface ContinuationPreviewResult {
   x_label?: string;
   interpretation?: "source_chain" | "stitched";
   cycle_count?: number | null;
+  cycle_note?: string;
+  detected_order?: "charge_discharge" | "discharge_charge";
   segments: ContinuationPreviewSegment[];
 }
 

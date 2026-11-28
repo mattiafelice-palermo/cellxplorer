@@ -2730,12 +2730,33 @@ def compute(
             source_bookkeeping_started,
         )
         paired_raw = None
-        if analysis_cycle_pairing.enabled(computation):
-            paired_raw, segments, missing = analysis_cycle_pairing.measurements(refs)
+        explicit_pairing = analysis_cycle_pairing.enabled(computation)
+        charge_first = computation.get("cycle_pairing") == "charge_discharge"
+        if not explicit_pairing:
+            stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
+            missing_cycles, initial_discharge = (
+                analysis_cycle_pairing.missing_programmed_phases(refs, segments,
+                    stitched.attrs.get("cross_source_cp_cycle_ids", []) + stitched.attrs.get("cross_source_gcpl_cycle_ids", []))
+                if not missing else (False, False)
+            )
+            if missing_cycles or (initial_discharge and not stitched.empty):
+                charge_first = stitched.empty
+                if not charge_first:
+                    detail = ("The initial discharge is excluded from programmed cycle totals and remains in the time plot."
+                              if initial_discharge else "Some measured phases have no programmed cycle.")
+                    badges.append({"kind": "cycle_detection_available", "cell_id": cell.id,
+                                   "cell_name": cell.name, "detail": detail})
+        if explicit_pairing or charge_first:
+            paired_raw, segments, missing = analysis_cycle_pairing.measurements(
+                refs, charge_first=charge_first,
+            )
             stitched = analysis_cycle_pairing.summary(paired_raw) if not missing else pd.DataFrame()
             stitched.attrs.update(paired_raw.attrs)
-        else:
-            stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
+            if charge_first and not missing:
+                kind = "cycles_detected" if not stitched.empty else "no_charge_first_pairs"
+                detail = (analysis_cycle_pairing.detection_note(paired_raw) if not stitched.empty else
+                          "No charge followed by discharge was found. Try discharge followed by charge.")
+                badges.append({"kind": kind, "cell_id": cell.id, "cell_name": cell.name, "detail": detail})
         post_stitch_started = _cycles_profile_started(profiling)
         descriptors = source_descriptors(files, segments, missing, stitched)
         complete = stitch.stitch_metadata(stitched)["complete"]
@@ -4312,7 +4333,9 @@ def compute_time_capacity(
         else:
             with time_capacity_path.timed_stage(cell_diagnostics, "legacy_full_raw_read"):
                 raw, segments, missing = (
-                    analysis_cycle_pairing.measurements(refs) if paired else stitch.stitch_raw(refs)
+                    analysis_cycle_pairing.measurements(
+                        refs, charge_first=computation.get("cycle_pairing") == "charge_discharge",
+                    ) if paired else stitch.stitch_raw(refs)
                 )
 
         cell_diagnostics["raw_rows_loaded_before_filter"] = len(raw)

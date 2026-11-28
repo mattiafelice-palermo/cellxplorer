@@ -197,6 +197,31 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(preview["raw_metadata"]["modules.count"], "3")
         self.assertEqual(preview["raw_metadata"]["data.n_datapoints"], "1")
 
+    def test_import_uses_characteristic_mass_in_recorded_units_and_preserves_override(self):
+        import struct
+
+        db = self.make_session()
+        with TemporaryDirectory() as tmp:
+            for code, value, expected, override in [(1, 1.5, 1500, None), (2, 125, 125, 99), (255, 5, 143, None)]:
+                path = Path(tmp) / f"mass-{code}.mpr"
+                settings = bytearray(encode_gcpl_settings([{"set_i_c": 0, "current": -1}], active_mass_mg=143))
+                struct.pack_into("<f", settings, 0x024C, value)
+                settings[0x0251] = code
+                write_gcpl_mpr(path, [{"total_time_s": 0, "ns": 0, "control": -1}],
+                               settings_payload=bytes(settings))
+                preview = files._inspect_import_path(path, db)
+                self.assertEqual(preview["active_mass_mg"], expected)
+                request = files.ImportCellsRequest(cells=[files.ImportCellDraft(
+                    cell_name=path.stem, filename=path.name, source_path=str(path),
+                    staged_name=path.name, active_mass_mg_override=override,
+                )])
+                with patch.object(files, "start_import_cache_jobs", return_value={}):
+                    files._create_imported_cells_impl(request, db)
+                cell = db.query(Cell).filter_by(name=path.stem).one()
+                mass = library.cell_scientific_metadata(cell)["active_mass_mg"]
+                self.assertEqual(mass["effective_value"], override or expected)
+                self.assertEqual(mass["legacy_value"], expected)
+
     def test_complete_staged_preview_bounds_all_metadata_facts(self):
         db = self.make_session()
         with TemporaryDirectory() as tmp:
@@ -292,7 +317,7 @@ class ImportFlowTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "adapter defect"):
                     parsing.read_header_metadata(path)
 
-    def test_ambiguous_gcpl_header_allows_voltage_preview_without_a_cycle_summary(self):
+    def test_ambiguous_gcpl_header_keeps_source_cycles_unknown_and_displays_detected_pair(self):
         with TemporaryDirectory() as tmp, patch.object(files.cache, "CACHE_DIR", Path(tmp) / "cache"):
             path = Path(tmp) / "preview.mpr"
             _write_ambiguous_loop_mpr(path)
@@ -306,12 +331,21 @@ class ImportFlowTests(unittest.TestCase):
                   "parser_version": info["parser_version"]}],
                 quantity="voltage", voltage_x_axis="time", cycle_start=None, cycle_end=None,
             )
-            self.assertIsNone(result["cycle_count"])
+            self.assertEqual(result["cycle_count"], 1)
+            self.assertEqual(result["detected_order"], "charge_discharge")
             segment = result["segments"][0]
             self.assertEqual(segment["source_cycle_count"], 0)
-            self.assertIsNone(segment["global_cycle_start"])
+            self.assertEqual(segment["global_cycle_start"], 1)
             self.assertEqual(segment["current_ma"], [1, -1, 1])
             self.assertEqual(segment["x"], [0, 1, 2])
+            request = _continuation_preview_request([path])
+            request.interpretation = "stitched"
+            request.quantity = "capacity_bundle"
+            request.discharge_first = True
+            detected = files.preview_continuation_sources(request)
+            self.assertEqual(detected["detected_order"], "discharge_charge")
+            self.assertEqual(detected["cycle_count"], 1)
+
 
     def test_biologic_mpr_synthetic_preview_builds_without_mpt(self):
         """A verified single-direction MPR can build a preview without an MPT."""

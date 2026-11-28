@@ -1200,7 +1200,7 @@ function BadgeBar({ badges }: { badges: ApiBadge[] }) {
     <Stack gap={4}>
     <AnalysisSourceLimitations badges={badges} />
     <Group gap={6}>
-      {badges.filter(b => b.kind !== "exploratory_mpr").map((b, i) => (
+      {badges.filter(b => !["exploratory_mpr", "cycle_detection_available", "cycles_detected", "no_charge_first_pairs"].includes(b.kind)).map((b, i) => (
         <Tooltip key={i} label={b.detail} multiline w={320}>
           <Badge color={colors[b.kind] ?? "gray"} variant="light" size="sm">
             {b.kind === "exploratory_mpr" ? "Permissive MPR" : b.kind.replace(/_/g, " ")}
@@ -4451,6 +4451,16 @@ function AnalysisEditorView({
   };
 
   const displayResult = rendered?.result ?? compute.data;
+  const cycleNotes = displayResult?.badges.filter(b =>
+    ["cycle_detection_available", "cycles_detected", "no_charge_first_pairs"].includes(b.kind)
+  ) ?? [];
+  const cycleNoteGroups = new Map<string, string[]>();
+  for (const note of cycleNotes) {
+    const names = cycleNoteGroups.get(note.detail) ?? [];
+    if (note.cell_name && !names.includes(note.cell_name)) names.push(note.cell_name);
+    cycleNoteGroups.set(note.detail, names);
+  }
+  const suggestDischargeFirst = cycleNotes.some(b => b.kind !== "cycle_detection_available");
   const activePlot = spec
     ? (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
     : null;
@@ -5511,13 +5521,29 @@ function AnalysisEditorView({
           allowDeselect={false}
           data={[
             { value: "programmed", label: "Programmed cycles" },
+            { value: "charge_discharge", label: "Detect charge followed by discharge", disabled: !analysisCapabilities.data?.capabilities?.charge_discharge_pairing },
             { value: "discharge_charge", label: "Discharge followed by charge", disabled: !analysisCapabilities.data?.capabilities?.discharge_charge_pairing },
           ]}
           value={spec.computation.cycle_pairing ?? "programmed"}
           onChange={(value) => update((draft) => {
-            draft.computation.cycle_pairing = value === "discharge_charge" ? value : "programmed";
+            draft.computation.cycle_pairing = value === "discharge_charge" || value === "charge_discharge" ? value : "programmed";
           })}
         />
+      )}
+      {activeTab === "cycles" && Array.from(cycleNoteGroups, ([detail, names]) => (
+        <Text key={detail} size="xs" c="dimmed" title={names.join(", ")}>
+          {names.length > 1 ? `${names.length} cells - ` : ""}{detail}
+        </Text>
+      ))}
+      {activeTab === "cycles" && (!spec.computation.cycle_pairing || spec.computation.cycle_pairing === "programmed") &&
+        cycleNotes.length > 0 &&
+        analysisCapabilities.data?.capabilities?.charge_discharge_pairing && (
+          <Button size="compact-xs" variant="subtle" onClick={() => update(draft => {
+            draft.computation.cycle_pairing = suggestDischargeFirst ? "discharge_charge" : "charge_discharge";
+          })}>
+            {suggestDischargeFirst
+              ? "Pair discharge first" : "Detect cycles from current"}
+          </Button>
       )}
       {activeTab === "time_capacity" && (
         <TimeCapacitySettings

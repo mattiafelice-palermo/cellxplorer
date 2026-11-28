@@ -43,7 +43,7 @@ RESULT_SCHEMA_VERSIONS = {
     # Spec 040.3: each kind's persisted "sources" entries gained a "files"
     # array (per-source {hash, position, parser_version}), so a legacy
     # cached payload missing that array must not be served as if it had it.
-    "cycles": 5,  # Signed GCPL V dQ energy derivation and provenance.
+    "cycles": 6,  # Current-detected summaries when programmed cycles are absent.
     # Specs 040.4/041.5: the payload gained a top-level "voltage_channels"
     # availability map, "settings" gained "voltage_channel", and the channel
     # entries now carry resolved role/reference presentation context. Legacy
@@ -59,7 +59,7 @@ RESULT_SCHEMA_VERSIONS = {
     # entries produced before that worker parity fix.
     # Consecutive time uses the Cell timeline, including skipped-cycle gaps.
     # Display sampling topology and completeness; voltage/current extrema.
-    "time_capacity": 15,  # Uncounted measurements retain their acquisition position.
+    "time_capacity": 16,  # Uncounted measurements retain their acquisition position.
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,
@@ -232,7 +232,7 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
         return {
             "selection": selection,
             "computation": {
-                **({"cycle_pairing": "discharge_charge"} if computation.get("cycle_pairing") == "discharge_charge" else {}),
+                **({"cycle_pairing": computation["cycle_pairing"]} if computation.get("cycle_pairing") in ("discharge_charge", "charge_discharge") else {}),
                 "cycle_range": computation.get("cycle_range") or {},
                 "exclude_check_cycles_every_n": computation.get(
                     "exclude_check_cycles_every_n"
@@ -257,7 +257,7 @@ def _scientific_spec(spec: dict, kind: str) -> dict:
                 # Time/Capacity retains the generic cycle-range fallback used
                 # by time_capacity_settings() for legacy specs without a
                 # dedicated time_capacity range.
-                **({"cycle_pairing": "discharge_charge"} if computation.get("cycle_pairing") == "discharge_charge" else {}),
+                **({"cycle_pairing": computation["cycle_pairing"]} if computation.get("cycle_pairing") in ("discharge_charge", "charge_discharge") else {}),
                 "cycle_range": computation.get("cycle_range") or {},
                 "protocol_filter": computation.get("protocol_filter") or {},
             },

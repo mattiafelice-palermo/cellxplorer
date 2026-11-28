@@ -10,7 +10,7 @@ type MassSource = {
   maccor_mass_from_scap?: boolean;
 };
 
-export function CellMassInput({ sources, ...input }: NumberInputProps & { sources: MassSource[] }) {
+export function CellMassInput({ sources, defaultMassMg, ...input }: NumberInputProps & { sources: MassSource[]; defaultMassMg?: number | null }) {
   const hasSCap = sources.some((source) => source.maccor_scap != null);
   if (!hasSCap && !sources.some((source) => source.recorded_masses?.length)) {
     return <NumberInput {...input} />;
@@ -38,8 +38,8 @@ export function CellMassInput({ sources, ...input }: NumberInputProps & { source
                 const label = kind === "characteristic" ? "Characteristic mass" : "Active material mass";
                 return (
                   <Menu.Item key={kind} onClick={() => input.onChange?.(massMg)}
-                    rightSection={input.value === massMg ? <IconCheck size={14} /> : undefined}>
-                    {label} · {Number(value.toPrecision(7))} {unit}
+                    rightSection={(input.value === "" || input.value == null ? defaultMassMg : input.value) === massMg ? <IconCheck size={14} /> : undefined}>
+                    {label} · {Number(value.toPrecision(7))} {unit}{massMg === defaultMassMg ? " (default)" : ""}
                   </Menu.Item>
                 );
               })}
@@ -51,7 +51,7 @@ export function CellMassInput({ sources, ...input }: NumberInputProps & { source
                   const massMg = source.maccor_scap! * (unit === "g" ? 1000 : 1);
                   return Number.isFinite(massMg) && (
                     <Menu.Item key={unit} onClick={() => input.onChange?.(massMg)}
-                      rightSection={input.value === massMg ? <IconCheck size={14} /> : undefined}>
+                      rightSection={(input.value === "" || input.value == null ? defaultMassMg : input.value) === massMg ? <IconCheck size={14} /> : undefined}>
                       Use SCap as {unit === "g" ? "grams" : "milligrams"} · {Number(massMg.toPrecision(7))} mg
                     </Menu.Item>
                   );

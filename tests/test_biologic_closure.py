@@ -483,6 +483,20 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         for voltage, row in zip(trace["voltage_v"], rows, strict=True):
             self.assertAlmostEqual(voltage, row["ewe_v"] - row["ece_v"], places=5)
 
+        from app.routers import files as files_router
+
+        result = analysis_engine.compute(self.db, spec, None)
+        self.assertEqual(result["cell_series"][0]["x"], [1])
+        self.assertIn("cycles_detected", [notice["kind"] for notice in result["badges"]])
+        ordered = [{"hash": source.hash, "parser_version": source.parser_version,
+                    "filename": path.name, "source_key": "one"}]
+        for build in (files_router._build_stitched_continuation_preview, files_router._build_continuation_preview):
+            preview = build(ordered, quantity="capacity_bundle")
+            self.assertEqual(preview["cycle_count"], 1)
+            self.assertEqual(preview["segments"][0]["discharge_capacity_y"], [1.])
+            self.assertIn("detected from current", preview["cycle_note"])
+        self.assertEqual(source.cycle_count, 0)
+
         # Re-import the same bytes after an older reader stored a metadata-only verdict.
         parsing._mark_biologic_source_metadata_only(
             source, warning="Unresolved loop", parser_version="bm:gcpl20cpocv1:r1",
