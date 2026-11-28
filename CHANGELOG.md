@@ -13,6 +13,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.42 - 2026-11-28
+
+### Bug fixes
+
+- Restore numbered file boundaries in combined import previews and open multi-file voltage plots on the full source chain.
+
 ## 0.29.0-alpha.41 - 2026-11-28
 
 ### New features

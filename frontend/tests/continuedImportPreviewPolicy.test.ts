@@ -10,6 +10,8 @@ import {
   continuationPreviewQueryKey,
   continuationPreviewRequest,
   continuationPreviewTimeAxis,
+  defaultContinuationVoltageRange,
+  previewSourceSpans,
   scaleContinuationPreviewTimeAxis,
 } from "../src/continuedImportPreviewPolicy.ts";
 
@@ -240,19 +242,67 @@ test("source selection highlights capacity markers and voltage lines", () => {
   assert.equal(selectedVoltage.marker?.size, 5);
 });
 
-test("provenance guides keep one colored marker and file number for every segment", () => {
-  const guides = buildContinuationPreviewProvenanceLayout(preview(), {
-    "part-a.ndax": "#12b886",
-    "part-b.xlsx": "#228be6",
-  });
+function source(number: number, start: number, end: number) {
+  return { number, start, end, filename: `part-${number}.mpr`, color: number % 2 ? "#228be6" : "#12b886" };
+}
 
-  assert.equal(guides.shapes?.length, 2);
-  assert.equal(guides.annotations?.length, 2);
-  assert.deepEqual(guides.annotations?.map((annotation) => annotation.text), ["1", "2"]);
-  assert.deepEqual(guides.shapes?.map((shape) => shape.line?.color), ["#228be6", "#12b886"]);
-  assert.deepEqual(guides.annotations?.map((annotation) => annotation.bordercolor), ["#228be6", "#12b886"]);
-  assert.deepEqual(guides.annotations?.map((annotation) => annotation.y), [1.04, 1.04]);
-  assert.deepEqual(guides.annotations?.map((annotation) => annotation.font?.color), ["#1f2937", "#1f2937"]);
+test("combined voltage opens unfiltered even when the final twenty cycles belong to one file", () => {
+  assert.equal(defaultContinuationVoltageRange(6, 51), null);
+  assert.equal(defaultContinuationVoltageRange(2, 0), null);
+  assert.equal(defaultContinuationVoltageRange(1, 15), null);
+  assert.deepEqual(defaultContinuationVoltageRange(1, 51), { start: 32, end: 51 });
+});
+
+test("short recordings keep separate badges and their exact joins on the full time axis", () => {
+  const edges = [0, 60, 60.2, 203, 203.01, 270, 7500];
+  const spans = edges.slice(1).map((end, i) => source(i + 1, edges[i], end));
+  const width = 420;
+  const guides = buildContinuationPreviewProvenanceLayout(spans, { start: 0, end: 7500, width }, true);
+  const labels = guides.annotations!;
+  assert.deepEqual(labels.map((a) => a.text), ["1", "2", "3", "4", "5", "6"]);
+  assert.deepEqual(labels.map((a) => a.bordercolor), spans.map((span) => span.color));
+  assert.deepEqual(guides.shapes!.map((s) => s.x0), edges.slice(1, -1));
+  const centers = labels.map((a) => Number(a.x) * width + Number(a.ax));
+  assert.ok(centers.every((x, i) => i === 0 || x - centers[i - 1] >= 21));
+  assert.equal(labels[1].x, (60 + 60.2) / 2 / 7500);
+  assert.ok(labels.every((a) => a.ay! < 0 && a.showarrow));
+  assert.match(labels[5].hovertext!, /Source 6 · part-6.mpr/);
+
+  const zoom = buildContinuationPreviewProvenanceLayout(spans, { start: 300, end: 330, width }, true);
+  assert.deepEqual(zoom.annotations!.map((a) => [a.text, a.x]), [["6", 0.5]]);
+  assert.deepEqual(zoom.shapes, []);
+});
+
+test("a filtered window labels only sources with finite plotted measurements and keeps their chain numbers", () => {
+  const spans = previewSourceSpans([
+    { ...source(1, 0, 1), traces: [{ x: [], y: [] }] },
+    { ...source(3, 1, 1), traces: [{ x: [1, 2], y: [null, NaN] }] },
+    { ...source(6, 0, 5), traces: [{ x: [0, null, 2], y: [1.6, null, 2] }, { x: [5], y: [16] }] },
+  ]);
+  assert.deepEqual(spans, [source(6, 0, 5)]);
+  const guides = buildContinuationPreviewProvenanceLayout(spans, { start: 0, end: 5, width: 400 }, true);
+  assert.deepEqual(guides.annotations!.map((a) => a.text), ["6"]);
+  assert.deepEqual(guides.shapes, []);
+});
+
+test("cycle points mark visible joins, while file-local capacity coordinates have no time separators", () => {
+  const viewport = { start: 0, end: 51, width: 400 };
+  const cycles = [source(3, 1, 1), source(6, 2, 51)];
+  const guides = buildContinuationPreviewProvenanceLayout(cycles, viewport, true);
+  assert.deepEqual(guides.annotations!.map((a) => a.text), ["3", "6"]);
+  assert.deepEqual(guides.shapes!.map((shape) => shape.x0), [1.5]);
+  const overlaid = buildContinuationPreviewProvenanceLayout([source(1, 0, 12), source(2, 0, 30)], viewport, false);
+  assert.deepEqual(overlaid.annotations!.map((a) => a.text), ["1", "2"]);
+  assert.deepEqual(overlaid.shapes, []);
+});
+
+test("a dense chain retains individual names in grouped badges and resolves them on zoom", () => {
+  const spans = Array.from({ length: 80 }, (_, i) => source(i + 1, i, i + 1));
+  const overview = buildContinuationPreviewProvenanceLayout(spans, { start: 0, end: 80, width: 400 }, true);
+  assert.ok(overview.annotations!.length < spans.length);
+  assert.equal(overview.annotations!.flatMap((a) => a.hovertext!.split("<br>")).length, 80);
+  const zoom = buildContinuationPreviewProvenanceLayout(spans, { start: 12.1, end: 17.9, width: 400 }, true);
+  assert.deepEqual(zoom.annotations!.map((a) => a.text), ["13", "14", "15", "16", "17", "18"]);
 });
 
 test("combined previews preserve each source's reader and separate cache keys by mode", () => {

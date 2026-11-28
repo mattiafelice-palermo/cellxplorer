@@ -65,8 +65,8 @@ import {
   type ImportPreviewDraftState,
 } from "../importPreviewPolicy";
 import {
-  buildContinuationPreviewProvenanceLayout,
-  continuationPreviewHasPoints,
+  defaultContinuationVoltageRange,
+  previewSourceSpans,
   continuationPreviewFailureSources,
   continuationPreviewQueryKey,
   continuationPreviewRequest,
@@ -77,7 +77,8 @@ import {
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 import { AddScientificPresetButton } from "./AddScientificPresetButton";
-import { CellPreviewPlot, CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
+import { CellPreviewToolbar, type CellPreviewSurfaceMode } from "./CellPreviewPlot";
+import { ContinuedImportPlot } from "./ContinuedImportPlot";
 import {
   cellPreviewCapacityLayout,
   cellPreviewCapacityTraces,
@@ -252,11 +253,6 @@ export function ContinuedImportEditor({
   const [previewNormalizeByMass, setPreviewNormalizeByMass] = useState(true);
   const [previewVoltageCycleRange, setPreviewVoltageCycleRange] = useState<{ start: number; end: number } | null>(null);
   const [previewCapacityCycleRange, setPreviewCapacityCycleRange] = useState<{ start: number; end: number } | null>(null);
-  const previewCycleRange = previewQuantity === "voltage" ? previewVoltageCycleRange : previewCapacityCycleRange;
-  const setPreviewCycleRange = (next: { start: number; end: number } | null) => {
-    if (previewQuantity === "voltage") setPreviewVoltageCycleRange(next);
-    else setPreviewCapacityCycleRange(next);
-  };
   const [detectDischargeFirst, setDetectDischargeFirst] = useState(false);
   const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
   const [userChosePreviewInterpretation, setUserChosePreviewInterpretation] = useState(false);
@@ -402,6 +398,15 @@ export function ContinuedImportEditor({
     ...(displayChargePreview?.segments.map((segment) => segment.global_cycle_end ?? 0) ?? []),
   );
   const combinedCycleCount = previewCycleExtent || inspectedCycleExtent;
+  const multipleSources = order.length > 1;
+  const selectedRange = previewQuantity === "voltage" ? previewVoltageCycleRange : previewCapacityCycleRange;
+  const previewCycleRange = selectedRange ?? (combinedCycleCount > 0 ? { start: 1, end: combinedCycleCount } : null);
+  const setPreviewCycleRange = (next: { start: number; end: number } | null) => {
+    // An unfiltered overview includes OCV and other measurements outside numbered cycles.
+    const range = next?.start === 1 && next.end === combinedCycleCount ? null : next;
+    if (previewQuantity === "voltage") setPreviewVoltageCycleRange(range);
+    else setPreviewCapacityCycleRange(range);
+  };
   const combinedPreviewLoading = activeCombinedQuery.isPending
     || (activeCombinedQuery.isFetching && !activeCombinedQuery.data)
     || activeCombinedQuery.isPlaceholderData
@@ -410,12 +415,8 @@ export function ContinuedImportEditor({
   const combinedPreviewError = activeCombinedQuery.isError
     || (previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isError);
   useEffect(() => {
-    setPreviewVoltageCycleRange(combinedCycleCount > 0
-      ? { start: Math.max(1, combinedCycleCount - 19), end: combinedCycleCount }
-      : null);
-    setPreviewCapacityCycleRange(combinedCycleCount > 0
-      ? { start: 1, end: combinedCycleCount }
-      : null);
+    setPreviewVoltageCycleRange(defaultContinuationVoltageRange(order.length, combinedCycleCount));
+    setPreviewCapacityCycleRange(null);
   }, [order.join("\u0000"), effectivePreviewInterpretation, combinedCycleCount]);
   useEffect(() => {
     if (!normalizableByMass) setPreviewNormalizeByMass(false);
@@ -469,7 +470,7 @@ export function ContinuedImportEditor({
         massG,
         chargeColor: sourceColor,
         dischargeColor: sourceColor,
-        capacityOpacity: key === selectedSourceKey ? 1 : 0.62,
+        capacityOpacity: key === selectedSourceKey ? 1 : 0.82,
       };
     });
   }, [
@@ -483,35 +484,51 @@ export function ContinuedImportEditor({
     colors,
     selectedSourceKey,
   ]);
-  const combinedCapacityTraces = useMemo(
-    () => cellPreviewCapacityTraces(combinedCapacitySeries, previewCapacityView, previewNormalizeByMass),
-    [combinedCapacitySeries, previewCapacityView, previewNormalizeByMass],
-  );
   const combinedEfficiencyRange = useMemo(
     () => paddedEfficiencyRange(combinedCapacitySeries.flatMap((series) => series.efficiencyPct ?? [])),
     [combinedCapacitySeries],
   );
   const combinedPlotPreview = displayCombinedPreview ?? displayChargePreview;
-  const combinedVoltageTraces = useMemo(() => displayCombinedPreview?.quantity === "voltage"
-    ? cellPreviewVoltageTraces(displayCombinedPreview.segments.map((segment) => ({
-        x: segment.x,
-        voltage: segment.y,
-        current: segment.current_ma,
-        breakBefore: segment.display_break_before,
-        name: segment.filename,
-        voltageColor: colors[segment.source_key] ?? "#12b886",
-        opacity: segment.source_key === selectedSourceKey ? 1 : 0.62,
-      })))
-    : [], [displayCombinedPreview, colors, selectedSourceKey]);
-  const combinedPlotData = previewQuantity === "voltage"
-    ? displayCombinedPreview && continuationPreviewHasPoints(displayCombinedPreview) ? combinedVoltageTraces : []
-    : combinedCapacityTraces;
+  const sourceLines = useMemo(() => {
+    const voltage = previewQuantity === "voltage";
+    const segments = new Map(combinedPlotPreview?.segments.map((segment) => [segment.source_key, segment]));
+    const cycles = new Map(combinedCapacitySeries.map((series) => [series.sourceKey, series]));
+    return order.map((key, index) => {
+      const segment = segments.get(key);
+      const series = cycles.get(key);
+      const color = colors[key] ?? "#12b886";
+      let traces: ReturnType<typeof cellPreviewVoltageTraces> = [];
+      if (voltage && combinedPlotPreview?.quantity === "voltage" && segment?.x.length) {
+        traces = cellPreviewVoltageTraces([{
+          x: segment.x,
+          voltage: segment.y,
+          current: segment.current_ma,
+          breakBefore: segment.display_break_before,
+          name: segment.filename,
+          voltageColor: color,
+          currentColor: multipleSources ? color : undefined,
+          opacity: key === selectedSourceKey ? 1 : 0.82,
+        }]);
+      } else if (!voltage && series) {
+        traces = cellPreviewCapacityTraces([series], previewCapacityView, previewNormalizeByMass);
+      }
+      return { number: index + 1, filename: segment?.filename ?? series?.name ?? key, color, traces };
+    });
+  }, [order, combinedPlotPreview, previewQuantity, combinedCapacitySeries, colors, multipleSources,
+    selectedSourceKey, previewCapacityView, previewNormalizeByMass]);
+  const spans = useMemo(() => multipleSources ? previewSourceSpans(sourceLines) : [], [multipleSources, sourceLines]);
+  const combinedPlotData = useMemo(() => sourceLines.flatMap(({ number, filename, traces }) =>
+    multipleSources ? traces.map((trace) => ({
+      ...trace,
+      meta: `Source ${number} · ${filename}`,
+      hovertemplate: `%{meta}<br>${trace.hovertemplate}`,
+    })) : traces
+  ), [sourceLines, multipleSources]);
   const combinedPlotLayout = useMemo(() => {
-    if (!combinedPlotPreview) return {};
-    const base = previewQuantity === "voltage"
+    return previewQuantity === "voltage"
       ? cellPreviewVoltageLayout(
           previewColors,
-          combinedPlotPreview.x_label
+          combinedPlotPreview?.x_label
             ?? (previewVoltageXAxis === "time" ? "Time (minutes)" : "Capacity (mAh)"),
           `continued-preview-voltage-${previewVoltageXAxis}`,
         )
@@ -521,13 +538,6 @@ export function ContinuedImportEditor({
           combinedEfficiencyRange,
           `continued-preview-cycles-${previewNormalizeByMass && normalizableByMass ? "mAh-per-g" : "mAh"}`,
         );
-    if (previewQuantity !== "voltage") return base;
-    const provenance = buildContinuationPreviewProvenanceLayout(combinedPlotPreview, colors);
-    return {
-      ...base,
-      ...provenance,
-      shapes: [...base.shapes, ...(provenance.shapes ?? [])],
-    };
   }, [
     combinedPlotPreview,
     previewQuantity,
@@ -536,7 +546,6 @@ export function ContinuedImportEditor({
     previewNormalizeByMass,
     normalizableByMass,
     combinedEfficiencyRange,
-    colors,
   ]);
   const combinedPlotReady = Boolean(
     result?.inspection_complete
@@ -551,15 +560,18 @@ export function ContinuedImportEditor({
     && combinedPlotPreview,
   );
   const combinedPlotElement: ReactNode = combinedPlotPreview && combinedPlotData.length > 0 ? (
-    <CellPreviewPlot
+    <ContinuedImportPlot
+      key={JSON.stringify([order, effectivePreviewInterpretation, detectDischargeFirst, previewQuantity, previewVoltageXAxis, selectedRange])}
       data={combinedPlotData}
       layout={combinedPlotLayout}
+      spans={spans}
+      sequentialAxis={previewQuantity !== "voltage" || previewVoltageXAxis === "time"}
       config={{ displayModeBar: false, responsive: true }}
       style={{ width: "100%", height: 352, fontWeight: 400 }}
       surfaceMode={previewSurfaceMode}
       onSurfaceModeChange={setPreviewSurfaceMode}
       showToolbar={false}
-      legend={previewQuantity === "voltage" && combinedVoltageTraces.some((trace) => trace.name.startsWith("Current"))
+      legend={!multipleSources && previewQuantity === "voltage" && combinedPlotData.some((trace) => trace.name.startsWith("Current"))
         ? [{ name: "Voltage", color: "#12b886" }, { name: "Current", color: "#2E86AB" }]
         : []}
       updating={activeCombinedQuery.isFetching && Boolean(activeCombinedQuery.data)
@@ -579,6 +591,9 @@ export function ContinuedImportEditor({
         setPreviewCycleRange({ start: previewCycleRange?.start ?? 1, end });
       }} w={86} />
       <Tooltip label="Next cycle window"><Button variant="default" size="compact-sm" aria-label="Next cycle window" disabled={!previewCycleRange || previewCycleRange.end >= combinedCycleCount} onClick={() => previewCycleRange && setPreviewCycleRange(shiftPreviewCycleWindow(previewCycleRange, combinedCycleCount, 1))}><IconChevronRight size={15} /></Button></Tooltip>
+      {multipleSources && combinedCycleCount > 0 && (
+        <Button size="compact-sm" variant="subtle" disabled={!selectedRange} onClick={() => setPreviewCycleRange(null)}>All cycles</Button>
+      )}
     </Group>
   );
   const combinedCapacitySelector = (
@@ -660,7 +675,7 @@ export function ContinuedImportEditor({
     activeCombinedQuery.isPlaceholderData,
     chargePreviewQuery.data,
     chargePreviewQuery.isPlaceholderData,
-    combinedCapacityTraces,
+    combinedPlotData,
     cellDraft.active_mass_mg_override,
     colors,
     selectedSourceKey,

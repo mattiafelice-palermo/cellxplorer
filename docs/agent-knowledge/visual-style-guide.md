@@ -366,6 +366,14 @@ figure; default Voltage to the last 20 cycles and Cycles to the full range. When
 both views, retain a fixed-height control slot and independent ranges so switching views does not
 shift the plot or change the other view's selection.
 
+The multi-file **All sources (combined)** import preview opens on the whole chain. Request the
+overview without cycle bounds so neutral and unnumbered measurements are included. Reserve a
+40 px top margin for source numbers. Anchor each badge to the visible extent of its plotted
+measurements, keep the chain number when filtering, and spread crowded badges with leaders.
+Draw dashed joins on sequential time and cycle axes. The voltage/capacity overlay uses each
+file's own capacity coordinates. Both voltage and current take their file's source-chain color,
+and the badge and trace hovers identify the filename.
+
 Capacity traces use filled circles for Charge and filled squares for Discharge; CE is a filled red
 circle at 4.5 px and 30% opacity with 15% padding around its finite min/max. Mass normalization
 changes only capacity values and its axis label. The external voltage/current legend stays in its

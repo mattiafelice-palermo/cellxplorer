@@ -2,6 +2,7 @@ import { ActionIcon, Badge, Box, Group, Stack, Text, Tooltip } from "@mantine/co
 import { useElementSize } from "@mantine/hooks";
 import { IconMoon, IconSun, IconSunset } from "@tabler/icons-react";
 import type { ReactNode } from "react";
+import type { PlotParams } from "react-plotly.js";
 import Plot from "./Plot";
 
 export type CellPreviewSurfaceMode = "theme" | "sun" | "gray" | "moon";
@@ -96,6 +97,7 @@ export function CellPreviewPlot({
   legend = [],
   toolbarContent,
   showToolbar = true,
+  onFigureChange,
 }: {
   data: unknown[];
   layout: Record<string, unknown>;
@@ -107,6 +109,7 @@ export function CellPreviewPlot({
   legend?: CellPreviewLegendItem[];
   toolbarContent?: ReactNode;
   showToolbar?: boolean;
+  onFigureChange?: PlotParams["onUpdate"];
 }) {
   return (
     <>
@@ -119,7 +122,8 @@ export function CellPreviewPlot({
             {toolbarContent}
           </CellPreviewToolbar>
         )}
-        <Plot data={data as never} layout={layout as never} config={config as never} style={style} />
+        <Plot data={data as never} layout={layout as never} config={config as never} style={style}
+          onInitialized={onFigureChange} onUpdate={onFigureChange} />
         {updating && <Badge color="gray" variant="filled" role="status" style={{ position: "absolute", top: 8, right: 8, pointerEvents: "none" }}>Updating preview…</Badge>}
       </Box>
       <Group gap="md" justify="center" h={20}>

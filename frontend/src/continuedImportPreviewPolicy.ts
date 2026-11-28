@@ -20,6 +20,11 @@ export type ContinuationPreviewQuantity =
 
 export type ContinuationPreviewInterpretation = "source_chain" | "stitched";
 
+/** Null requests every recorded row, including intervals without a cycle assignment. */
+export function defaultContinuationVoltageRange(sourceCount: number, cycleCount: number) {
+  return sourceCount === 1 && cycleCount > 20 ? { start: cycleCount - 19, end: cycleCount } : null;
+}
+
 export type ContinuationPreviewTimeUnit = "seconds" | "minutes" | "hours" | "days";
 
 export type ContinuationPreviewTimeAxis = {
@@ -166,71 +171,109 @@ export function buildContinuationPreviewTraces(
   });
 }
 
-/**
- * Build file-provenance guides independently of the active interpretation.
- * Each backend segment gets one dashed marker and one top source number;
- * colors identify the physical file, not the inferred cycle grouping.
- */
+export type PreviewSourceLines = {
+  number: number;
+  filename: string;
+  color: string;
+  traces: ReadonlyArray<{ x: Array<number | null>; y: Array<number | null> }>;
+};
+
+/** Derive coverage from the plotted coordinates, including both capacity directions and CE. */
+export function previewSourceSpans(sources: PreviewSourceLines[]) {
+  return sources.flatMap(({ number, filename, color, traces }) => {
+    let start = Infinity;
+    let end = -Infinity;
+    for (const { x, y } of traces) {
+      x.forEach((point, index) => {
+        if (point === null || !Number.isFinite(point) || !Number.isFinite(y[index])) return;
+        start = Math.min(start, point);
+        end = Math.max(end, point);
+      });
+    }
+    return end >= start ? [{ number, filename, color, start, end }] : [];
+  });
+}
+
+export type PreviewXAxisViewport = { start: number; end: number; width: number };
+
 export function buildContinuationPreviewProvenanceLayout(
-  preview: ContinuationPreviewResult,
-  colorsBySourceKey: Record<string, string>,
+  spans: ReturnType<typeof previewSourceSpans>,
+  viewport: PreviewXAxisViewport,
+  sequentialAxis: boolean,
 ): Pick<Layout, "shapes" | "annotations"> {
   const shapes: NonNullable<Layout["shapes"]> = [];
   const annotations: NonNullable<Layout["annotations"]> = [];
+  const { start, end, width } = viewport;
+  if (end <= start || width <= 0) return { shapes, annotations };
 
-  preview.segments.forEach((segment, index) => {
-    const points = segment.x.filter((value) => Number.isFinite(value));
-    const start = finiteNumber(segment.display_x_start)
-      ?? finiteNumber(segment.global_cycle_start)
-      ?? points[0]
-      ?? null;
-    const end = finiteNumber(segment.display_x_end)
-      ?? finiteNumber(segment.global_cycle_end)
-      ?? points[points.length - 1]
-      ?? null;
-    if (start === null || end === null) return;
+  if (sequentialAxis) {
+    spans.slice(1).forEach((next, index) => {
+      const previous = spans[index];
+      const join = (previous.end + next.start) / 2;
+      if (previous.end > next.start || join < start || join > end) return;
+      shapes.push({
+        type: "line", xref: "x", x0: join, x1: join, yref: "paper", y0: 0, y1: 1,
+        line: { color: previous.color, width: 1.5, dash: "dash" },
+      });
+    });
+  }
 
-    const next = preview.segments[index + 1];
-    const nextStart = next
-      ? finiteNumber(next.display_x_start)
-        ?? finiteNumber(next.global_cycle_start)
-        ?? next.x.find((value) => Number.isFinite(value))
-        ?? null
-      : null;
-    const boundary = nextStart !== null ? (end + nextStart) / 2 : end;
-    const color = colorsBySourceKey[segment.source_key] ?? "#12b886";
-    const pastel = pastelSourceColor(color);
-    shapes.push({
-      type: "line",
-      x0: boundary,
-      x1: boundary,
-      y0: 0,
-      y1: 1,
-      yref: "paper",
-      line: { color, width: 1, dash: "dash" },
-      opacity: 0.72,
+  const visible = spans.filter((span) => span.end >= start && span.start <= end).map((span) => {
+    const center = (Math.max(start, span.start) + Math.min(end, span.end)) / 2;
+    return { ...span, pixel: (center - start) / (end - start) * width };
+  }).sort((a, b) => a.pixel - b.pixel || a.number - b.number);
+  if (!visible.length) return { shapes, annotations };
+
+  // Short recordings can be fractions of a pixel wide. Spread their badges while
+  // keeping each leader attached to its true interval. Group only beyond screen capacity.
+  const singleWidth = 16 + 7 * Math.max(...visible.map((span) => String(span.number).length));
+  const compact = visible.length * singleWidth > width;
+  const columns = Math.max(1, Math.floor(width / 72));
+  const buckets = new Map<number, typeof visible>();
+  visible.forEach((span, index) => {
+    const key = compact ? Math.min(columns - 1, Math.floor(span.pixel / width * columns)) : index;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(span);
+    else buckets.set(key, [span]);
+  });
+  const labels = [...buckets.values()].map((members) => {
+    const first = members[0];
+    const last = members[members.length - 1];
+    const text = members.length === 1 ? String(first.number)
+      : members.every((item, i) => item.number === first.number + i) ? `${first.number}–${last.number}`
+      : `${first.number} +${members.length - 1}`;
+    const anchor = (first.pixel + last.pixel) / 2;
+    return { members, text, anchor, pixel: anchor, halfWidth: (14 + 7 * text.length) / 2 };
+  });
+  let left = 0;
+  for (const label of labels) {
+    label.pixel = Math.max(label.pixel, left + label.halfWidth);
+    left = label.pixel + label.halfWidth + 2;
+  }
+  let right = width;
+  for (const label of [...labels].reverse()) {
+    label.pixel = Math.min(label.pixel, right - label.halfWidth);
+    right = label.pixel - label.halfWidth - 2;
+  }
+  for (const { members, text, pixel, anchor } of labels) {
+    const color = members.length === 1 ? members[0].color : "#64748b";
+    const filenames = members.map((span) => {
+      const filename = span.filename.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      return `Source ${span.number} · ${filename}`;
     });
     annotations.push({
-      x: (start + end) / 2,
-      y: 1.04,
-      xref: "x",
-      yref: "paper",
-      text: String(index + 1),
-      showarrow: false,
-      yanchor: "bottom",
-      bgcolor: pastel,
+      x: anchor / width, xref: "paper", y: 1, yref: "paper",
+      ax: pixel - anchor, ay: -22, axref: "pixel", ayref: "pixel",
+      showarrow: true, arrowhead: 0, arrowwidth: 1, arrowcolor: color,
+      xanchor: "center", yanchor: "middle", text,
+      hovertext: filenames.join("<br>"),
+      bgcolor: pastelSourceColor(color),
       bordercolor: color,
-      borderwidth: 1,
-      borderpad: 4,
-      font: { color: "#1f2937", size: 11 },
+      borderwidth: 1, borderpad: 3,
+      font: { color: "#1f2937", size: 12 },
     });
-  });
-
+  }
   return { shapes, annotations };
-}
-
-function finiteNumber(value: number | null | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function pastelSourceColor(color: string): string {
