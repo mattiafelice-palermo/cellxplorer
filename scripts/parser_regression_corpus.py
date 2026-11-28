@@ -83,6 +83,34 @@ def register(root: Path, case_id: str, source: Path, chain: str, *, read_mode: s
     write_json(root/'manifest.json',manifest)
 
 
+def verify_mb_final_charge(db, spec, source, cycle_count):
+    import numpy as np
+    from app.services import analysis_engine, cache
+
+    # A cycle table alone cannot detect a hidden or misplaced trailing charge.
+    original = cache.load_raw(source.hash, source.parser_version)
+    tail = original.loc[~original.cycle_complete]
+    if cycle_count != 111 or len(original) != 117834 or len(tail) != 577:
+        raise ValueError('MB complete cycles or final charge row count changed')
+    np.testing.assert_array_equal(tail.index, original.index[-577:])
+    np.testing.assert_allclose(tail.charge_capacity_mah.iloc[-1], 439.702326, atol=1e-5, rtol=0)
+    for precision, compact in [('full', False), ('standard', True)]:
+        trace = analysis_engine.compute_time_capacity(
+            db, spec, None, use_current_versions=True, precision=precision, compact=compact
+        )['cell_traces'][0]
+        x = np.asarray(trace['display_x'])
+        if np.any(np.diff(x) < 0) or not trace['display_only_cycle'][-1]:
+            raise ValueError('Final MB charge is missing or out of order on the timeline')
+        # Compact responses round plotted values and may sample the interior.
+        np.testing.assert_allclose(x[-1], tail.biologic_mb_time_s.iloc[-1], atol=1e-5, rtol=0)
+        np.testing.assert_allclose(trace['voltage_v'][-1], tail.voltage_v.iloc[-1], atol=1e-5, rtol=0)
+        np.testing.assert_allclose(trace['current_ma'][-1], tail.current_ma.iloc[-1], atol=1e-5, rtol=0)
+        if precision == 'full':
+            np.testing.assert_array_equal(trace['display_only_cycle'][-577:], True)
+            np.testing.assert_allclose(x[-577:], tail.biologic_mb_time_s, rtol=0, atol=1e-8)
+            np.testing.assert_allclose(trace['voltage_v'][-577:], tail.voltage_v, rtol=0, atol=1e-8)
+
+
 def scientific_snapshot(manifest: dict, paths: dict[str, Path], work: Path) -> dict:
     # Set this before importing any application code. Never open a real profile.
     os.environ['CELLXPLORER_DATA'] = str(work)
@@ -122,7 +150,13 @@ def scientific_snapshot(manifest: dict, paths: dict[str, Path], work: Path) -> d
             raw=cache.load_raw(source.hash,source.parser_version)
             pd.testing.assert_frame_equal(fresh,raw,check_exact=True)
             cycles=cache.load_cycles(source.hash,source.parser_version,cache.CALC_VERSION)
-            pd.testing.assert_frame_equal(calc.per_cycle(raw),cycles,check_exact=True)
+            computed = calc.per_cycle(raw)
+            # Parquet can promote the unit of an entirely missing datetime column.
+            # Compare missingness exactly while retaining strict types for recorded times.
+            for field in ('start_timestamp', 'end_timestamp'):
+                if field in computed and computed[field].isna().all() and cycles[field].isna().all():
+                    computed[field] = computed[field].astype(cycles[field].dtype)
+            pd.testing.assert_frame_equal(computed,cycles,check_exact=True)
             warnings=cache.load_parser_warnings(source.hash,source.parser_version)
             selective=cache.load_raw_cycles(source.hash,source.parser_version,
                 raw.cycle.unique().tolist()[-2:],list(raw.columns))
@@ -178,6 +212,15 @@ def scientific_snapshot(manifest: dict, paths: dict[str, Path], work: Path) -> d
                     selected=cycles.set_index('cycle').loc[preview_values[xkey],col]
                     np.testing.assert_allclose(np.asarray(preview_values[key],dtype=float),
                                                np.asarray(selected,dtype=float),rtol=0,atol=1e-10,equal_nan=True)
+                if 'mb-final-charge' in ids:
+                    if ids != ['mb-final-charge']:
+                        raise ValueError('Final-charge MB regression requires a standalone Cell')
+                    spec['computation']['time_capacity'] = {
+                        'view': 'voltage_current', 'x_axis': 'time', 'time_unit': 's',
+                        'display_mode': 'consecutive', 'time_reference': 'test_start',
+                    }
+                    if not results:
+                        verify_mb_final_charge(db, spec, ordered[0], len(cycles))
                 tc=analysis_engine.compute_time_capacity(db,spec,None,use_current_versions=True)
                 if not tc['cell_traces']:raise ValueError('Missing Time/Capacity traces')
                 trace_keys=('cycle','display_x','time_s','capacity_mah','capacity_mah_g',
@@ -256,9 +299,14 @@ def main(argv=None):
     registration.add_argument('--read-mode',choices=('safe','permissive'),default='safe')
     snapshot=sub.add_parser('snapshot')
     snapshot.add_argument('--replace-expectations',action='store_true')
-    sub.add_parser('verify')
+    verify = sub.add_parser('verify')
+    verify.add_argument('--release', action='store_true', help='Require the deployment corpus cases')
     args=parser.parse_args(argv)
     try:
+        if args.command == 'verify' and args.release:
+            cases = read_manifest(args.root)['cases']
+            if not any(c['id'] == 'mb-final-charge' and c['chain'] == 'mb-final-charge' for c in cases):
+                raise ValueError('Release corpus is missing the final-charge MB recording')
         if args.command=='register':
             register(args.root.resolve(),args.case_id,args.source,args.chain,read_mode=args.read_mode)
             print(json.dumps({'registered':args.case_id}))

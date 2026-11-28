@@ -91,6 +91,30 @@ class TimeCapacityTransformNeeds:
         )
 
 
+NATIVE_TIME_COLUMNS = ("mpr_elapsed_time_s", "biologic_mb_time_s")
+
+
+def continued_source_time(frame: pd.DataFrame, offset: float) -> np.ndarray:
+    """Place a complete acquisition block on the Cell clock, preserving measured intervals."""
+    names = ("preview_time_s", *NATIVE_TIME_COLUMNS, "total_time_s", "time_s", "record_index")
+    column = next((name for name in names if name in frame), None)
+    if column is None:
+        return np.arange(len(frame), dtype=float) + offset
+    values = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+    present = np.isfinite(values)
+    times = values[present]
+    if not len(times):
+        return np.arange(len(frame), dtype=float) + offset
+    # A reset begins a new acquisition. Keep any real forward gap within the
+    # file; the duration of a stop across independent clocks is unknown.
+    deltas = np.diff(times)
+    if column == "time_s":
+        deltas = np.where(deltas < 0, times[1:], deltas)
+    coordinates = np.full(len(frame), np.nan)
+    coordinates[present] = offset + np.r_[0., np.cumsum(np.maximum(deltas, 0.))]
+    return coordinates
+
+
 def source_clock(frame: pd.DataFrame) -> pd.Series:
     """Choose the recorded Maccor test clock, including in mixed-source Cells."""
     if "maccor_mode" in frame and "total_time_s" in frame:

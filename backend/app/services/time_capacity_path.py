@@ -24,7 +24,7 @@ from typing import Any
 
 import pandas as pd
 
-from . import cache, canonical_cycling, stitch
+from . import cache, canonical_cycling, stitch, time_capacity_derived
 
 
 # The scientific consumers below compute phase, capacity, protocol masks and
@@ -452,6 +452,13 @@ def build_time_capacity_stitch_plan(
             )
 
         available_columns = set(index.get("raw_column_names") or [])
+        if len(ordered_refs) > 1 and available_columns.intersection(time_capacity_derived.NATIVE_TIME_COLUMNS):
+            # Existing per-cycle indexes describe step time, not the elapsed
+            # duration of native-clock acquisitions (including uncounted rows).
+            return _fallback_plan(
+                ordered_refs, indexed_sources=sources,
+                reason="continued_native_clock_requires_acquisition_time", diagnostics=diagnostics,
+            )
         if not set(TIME_CAPACITY_REQUIRED_COLUMNS).issubset(available_columns):
             return _fallback_plan(
                 ordered_refs,

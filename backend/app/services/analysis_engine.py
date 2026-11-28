@@ -1874,7 +1874,7 @@ def _time_capacity_sort_columns(frame: pd.DataFrame) -> list[str]:
         return ["_stitch_order"]
     # A display-only partial cycle has stitched label zero even at the end of
     # a recording. Its instrument rows must keep their acquisition order.
-    if "mpr_elapsed_time_s" in frame.columns or "maccor_mode" in frame.columns:
+    if any(name in frame for name in (*time_capacity_derived.NATIVE_TIME_COLUMNS, "maccor_mode")):
         return [column for column in ("segment", "record_index") if column in frame.columns]
     return ["cycle", "segment", "record_index"] if "record_index" in frame.columns else ["cycle", "segment"]
 
@@ -1887,6 +1887,8 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     which offsets x per half-cycle — a CV hold re-drew from x=0 as a flat
     line at the cutoff voltage. Each drop adds the pre-drop value as a
     running offset, turning per-step time into cumulative elapsed time."""
+    if "_stitch_time_s" in frame.columns:
+        return frame.assign(time_s=frame["_stitch_time_s"].to_numpy(dtype=float))
     if "biologic_mb_time_s" in frame.columns:
         ordinary = _continuous_time(frame.drop(columns="biologic_mb_time_s"))
         native = pd.to_numeric(frame["biologic_mb_time_s"], errors="coerce").to_numpy(dtype=float)
@@ -1904,8 +1906,6 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
         present = np.isfinite(native)
         values[present] = native[present]
         return frame.assign(time_s=values)
-    if "_stitch_time_s" in frame.columns:
-        return frame.assign(time_s=frame["_stitch_time_s"].to_numpy(dtype=float))
     if "maccor_mode" in frame.columns:
         frame = frame.assign(time_s=time_capacity_derived.source_clock(frame))
     if "time_s" not in frame.columns or len(frame) < 2:
@@ -2016,7 +2016,7 @@ def _time_capacity_display_x(
         mb_native = pd.to_numeric(raw["biologic_mb_time_s"], errors="coerce").to_numpy(dtype=float) / factor
         native = mb_native if native is None else np.where(np.isfinite(mb_native), mb_native, native)
     def preserve_native(output: np.ndarray) -> np.ndarray:
-        if native is not None:
+        if native is not None and not (settings["display_mode"] == "consecutive" and "_stitch_time_s" in raw):
             present = np.isfinite(native)
             output[present] = native[present]
         return output

@@ -14,6 +14,8 @@ from collections.abc import Sequence
 import pandas as pd
 
 from .time_capacity_derived import (
+    NATIVE_TIME_COLUMNS,
+    continued_source_time,
     capacity_phases,
     consecutive_capacity_display,
     phase_capacity,
@@ -79,6 +81,9 @@ def prepare_segmented_raw(
         return pd.DataFrame()
 
     prepared: list[pd.DataFrame] = []
+    native_chain = len(source_frames) > 1 and any(
+        any(column in frame for column in NATIVE_TIME_COLUMNS) for frame in source_frames
+    )
     time_offset = 0.0
     for segment, source_frame in enumerate(source_frames):
         frame = source_frame.copy()
@@ -114,7 +119,9 @@ def prepare_segmented_raw(
             ),
             None,
         )
-        if time_column is None:
+        if native_chain:
+            frame["preview_time_s"] = continued_source_time(frame, time_offset)
+        elif time_column is None:
             frame["preview_time_s"] = pd.Series(
                 range(len(frame)), index=frame.index, dtype="float64"
             ) + time_offset

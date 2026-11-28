@@ -25,6 +25,7 @@ import pandas as pd
 import numpy as np
 
 from . import cache, canonical_cycling, biologic_gcpl_executions as gcpl_executions
+from .time_capacity_derived import NATIVE_TIME_COLUMNS, continued_source_time
 
 _CP_CURRENT_TOLERANCE_MA = 1e-6
 
@@ -423,7 +424,18 @@ def _stitch_ordered(
     if not frames:
         result = pd.DataFrame()
     else:
-        if paired_gcpl_cycle_ids:
+        has_native_chain = not sort_output and len(frames) > 1 and any(
+            any(column in frame for column in NATIVE_TIME_COLUMNS) for frame in frames
+        )
+        if has_native_chain:
+            end = 0.0
+            for frame in frames:
+                times = continued_source_time(frame, end)
+                frame["_stitch_time_s"] = times
+                finite = times[np.isfinite(times)]
+                if len(finite):
+                    end = float(finite[-1])
+        elif paired_gcpl_cycle_ids:
             # These are display-only scratch coordinates. Scientific step
             # clocks remain untouched. Inside a cohort preserve source gaps;
             # outside it retain established step-reset continuation behavior.
@@ -442,7 +454,7 @@ def _stitch_ordered(
                 if len(finite):
                     offset += max(0.0, float(finite[-1] - finite[0]))
         result = pd.concat(frames, ignore_index=True)
-        if paired_gcpl_cycle_ids:
+        if has_native_chain or paired_gcpl_cycle_ids:
             result["_stitch_order"] = np.arange(len(result))
         if sort_output and not result.empty and "source_cycle" in result.columns:
             result = result.sort_values(["segment", "source_cycle"], kind="stable").reset_index(

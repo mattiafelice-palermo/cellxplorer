@@ -13,6 +13,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.31 - 2026-11-28
+
+### Bug fixes
+
+- Continued cells place BioLogic recordings with independent clocks in source order, including analyses saved with an older reader.
+
 ## 0.29.0-alpha.30 - 2026-11-28
 
 ### Bug fixes

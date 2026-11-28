@@ -40,6 +40,15 @@ and scientific differences fail verification with a nonzero exit status.
 available on another checkout, report that boundary and run the public tests;
 do not claim whole-source parity.
 
+The release workstation must run `python scripts/parser_regression_corpus.py verify --release`.
+The ninth case uses the full MB file. The check verifies all 111 cycle summaries,
+the 577 samples of the final unmatched charge, its measured capacity, and the
+last plotted current, voltage and time in full and sampled results. The file
+and its checksum-bound expectations live in the private archive.
+Local preflight also runs this MB check when the archive is present. In a
+separate worktree, set `CELLXPLORER_PRIVATE_CORPUS` to the archive root to use
+the same files. Public CI exercises the synthetic regression fixtures.
+
 ## Adding a shared case
 
 Use a stable, non-sensitive ID and a chain ID identifying the Cell pair/group:

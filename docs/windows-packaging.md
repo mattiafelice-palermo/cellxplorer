@@ -11,9 +11,9 @@ User data must stay outside the install directory. The current backend already s
 explicit packaged schema migrations and automatic pre-migration backups. See
 `docs/database-migrations.md`.
 
-Before deploying a version, run `python scripts/parser_regression_corpus.py verify`
+Before deploying a version, run `python scripts/parser_regression_corpus.py verify --release`
 on the workstation holding the [private difficult-source corpus](private-parser-regression-corpus.md).
-This checks the archived GCPL late-reset and paused-loop recordings through import, cache, analysis and preview.
+This checks the archived GCPL cases and requires the whole MB recording with 111 complete cycles and a final charge visible in both full and sampled Time/Capacity output.
 On the same workstation, run `python -m unittest discover -s tests -p test_continued_import_recordings.py`
 to check the three-file Cell 38 import and combined voltage preview.
 

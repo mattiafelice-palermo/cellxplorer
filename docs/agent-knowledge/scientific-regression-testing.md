@@ -112,3 +112,13 @@ the temporary source still exists, before cleanup removes the path needed to
 expand the alias. Raw temporary-path text can differ from the stored path while
 referring to exactly the same directory; do not change application path handling
 to satisfy that textual mismatch.
+
+## Continued-cell plots with native BioLogic clocks
+
+A saved analysis can pin an exploratory source even after a newer parser verifies the file.
+MB and exploratory native timestamps remain available in each raw source. For a continued
+Cell, prepare the display clock in acquisition order across complete sources before selecting
+cycles or sampling. Each subsequent source starts at the preceding endpoint. The chart
+preserves forward intervals inside a source and breaks at native acquisition resets.
+File boundaries with unknown downtime share an elapsed endpoint. The per-cycle step-clock
+index alone cannot give the duration of these acquisitions or their unmatched tails.

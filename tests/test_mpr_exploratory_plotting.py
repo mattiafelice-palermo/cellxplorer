@@ -99,6 +99,50 @@ class ExploratoryPlottingTests(unittest.TestCase):
             self.assertEqual(trace["display_x"], [100.,110.,105.,115.])
             self.assertEqual(trace["display_break_before"], [2])
 
+    def test_continued_cell_uses_one_clock_for_verified_and_native_recordings(self):
+        ordinary = [dict(total_time_s=t, ns=0, mode=1, control=1.,
+                         ewe_v=3.0, ece_v=.1, q_mAh=i, raw_dq_mAh=float(i > 0))
+                    for i, t in enumerate((0., 200.))]
+        paths = [write_gcpl_mpr(self.root / "start.mpr", ordinary,
+                                settings_payload=encode_gcpl_settings([{"current": 1.}])),
+                 self.path,
+                 write_gcpl_mpr(self.root / "end.mpr", [dict(r, ewe_v=3.1) for r in ordinary],
+                                settings_payload=encode_gcpl_settings([{"current": 1.}]))]
+        cell = Cell(name="Continued clock")
+        self.db.add(cell)
+        self.db.flush()
+        internal = Test(cell_id=cell.id, name="internal")
+        self.db.add(internal)
+        self.db.flush()
+        frames = []
+        for position, path in enumerate(paths):
+            source = scanner.ingest_path(self.db, path, parse_now=True, read_mode="permissive")
+            self.assertEqual(source.parse_status, "parsed", source.parse_error)
+            self.db.add(TestFile(test_id=internal.id, file_id=source.id, position=position))
+            frames.append(cache.load_raw(source.hash, source.parser_version))
+        self.db.commit()
+        self.assertNotIn("mpr_elapsed_time_s", frames[0])
+        expected = [0., 200., 200., 210., 210., 220., 220., 420.]
+        preview = continuation_preview.prepare_segmented_raw(frames)
+        np.testing.assert_array_equal(preview.preview_time_s, expected)
+        spec = analysis_engine.default_spec("Continued")
+        spec["selection"]["entries"] = [{"kind":"cell", "ref_id":cell.id}]
+        spec["computation"]["time_capacity"] = {
+            "time_reference":"test_start", "x_axis":"time", "time_unit":"s",
+            "display_mode":"consecutive", "voltage_channels":["voltage","working_potential","counter_potential"],
+        }
+        for precision, compact in (("full", False), ("standard", True)):
+            with self.subTest(precision=precision):
+                trace = analysis_engine.compute_time_capacity(
+                    self.db, spec, None, precision=precision, compact=compact)["cell_traces"][0]
+                np.testing.assert_array_equal(trace["display_x"], expected)
+                self.assertIn(4, trace["display_break_before"])
+                for channel, column in (("voltage","voltage_v"), ("working_potential","working_potential_v"),
+                                        ("counter_potential","counter_potential_v")):
+                    np.testing.assert_allclose(trace["voltage_v_by_channel"][channel],
+                                               pd.concat([f[column] for f in frames]), atol=1e-5)
+        np.testing.assert_array_equal(frames[1].mpr_elapsed_time_s, [100.,110.,105.,115.])
+
     def test_index_projection_retains_native_clock_fields(self):
         raw = parsing.parse_timeseries(self.path, read_mode="permissive")
         settings = analysis_engine.time_capacity_settings({"time_capacity":{"x_axis":"time", "time_unit":"s"}})
