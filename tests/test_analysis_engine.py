@@ -4259,6 +4259,28 @@ class MultiVoltageTimeCapacityTests(unittest.TestCase):
         spec["computation"].update(comp)
         return spec
 
+    def test_charge_balance_prefix_matches_full_export_after_cycle_navigation(self):
+        ids = [self.cells[name].id for name in ("three", "two")]
+        cfg = {"view": "charge_balance", "cycle_end": None, "x_axis": "capacity_mah",
+               "max_points_per_cell": 100, "balance": {"unit": "soc", "references": {
+                   str(ids[0]): {"start_soc_pct": 100, "capacity_mah": 1},
+                   str(ids[1]): {"start_soc_pct": 50, "basis": "mass", "mass_mg": 2},
+               }}}
+        spec = self.spec_with([{"kind": "cell", "ref_id": i} for i in ids], time_capacity=cfg)
+        full = engine.compute_time_capacity(self.db, spec, None, precision="full", compact=True)
+        by_id = {t["cell_id"]: t for t in full["cell_traces"]}
+        original = by_id[ids[0]]
+        self.assertEqual(original["charge_balance_mah"][0], 0)
+        self.assertGreater(original["estimated_soc_pct"][1], 100)
+        self.assertAlmostEqual(by_id[ids[1]]["balance_reference_mah"], 1.64)
+        self.assertEqual(original["display_x"], original["charge_throughput_mah"])
+        last = original["cycle"].index(50)
+        self.assertGreater(original["charge_balance_mah"][last], 0)
+        cfg["cycle_start"] = cfg["cycle_end"] = 50
+        late = engine.compute_time_capacity(self.db, spec, None, compact=True)["cell_traces"][0]
+        for key in ("charge_balance_mah", "display_x", "estimated_soc_pct"):
+            np.testing.assert_allclose(late[key], original[key][last:], atol=1e-6)
+
     def test_working_potential_request_returns_correct_values_and_availability(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
         spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}

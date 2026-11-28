@@ -592,6 +592,9 @@ function tabLabel(tab: AnalysisTabKey): string {
 function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, spec: AnalysisSpec): string {
   if (tab === "time_capacity") {
     const cfg = timeCapacityConfig(spec);
+    if (cfg.view === "charge_balance") {
+      return `${cfg.balance?.unit === "soc" ? "Estimated SOC (%)" : "Charge balance (mAh)"} vs ${cfg.x_axis === "time" ? `test time (${cfg.time_unit})` : "charge throughput (mAh)"}`;
+    }
     if (cfg.view === "dqdv") {
       return `${cfg.derivative_specific ? "Specific " : ""}incremental capacity dQ/dV vs voltage`;
     }
@@ -671,6 +674,9 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
 }
 
 function suggestedPlotName(tab: AnalysisTabKey, result: ComputeResult | undefined, spec: AnalysisSpec): string {
+  if (tab === "time_capacity" && spec.computation.time_capacity?.view === "charge_balance") {
+    return spec.computation.time_capacity.balance?.unit === "soc" ? "Estimated SOC" : "Charge balance";
+  }
   if (tab === "time_capacity") return "Time / capacity comparison";
   if (tab === "dcir") {
     return spec.presentation.dcir_view?.quantity === "relative"
@@ -5271,12 +5277,15 @@ function AnalysisEditorView({
       const entries = clone(s.selection.entries);
       const savedPlots = clone(s.saved_plots ?? []);
       const existingStyles = { ...(s.presentation.plot_styles ?? {}) };
+      const pendingBalance = !plotSessionActive && activeTab === "time_capacity" &&
+        s.computation.time_capacity?.view === "charge_balance" ? s.computation.time_capacity : undefined;
       s.selection = {
         entries,
         exclusions: [],
         hidden_replicate_group_ids: [],
       };
       s.computation = clone(DEFAULT_COMPUTATION);
+      if (pendingBalance) s.computation.time_capacity = clone(pendingBalance);
       s.aggregation = clone(DEFAULT_AGGREGATION);
       s.presentation = {
         ...clone(DEFAULT_PRESENTATION),
@@ -5556,6 +5565,7 @@ function AnalysisEditorView({
           update={update}
           resetAxis={resetTimeCapacityAxis}
           voltageChannels={timeCapacityVoltageChannels}
+          selectedCells={selectedTimeCapacityCells}
         />
       )}
       {activeTab === "cycles" && (

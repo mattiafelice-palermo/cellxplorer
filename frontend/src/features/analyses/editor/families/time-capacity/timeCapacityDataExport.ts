@@ -1,4 +1,4 @@
-import type { AnalysisSpec, PlotStyle, TimeCapacityResult, TimeCapacityTrace } from "../../../../../api.ts";
+import type { AnalysisSpec, ChargeBalanceSettings, PlotStyle, TimeCapacityResult, TimeCapacityTrace } from "../../../../../api.ts";
 import type { DataColumn, PlotDataXRange } from "../../plotting/plotExport.ts";
 import { isSeriesHidden } from "../../policies/analysisVisibility.ts";
 import { voltageChannelLabel, type VoltageChannel } from "../../policies/voltageChannelPolicy.ts";
@@ -23,6 +23,7 @@ type ExportCurrentQuantity = "current_ma" | "current_density" | "c_rate";
 
 export type TimeCapacityExportConfig = {
   view: string;
+  balance?: ChargeBalanceSettings;
   x_axis: string;
   time_unit: string;
   display_mode: string;
@@ -128,6 +129,13 @@ function hasFinite(values: readonly (number | null)[]): boolean {
   return values.some((value) => value !== null && Number.isFinite(value));
 }
 
+function sampleAppearance(trace: TimeCapacityTrace, style: PlotStyle, color: string) {
+  return resolveSeriesStyle({
+    color, lineWidth: style.line_width, lineDash: style.line_dash, markerMode: style.marker_mode,
+    markerSymbol: style.marker_symbol, markerSize: style.marker_size, markerOpen: style.marker_open, opacity: 1,
+  }, timeCapacitySeriesDescriptor(trace), style.series_rules, style.series_overrides);
+}
+
 /** Resolve visibility and presentation names once from the live plotted result. */
 export function timeCapacityNativeExportPlan(
   result: TimeCapacityResult,
@@ -153,22 +161,7 @@ export function timeCapacityNativeExportPlan(
     if (!colors.has(seriesKey)) colors.set(seriesKey, style.custom_colors[seriesKey] ??
       paletteColorAt(palette, colorIndex++, paletteOverflow));
     const color = colors.get(seriesKey)!;
-    const descriptor = timeCapacitySeriesDescriptor(trace);
-    const resolved = resolveSeriesStyle(
-      {
-        color,
-        lineWidth: style.line_width,
-        lineDash: style.line_dash,
-        markerMode: style.marker_mode,
-        markerSymbol: style.marker_symbol,
-        markerSize: style.marker_size,
-        markerOpen: style.marker_open,
-        opacity: 1,
-      },
-      descriptor,
-      style.series_rules,
-      style.series_overrides,
-    );
+    const resolved = sampleAppearance(trace, style, color);
     if (resolved.hidden) continue;
     if (trace.display_x?.length !== trace.cycle.length) return null;
     const visibleChannels = new Set(
@@ -232,6 +225,41 @@ export function consecutiveTimeCapacityExportColumns(
   style: PlotStyle,
   range: PlotDataXRange | null,
 ): DataColumn[] | null {
+  if (config.view === "charge_balance") {
+    const columns: DataColumn[] = [];
+    const percent = config.balance?.unit === "soc";
+    for (const trace of result.cell_traces) {
+      const key = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
+      const resolved = sampleAppearance(trace, style, style.custom_colors[key] ?? "");
+      if (resolved.hidden || timeCapacityTraceIsHidden(trace, spec) || isSeriesHidden(spec, timeCapacityVisibilityKey(key))) continue;
+      const values = percent ? trace.estimated_soc_pct : trace.charge_balance_mah;
+      if (!values?.length || !hasFinite(values)) continue;
+      const x = (trace.display_x ?? []).map(value => value ?? NaN);
+      const indices = selectedIndices(x, range);
+      if (indices?.length === 0) continue;
+      const name = resolved.name;
+      const label = (title: string) => `${name} | ${title}`;
+      const timeLabel = config.x_axis === "time" ? `Test time (${config.time_unit})` : "Recorded time (s)";
+      const time = config.x_axis === "time" ? trace.display_x : trace.time_s;
+      columns.push(...sourceColumns(trace.cell_name, trace, indices),
+        { header: label(timeLabel), values: take(time ?? [], indices) },
+        { header: label("Charge throughput (mAh)"), values: take(trace.charge_throughput_mah ?? [], indices) },
+        { header: label("Charge balance (mAh)"), values: take(trace.charge_balance_mah ?? [], indices) },
+        { header: label("Voltage (V)"), values: take(trace.voltage_v, indices) });
+      if (percent) {
+        const count = indices?.length ?? x.length;
+        const ref = config.balance?.references?.[trace.cell_id];
+        columns.push({ header: label("Estimated SOC (%)"), values: take(values, indices) },
+          { header: label("Starting SOC (%)"), values: Array(count).fill(trace.balance_start_soc_pct) },
+          { header: label("Reference capacity (mAh)"), values: Array(count).fill(trace.balance_reference_mah) },
+          { header: label("Reference basis"), values: Array(count).fill(ref?.basis === "mass" ? "Initial active mass" : "Measured capacity") });
+        if (ref?.basis === "mass") columns.push(
+          { header: label("Initial active mass (mg)"), values: Array(count).fill(ref.mass_mg) },
+          { header: label("Specific capacity (mAh/g)"), values: Array(count).fill(ref.specific_capacity_mah_g ?? 820) });
+      }
+    }
+    return columns;
+  }
   const plan = timeCapacityNativeExportPlan(result, spec, config, style);
   if (plan === null) return null;
   const columns: DataColumn[] = [];

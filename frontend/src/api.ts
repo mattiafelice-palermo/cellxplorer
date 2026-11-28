@@ -1379,6 +1379,20 @@ export interface PlotStyle {
   series_order?: string[];
 }
 
+export interface ChargeBalanceReference {
+  start_soc_pct?: number | null;
+  basis?: "measured" | "mass";
+  capacity_mah?: number | null;
+  mass_mg?: number | null;
+  specific_capacity_mah_g?: number | null;
+}
+
+export interface ChargeBalanceSettings {
+  unit?: "mah" | "soc";
+  show_voltage?: boolean;
+  references?: Record<string, ChargeBalanceReference>;
+}
+
 export interface AnalysisSpec {
   spec_version: number;
   type: string; // "cycling" for now; protocol-specific types come later
@@ -1425,7 +1439,8 @@ export interface AnalysisSpec {
       current_left: "current_ma" | "current_density" | "c_rate";
       current_right: "none" | "current_ma" | "current_density" | "c_rate";
       electrode_area_cm2: number | null;
-      view: "voltage_current" | "dqdv" | "dvdq";
+      view: "voltage_current" | "dqdv" | "dvdq" | "charge_balance";
+      balance?: ChargeBalanceSettings;
       derivative_phase: "both" | "charge" | "discharge";
       derivative_specific: boolean;
       derivative_absolute_discharge: boolean;
@@ -1882,6 +1897,11 @@ export interface ComputeResult {
 }
 
 export interface TimeCapacityTrace {
+  charge_balance_mah?: (number | null)[];
+  charge_throughput_mah?: (number | null)[];
+  estimated_soc_pct?: (number | null)[];
+  balance_reference_mah?: number | null;
+  balance_start_soc_pct?: number | null;
   cell_id: number;
   cell_name: string;
   label: string;

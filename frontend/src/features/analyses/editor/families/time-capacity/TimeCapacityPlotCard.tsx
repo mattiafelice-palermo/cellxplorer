@@ -2,6 +2,8 @@ import { postTimeCapacity, supportsDayCoordinates } from "../../../../../api";
 import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { PLOT_TIME_UNITS, secondsPerPlotTimeUnit } from "../../../../../plotTimeUnits";
 import { NegativeTimeNotice } from "./NegativeTimeNotice";
+import { ChargeBalanceControls } from "./ChargeBalanceControls";
+import { balanceAxisTitle, chargeBalanceTraces } from "./chargeBalancePlot";
 import { OutOfWindowCellsNotice } from "./OutOfWindowCellsNotice";
 import {
   computeTimeCapacityOutOfWindowNotice,
@@ -378,6 +380,8 @@ function overlapX(values: number[], cycles: (number | null)[], phases: string[],
 }
 
 function timeCapacityXAxisTitle(cfg: TimeCapacityConfig): string {
+  if (cfg.view === "charge_balance") return cfg.x_axis === "capacity_mah"
+    ? "Charge throughput (mAh)" : `Test time (${cfg.time_unit})`;
   return cfg.x_axis === "capacity_mah_g"
     ? "Specific capacity (mAh/g)"
     : cfg.x_axis === "capacity_mah_cm2"
@@ -711,7 +715,7 @@ export function timeCapacityTracesForResult(
     );
   };
 
-  if (cfg.view !== "voltage_current") {
+  if (cfg.view === "dqdv" || cfg.view === "dvdq") {
     for (const trace of result.cell_traces) {
       const analysisSampleHidden = timeCapacityTraceIsHidden(trace, spec);
       if (analysisSampleHidden && !preserveAnalysisSampleVisibility) continue;
@@ -819,6 +823,13 @@ export function timeCapacityTracesForResult(
       style.line_dash,
     );
     if (resolved.hidden) continue;
+    if (cfg.view === "charge_balance") {
+      const curves = chargeBalanceTraces(trace, cfg.balance ?? {}, resolved, seriesKey, !legendShown.has(seriesKey),
+        legendRanks.get(seriesKey), interactiveWebGl, includeExportColumns);
+      if (curves.length) legendShown.add(seriesKey);
+      out.push(...curves);
+      continue;
+    }
     const name = resolved.name;
     const currentStyles = timeCapacityCurrentSeriesDescriptors(trace, cfg, name).flatMap((current) => {
       if (isSeriesHidden(spec, current.visibilityKey!)) return [];
@@ -1016,9 +1027,11 @@ export function timeCapacityLayout(
   const yRange = numericTraceExtent(traces, "y", ["y"]);
   const y2Range = numericTraceExtent(traces, "y", ["y2", "y3"]);
   if (cfg.view !== "voltage_current") {
+    const balance = cfg.view === "charge_balance";
+    const voltageOverlay = balance && cfg.balance?.show_voltage;
     const specific = cfg.derivative_specific;
-    const xTitle = cfg.view === "dqdv" ? "Voltage (V)" : specific ? "Specific capacity (mAh/g)" : "Capacity (mAh)";
-    const yTitle =
+    const xTitle = balance ? timeCapacityXAxisTitle(cfg) : cfg.view === "dqdv" ? "Voltage (V)" : specific ? "Specific capacity (mAh/g)" : "Capacity (mAh)";
+    const yTitle = balance ? balanceAxisTitle(cfg.balance) :
       cfg.view === "dqdv"
         ? specific ? "dQ/dV (mAh/g/V)" : "dQ/dV (mAh/V)"
         : specific ? "dV/dQ (V/(mAh/g))" : "dV/dQ (V/mAh)";
@@ -1032,7 +1045,7 @@ export function timeCapacityLayout(
       hoverlabel: hoverLabelLayout(style),
       margin: {
         l: 78 + lm.l + leftGap,
-        r: Math.max(28, lm.r ? lm.r + 24 : 0),
+        r: Math.max(voltageOverlay ? 76 + axisGapDelta(style.y2_axis) : 28, lm.r ? lm.r + 24 : 0),
         t: 20 + lm.t,
         b: 58 + lm.b + bottomGap,
       },
@@ -1051,9 +1064,15 @@ export function timeCapacityLayout(
         title: { text: style.y_title ?? yTitle, font: titleFont, standoff: style.y_axis.title_standoff },
         ...axisLayout(style.y_axis, yRange),
       },
+      ...(voltageOverlay ? { yaxis2: {
+        ...baseAxis(style.y2_axis), overlaying: "y" as const, side: "right" as const, showgrid: false,
+        title: { text: style.y2_title ?? "Voltage (V)", font: titleFont, standoff: style.y2_axis.title_standoff },
+        ...axisLayout(style.y2_axis, y2Range),
+      }} : {}),
     }, style, [
-      referenceAxis("x", `time_capacity:${cfg.view}:x:${specific ? "specific" : "absolute"}`, referenceUnits(xTitle), xTitle),
-      referenceAxis("y", `time_capacity:${cfg.view}:y:${specific ? "specific" : "absolute"}`, referenceUnits(yTitle), yTitle),
+      referenceAxis("x", `time_capacity:${cfg.view}:x:${balance ? xTitle : specific ? "specific" : "absolute"}`, referenceUnits(xTitle), xTitle),
+      referenceAxis("y", `time_capacity:${cfg.view}:y:${balance ? cfg.balance?.unit ?? "mah" : specific ? "specific" : "absolute"}`, referenceUnits(yTitle), yTitle),
+      ...(voltageOverlay ? [referenceAxis("y2", "time_capacity:charge_balance:voltage", "V", "Voltage (V)")] : []),
     ]), result?.badges, limitationContext);
   }
   return withMprReadNotice(withCycleShadingKey(withReferenceLines({
@@ -1302,12 +1321,14 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
   update,
   resetAxis,
   voltageChannels,
+  selectedCells,
 }: {
   spec: AnalysisSpec;
   update: (fn: (s: AnalysisSpec) => void) => void;
   resetAxis: (spec: AnalysisSpec, axis: "x_axis" | "y_axis") => void;
   /** Live per-selection availability from the current Time/Capacity result. */
   voltageChannels?: TimeCapacityResult["voltage_channels"];
+  selectedCells: SelectedCellCycleSummary[];
 }) {
   const cfg = timeCapacityConfig(spec);
   // Only offer electrode potentials that actually have data for the current
@@ -1343,6 +1364,7 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
                 label="Plot"
                 data={[
                   { value: "voltage_current", label: "Voltage / current" },
+                  { value: "charge_balance", label: "Charge balance / estimated SOC" },
                   { value: "dqdv", label: "Incremental capacity (dQ/dV)" },
                   { value: "dvdq", label: "Differential voltage (dV/dQ)" },
                 ]}
@@ -1352,13 +1374,50 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
                   update((s) => {
                     const next = timeCapacityConfig(s);
                     next.view = value as TimeCapacityConfig["view"];
+                    if (value === "charge_balance") {
+                      if (!next.balance) {
+                        next.balance = { unit: "mah" };
+                        next.cycle_start = 1;
+                        next.cycle_end = null;
+                        next.cycles = [];
+                      }
+                      next.display_mode = "consecutive";
+                      next.time_reference = "test_start";
+                      next.stacked = false;
+                      next.voltage_channels = ["voltage"];
+                      next.voltage_channel = "voltage";
+                      if (next.x_axis !== "capacity_mah") next.x_axis = "time";
+                    }
                     s.computation.time_capacity = next;
                     resetAxis(s, "x_axis");
                     resetAxis(s, "y_axis");
                   })
                 }
               />
-              {cfg.view === "voltage_current" ? (
+              {cfg.view === "charge_balance" ? (
+                <>
+                  <Select label="X axis" value={cfg.x_axis} allowDeselect={false}
+                    data={[{ value: "time", label: "Test time" }, { value: "capacity_mah", label: "Charge throughput (mAh)" }]}
+                    onChange={value => update(s => {
+                      const next = timeCapacityConfig(s);
+                      next.x_axis = value === "capacity_mah" ? "capacity_mah" : "time";
+                      s.computation.time_capacity = next;
+                      resetAxis(s, "x_axis");
+                    })} />
+                  {cfg.x_axis === "time" && <Select label="Time unit" value={cfg.time_unit} data={PLOT_TIME_UNITS}
+                    allowDeselect={false} onChange={value => value && update(s => {
+                      s.computation.time_capacity = { ...timeCapacityConfig(s), time_unit: value as TimeCapacityConfig["time_unit"] };
+                      resetAxis(s, "x_axis");
+                    })} />}
+                  <ChargeBalanceControls cells={selectedCells} settings={cfg.balance ?? {}} onChange={change => update(s => {
+                    const next = timeCapacityConfig(s);
+                    const previousUnit = next.balance?.unit ?? "mah";
+                    next.balance = change(next.balance ?? {});
+                    s.computation.time_capacity = next;
+                    if (previousUnit !== (next.balance.unit ?? "mah")) resetAxis(s, "y_axis");
+                  })} />
+                </>
+              ) : cfg.view === "voltage_current" ? (
                 <>
               {showVoltageChannelSelector && (
                 <TimeCapacityVoltageChannelSelector
@@ -1565,7 +1624,7 @@ export const TimeCapacitySettings = memo(function TimeCapacitySettings({
   );
 }, (previous, next) => {
   if (previous.update !== next.update || previous.resetAxis !== next.resetAxis ||
-      previous.voltageChannels !== next.voltageChannels) return false;
+      previous.voltageChannels !== next.voltageChannels || previous.selectedCells !== next.selectedCells) return false;
   // This panel displays settings, not the independently mounted cycle range.
   // Its handlers always read the current spec through update's functional
   // callback, so skipping a range-only edit cannot capture an obsolete range.
@@ -2463,10 +2522,18 @@ function TimeCapacityPlotCardView({
     }
   }, [active, cancelPendingRefinement]);
   useEffect(() => cancelPendingRefinement, [cancelPendingRefinement]);
-  const selectedVoltageUnavailable = voltageChannelsUnavailable(
+  const selectedVoltageUnavailable = cfg.view !== "charge_balance" && voltageChannelsUnavailable(
     cfg.voltage_channels,
     currentResult?.voltage_channels,
   );
+  const balanceCells = cfg.view === "charge_balance"
+    ? (currentResult?.cell_traces ?? []).filter(trace => !timeCapacityTraceIsHidden(trace, spec))
+    : [];
+  const missingCalibration = cfg.balance?.unit === "soc" ? balanceCells.filter(trace =>
+    trace.charge_balance_mah?.some(value => value !== null) &&
+    (trace.balance_reference_mah == null || trace.balance_start_soc_pct == null)) : [];
+  const incompleteBalance = (currentResult?.badges ?? []).filter(badge =>
+    badge.kind === "charge_balance_incomplete" && balanceCells.some(trace => trace.cell_id === badge.cell_id));
   const voltageDataIdentity = voltageChannelDataIdentity(currentResult);
   const lastVoltageDataIdentityRef = useRef<string | undefined>(undefined);
   const effectiveVoltageDataIdentity =
@@ -2739,7 +2806,7 @@ function TimeCapacityPlotCardView({
     stacked: cfg.stacked,
   });
   const lastVisibleAutoFitSignatureRef = useRef<string | null>(null);
-  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}`;
+  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.view === "charge_balance" ? JSON.stringify(cfg.balance) : ""}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
@@ -3519,7 +3586,7 @@ function TimeCapacityPlotCardView({
       ) {
         throw new Error("The plot changed while the full-resolution export was prepared. Please try again.");
       }
-      if (voltageChannelsUnavailable(requestedVoltageChannels, fullResult.voltage_channels)) {
+      if (exportConfig.view !== "charge_balance" && voltageChannelsUnavailable(requestedVoltageChannels, fullResult.voltage_channels)) {
         const unavailableChannel = requestedVoltageChannels.find((channel) =>
           voltageChannelsUnavailable([channel], fullResult.voltage_channels),
         );
@@ -3734,12 +3801,12 @@ function TimeCapacityPlotCardView({
           quantityName={
              cfg.view === "voltage_current"
                ? `${voltageChannelSelectionLabel(cfg.voltage_channels, currentResult?.voltage_channels)}${cfg.stacked ? " and current" : ""}`
-              : cfg.view === "dqdv"
+              : cfg.view === "charge_balance" ? balanceAxisTitle(cfg.balance) : cfg.view === "dqdv"
                 ? "dQ/dV"
                 : "dV/dQ"
           }
           xAxisName={
-            cfg.x_axis === "time"
+            cfg.view === "charge_balance" ? timeCapacityXAxisTitle(cfg) : cfg.x_axis === "time"
               ? `Time (${cfg.time_unit})`
               : cfg.x_axis === "capacity_mah_g"
                 ? "Specific capacity (mAh/g)"
@@ -3774,7 +3841,8 @@ function TimeCapacityPlotCardView({
             Cycle navigation is disabled in Continuous mode. Use the x-axis range to select test time.
           </Text>
         ) : <TimeCapacityCycleNavigation
-          config={cfg}
+          config={cfg.view === "charge_balance" && cfg.cycle_end == null
+            ? { ...cfg, cycle_end: maxAvailableCycle } : cfg}
           maxAvailableCycle={maxAvailableCycle}
           viewportCycleRange={plotViewportCycleRange}
           isVirgin={isVirginNavigation}
@@ -3807,6 +3875,13 @@ function TimeCapacityPlotCardView({
             </Group>
           </Alert>
         )}
+        {incompleteBalance.length > 0 && <Text size="xs" c="dimmed">
+          Charge transfer is uncertain after a gap or an unverified reading in {incompleteBalance.map(b => b.cell_name).join(", ")}.
+          {" "}The balance ends at the last supported sample.
+        </Text>}
+        {missingCalibration.length > 0 && missingCalibration.length < balanceCells.length && <Text size="xs" c="dimmed">
+          Set a starting SOC and a capacity reference for {missingCalibration.map(trace => trace.cell_name).join(", ")}.
+        </Text>}
          {loadingWithoutResult ? (
           // Hold the space silently until the load is slow enough to mention.
           <Center h={500}>
@@ -3817,7 +3892,11 @@ function TimeCapacityPlotCardView({
          ) : traces.length === 0 ? (
            <Center h={500}>
              <Text size="sm" c="dimmed">
-               {cfg.voltage_channels.length === 0
+               {cfg.view === "charge_balance"
+                 ? cfg.balance?.unit === "soc" && currentResult?.cell_traces.some(trace => trace.balance_reference_mah == null || trace.balance_start_soc_pct == null)
+                   ? "Enter a starting SOC and a capacity reference for the Cell to see its estimated SOC."
+                   : "No recorded charge balance is available for the selected Cells and cycles."
+                 : cfg.voltage_channels.length === 0
                  ? "Select at least one voltage quantity to plot."
                  : selectedVoltageUnavailable
                  ? voltageChannelsUnavailableMessage(cfg.voltage_channels, currentResult?.voltage_channels)

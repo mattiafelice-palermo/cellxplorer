@@ -86,6 +86,7 @@ export function timeCapacitySeriesVisibilityCandidatesForConfig(
         ? config.voltage_channels.some((channel) =>
             hasFinitePoint(traceVoltageValues(trace, channel, config.voltage_channel)),
           )
+        : config.view === "charge_balance" ? hasFinitePoint(trace.charge_balance_mah)
         : hasFinitePoint(trace.derivative_x) && hasFinitePoint(trace.derivative_y);
     if (!hasData) continue;
     candidates.push({ key: timeCapacityVisibilityKey(seriesKey), label: baseLabel });

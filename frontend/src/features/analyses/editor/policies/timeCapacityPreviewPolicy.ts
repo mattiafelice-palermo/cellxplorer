@@ -30,6 +30,9 @@ export function timeCapacityPreviewResult(
   spec: AnalysisSpec,
 ): TimeCapacityResult | undefined {
   if (!result) return undefined;
+  if (spec.computation.time_capacity?.view === "charge_balance") {
+    return result.settings?.view === "charge_balance" ? result : undefined;
+  }
   const channels = selectedVoltageChannels(spec);
   if (!timeCapacityResultMatchesVoltageChannels(result, channels)) return undefined;
   if (voltageChannelsUnavailable(channels, result.voltage_channels)) return undefined;

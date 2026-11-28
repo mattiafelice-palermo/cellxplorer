@@ -675,7 +675,7 @@ export function SavedTimeCapacityPreview({
   });
   const previewVoltageChannels = timeCapacityConfig(previewSpec).voltage_channels;
   const previewResult = timeCapacityPreviewResult(preview.data, previewSpec);
-  const selectedVoltageUnavailable = voltageChannelsUnavailable(
+  const selectedVoltageUnavailable = previewSpec.computation.time_capacity?.view !== "charge_balance" && voltageChannelsUnavailable(
     previewVoltageChannels,
     preview.data?.voltage_channels,
   );

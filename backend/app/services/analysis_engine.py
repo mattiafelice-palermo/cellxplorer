@@ -39,6 +39,7 @@ from . import (
     cycle_throughput,
     cycle_energy,
     canonical_cycling,
+    charge_balance,
     parsing,
     protocol,
     stitch,
@@ -1314,9 +1315,10 @@ def time_capacity_sampling_metadata(
     Existing masks and phase/cycle segmentation remain owned by their renderer.
     """
     breaks = []
-    if row_indices is not None and window_break_rows is not None:
-        positions = np.searchsorted(row_indices, window_break_rows)
-        breaks = np.unique(positions[(positions > 0) & (positions < len(row_indices))]).tolist()
+    if window_break_rows is not None:
+        positions = np.searchsorted(row_indices, window_break_rows) if row_indices is not None else window_break_rows
+        length = len(row_indices) if row_indices is not None else selected_count
+        breaks = np.unique(positions[(positions > 0) & (positions < length)]).tolist()
     if raw is not None and ("mpr_acquisition_segment" in raw or "acquisition_segment" in raw):
         from . import exploratory_plotting
         breaks = sorted(set(breaks).union(exploratory_plotting.break_before(raw)))
@@ -1792,7 +1794,7 @@ def time_capacity_settings(computation: dict, *, preserve_cycle_window: bool = F
         "current_left": current_left,
         "current_right": current_right,
         "electrode_area_cm2": _metadata_float(cfg.get("electrode_area_cm2")),
-        "view": cfg.get("view") if cfg.get("view") in {"voltage_current", "dqdv", "dvdq"} else "voltage_current",
+        "view": cfg.get("view") if cfg.get("view") in {"voltage_current", "dqdv", "dvdq", "charge_balance"} else "voltage_current",
         "derivative_phase": cfg.get("derivative_phase") if cfg.get("derivative_phase") in {"both", "charge", "discharge"} else "both",
         "derivative_specific": bool(cfg.get("derivative_specific", False)),
         "derivative_absolute_discharge": bool(cfg.get("derivative_absolute_discharge", True)),
@@ -1805,6 +1807,14 @@ def time_capacity_settings(computation: dict, *, preserve_cycle_window: bool = F
         # intentionally continue to use the primary `voltage_v` array.
         "voltage_channel": voltage_channel,
         "voltage_channels": voltage_channels,
+        **({
+            "balance": cfg.get("balance") if isinstance(cfg.get("balance"), dict) else {},
+            "display_mode": "consecutive",
+            "time_reference": "test_start",
+            "x_axis": "capacity_mah" if cfg.get("x_axis") == "capacity_mah" else "time",
+            "voltage_channel": "voltage",
+            "voltage_channels": ["voltage"],
+        } if cfg.get("view") == "charge_balance" else {}),
     }
 
 
@@ -4178,6 +4188,7 @@ def compute_time_capacity(
 
     computation = spec.get("computation", {})
     settings = time_capacity_settings(computation, preserve_cycle_window=refinement)
+    balance_view = settings["view"] == "charge_balance"
     compact_ordinary_time = (
         compact
         and settings["view"] == "voltage_current"
@@ -4308,7 +4319,8 @@ def compute_time_capacity(
             charge_first = uncounted and cycles.empty
             paired = charge_first or mixed_runs is not None
         has_paired_navigation |= paired
-        indexed_path = not paired and plan.path in {"indexed", "missing"}
+        # The balance needs every preceding executed step, including uncounted halves.
+        indexed_path = not balance_view and not paired and plan.path in {"indexed", "missing"}
         # A legacy index without time prefixes must use the complete timeline;
         # silently zeroing the selected range would produce false coordinates.
         if canonical_time and plan.complete and display_origin_time_s is None:
@@ -4541,8 +4553,21 @@ def compute_time_capacity(
                 )
             continue
 
-        if canonical_time and not indexed_path:
-            raw = raw.sort_values(_time_capacity_sort_columns(raw), kind="stable")
+        if balance_view:
+            raw = charge_balance.trajectory(raw)
+            start_soc, reference_mah = charge_balance.calibration(settings["balance"], cell.id)
+            raw["estimated_soc_pct"] = (
+                start_soc + 100 * raw["charge_balance_mah"] / reference_mah
+                if start_soc is not None and reference_mah is not None else np.nan
+            )
+            if raw["charge_balance_mah"].isna().any():
+                badges.append({
+                    "kind": "charge_balance_incomplete", "cell_id": cell.id, "cell_name": cell.name,
+                    "detail": "Charge balance ends where recorded charge transfer can no longer be established.",
+                })
+
+        if (canonical_time or balance_view) and not indexed_path:
+            raw = raw.sort_values(["_balance_row"] if balance_view else _time_capacity_sort_columns(raw), kind="stable")
             raw = _continuous_time(raw)
             time_prepared_before_filter = True
             origin_rows = raw["time_s"]
@@ -4600,7 +4625,7 @@ def compute_time_capacity(
                         | (raw.get("display_only_cycle", False) & include_display_only_rows)
                     ]
 
-            raw = raw.sort_values(_time_capacity_sort_columns(raw), kind="stable")
+            raw = raw.sort_values(["_balance_row"] if balance_view else _time_capacity_sort_columns(raw), kind="stable")
             cell_diagnostics["selected_rows_before_transforms"] = len(raw)
 
         with time_capacity_path.timed_stage(
@@ -4831,6 +4856,12 @@ def compute_time_capacity(
             else:
                 plot_mask = np.zeros(len(raw), dtype=bool)
 
+        if balance_view:
+            raw = raw.copy()
+            raw.loc[plot_mask, ["charge_balance_mah", "estimated_soc_pct"]] = np.nan
+            # A sparse cycle or protocol selection must not draw a line over omitted rows.
+            balance_breaks = np.flatnonzero((np.diff(raw["_balance_row"]) != 1) | (plot_mask[1:] != plot_mask[:-1])) + 1
+
         materialized_voltage_channels = (
             settings["voltage_channels"]
             if settings["view"] == "voltage_current"
@@ -4882,17 +4913,19 @@ def compute_time_capacity(
             consumed_by=("response_projection",),
         )
         with time_capacity_path.timed_stage(cell_diagnostics, "display_coordinate"):
-            display_x = _time_capacity_display_x(
-                raw,
-                phases,
-                capacity,
-                capacity_g,
-                capacity_area,
-                settings,
-                origin_cycle_start=display_origin_cycle_start,
-                origin_time_s=display_origin_time_s,
-                origin_capacity=(display_origin_capacity_by_cell or {}).get(cell.id),
-            )
+            if balance_view:
+                if settings["x_axis"] == "capacity_mah":
+                    display_x = raw["charge_throughput_mah"].to_numpy(dtype=float)
+                else:
+                    factor = time_capacity_derived.SECONDS_PER_PLOT_TIME_UNIT.get(settings.get("time_unit"), 1.0)
+                    display_x = (raw["time_s"].to_numpy(dtype=float) - (display_origin_time_s or 0.)) / factor
+            else:
+                display_x = _time_capacity_display_x(
+                    raw, phases, capacity, capacity_g, capacity_area, settings,
+                    origin_cycle_start=display_origin_cycle_start,
+                    origin_time_s=display_origin_time_s,
+                    origin_capacity=(display_origin_capacity_by_cell or {}).get(cell.id),
+                )
         display_x_cycle_origins = (
             {
                 str(cycle): float(value)
@@ -4910,7 +4943,7 @@ def compute_time_capacity(
         )
         display_cycle_spans = time_capacity_cycle_spans(raw["cycle"].to_numpy(), display_x) if not refinement else {}
         display_row_indices = None
-        window_break_rows = None
+        window_break_rows = balance_breaks if balance_view else None
         if (
             refinement
             and refinement_viewport_x_min is not None
@@ -4957,6 +4990,9 @@ def compute_time_capacity(
                 else [*(list(voltage_by_channel.values()) or [voltage]), current]
             )
             primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
+            if balance_view:
+                primary_values = raw["charge_balance_mah"].to_numpy(dtype=float)
+                envelope_series = [primary_values, voltage]
             if settings["view"] == "voltage_current" and voltage_by_channel:
                 visible_voltage_values = np.zeros(len(raw), dtype=bool)
                 for values in voltage_by_channel.values():
@@ -4971,7 +5007,8 @@ def compute_time_capacity(
             with time_capacity_path.timed_stage(
                 profile_diagnostics, "display_post_downsample_materialization"
             ):
-                take = np.union1d(take, time_capacity_boundary_sample_rows(raw, source_boundary_indices))
+                boundaries = np.union1d(source_boundary_indices, balance_breaks) if balance_view else source_boundary_indices
+                take = np.union1d(take, time_capacity_boundary_sample_rows(raw, boundaries))
                 raw = raw.iloc[take]
                 display_row_indices = take if display_row_indices is None else display_row_indices[take]
                 display_x = display_x[take]
@@ -5015,10 +5052,11 @@ def compute_time_capacity(
         )
 
         full_precision = precision == "full" or not compact
-        is_derivative = settings["view"] != "voltage_current"
+        is_derivative = settings["view"] in {"dqdv", "dvdq"}
         x_axis = settings["x_axis"]
         include_time = (
             not compact
+            or (balance_view and full_precision)
             or not is_derivative
             and x_axis == "time"
             and settings["display_mode"] != "consecutive"
@@ -5041,6 +5079,13 @@ def compute_time_capacity(
                 "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
                 "display_x": _jsonsafe_plot(display_x, None if full_precision else 6),
+                **({
+                    "charge_balance_mah": _jsonsafe_plot(raw["charge_balance_mah"], None if full_precision else 8),
+                    "estimated_soc_pct": _jsonsafe_plot(raw["estimated_soc_pct"], None if full_precision else 7),
+                    "charge_throughput_mah": _jsonsafe_plot(raw["charge_throughput_mah"], None if full_precision else 8),
+                    "balance_reference_mah": reference_mah,
+                    "balance_start_soc_pct": start_soc,
+                } if balance_view else {}),
                 **time_capacity_sampling_metadata(display_row_indices, selected_display_count, window_break_rows, raw=raw),
                 **({"display_cycle_spans": display_cycle_spans} if not refinement else {}),
                 **(
@@ -5060,7 +5105,7 @@ def compute_time_capacity(
                 ),
                 "capacity_mah": (
                     _jsonsafe_plot(capacity, None if full_precision else 6)
-                    if not compact or (not is_derivative and x_axis == "capacity_mah")
+                    if not compact or (not is_derivative and not balance_view and x_axis == "capacity_mah")
                     else []
                 ),
                 "capacity_mah_g": (

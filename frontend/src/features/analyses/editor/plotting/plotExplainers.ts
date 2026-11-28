@@ -215,10 +215,20 @@ export function getCycleQuantityExplainer(quantity: string, normalizeByMass: boo
 export function getTimeCapacityExplainer(
   xAxis: "time" | "capacity_mah" | "capacity_mah_g" | "capacity_mah_cm2",
   currentAxis: "none" | "current_ma" | "current_density" | "c_rate",
-  view: "voltage_current" | "dqdv" | "dvdq" = "voltage_current",
+  view: "voltage_current" | "dqdv" | "dvdq" | "charge_balance" = "voltage_current",
   derivativeSpecific = false,
   smoothingWindow = 7,
 ): PlotExplainer {
+  if (view === "charge_balance") return {
+    title: "Charge balance and estimated SOC",
+    formula: "Charge balance = recorded charge in − recorded charge out, starting at the first sample.",
+    secondaryFormula: "Estimated SOC (%) = starting SOC + 100 × charge balance / reference capacity.",
+    requires: ["charge_capacity_mah", "discharge_capacity_mah"],
+    notes: [
+      "Capacity on the horizontal axis counts both charge and discharge as positive throughput. Choosing another cycle window preserves the accumulated balance.",
+      "Mass-based SOC uses the initial active mass and the material’s specific capacity. Side reactions and self-discharge can separate this estimate from the recoverable charge. Values can extend below 0% or above 100%.",
+    ],
+  };
   if (view === "dqdv") {
     return {
       title: "Incremental capacity analysis (ICA)",

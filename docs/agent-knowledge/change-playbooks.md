@@ -75,6 +75,12 @@ consolidating distribution metadata.
 
 ## Scientific calculation change
 
+Time/Capacity charge balance uses measured counter increments over the complete ordered
+Cell before applying cycle windows, protocol masks or display sampling. A plotted
+consecutive-capacity coordinate can rebase on the visible window and cannot supply this
+prefix. Calibration belongs to the plot and individual Cell. Portable import remaps its
+Cell IDs for both the active recipe and saved plots. See [Spec 116](../specs/116-time-capacity-charge-balance.md).
+
 1. Keep deterministic calculations in backend services.
 2. Decide which scientific meaning changed. Bump `CALC_VERSION` for shared
    calculations; a format-specific change belongs in that adapter's parser

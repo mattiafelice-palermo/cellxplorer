@@ -1,5 +1,8 @@
 # Feature specs
 
+- [116 — Time/Capacity charge balance and estimated SOC](116-time-capacity-charge-balance.md).
+  Recorded charge inventory across cycles with per-Cell measured or mass-based calibration.
+
 - [115 — Alpha 0.29.0-alpha.29 release](115-alpha29-release.md).
   **Complete; published and independently verified.** Maccor, cache-sharing and
   BioLogic MB fixes since Alpha .24; local/Windows and signed native gates passed.

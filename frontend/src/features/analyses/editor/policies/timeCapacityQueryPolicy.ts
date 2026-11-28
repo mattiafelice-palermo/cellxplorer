@@ -160,6 +160,7 @@ export function timeCapacityCompatibilitySignature(
     voltage_channel: config.voltage_channel,
     voltage_channels: config.voltage_channels ?? [config.voltage_channel],
     view: config.view,
+    balance: config.view === "charge_balance" ? config.balance : undefined,
     derivative_phase: config.derivative_phase,
     derivative_specific: config.derivative_specific,
     derivative_absolute_discharge: config.derivative_absolute_discharge,
@@ -201,7 +202,8 @@ export function timeCapacityDataSignature(
     voltageChannels: config.voltage_channels,
     viewportWidth,
     coordinateOriginCycle: coordinateOriginCycle ?? timeCapacityOriginCycle(config),
-    derivative: config.view === "voltage_current" ? null : {
+    balance: config.view === "charge_balance" ? (config.balance ?? {}) : undefined,
+    derivative: config.view === "voltage_current" || config.view === "charge_balance" ? null : {
       view: config.view,
       phase: config.derivative_phase,
       specific: config.derivative_specific,

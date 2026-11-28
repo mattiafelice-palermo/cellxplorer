@@ -62,7 +62,7 @@ class TimeCapacityTransformNeeds:
         full_response = not compact
         normal_view = settings.get("view") == "voltage_current"
         x_axis = settings.get("x_axis")
-        derivative = not normal_view
+        derivative = settings.get("view") in {"dqdv", "dvdq"}
         compact_consecutive_time = (
             compact
             and normal_view

@@ -132,6 +132,23 @@ test("native export plan carries resolved visible names without scientific rows"
   });
 });
 
+test("SOC export keeps one aligned row per observation and the Cell-specific calibration", () => {
+  const cfg = { ...config, view: "charge_balance", x_axis: "capacity_mah", balance: {
+    unit: "soc" as const, show_voltage: true, references: { 1: { basis: "mass" as const, mass_mg: 100 } },
+  }};
+  const result = makeResult();
+  Object.assign(result.cell_traces[0], {
+    charge_balance_mah: [0, 12, -8], charge_throughput_mah: [0, 12, 32], display_x: [0, 12, 32],
+    estimated_soc_pct: [60, 74.634, 50.244], balance_start_soc_pct: 60, balance_reference_mah: 82,
+  });
+  const columns = consecutiveTimeCapacityExportColumns(result, makeSpec(), cfg, DEFAULT_PLOT_STYLE, [30, 32])!;
+  assert.equal(new Set(columns.map(c => c.header)).size, columns.length);
+  assert.deepEqual(columns.find(c => c.header.endsWith("Estimated SOC (%)"))?.values, [50.244]);
+  assert.deepEqual(columns.find(c => c.header.endsWith("Reference capacity (mAh)"))?.values, [82]);
+  assert.deepEqual(columns.find(c => c.header.endsWith("Specific capacity (mAh/g)"))?.values, [820]);
+  assert.deepEqual(columns.find(c => c.header === "Local cycle")?.values, [5]);
+});
+
 test("direct Time/Capacity export includes configured stacked-current quantities", () => {
   const columns = consecutiveTimeCapacityExportColumns(
     { ...makeResult(), cell_traces: [makeTrace(1, "Cell A")] },

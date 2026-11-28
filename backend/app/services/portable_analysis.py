@@ -1314,15 +1314,29 @@ def _html_tail() -> str:
   }
   function timeRows(view) {
     const rows = [];
+    const balance = view.result.settings?.view === "charge_balance";
+    const percent = view.result.settings?.balance?.unit === "soc";
     for (const series of view.result.cell_traces || []) {
       if (series.excluded) continue;
       const settings = view.result.settings || {};
+      if (balance) {
+        (series.display_x || []).forEach((x, i) => rows.push({
+          series: series.label, x, y: (percent ? series.estimated_soc_pct : series.charge_balance_mah)?.[i] ?? null,
+          charge_balance_mah: series.charge_balance_mah?.[i] ?? null,
+          voltage_v: series.voltage_v?.[i] ?? null, cycle: series.cycle?.[i],
+          start_soc_pct: series.balance_start_soc_pct, reference_mah: series.balance_reference_mah,
+        }));
+        continue;
+      }
       const xKey = settings.x_axis === "capacity_mah_g" ? "capacity_mah_g" : settings.x_axis === "capacity_mah" ? "capacity_mah" : "time_s";
       const yKey = settings.view === "dqdv" || settings.view === "dvdq" ? "derivative_y" : "voltage_v";
       const xs = series[xKey] || [];
       const ys = series[yKey] || [];
       xs.forEach((x, index) => rows.push({ series: series.label, x, y: ys[index] }));
     }
+    if (balance) return { rows,
+      xLabel: view.result.settings.x_axis === "capacity_mah" ? "Charge throughput (mAh)" : "Test time (" + view.result.settings.time_unit + ")",
+      yLabel: percent ? "Estimated SOC (%)" : "Charge balance (mAh)" };
     return { rows, xLabel: view.result.settings?.x_axis || "Time", yLabel: "Voltage / derivative" };
   }
   function dataRows(view) { return view.tab === "time_capacity" ? timeRows(view) : cycleRows(view); }
@@ -2219,6 +2233,14 @@ def _remap_spec(spec: dict, cell_map: dict[int, int], group_map: dict[int, int])
     result.pop("draft_plot", None)
     result.pop("draft_plots", None)
     result["selection"] = _remap_selection(result.get("selection", {}), cell_map, group_map)
+    for recipe in [result, *(result.get("saved_plots") or [])]:
+        balance = ((recipe.get("computation") or {}).get("time_capacity") or {}).get("balance")
+        if isinstance(balance, dict) and isinstance(balance.get("references"), dict):
+            references = balance["references"]
+            balance["references"] = {
+                str(new_id): references[str(old_id)] for old_id, new_id in cell_map.items()
+                if str(old_id) in references
+            }
     for plot in result.get("saved_plots", []) or []:
         plot["selection"] = _remap_selection(plot.get("selection", {}), cell_map, group_map)
     # Presentation is copied with the plot, but source IDs belong to the source
