@@ -182,7 +182,8 @@ import {
   type CellPickerSortKey,
   type CellPickerSortState,
 } from "./policies/analysisSamplePickerPolicy";
-import { shiftPreviewCycleWindow } from "../../../analysisCellPreviewPolicy";
+import { editPreviewWindow, pickerCycleExtentKey, pickerNeedsCycleExtent, pickerPreviewWindow, shiftPreviewCycleWindow, type PreviewCycleWindow } from "../../../analysisCellPreviewPolicy";
+import { PreviewCycleInput } from "../../../components/PreviewCycleInput";
 import { CellPreviewPlot } from "../../../components/CellPreviewPlot";
 import {
   cellPreviewCapacityLayout,
@@ -1165,8 +1166,8 @@ function CellPickerMetricCells({ cell, selected = false }: { cell: CellPickerCel
   return (
     <>
       <Table.Td ta="right">
-        <Text size="xs" c={textColor}>
-          {cell.cycle_count === null ? "—" : cell.cycle_count.toLocaleString()}
+        <Text size="xs" c={textColor} title={cell.recordedCountOnly ? "Preview this Cell to include cycles detected from measured current." : undefined}>
+          {cell.cycle_count === null ? "—" : cell.cycle_count.toLocaleString()}{cell.recordedCountOnly && cell.cycle_count !== null ? " recorded" : ""}
         </Text>
       </Table.Td>
       <Table.Td ta="right">
@@ -1268,10 +1269,10 @@ function AddEntriesModal({
   const [previewCellId, setPreviewCellId] = useState<number | null>(null);
   const [previewTab, setPreviewTab] = useState<"voltage" | "capacity">("voltage");
   const [previewVoltageXAxis, setPreviewVoltageXAxis] = useState<"time" | "capacity">("time");
-  const [previewCycleStart, setPreviewCycleStart] = useState(1);
-  const [previewCycleEnd, setPreviewCycleEnd] = useState(20);
-  const [capacityCycleStart, setCapacityCycleStart] = useState(1);
-  const [capacityCycleEnd, setCapacityCycleEnd] = useState(1);
+  const [previewRanges, setPreviewRanges] = useState<{
+    scope: string; voltage?: PreviewCycleWindow; capacity?: PreviewCycleWindow;
+  }>();
+  const [previewExtents, setPreviewExtents] = useState<Map<number, { scope: string; count: number }>>(() => new Map());
   const [normalizeCapacityByMass, setNormalizeCapacityByMass] = useState(true);
   const [previewSurfaceMode, setPreviewSurfaceMode] = useState<"theme" | "sun" | "gray" | "moon">("theme");
   const [cellPickerTableShare, setCellPickerTableShare] = useState(68);
@@ -1401,6 +1402,16 @@ function AddEntriesModal({
     () => new Map((cells.data ?? []).map((cell) => [cell.id, cell] as const)),
     [cells.data],
   );
+  const pairing = analysisSpec.computation.cycle_pairing;
+  const pickerCount = useCallback((cell: CellSummary | undefined) => {
+    if (!cell) return { cycle_count: null };
+    const extent = previewExtents.get(cell.id);
+    if (extent?.scope === pickerCycleExtentKey(cell, pairing)) return { cycle_count: extent.count };
+    return {
+      cycle_count: cell.cycle_count_ready ? cell.total_cycles : null,
+      recordedCountOnly: pickerNeedsCycleExtent(cell, pairing),
+    };
+  }, [previewExtents, pairing]);
   const filedReferences = useMemo(() => {
     const cellIds = new Set<number>();
     const groupIds = new Set<number>();
@@ -1423,7 +1434,7 @@ function AddEntriesModal({
             return {
               id: cell.id,
               name: cell.name,
-              cycle_count: summary?.cycle_count_ready ? summary.total_cycles : null,
+              ...pickerCount(summary),
               max_specific_discharge_capacity_mah_g:
                 cell.max_specific_discharge_capacity_mah_g,
               created_at: summary?.created_at ?? null,
@@ -1438,7 +1449,7 @@ function AddEntriesModal({
     };
     visit(tree.data?.folders ?? []);
     return rowsByFolderId;
-  }, [cellSort, cellSummariesById, matchesCell, tree.data?.folders]);
+  }, [cellSort, cellSummariesById, matchesCell, pickerCount, tree.data?.folders]);
   const unfiledCells = useMemo(
     () =>
       sortCellPickerCells(
@@ -1446,7 +1457,7 @@ function AddEntriesModal({
           .filter((cell) => !cell.archived && !filedCellIds.has(cell.id) && matchesCell({
             id: cell.id,
             name: cell.name,
-            cycle_count: cell.cycle_count_ready ? cell.total_cycles : null,
+            ...pickerCount(cell),
             max_specific_discharge_capacity_mah_g: cell.max_specific_discharge_capacity_mah_g,
             created_at: cell.created_at,
             last_modified_at: cell.last_modified_at ?? null,
@@ -1455,7 +1466,7 @@ function AddEntriesModal({
           .map((cell) => ({
             id: cell.id,
             name: cell.name,
-            cycle_count: cell.cycle_count_ready ? cell.total_cycles : null,
+            ...pickerCount(cell),
             max_specific_discharge_capacity_mah_g: cell.max_specific_discharge_capacity_mah_g,
             created_at: cell.created_at,
             last_modified_at: cell.last_modified_at ?? null,
@@ -1463,7 +1474,7 @@ function AddEntriesModal({
           })),
         cellSort,
       ),
-    [cellSort, cells.data, filedCellIds, matchesCell],
+    [cellSort, cells.data, filedCellIds, matchesCell, pickerCount],
   );
   const shownUnfiledCells = hideAddedCells
     ? unfiledCells.filter((cell) => !existingCellIds.has(cell.id))
@@ -1504,7 +1515,10 @@ function AddEntriesModal({
     ? undefined
     : cellSummariesById.get(activePreviewCellId);
   const previewCellSummaryLoaded = previewCellSummary !== undefined;
-  const previewCycleCount = previewCellSummary?.cycle_count_ready ? previewCellSummary.total_cycles : 0;
+  const previewScope = previewCellSummary ? pickerCycleExtentKey(previewCellSummary, pairing) : "";
+  const previewCount = pickerCount(previewCellSummary);
+  const resolvingExtent = Boolean(previewCount.recordedCountOnly);
+  const previewCycleCount = resolvingExtent ? 0 : previewCount.cycle_count ?? 0;
   const previewActiveMassMg = previewCellSummary?.scientific_metadata.active_mass_mg.effective_value ?? null;
   const previewActiveMassG = previewActiveMassMg !== null && Number.isFinite(previewActiveMassMg) && previewActiveMassMg > 0
     ? previewActiveMassMg / 1000
@@ -1515,30 +1529,25 @@ function AddEntriesModal({
     && previewCellSummary.source_facets.every((source) => source.technique?.trim().toLocaleUpperCase() === "OCV"),
   );
   const previewXAxis = previewVoltageXAxis;
-  const resolvedPreviewCycleStart = previewCycleCount > 0
-    ? Math.max(1, Math.min(previewCycleStart, previewCycleCount))
-    : 0;
-  const resolvedPreviewCycleEnd = previewCycleCount > 0
-    ? Math.max(resolvedPreviewCycleStart, Math.min(previewCycleEnd, previewCycleCount))
-    : 0;
-  const resolvedCapacityCycleStart = previewCycleCount > 0
-    ? Math.max(1, Math.min(capacityCycleStart, previewCycleCount))
-    : 0;
-  const resolvedCapacityCycleEnd = previewCycleCount > 0
-    ? Math.max(resolvedCapacityCycleStart, Math.min(capacityCycleEnd, previewCycleCount))
-    : 0;
+  const edits = previewRanges?.scope === previewScope ? previewRanges : undefined;
+  const voltageRange = pickerPreviewWindow(previewCycleCount, "voltage", edits?.voltage);
+  const capacityRange = pickerPreviewWindow(previewCycleCount, "capacity", edits?.capacity);
+  const { start: resolvedPreviewCycleStart, end: resolvedPreviewCycleEnd } = voltageRange;
+  const { start: resolvedCapacityCycleStart, end: resolvedCapacityCycleEnd } = capacityRange;
+  const activeRange = previewTab === "voltage" ? voltageRange : capacityRange;
+  const changeRange = (range: PreviewCycleWindow) => setPreviewRanges({ ...edits, scope: previewScope, [previewTab]: range });
   useEffect(() => {
     if (!opened) return;
-    const end = previewCycleCount;
-    setPreviewCycleEnd(end);
-    setPreviewCycleStart(end > 0 ? Math.max(1, end - 19) : 0);
-    setCapacityCycleStart(end > 0 ? 1 : 0);
-    setCapacityCycleEnd(end);
     setNormalizeCapacityByMass(previewActiveMassG !== null);
     setPreviewSurfaceMode("theme");
     if (previewIsOcvOnly) setPreviewVoltageXAxis("time");
-    if (previewCellSummaryLoaded && !previewHasVerifiedCycles) setPreviewTab("voltage");
-  }, [opened, activePreviewCellId, previewActiveMassG, previewCycleCount, previewIsOcvOnly, previewCellSummaryLoaded, previewHasVerifiedCycles]);
+  }, [opened, activePreviewCellId, previewActiveMassG, previewIsOcvOnly]);
+  useEffect(() => {
+    if (opened && previewCellSummaryLoaded && !resolvingExtent && !previewHasVerifiedCycles) setPreviewTab("voltage");
+  }, [opened, previewCellSummaryLoaded, resolvingExtent, previewHasVerifiedCycles]);
+  useEffect(() => {
+    if (!opened) setPreviewRanges(undefined);
+  }, [opened]);
   const previewSpec = useMemo<AnalysisSpec | null>(() => {
     if (activePreviewCellId === null) return null;
     return {
@@ -1558,8 +1567,7 @@ function AddEntriesModal({
         protocol_filter: { excluded_segment_ids: [], only_segment_ids: [] },
         time_capacity: {
           ...DEFAULT_TIME_CAPACITY,
-        ...analysisSpec.computation.time_capacity,
-        time_reference: "selected_range",
+          time_reference: "selected_range",
           x_axis: previewXAxis === "time" ? "time" : "capacity_mah",
           time_unit: "min",
           // Keep the phase labels (the compact route returns them too) so the
@@ -1568,9 +1576,7 @@ function AddEntriesModal({
           view: "voltage_current",
           cycle_start: previewCycleCount > 0 ? resolvedPreviewCycleStart : 1,
           cycle_end: previewCycleCount > 0 ? resolvedPreviewCycleEnd : 1,
-          cycles: previewCycleCount > 0
-            ? Array.from({ length: resolvedPreviewCycleEnd - resolvedPreviewCycleStart + 1 }, (_, index) => resolvedPreviewCycleStart + index)
-            : [],
+          cycles: [],
           current_right: "none",
           voltage_channel: "voltage",
           voltage_channels: ["voltage"],
@@ -1580,21 +1586,23 @@ function AddEntriesModal({
     };
   }, [activePreviewCellId, analysisSpec, previewCycleCount, previewXAxis, resolvedPreviewCycleEnd, resolvedPreviewCycleStart]);
   const previewQuery = useQuery({
-    queryKey: ["analysis-cell-picker-preview", analysisId, activePreviewCellId, previewXAxis, resolvedPreviewCycleStart, resolvedPreviewCycleEnd],
-    queryFn: () => postTimeCapacity<TimeCapacityResult>(
+    queryKey: ["analysis-cell-picker-preview", analysisId, previewScope, previewXAxis, resolvedPreviewCycleStart, resolvedPreviewCycleEnd],
+    queryFn: ({ signal }) => postTimeCapacity<TimeCapacityResult>(
       `/api/analyses/${analysisId}/time-capacity`,
       {
         spec: previewSpec!,
         recompute: false,
         compact: true,
         viewport_width: 420,
+        persist: false,
       },
+      { signal },
     ),
     enabled:
       opened &&
       mode === "cell" &&
-      previewTab === "voltage" &&
-      activePreviewCellId !== null &&
+      (previewTab === "voltage" || resolvingExtent) &&
+      previewCellSummaryLoaded &&
       previewSpec !== null,
     staleTime: 30_000,
     placeholderData: (previous, previousQuery) =>
@@ -1603,7 +1611,12 @@ function AddEntriesModal({
         : undefined,
     retry: false,
   });
-  const matchingPreviewTrace = previewQuery.isPlaceholderData ? undefined : previewQuery.data?.cell_traces.find(
+  useEffect(() => {
+    if (!resolvingExtent || activePreviewCellId === null || !previewQuery.data || previewQuery.isPlaceholderData) return;
+    const count = previewQuery.data.paired_cycle_max ?? previewCount.cycle_count ?? 0;
+    setPreviewExtents(previous => new Map(previous).set(activePreviewCellId, { scope: previewScope, count }));
+  }, [resolvingExtent, activePreviewCellId, previewScope, previewCount.cycle_count, previewQuery.data, previewQuery.isPlaceholderData]);
+  const matchingPreviewTrace = previewQuery.isPlaceholderData || resolvingExtent ? undefined : previewQuery.data?.cell_traces.find(
     (trace) => trace.cell_id === activePreviewCellId,
   );
   const [retainedPreview, setRetainedPreview] = useState<{
@@ -1613,9 +1626,10 @@ function AddEntriesModal({
   useEffect(() => {
     if (matchingPreviewTrace) setRetainedPreview({ trace: matchingPreviewTrace, xAxis: previewXAxis });
   }, [matchingPreviewTrace, previewXAxis]);
-  const previewTrace = matchingPreviewTrace ?? retainedPreview?.trace;
-  const previewTraceXAxis = matchingPreviewTrace ? previewXAxis : retainedPreview?.xAxis;
-  const renderedPreviewXAxis = previewTraceXAxis ?? previewXAxis;
+  const waitingPreview = previewQuery.isFetching && retainedPreview?.trace.cell_id === activePreviewCellId
+    ? retainedPreview : undefined;
+  const previewTrace = matchingPreviewTrace ?? waitingPreview?.trace;
+  const renderedPreviewXAxis = matchingPreviewTrace ? previewXAxis : waitingPreview?.xAxis ?? previewXAxis;
   const previewTraceIsUpdating = previewQuery.isFetching && !matchingPreviewTrace;
   const cyclePreviewSpec = useMemo<AnalysisSpec | null>(() => {
     if (activePreviewCellId === null || !previewHasVerifiedCycles) return null;
@@ -1636,11 +1650,11 @@ function AddEntriesModal({
     };
   }, [activePreviewCellId, analysisSpec, previewHasVerifiedCycles, resolvedCapacityCycleEnd, resolvedCapacityCycleStart]);
   const cyclePreviewQuery = useQuery({
-    queryKey: ["analysis-cell-picker-cycle-preview", analysisId, activePreviewCellId, resolvedCapacityCycleStart, resolvedCapacityCycleEnd],
-    queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
+    queryKey: ["analysis-cell-picker-cycle-preview", analysisId, previewScope, resolvedCapacityCycleStart, resolvedCapacityCycleEnd],
+    queryFn: ({ signal }) => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
       spec: cyclePreviewSpec,
       cache_only: false,
-    }),
+    }, { signal }),
     enabled: opened && mode === "cell" && previewTab === "capacity" && cyclePreviewSpec !== null,
     staleTime: 30_000,
     placeholderData: (previous, previousQuery) =>
@@ -1669,7 +1683,8 @@ function AddEntriesModal({
   useEffect(() => {
     if (matchingCyclePreviewSeries) setRetainedCyclePreviewSeries(matchingCyclePreviewSeries);
   }, [matchingCyclePreviewSeries]);
-  const cyclePreviewSeries = matchingCyclePreviewSeries ?? retainedCyclePreviewSeries;
+  const cyclePreviewSeries = matchingCyclePreviewSeries
+    ?? (cyclePreviewQuery.isFetching && retainedCyclePreviewSeries?.cell_id === activePreviewCellId ? retainedCyclePreviewSeries : undefined);
   const cyclePreviewIsUpdating = cyclePreviewQuery.isFetching && !matchingCyclePreviewSeries;
   const previewCeRange = useMemo(
     () => paddedEfficiencyRange(cyclePreviewSeries?.quantities.coulombic_efficiency_pct ?? []),
@@ -1709,6 +1724,10 @@ function AddEntriesModal({
   );
   const previewPlotConfig = useMemo(() => ({ responsive: true, displayModeBar: false }), []);
   const previewPlotStyle = useMemo(() => ({ width: "100%", height: 352, fontWeight: 400 as const }), []);
+  const voltageTab = previewTab === "voltage";
+  const previewData = voltageTab ? previewChartData : previewCycleChartData;
+  const previewUpdating = resolvingExtent ? previewQuery.isFetching : voltageTab ? previewTraceIsUpdating : cyclePreviewIsUpdating;
+  const previewError = (resolvingExtent || voltageTab ? previewQuery : cyclePreviewQuery).isError;
   const unfiledGroups = (groups.data ?? []).filter(
     (group) => !filedGroupIds.has(group.id) && matches(group.name)
   );
@@ -2838,104 +2857,44 @@ function AddEntriesModal({
                   </Group>
                 )}
               </Box>
-              <Box style={{ position: "relative", height: 404, minHeight: 404 }}>
-              <Box style={{ position: "absolute", inset: 0, visibility: previewTab === "capacity" ? "visible" : "hidden", pointerEvents: previewTab === "capacity" ? undefined : "none", opacity: cyclePreviewIsUpdating ? 0.35 : 1, transition: "opacity 100ms linear" }}>
-              {(
-                cyclePreviewQuery.isLoading && !cyclePreviewSeries ? (
-                  <Center h={300}><Loader size="sm" /></Center>
-                ) : cyclePreviewQuery.isError && !cyclePreviewSeries ? (
-                  <Alert color="yellow" title="Cycle preview unavailable">Cycle capacities could not be loaded for this cell.</Alert>
-                ) : cyclePreviewSeries && previewCycleChartData.length ? (
-                  <>
-                    <CellPreviewPlot
-                      data={previewCycleChartData as never}
-                      layout={previewCapacityLayout}
-                      config={previewPlotConfig}
-                      style={previewPlotStyle}
-                      surfaceMode={previewSurfaceMode}
-                      onSurfaceModeChange={setPreviewSurfaceMode}
-                      updating={cyclePreviewQuery.isFetching && Boolean(cyclePreviewSeries)}
-                    />
-                  </>
-                ) : <Center h={300}><Text size="sm" c="dimmed">No charge/discharge cycle summary is available.</Text></Center>
-              )}
-              </Box>
-              <Box style={{ position: "absolute", inset: 0, visibility: previewTab === "voltage" ? "visible" : "hidden", pointerEvents: previewTab === "voltage" ? undefined : "none", opacity: previewTraceIsUpdating ? 0.35 : 1, transition: "opacity 100ms linear" }}>
-              {previewQuery.isLoading && !previewTrace ? (
-                <Center h={300}><Loader size="sm" /></Center>
-              ) : previewQuery.isError && !previewTrace ? (
-                <Alert color="yellow" title="Preview unavailable">This cell has no curve for the selected cycle range, or the preview could not be loaded.</Alert>
-              ) : previewTrace && previewChartData.length > 0 ? (
-                <>
+              <Box style={{ position: "relative", height: 404 }}>
+                {previewError ? (
+                  <Alert color="yellow" title="Preview unavailable">The preview could not be loaded for this Cell.</Alert>
+                ) : previewUpdating || previewData.length > 0 ? (
                   <CellPreviewPlot
-                    data={previewChartData as never}
-                    layout={previewVoltageLayout}
-                    config={previewPlotConfig}
-                    style={previewPlotStyle}
-                    surfaceMode={previewSurfaceMode}
-                    onSurfaceModeChange={setPreviewSurfaceMode}
-                    updating={previewQuery.isFetching && Boolean(previewTrace)}
-                    legend={[{ name: "Voltage", color: PLOT_PALETTES.app[0] }, { name: "Current", color: PLOT_PALETTES.app[1] }]}
+                    data={previewData} layout={voltageTab ? previewVoltageLayout : previewCapacityLayout}
+                    config={previewPlotConfig} style={previewPlotStyle}
+                    surfaceMode={previewSurfaceMode} onSurfaceModeChange={setPreviewSurfaceMode}
+                    updating={previewUpdating}
+                    legend={voltageTab ? [{ name: "Voltage", color: PLOT_PALETTES.app[0] }, { name: "Current", color: PLOT_PALETTES.app[1] }] : []}
                   />
-                </>
-              ) : (
-                <Center h={300}><Text size="sm" c="dimmed" ta="center">No voltage curve is available for this cell.</Text></Center>
-              )}
-              </Box>
+                ) : (
+                  <Center h={350}><Text size="sm" c="dimmed" ta="center">
+                    {voltageTab ? "No voltage curve is available for this Cell." : "No charge/discharge cycle summary is available."}
+                  </Text></Center>
+                )}
               </Box>
               <Group gap="xs" justify="center" align="flex-end">
                 <Tooltip label="Move the selected cycle window left">
-                  <ActionIcon variant="default" aria-label="Previous cycle window" disabled={!previewHasVerifiedCycles || (previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart) <= 1} onClick={() => {
-                    const currentStart = previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart;
-                    const currentEnd = previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd;
-                    const shifted = shiftPreviewCycleWindow(
-                      { start: currentStart, end: currentEnd },
-                      previewCycleCount,
-                      -1,
-                    );
-                    if (previewTab === "capacity") {
-                      setCapacityCycleStart(shifted.start);
-                      setCapacityCycleEnd(shifted.end);
-                    } else {
-                      setPreviewCycleStart(shifted.start);
-                      setPreviewCycleEnd(shifted.end);
-                    }
-                  }}><IconChevronRight size={15} style={{ transform: "rotate(180deg)" }} /></ActionIcon>
+                  <ActionIcon variant="default" aria-label="Previous cycle window" disabled={activeRange.start <= 1}
+                    onClick={() => changeRange(shiftPreviewCycleWindow(activeRange, previewCycleCount, -1))}>
+                    <IconChevronRight size={15} style={{ transform: "rotate(180deg)" }} />
+                  </ActionIcon>
                 </Tooltip>
-                <NumberInput aria-label={previewTab === "capacity" ? "First capacity preview cycle" : "First preview cycle"} min={1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? (previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart) : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
-                  const next = Number(value);
-                  if (!Number.isFinite(next)) return;
-                  const end = previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd;
-                  const start = Math.max(1, Math.min(Math.trunc(next), end));
-                  if (previewTab === "capacity") setCapacityCycleStart(start);
-                  else setPreviewCycleStart(start);
-                }} w={78} />
+                <PreviewCycleInput key={`first-${previewScope}-${previewTab}`}
+                  label={voltageTab ? "First preview cycle" : "First capacity preview cycle"}
+                  value={previewHasVerifiedCycles ? activeRange.start : undefined} min={1} max={previewCycleCount}
+                  onCommit={value => changeRange(editPreviewWindow(activeRange, "start", value))} />
                 <Text size="sm" c="dimmed">–</Text>
-                <NumberInput aria-label={previewTab === "capacity" ? "Last capacity preview cycle" : "Last preview cycle"} min={previewHasVerifiedCycles ? (previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart) : 1} max={previewCycleCount || undefined} value={previewHasVerifiedCycles ? (previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd) : ""} disabled={!previewHasVerifiedCycles} onChange={(value) => {
-                  const next = Number(value);
-                  if (!Number.isFinite(next)) return;
-                  const start = previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart;
-                  const end = Math.max(start, Math.min(Math.trunc(next), previewCycleCount));
-                  if (previewTab === "capacity") setCapacityCycleEnd(end);
-                  else setPreviewCycleEnd(end);
-                }} w={78} />
+                <PreviewCycleInput key={`last-${previewScope}-${previewTab}`}
+                  label={voltageTab ? "Last preview cycle" : "Last capacity preview cycle"}
+                  value={previewHasVerifiedCycles ? activeRange.end : undefined} min={1} max={previewCycleCount}
+                  onCommit={value => changeRange(editPreviewWindow(activeRange, "end", value))} />
                 <Tooltip label="Move the selected cycle window right">
-                  <ActionIcon variant="default" aria-label="Next cycle window" disabled={!previewHasVerifiedCycles || (previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd) >= previewCycleCount} onClick={() => {
-                    const currentStart = previewTab === "capacity" ? resolvedCapacityCycleStart : resolvedPreviewCycleStart;
-                    const currentEnd = previewTab === "capacity" ? resolvedCapacityCycleEnd : resolvedPreviewCycleEnd;
-                    const shifted = shiftPreviewCycleWindow(
-                      { start: currentStart, end: currentEnd },
-                      previewCycleCount,
-                      1,
-                    );
-                    if (previewTab === "capacity") {
-                      setCapacityCycleStart(shifted.start);
-                      setCapacityCycleEnd(shifted.end);
-                    } else {
-                      setPreviewCycleStart(shifted.start);
-                      setPreviewCycleEnd(shifted.end);
-                    }
-                  }}><IconChevronRight size={15} /></ActionIcon>
+                  <ActionIcon variant="default" aria-label="Next cycle window" disabled={activeRange.end >= previewCycleCount}
+                    onClick={() => changeRange(shiftPreviewCycleWindow(activeRange, previewCycleCount, 1))}>
+                    <IconChevronRight size={15} />
+                  </ActionIcon>
                 </Tooltip>
               </Group>
             </Stack>
@@ -3980,7 +3939,7 @@ function RetainedCyclesPlotCard(props: Omit<ComponentProps<typeof CyclePlotCard>
   const { result, job } = useCyclesResult({ analysisId: props.analysisId, spec: props.spec, enabled: true });
   const previous = useRef<ComputeResult>();
   if (result.data) previous.current = result.data;
-  return <CyclePlotCard {...props} result={result.data ?? previous.current} updating={result.isFetching}
+  return <CyclePlotCard {...props} result={result.data ?? (result.isFetching ? previous.current : undefined)} updating={result.isFetching}
     error={result.isError ? result.error : null} computeJob={job} />;
 }
 
@@ -4085,7 +4044,7 @@ function AnalysisEditorView({
   const [quantityRenamePrompt, setQuantityRenamePrompt] = useState<{
     name: string;
     suggestedName: string;
-    afterUpdate?: () => void;
+    afterUpdate?: (saved: AnalysisSpec) => void;
   } | null>(null);
   const [leaveSaving, setLeaveSaving] = useState(false);
   const [rendered, setRendered] = useState<{ result: ComputeResult; spec: AnalysisSpec } | null>(null);
@@ -4515,13 +4474,13 @@ function AnalysisEditorView({
   );
 
   const applyTabWorkspace = useCallback(
-    (tab: AnalysisTabKey) => {
-      if (!spec) {
+    (tab: AnalysisTabKey, base = spec) => {
+      if (!base) {
         setActiveTab(tab);
         return;
       }
       const currentPlot =
-        (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null;
+        (base.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null;
       if (currentPlot?.tab === tab) {
         setActiveTab(tab);
         setPlotSessionActive(true);
@@ -4537,7 +4496,7 @@ function AnalysisEditorView({
         setActiveTab(tab);
         return;
       }
-      openColdTabWorkspace(tab, spec);
+      openColdTabWorkspace(tab, base);
     },
     [
       activeSavedPlotId,
@@ -4942,7 +4901,7 @@ function AnalysisEditorView({
     });
   };
 
-  const applyUpdateActivePlot = (name: string, afterUpdate?: () => void) => {
+  const applyUpdateActivePlot = (name: string, afterUpdate?: (saved: AnalysisSpec) => void) => {
     if (!activePlot || !spec || saveStatus === "saving") return;
     const subtitle = plotSubtitle(activeTab, displayResult, spec);
     const trimmed = name.trim() || activePlot.name;
@@ -4978,12 +4937,12 @@ function AnalysisEditorView({
         }
         setActivePlotBaselineSignature(snapshotSignature(next));
         setDirty(false);
-        afterUpdate?.();
+        afterUpdate?.(next);
       })
       .catch(() => undefined);
   };
 
-  const updateActivePlot = (options?: { afterUpdate?: () => void }) => {
+  const updateActivePlot = (options?: { afterUpdate?: (saved: AnalysisSpec) => void }) => {
     if (!activePlot || !spec) return;
     const quantityChanged =
       plotNamingQuantityKey(activeTab, activePlot.presentation) !==
@@ -5037,8 +4996,8 @@ function AnalysisEditorView({
     });
   };
 
-  const openSavedPlotDirect = (plot: SavedAnalysisPlot) => {
-    const restored = specForSavedPlot(spec, plot);
+  const openSavedPlotDirect = (plot: SavedAnalysisPlot, base = spec) => {
+    const restored = specForSavedPlot(base, plot);
     if (plot.tab === "time_capacity") {
       setTimeCapacityNavigationSession((value) => value + 1);
       setTimeCapacityVirginNavigation(false);
@@ -5101,7 +5060,7 @@ function AnalysisEditorView({
                 variant="light"
                 onClick={() => {
                   modals.closeAll();
-                  updateActivePlot({ afterUpdate: () => applyTabWorkspace(next) });
+                  updateActivePlot({ afterUpdate: saved => applyTabWorkspace(next, saved) });
                 }}
               >
                 Save changes
@@ -5166,7 +5125,7 @@ function AnalysisEditorView({
                 variant="light"
                 onClick={() => {
                   modals.closeAll();
-                  updateActivePlot({ afterUpdate: () => openSavedPlotDirect(plot) });
+                  updateActivePlot({ afterUpdate: saved => openSavedPlotDirect(plot, saved) });
                 }}
               >
                 Save changes
@@ -5843,7 +5802,6 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "cycles",
                 <RetainedCyclesPlotCard
-                  key={familyPlotKey("cycles")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("cycles")}
@@ -5867,7 +5825,6 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "steps",
                 <StepsPlotCard
-                  key={familyPlotKey("steps")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("steps")}
@@ -5891,7 +5848,6 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "dcir",
                 <DcirPlotCard
-                  key={familyPlotKey("dcir")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("dcir")}
@@ -5914,7 +5870,6 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "chargeability",
                 <ChargeabilityPlotCard
-                  key={familyPlotKey("chargeability")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("chargeability")}
@@ -5960,7 +5915,6 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "time_capacity",
                 <TimeCapacityPlotCard
-                  key={familyPlotKey("time_capacity")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("time_capacity")}
@@ -5993,7 +5947,6 @@ function AnalysisEditorView({
               {plotSurfaceFor(
                 "crate",
                 <RateCapabilityPlotCard
-                  key={familyPlotKey("crate")}
                   analysisId={aid}
                   analysisTitle={title}
                   plotName={familyPlotName("crate")}

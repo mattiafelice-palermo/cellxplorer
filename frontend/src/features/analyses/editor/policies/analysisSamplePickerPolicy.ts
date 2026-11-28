@@ -133,6 +133,7 @@ export type CellPickerCell = {
   id: number;
   name: string;
   cycle_count: number | null;
+  recordedCountOnly?: boolean;
   max_specific_discharge_capacity_mah_g: number | null;
   created_at: string | null;
   last_modified_at: string | null;

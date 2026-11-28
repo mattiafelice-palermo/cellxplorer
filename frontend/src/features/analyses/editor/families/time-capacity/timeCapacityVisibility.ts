@@ -1,7 +1,7 @@
 import type { AnalysisSpec, TimeCapacityResult, TimeCapacityTrace } from "../../../../../api.ts";
 import { isAnalysisSampleHidden, isSeriesHidden } from "../../policies/analysisVisibility.ts";
 import type { VoltageChannel } from "../../policies/voltageChannelPolicy.ts";
-import { timeCapacityCurrentSeriesDescriptors, timeCapacityVoltageChannelShortLabel, type TimeCapacityCurrentConfig } from "../../plotting/seriesStyling.ts";
+import { chargeBalanceSeriesDescriptors, timeCapacityCurrentSeriesDescriptors, timeCapacityVoltageChannelShortLabel, type TimeCapacityCurrentConfig } from "../../plotting/seriesStyling.ts";
 
 const TIME_CAPACITY_VISIBILITY_PREFIX = "time_capacity:";
 
@@ -65,6 +65,12 @@ export function timeCapacitySeriesVisibilityCandidatesForConfig(
     if (timeCapacityTraceIsHidden(trace, spec)) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     const baseLabel = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+    if (config.view === "charge_balance") {
+      const descriptors = chargeBalanceSeriesDescriptors(trace, { ...config, stacked: config.stacked ?? false,
+        display_mode: "consecutive", current_left: "current_ma", current_right: "none" });
+      for (const d of descriptors) candidates.push({ key: d.visibilityKey!, label: d.label });
+      continue;
+    }
     if (config.stacked && config.current_left && config.display_mode) {
       for (const descriptor of timeCapacityCurrentSeriesDescriptors(trace, {
         ...config, stacked: true, current_left: config.current_left,
@@ -86,7 +92,6 @@ export function timeCapacitySeriesVisibilityCandidatesForConfig(
         ? config.voltage_channels.some((channel) =>
             hasFinitePoint(traceVoltageValues(trace, channel, config.voltage_channel)),
           )
-        : config.view === "charge_balance" ? hasFinitePoint(trace.charge_balance_mah)
         : hasFinitePoint(trace.derivative_x) && hasFinitePoint(trace.derivative_y);
     if (!hasData) continue;
     candidates.push({ key: timeCapacityVisibilityKey(seriesKey), label: baseLabel });

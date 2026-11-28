@@ -83,7 +83,15 @@ Cell IDs for both the active recipe and saved plots. For a window regression, co
 the same recorded point in the overview, a late cycle and the full-resolution export.
 Display sampling can retain different points at different scales. The balance, SOC,
 throughput and test time must agree at common points. The lower current panel shares
-the same sampled rows and gap boundaries. See [Spec 116](../specs/116-time-capacity-charge-balance.md).
+the same sampled rows and gap boundaries. In percent mode, each Cell needs a valid
+reference and finite SOC before any of its lines can appear. The primary, voltage
+and current series have independent, stable styling and visibility keys shared by
+the editor, figure and exports. See [Spec 116](../specs/116-time-capacity-charge-balance.md).
+
+The Add sample table initially knows a Cell's recorded cycle count. For a Cell that
+can use measured phase pairing, resolve the focused preview with the analysis pairing
+mode and use its `paired_cycle_max` for both preview tabs. Resolve one focused Cell
+at a time and invalidate the remembered extent when its sources or pairing change.
 
 1. Keep deterministic calculations in backend services.
 2. Decide which scientific meaning changed. Bump `CALC_VERSION` for shared

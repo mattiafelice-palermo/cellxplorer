@@ -54,7 +54,7 @@ import {
   seriesPaletteSlots,
   timeCapacityVoltageChannelPaletteIndex,
   timeCapacitySeriesDescriptors,
-  timeCapacityCurrentBaseStyle,
+  timeCapacitySeriesBaseStyle,
   type SeriesDescriptor,
 } from "./seriesStyling";
 import { SeriesStyleModal, type SeriesPreviewBuilder } from "./SeriesStyleModal";
@@ -254,7 +254,7 @@ export function PlotStylePanel({
       const index = seriesKeyOrder.get(descriptor.key) ?? 0;
       const { palette, paletteOverflow } = seriesBaseDefaults;
       const isCe = descriptor.measure === "coulombic_efficiency";
-      const legacyColor = descriptor.sourceKey
+      const legacyColor = descriptor.sourceKey && !descriptor.balanceRole
         ? seriesBaseDefaults.customColors[descriptor.sourceKey]
         : undefined;
       const colorIndex = descriptor.channel
@@ -273,13 +273,13 @@ export function PlotStylePanel({
         markerOpen: isCe ? seriesBaseDefaults.ceMarkerOpen : seriesBaseDefaults.markerOpen,
         opacity: isCe
           ? seriesBaseDefaults.ceOpacity
-          : axisScope === "cycles"
+          : axisScope === "cycles" || descriptor.balanceRole
             ? 1
             : seriesBaseDefaults.individualOpacity,
       };
-      return descriptor.currentPanel ? timeCapacityCurrentBaseStyle(base, descriptor.currentPanel) : base;
+      return timeCapacitySeriesBaseStyle(base, descriptor);
     },
-    [seriesKeyOrder, seriesBaseDefaults],
+    [seriesKeyOrder, seriesBaseDefaults, axisScope],
   );
   const customisedSeriesCount = Object.keys(style.series_overrides ?? {}).length;
   const seriesRuleCount = (style.series_rules ?? []).length;

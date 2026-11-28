@@ -1320,6 +1320,7 @@ def _html_tail() -> str:
       if (series.excluded) continue;
       const settings = view.result.settings || {};
       if (balance) {
+        if (percent && !series.estimated_soc_pct?.some(Number.isFinite)) continue;
         (series.display_x || []).forEach((x, i) => rows.push({
           series: series.label, x, y: (percent ? series.estimated_soc_pct : series.charge_balance_mah)?.[i] ?? null,
           charge_balance_mah: series.charge_balance_mah?.[i] ?? null,

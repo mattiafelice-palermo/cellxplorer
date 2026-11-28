@@ -1,7 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fullPreviewCycleWindow, shiftPreviewCycleWindow } from "../src/analysisCellPreviewPolicy.ts";
+import { editPreviewWindow, fullPreviewCycleWindow, pickerCycleExtentKey, pickerNeedsCycleExtent, pickerPreviewWindow, shiftPreviewCycleWindow } from "../src/analysisCellPreviewPolicy.ts";
+import type { CellSummary } from "../src/api.ts";
+
+test("picker resolves a continued Cell with one programmed cycle in the active analysis pairing", () => {
+  const cell = { id: 41, total_cycles: 1, cycle_count_ready: true, n_files: 6,
+    source_facets: [{ system: "biologic", technique: "GCPL" }, { system: "biologic", technique: "OCV" }] } as CellSummary;
+  assert.equal(pickerNeedsCycleExtent(cell, "programmed"), true);
+  assert.equal(pickerNeedsCycleExtent({ ...cell, n_files: 1 }, "programmed"), false);
+  assert.notEqual(pickerCycleExtentKey(cell, "programmed"), pickerCycleExtentKey(cell, "discharge_charge"));
+  assert.notEqual(pickerCycleExtentKey(cell, "programmed"), pickerCycleExtentKey({ ...cell, last_data_update_at: "later" }, "programmed"));
+  const voltage = pickerPreviewWindow(51, "voltage");
+  assert.deepEqual(voltage, { start: 32, end: 51 });
+  assert.deepEqual(pickerPreviewWindow(51, "capacity"), { start: 1, end: 51 });
+  assert.deepEqual(editPreviewWindow({ start: 1, end: 51 }, "end", 30), { start: 1, end: 30 });
+  assert.deepEqual(editPreviewWindow(voltage, "end", 30), { start: 30, end: 30 });
+});
 
 test("capacity and CE preview starts with the complete available cycle range", () => {
   assert.deepEqual(fullPreviewCycleWindow(767), { start: 1, end: 767 });

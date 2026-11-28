@@ -14,10 +14,11 @@
  * Pure by design — no React, no Plotly, no network. Everything here is unit
  * tested in `frontend/tests/seriesStyling.test.ts`.
  */
-import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField, TimeCapacityTrace } from "../../../../api";
+import type { ChargeBalanceSettings, SeriesStyleOverride, SeriesStyleRule, SeriesRuleField, TimeCapacityTrace } from "../../../../api";
 import { cycleCellIsDisplayed, hasFiniteCycleValues } from "../families/cycles/cycleDisplayPolicy.ts";
 import { plotlySafeText } from "../policies/voltageChannelPolicy.ts";
 import { normalizeChannelNaming } from "../../../../electrodeDisplayLabels.ts";
+import { hasSocCalibration } from "../families/time-capacity/chargeBalanceCalibration.ts";
 
 export type SeriesKind = "cell" | "group";
 
@@ -81,6 +82,7 @@ export interface SeriesDescriptor {
   /** Selected Time/Capacity voltage channel for a channel-specific descriptor. */
   channel?: TimeCapacityVoltageChannel;
   currentPanel?: "left" | "right";
+  balanceRole?: "primary" | "voltage" | "current";
 }
 
 /** Everything a trace needs, after all three layers are applied. */
@@ -351,6 +353,7 @@ export function timeCapacityVoltageSeriesDescriptor(
 export type TimeCapacityCurrentQuantity = "current_ma" | "current_density" | "c_rate";
 export type TimeCapacityCurrentConfig = {
   view: string;
+  balance?: ChargeBalanceSettings;
   stacked: boolean;
   current_left: TimeCapacityCurrentQuantity;
   current_right: TimeCapacityCurrentQuantity | "none";
@@ -372,7 +375,7 @@ export function timeCapacityCurrentSeriesDescriptors(
   const balance = config.view === "charge_balance";
   if ((!balance && config.view !== "voltage_current") || !config.stacked ||
     !trace.current_ma?.some((value, index) => value != null && Number.isFinite(value) &&
-      (config.display_mode === "consecutive" || trace.phase?.[index] === "charge" || trace.phase?.[index] === "discharge"))) return [];
+      (balance || config.display_mode === "consecutive" || trace.phase?.[index] === "charge" || trace.phase?.[index] === "discharge"))) return [];
   const base = timeCapacitySeriesDescriptor(trace);
   const area = config.electrode_area_cm2 ?? trace.electrode_area_cm2;
   const nominal = trace.nominal_capacity_mah;
@@ -403,6 +406,31 @@ export function timeCapacityCurrentBaseStyle(base: BaseSeriesStyle, panel: "left
   };
 }
 
+export function timeCapacitySeriesBaseStyle(base: BaseSeriesStyle, descriptor: SeriesDescriptor): BaseSeriesStyle {
+  if (descriptor.currentPanel) return timeCapacityCurrentBaseStyle(base, descriptor.currentPanel);
+  if (descriptor.balanceRole === "voltage") {
+    return { ...base, lineWidth: Math.max(1, base.lineWidth - 0.5), lineDash: "dash", opacity: 0.75, markerMode: "none" };
+  }
+  return base;
+}
+
+/** All three lines are owned by the same sample, with independent appearance and visibility. */
+export function chargeBalanceSeriesDescriptors(trace: CellSeriesLike & Partial<TimeCapacityTrace>, config: TimeCapacityCurrentConfig): SeriesDescriptor[] {
+  const percent = config.balance?.unit === "soc";
+  if (percent && !hasSocCalibration(config.balance?.references?.[trace.cell_id])) return [];
+  const values = percent ? trace.estimated_soc_pct : trace.charge_balance_mah;
+  if (!values?.some(value => value != null && Number.isFinite(value))) return [];
+  const base = timeCapacitySeriesDescriptor(trace);
+  const descriptors: SeriesDescriptor[] = [{ ...base, balanceRole: "primary", measureLabel: percent ? "Estimated SOC (%)" : "Charge balance (mAh)" }];
+  if (config.balance?.show_voltage && trace.voltage_v?.some(value => value != null && Number.isFinite(value))) {
+    const key = `${base.key}|balance_voltage`;
+    descriptors.push({ ...base, key, sourceKey: base.key, visibilityKey: `time_capacity:${key}`,
+      balanceRole: "voltage", axis: config.stacked ? "y3" : "y2", measureLabel: "Voltage (V)", label: `${base.label} · voltage` });
+  }
+  for (const current of timeCapacityCurrentSeriesDescriptors(trace, config)) descriptors.push({ ...current, balanceRole: "current" });
+  return descriptors;
+}
+
 /**
  * Stylable time/capacity series, de-duplicated by key.
  *
@@ -420,10 +448,12 @@ export function timeCapacitySeriesDescriptors(
   const channels = voltageChannels.length > 1 ? voltageChannels : null;
   for (const trace of traces) {
     if (trace.excluded) continue;
-    const descriptors = channels
+    const primary = channels
       ? channels.map((channel) => timeCapacityVoltageSeriesDescriptor(trace, channel))
       : [timeCapacitySeriesDescriptor(trace, voltageChannels[0])];
-    for (const descriptor of [...descriptors, ...(currentConfig ? timeCapacityCurrentSeriesDescriptors(trace, currentConfig) : [])]) {
+    const descriptors = currentConfig?.view === "charge_balance" ? chargeBalanceSeriesDescriptors(trace, currentConfig)
+      : [...primary, ...(currentConfig ? timeCapacityCurrentSeriesDescriptors(trace, currentConfig) : [])];
+    for (const descriptor of descriptors) {
       if (seen.has(descriptor.key)) continue;
       seen.add(descriptor.key);
       out.push(descriptor);
@@ -475,7 +505,7 @@ export function seriesVisibilityKey(descriptor: SeriesDescriptor): string {
 
 /** True when a series is on the secondary axis, or plots a named (non-primary) measure. */
 export function isSecondarySeries(descriptor: SeriesDescriptor): boolean {
-  if (descriptor.currentPanel) return false; // Independent subplot, not a CE-style overlay.
+  if (descriptor.currentPanel || descriptor.balanceRole) return false;
   if (descriptor.axis === "y2") return true;
   return typeof descriptor.measure === "string" && descriptor.measure.length > 0;
 }
@@ -629,6 +659,14 @@ export function linkedSecondarySeriesKeys(
  */
 export function seriesPaletteSlots(descriptors: SeriesDescriptor[]): Map<string, number> {
   const slots = new Map<string, number>();
+  if (descriptors.some(descriptor => descriptor.balanceRole)) {
+    const sources = new Map([...new Set(descriptors.map(d => d.sourceKey ?? d.key))].map((key, i) => [key, i]));
+    for (const d of descriptors) {
+      const offset = d.balanceRole === "current" ? 2 : d.balanceRole === "voltage" ? 1 : 0;
+      slots.set(d.key, sources.get(d.sourceKey ?? d.key)! + offset * sources.size);
+    }
+    return slots;
+  }
   let next = 0;
   for (const descriptor of descriptors) {
     if (descriptor.currentPanel || isSecondarySeries(descriptor)) continue;

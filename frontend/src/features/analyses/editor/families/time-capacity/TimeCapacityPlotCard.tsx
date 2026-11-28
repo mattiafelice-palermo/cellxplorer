@@ -3,7 +3,8 @@ import { withMprReadNotice } from "../../plotting/mprReadNotice";
 import { PLOT_TIME_UNITS, secondsPerPlotTimeUnit } from "../../../../../plotTimeUnits";
 import { NegativeTimeNotice } from "./NegativeTimeNotice";
 import { ChargeBalanceControls } from "./ChargeBalanceControls";
-import { balanceAxisTitle, chargeBalanceTraces } from "./chargeBalancePlot";
+import { balanceAxisTitle, chargeBalanceTraces, type BalanceLines } from "./chargeBalancePlot";
+import { hasSocCalibration } from "./chargeBalanceCalibration";
 import { OutOfWindowCellsNotice } from "./OutOfWindowCellsNotice";
 import {
   computeTimeCapacityOutOfWindowNotice,
@@ -139,7 +140,9 @@ import {
   timeCapacitySeriesDescriptor,
   timeCapacityVoltageSeriesDescriptor,
   timeCapacityCurrentSeriesDescriptors,
-  timeCapacityCurrentBaseStyle,
+  timeCapacitySeriesBaseStyle,
+  chargeBalanceSeriesDescriptors,
+  seriesPaletteSlots,
   timeCapacityCurrentAxisLabel as currentAxisLabel,
   type TimeCapacityCurrentQuantity as CurrentQuantity,
   type SeriesDescriptor,
@@ -672,14 +675,9 @@ export function timeCapacityTracesForResult(
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
-  const legendRanks = seriesLegendRanks(
-    timeCapacitySeriesDescriptors(
-      result.cell_traces,
-      cfg.view === "voltage_current" ? selectedVoltageChannels : [],
-      cfg,
-    ),
-    style.series_order,
-  );
+  const descriptors = timeCapacitySeriesDescriptors(result.cell_traces, cfg.view === "voltage_current" ? selectedVoltageChannels : [], cfg);
+  const legendRanks = seriesLegendRanks(descriptors, style.series_order);
+  const balanceSlots = cfg.view === "charge_balance" ? seriesPaletteSlots(descriptors) : undefined;
   const multipleVoltageChannels =
     cfg.view === "voltage_current" && selectedVoltageChannels.length > 1;
   const traceType = interactiveWebGl ? "scattergl" : "scatter";
@@ -708,7 +706,7 @@ export function timeCapacityTracesForResult(
         opacity: 1,
     };
     return resolveSeriesStyle(
-      descriptor.currentPanel ? timeCapacityCurrentBaseStyle(base, descriptor.currentPanel) : base,
+      timeCapacitySeriesBaseStyle(base, descriptor),
       descriptor,
       style.series_rules,
       style.series_overrides,
@@ -806,6 +804,17 @@ export function timeCapacityTracesForResult(
   for (const trace of result.cell_traces) {
     const analysisSampleHidden = timeCapacityTraceIsHidden(trace, spec);
     if (analysisSampleHidden && !preserveAnalysisSampleVisibility) continue;
+    if (cfg.view === "charge_balance") {
+      const lines: BalanceLines = {};
+      for (const descriptor of chargeBalanceSeriesDescriptors(trace, cfg)) {
+        if (isSeriesHidden(spec, descriptor.visibilityKey!)) continue;
+        const color = style.custom_colors[descriptor.key] ?? paletteColorAt(palette, balanceSlots!.get(descriptor.key) ?? 0, paletteOverflow);
+        const resolved = resolveTrace(descriptor, color, style.line_dash);
+        if (!resolved.hidden) lines[descriptor.balanceRole!] = { key: descriptor.key, style: resolved, rank: legendRanks.get(descriptor.key) };
+      }
+      out.push(...chargeBalanceTraces(trace, cfg.balance ?? {}, lines, legendShown, interactiveWebGl, includeExportColumns, cfg.stacked));
+      continue;
+    }
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     if (!multipleVoltageChannels && isSeriesHidden(spec, timeCapacityVisibilityKey(seriesKey))) {
       continue;
@@ -829,14 +838,6 @@ export function timeCapacityTracesForResult(
       const currentStyle = resolveTrace(current, style.custom_colors[current.key] ?? color, style.line_dash);
       return currentStyle.hidden ? [] : [{ descriptor: current, resolved: currentStyle }];
     });
-    if (cfg.view === "charge_balance") {
-      const current = currentStyles[0];
-      const curves = chargeBalanceTraces(trace, cfg.balance ?? {}, resolved, seriesKey, legendShown,
-        legendRanks.get(seriesKey), interactiveWebGl, includeExportColumns, cfg.stacked,
-        current && { style: current.resolved, key: current.descriptor.key, rank: legendRanks.get(current.descriptor.key) });
-      out.push(...curves);
-      continue;
-    }
     const fullX = timeCapacityX(trace, spec).x;
     const channelStyles = selectedVoltageChannels.map((channel) => {
       const channelKey = `${seriesKey}|${channel}`;
@@ -1732,6 +1733,12 @@ function TimeCapacityPlotCardView({
   const active = activeProp && familyActivity.enabled && !familyActivity.cacheOnly;
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
+  const soc = cfg.view === "charge_balance" && cfg.balance?.unit === "soc";
+  const calibrationNeeded = soc && (selectedCellCycles?.length
+    ? !selectedCellCycles.some(cell => !timeCapacityTraceIsHidden({
+      cell_id: cell.id, group_id: cell.group_id, excluded: false,
+    }, spec) && hasSocCalibration(cfg.balance?.references?.[cell.id]))
+    : !Object.values(cfg.balance?.references ?? {}).some(hasSocCalibration));
   const panningEnabled = useMemo(() => timeCapacityPanningEnabled(), []);
   const queryClient = useQueryClient();
   const [cyclePreviewRange, setCyclePreviewRange] = useState<TimeCapacityCycleRange | null>(null);
@@ -2809,6 +2816,7 @@ function TimeCapacityPlotCardView({
     hiddenAnalysisSegmentIds: [...(spec.presentation.hidden_analysis_segment_ids ?? [])].sort(),
   });
   const visibleAutoFitSignature = JSON.stringify({
+    plotKey,
     sampleVisibilitySignature,
     xMode: plotAxisStyle.x_axis.mode,
     yMode: plotAxisStyle.y_axis.mode,
@@ -2821,7 +2829,7 @@ function TimeCapacityPlotCardView({
     stacked: cfg.stacked,
   });
   const lastVisibleAutoFitSignatureRef = useRef<string | null>(null);
-  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.view === "charge_balance" ? JSON.stringify(cfg.balance) : ""}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}`;
+  const zoomSignature = `${plotKey ?? analysisId}|${cfg.view}|${cfg.view === "charge_balance" ? JSON.stringify(cfg.balance) : ""}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}|${cfg.time_reference ?? "selected_range"}|${plotAxisStyle.x_axis.mode}|${plotAxisStyle.y_axis.mode}|${plotAxisStyle.y2_axis.mode}`;
   const zoom = useZoomMemory(zoomSignature, !cfg.stacked || (cfg.view !== "voltage_current" && cfg.view !== "charge_balance"));
   const zoomResetRef = useRef(zoom.reset);
   zoomResetRef.current = zoom.reset;
@@ -2874,7 +2882,7 @@ function TimeCapacityPlotCardView({
   // A change that redefines the y quantity makes a retained window meaningless.
   useEffect(() => {
     setFrozenY(null);
-  }, [cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.voltage_channels.join("|"), cfg.stacked, cfg.display_mode]);
+  }, [plotKey, cfg.view, cfg.x_axis, cfg.voltage_channel, cfg.voltage_channels.join("|"), cfg.stacked, cfg.display_mode]);
   const fitYAxis = useCallback(() => setFrozenY(null), []);
 
   const resetPlotViewportForNavigation = useCallback((redrawCurrent = true) => {
@@ -2906,6 +2914,7 @@ function TimeCapacityPlotCardView({
     // Auto ranges are applied with Plotly.relayout alongside the trace restyle.
     const base = zoom.apply(timeCapacityLayout(plotResult, scientificRenderSpec, plotTraces));
     const next = { ...base } as Record<string, unknown>;
+    if (base.uirevision != null && plotKey) next.uirevision = `${plotKey}|${base.uirevision}`;
     const rememberedViewport = stackedViewportRef.current;
     const retainedY = panFrozenYRef.current ?? (
       cfg.stacked && rememberedViewport?.signature === zoomSignature
@@ -3156,6 +3165,16 @@ function TimeCapacityPlotCardView({
     }),
     [fitYModebarButton, gridModebarButton, style.legend_mode, yOutOfView],
   );
+  // Keep the complete previous figure together while a different scientific request loads.
+  // It is display-only. Exports, navigation and styling continue to use the requested result.
+  const figure = { data: traces, layout, config: plotConfig, traceVisibility, traceVisibilityLayoutUpdate,
+    traceVisibilityLayoutKey: visibleAutoFitSignature };
+  const previousFigure = useRef<typeof figure>();
+  useLayoutEffect(() => {
+    if (calibrationNeeded || (!loadingWithoutResult && !traces.length)) previousFigure.current = undefined;
+    else if (!loadingWithoutResult) previousFigure.current = figure;
+  });
+  const heldFigure = loadingWithoutResult && !calibrationNeeded ? previousFigure.current : undefined;
   const explainer = getTimeCapacityExplainer(
     cfg.x_axis,
     cfg.stacked ? (cfg.current_right !== "none" ? cfg.current_right : cfg.current_left) : "none",
@@ -3803,7 +3822,7 @@ function TimeCapacityPlotCardView({
         {/* spinner only when there is nothing to show yet — background
             refetches of cached data keep the subtle opacity dim instead */}
         <LoadingOverlay
-          visible={timeResult.isFetching && traces.length === 0 && !timeResult.isLoading}
+          visible={timeResult.isFetching && traces.length === 0 && !timeResult.isLoading && !heldFigure && !calibrationNeeded}
           overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
           loaderProps={{ size: "sm" }}
         />
@@ -3898,14 +3917,18 @@ function TimeCapacityPlotCardView({
         {missingCalibration.length > 0 && missingCalibration.length < balanceCells.length && <Text size="xs" c="dimmed">
           Set a starting SOC and a capacity reference for {missingCalibration.map(trace => trace.cell_name).join(", ")}.
         </Text>}
-         {loadingWithoutResult ? (
+         {calibrationNeeded ? (
+          <Center h={500}><Text size="sm" c="dimmed">
+            Enter a starting SOC and a capacity reference for the Cell to see its estimated SOC.
+          </Text></Center>
+         ) : loadingWithoutResult && !heldFigure ? (
           // Hold the space silently until the load is slow enough to mention.
           <Center h={500}>
             {showComputeProgress ? (
               <ComputeProgress job={computeJob.data ?? undefined} label="Preparing time/capacity plot" />
             ) : null}
           </Center>
-         ) : traces.length === 0 ? (
+         ) : traces.length === 0 && !heldFigure ? (
            <Center h={500}>
              <Text size="sm" c="dimmed">
                {cfg.view === "charge_balance"
@@ -3927,6 +3950,7 @@ function TimeCapacityPlotCardView({
               zoom.armOnPointerDown();
             }}
             data-tc-fit-y-hint={yOutOfView ? "on" : undefined}
+            aria-busy={Boolean(heldFigure)}
             style={{
               width: "100%",
               minWidth: 0,
@@ -3946,36 +3970,32 @@ function TimeCapacityPlotCardView({
                 }
               `}</style>
             )}
-            <Plot
-              // remount at the stacked↔flat boundary: diffing a matched-axes
-              // subplot layout into a single-axis one is Plotly's slowest
-              // path; a clean newPlot is far cheaper and predictable
-              key={`${cfg.stacked ? "tc-stacked" : "tc-flat"}|grid-${style.show_grid ? "on" : "off"}`}
-              data={traces}
-              layout={layout}
-              config={plotConfig}
-              onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "time_capacity", (next) => applyReferenceLabelMoves(next, moves)))}
-                traceVisibility={traceVisibility}
-                traceVisibilityLayoutUpdate={traceVisibilityLayoutUpdate}
-                traceVisibilityLayoutKey={visibleAutoFitSignature}
-              style={{ width: "100%" }}
-              onRelayout={handlePlotRelayout}
-              onInitialized={(_, graphDiv) => {
-                rememberPlotDiv(graphDiv);
-                syncPlotSize();
-                completeTimeCapacityProfile();
-                acknowledgePanRender();
-              }}
-              onUpdate={(figure, graphDiv) => {
-                rememberPlotDiv(graphDiv);
-                syncPlotSize();
-                completeTimeCapacityProfile();
-                acknowledgePanRender();
-                revealCompletedRefinement(figure.data, graphDiv);
-              }}
-              onPurge={cancelRefinementReveal}
-              onError={cancelRefinementReveal}
-            />
+            {heldFigure && <Text role="status" size="xs" c="dimmed" pos="absolute" top={0} right="sm" style={{ zIndex: 1 }}>
+              Updating plot…
+            </Text>}
+            <Box {...(heldFigure ? { inert: "" } : {})} style={{ opacity: heldFigure ? 0.55 : 1 }}>
+              <Plot
+                {...(heldFigure ?? figure)}
+                onReferenceLabelMove={(moves) => update((draft) => writeScopedStyle(draft, "time_capacity", (next) => applyReferenceLabelMoves(next, moves)))}
+                style={{ width: "100%" }}
+                onRelayout={heldFigure ? undefined : handlePlotRelayout}
+                onInitialized={(_, graphDiv) => {
+                  rememberPlotDiv(graphDiv);
+                  syncPlotSize();
+                  completeTimeCapacityProfile();
+                  acknowledgePanRender();
+                }}
+                onUpdate={(figure, graphDiv) => {
+                  rememberPlotDiv(graphDiv);
+                  syncPlotSize();
+                  completeTimeCapacityProfile();
+                  acknowledgePanRender();
+                  revealCompletedRefinement(figure.data, graphDiv);
+                }}
+                onPurge={cancelRefinementReveal}
+                onError={cancelRefinementReveal}
+              />
+            </Box>
             {yOutOfView && (
               <Alert color="yellow" variant="light" mt="xs" p="xs" role="status">
                 <Group gap="xs" justify="space-between" wrap="nowrap">

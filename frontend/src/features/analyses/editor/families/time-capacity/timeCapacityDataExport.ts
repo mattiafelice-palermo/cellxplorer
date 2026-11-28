@@ -6,6 +6,7 @@ import { plotPalette } from "../../plotting/plotStyle.ts";
 import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft.ts";
 import {
   resolveSeriesStyle,
+  chargeBalanceSeriesDescriptors,
   timeCapacitySeriesDescriptor,
   timeCapacityVoltageSeriesDescriptor,
   timeCapacityCurrentSeriesDescriptors,
@@ -229,32 +230,32 @@ export function consecutiveTimeCapacityExportColumns(
     const columns: DataColumn[] = [];
     const percent = config.balance?.unit === "soc";
     for (const trace of result.cell_traces) {
-      const key = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
-      const resolved = sampleAppearance(trace, style, style.custom_colors[key] ?? "");
-      if (resolved.hidden || timeCapacityTraceIsHidden(trace, spec) || isSeriesHidden(spec, timeCapacityVisibilityKey(key))) continue;
-      const values = percent ? trace.estimated_soc_pct : trace.charge_balance_mah;
-      if (!values?.length || !hasFinite(values)) continue;
+      if (timeCapacityTraceIsHidden(trace, spec)) continue;
+      const base = sampleAppearance(trace, style, "");
+      const names = new Map(chargeBalanceSeriesDescriptors(trace, config).flatMap(d => {
+        const appearance = resolveSeriesStyle(base, d, style.series_rules, style.series_overrides);
+        return appearance.hidden || isSeriesHidden(spec, d.visibilityKey!) ? [] : [[d.balanceRole!, appearance.name] as const];
+      }));
+      if (!names.size) continue;
       const x = (trace.display_x ?? []).map(value => value ?? NaN);
       const indices = selectedIndices(x, range);
       if (indices?.length === 0) continue;
-      const name = resolved.name;
+      const name = names.get("primary") ?? trace.label;
       const label = (title: string) => `${name} | ${title}`;
       const timeLabel = config.x_axis === "time" ? `Test time (${config.time_unit})` : "Recorded time (s)";
       const time = config.x_axis === "time" ? trace.display_x : trace.time_s;
       columns.push(...sourceColumns(trace.cell_name, trace, indices),
         { header: label(timeLabel), values: take(time ?? [], indices) },
-        { header: label("Charge throughput (mAh)"), values: take(trace.charge_throughput_mah ?? [], indices) },
-        { header: label("Charge balance (mAh)"), values: take(trace.charge_balance_mah ?? [], indices) },
-        { header: label("Voltage (V)"), values: take(trace.voltage_v, indices) });
-      const current = timeCapacityCurrentSeriesDescriptors(trace, config, name)[0];
-      if (current && !isSeriesHidden(spec, current.visibilityKey!) &&
-          !resolveSeriesStyle(resolved, current, style.series_rules, style.series_overrides).hidden) {
-        columns.push({ header: label("Current (mA)"), values: take(trace.current_ma, indices) });
+        { header: label("Charge throughput (mAh)"), values: take(trace.charge_throughput_mah ?? [], indices) });
+      if (names.has("primary")) columns.push({ header: label("Charge balance (mAh)"), values: take(trace.charge_balance_mah ?? [], indices) });
+      if (names.has("voltage") || (!config.balance?.show_voltage && names.has("primary"))) {
+        columns.push({ header: `${names.get("voltage") ?? name} | Voltage (V)`, values: take(trace.voltage_v, indices) });
       }
-      if (percent) {
+      if (names.has("current")) columns.push({ header: `${names.get("current")} | Current (mA)`, values: take(trace.current_ma, indices) });
+      if (percent && names.has("primary")) {
         const count = indices?.length ?? x.length;
         const ref = config.balance?.references?.[trace.cell_id];
-        columns.push({ header: label("Estimated SOC (%)"), values: take(values, indices) },
+        columns.push({ header: label("Estimated SOC (%)"), values: take(trace.estimated_soc_pct ?? [], indices) },
           { header: label("Starting SOC (%)"), values: Array(count).fill(trace.balance_start_soc_pct) },
           { header: label("Reference capacity (mAh)"), values: Array(count).fill(trace.balance_reference_mah) },
           { header: label("Reference basis"), values: Array(count).fill(ref?.basis === "mass" ? "Initial active mass" : "Measured capacity") });

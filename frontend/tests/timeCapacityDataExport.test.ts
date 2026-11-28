@@ -134,7 +134,7 @@ test("native export plan carries resolved visible names without scientific rows"
 
 test("SOC export keeps one aligned row per observation and the Cell-specific calibration", () => {
   const cfg = { ...config, view: "charge_balance", x_axis: "capacity_mah", stacked: true, balance: {
-    unit: "soc" as const, show_voltage: true, references: { 1: { basis: "mass" as const, mass_mg: 100 } },
+    unit: "soc" as const, show_voltage: true, references: { 1: { start_soc_pct: 60, basis: "mass" as const, mass_mg: 100 } },
   }};
   const result = makeResult();
   Object.assign(result.cell_traces[0], {
@@ -152,6 +152,14 @@ test("SOC export keeps one aligned row per observation and the Cell-specific cal
   const hiddenColumns = consecutiveTimeCapacityExportColumns(result, hidden, cfg, DEFAULT_PLOT_STYLE, [30, 32])!;
   assert.equal(hiddenColumns.some(c => c.header.endsWith("Current (mA)")), false);
   assert.deepEqual(hiddenColumns.find(c => c.header.endsWith("Estimated SOC (%)"))?.values, [50.244]);
+  hidden.presentation.hidden_series_ids = ["time_capacity:c1"];
+  const renamed = { ...DEFAULT_PLOT_STYLE, series_overrides: { "c1|balance_voltage": { name: "Cutoff" } } };
+  const companions = consecutiveTimeCapacityExportColumns(result, hidden, cfg, renamed, [30, 32])!;
+  assert.equal(companions.some(c => c.header.endsWith("Estimated SOC (%)")), false);
+  assert.ok(companions.some(c => c.header === "Cutoff | Voltage (V)"));
+  assert.ok(companions.some(c => c.header.endsWith("Current (mA)")));
+  const incomplete = { ...cfg, balance: { ...cfg.balance, references: {} } };
+  assert.deepEqual(consecutiveTimeCapacityExportColumns(result, makeSpec(), incomplete, renamed, null), []);
   assert.deepEqual(columns.find(c => c.header === "Local cycle")?.values, [5]);
 });
 

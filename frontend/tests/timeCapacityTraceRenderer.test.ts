@@ -159,7 +159,8 @@ test("a late SOC window and its current share absolute coordinates and source ga
   sample.source_boundary_indices = [4];
   const render = await loadRenderer();
   for (const unit of ["mah", "soc"] as const) {
-    const spec = makeSpec({ view: "charge_balance", stacked: true, balance: { unit, show_voltage: true } });
+    const spec = makeSpec({ view: "charge_balance", stacked: true,
+      balance: { unit, show_voltage: true, references: { 1: { start_soc_pct: 80, capacity_mah: 1000 } } } });
     spec.presentation.plot_style.series_overrides = { "c1|current_left|current_ma": { show_in_legend: true } };
     const plotted = render(result, spec);
     const primary = plotted.filter(t => !t.yaxis);
@@ -175,6 +176,50 @@ test("a late SOC window and its current share absolute coordinates and source ga
     assert.deepEqual(render(result, spec).filter(t => !t.yaxis).map(t => t.y), primary.map(t => t.y));
     assert.equal(render(result, spec).some(t => t.xaxis === "x2"), false);
   }
+});
+
+test("SOC calibration gates every trace per Cell and each enabled quantity owns its style and visibility", async () => {
+  const result = makeResult();
+  const cell = result.cell_traces[0];
+  cell.display_x = cell.time_s;
+  cell.charge_balance_mah = cell.time_s;
+  cell.estimated_soc_pct = [0, 1, 2, 3, 4, 5, 6, 7];
+  result.cell_traces.push({ ...cell, cell_id: 2, cell_name: "Cell B", label: "Cell B" });
+  const spec = makeSpec({ view: "charge_balance", stacked: true, balance: { unit: "soc", show_voltage: true } });
+  spec.selection.entries.push({ kind: "cell", ref_id: 2 });
+  const balance = spec.computation.time_capacity!.balance!;
+  const render = await loadRenderer();
+  for (const entry of [{}, { start_soc_pct: 0 }, { capacity_mah: 100 },
+    { start_soc_pct: 80, basis: "mass" as const, mass_mg: 100, specific_capacity_mah_g: null }]) {
+    balance.references = { 1: entry };
+    assert.deepEqual(render(result, spec), []);
+  }
+  balance.references = { 1: { start_soc_pct: 0, capacity_mah: 100 } };
+  spec.presentation.plot_style.series_overrides = {
+    c1: { color: "#123456", name: "SOC", line_width: 5 },
+    "c1|balance_voltage": { color: "#abcdef", name: "Voltage", line_dash: "longdash", line_width: 4, marker_mode: "points" },
+    "c1|current_left|current_ma": { color: "#654321", name: "Current", line_width: 3 },
+  };
+  const plots = () => render(result, spec) as (RenderedTrace & { yaxis?: string; line: { color: string; width: number; dash: string }; mode: string })[];
+  const lines = plots();
+  assert.deepEqual(lines.map(t => t.name).sort(), ["Current", "SOC", "Voltage"]);
+  const voltage = lines.find(t => t.name === "Voltage")!;
+  assert.deepEqual([voltage.yaxis, voltage.line.color, voltage.line.width, voltage.line.dash, voltage.mode], ["y3", "#abcdef", 4, "longdash", "markers"]);
+  assert.equal(lines.find(t => t.name === "SOC")!.line.color, "#123456");
+  assert.equal(lines.find(t => t.name === "Current")!.line.color, "#654321");
+  for (const [key, remaining] of [
+    ["c1", ["Current", "Voltage"]], ["c1|balance_voltage", ["Current", "SOC"]], ["c1|current_left|current_ma", ["SOC", "Voltage"]],
+  ] as const) {
+    spec.presentation.hidden_series_ids = [`time_capacity:${key}`];
+    assert.deepEqual(plots().map(t => t.name).sort(), remaining);
+  }
+  spec.presentation.hidden_series_ids = [];
+  spec.computation.time_capacity!.stacked = false;
+  assert.equal(plots().find(t => t.name === "Voltage")?.yaxis, "y2");
+  balance.references = { 1: { start_soc_pct: 80, basis: "mass", mass_mg: 100 } };
+  assert.equal(plots().length, 2);
+  cell.estimated_soc_pct = cell.time_s.map(() => null);
+  assert.deepEqual(plots(), []);
 });
 
 test("stacked current has an independent style and visibility alongside three electrodes", async () => {

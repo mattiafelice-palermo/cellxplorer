@@ -13,6 +13,14 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.46 - 2026-11-28
+
+### Bug fixes
+
+- Add sample includes cycles detected from measured current when previewing a continued Cell and accepts the full cycle range.
+- Switching saved plots and preview tabs keeps the graph in place while data loads. Saving edits while switching preserves the updated plot.
+- Estimated SOC waits for calibration before drawing voltage or current. SOC, voltage and current can each have their own line style, visibility and legend entry.
+
 ## 0.29.0-alpha.45 - 2026-11-28
 
 ### New features

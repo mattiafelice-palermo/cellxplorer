@@ -1705,14 +1705,17 @@ export function CyclePlotCard({
     (spec.computation.protocol_filter?.only_segment_ids?.length ?? 0) > 0 ||
     (spec.computation.protocol_filter?.excluded_segment_ids?.length ?? 0) > 0 ||
     (spec.presentation.hidden_protocol_segment_ids?.length ?? 0) > 0;
-  const zoomSignature = `${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
+  const zoomSignature = `${plotKey ?? analysisId}|${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
     spec.presentation.normalize_by_mass ? "g" : "abs"
   }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}|${spec.presentation.cycles_x_axis ?? "cycle"}`;
   const zoom = useZoomMemory(zoomSignature);
   const layout = useMemo(
-    () => zoom.apply(cyclePlotLayout(result, spec, exportTraces)),
+    () => {
+      const figure = cyclePlotLayout(result, spec, exportTraces);
+      return zoom.apply({ ...figure, uirevision: `${plotKey ?? analysisId}|${figure.uirevision}` });
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result, viewSignature, exportTraces],
+    [result, viewSignature, exportTraces, plotKey, analysisId],
   );
   const style = currentPlotStyle(spec, "cycles");
   const plotConfig = useMemo(

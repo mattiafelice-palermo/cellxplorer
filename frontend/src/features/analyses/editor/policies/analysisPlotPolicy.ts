@@ -111,6 +111,8 @@ export function savedPlotPreviewSignature(base: AnalysisSpec, plot: SavedAnalysi
   return JSON.stringify({
     thumbnail_renderer_version: SAVED_PLOT_THUMBNAIL_RENDER_VERSION,
     ...(plot.tab === "time_capacity" ? { time_coordinate_revision: 3 } : {}),
+    ...(plot.tab === "time_capacity" && previewSpec.computation.time_capacity?.view === "charge_balance"
+      ? { balance_series_revision: 1 } : {}),
     saved_plot_modified_at: plot.modified_at,
     selection: previewSpec.selection,
     protocol_segments: previewSpec.protocol_segments ?? [],

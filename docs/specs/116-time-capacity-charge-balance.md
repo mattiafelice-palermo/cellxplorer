@@ -31,7 +31,12 @@ the inventory. Corrosion, parasitic reactions and changes in accessible capacity
 affect that interpretation. A voltage cutoff alone does not establish an empty or full
 electrode. Keep the aligned voltage accessible in hover and as an optional overlay.
 Offer recorded current in mA in a lower panel sharing the selected time or throughput
-axis. A contiguous cycle window retains uncounted measurements between its endpoints,
+axis. In estimated SOC mode, show a calibration prompt until a visible Cell has the
+required inputs. Omit all three series for each uncalibrated Cell. The primary line,
+voltage overlay and current each have independent appearance, visibility and legend
+settings, including when plots are saved and reopened.
+
+A contiguous cycle window retains uncounted measurements between its endpoints,
 including the lead-in when it starts at cycle one and the run-out when it ends at the
 final cycle. Explicit selections of individual cycles preserve gaps between them.
 
