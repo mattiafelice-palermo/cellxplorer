@@ -1,8 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 export type ImportedCell = { id: number; name: string };
 export function importedSourceLabel(cells: readonly ImportedCell[] = []): string {
-  return cells.length ? `Already imported as ${cells.map(cell => `‘${cell.name}’`).join(", ")}.`
-    : "Already imported; no current cell association.";
+  return cells.length ? `This file is already in ${cells.length === 1 ? "cell" : "these cells"} ${cells.map(cell => `‘${cell.name}’`).join(", ")}.`
+    : "This file is already in the database. It is currently unattached to a cell.";
 }
 export function renamedImportedCells(cells: readonly ImportedCell[] | undefined, names: ReadonlyMap<number, string>) {
   return cells?.map(cell => names.has(cell.id) ? { ...cell, name: names.get(cell.id)! } : cell);

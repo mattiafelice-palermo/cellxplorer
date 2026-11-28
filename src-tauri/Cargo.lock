@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "cellxplorer"
-version = "0.29.0-alpha.37"
+version = "0.29.0-alpha.38"
 dependencies = [
  "base64 0.22.1",
  "minisign-verify",

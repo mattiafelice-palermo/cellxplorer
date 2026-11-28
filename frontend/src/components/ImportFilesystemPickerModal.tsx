@@ -1,4 +1,5 @@
 import { ImportedSourceIdentity } from "./ImportedSourceIdentity";
+import { MprReadingHelp, RegisteredFileInfo } from "./ImportPickerInfo";
 import { importedSourceLabel, renamedImportedCells, subscribeImportedCellNames } from "../importedSourceIdentity";
 import {
   ActionIcon,
@@ -311,6 +312,7 @@ export function ImportFilesystemPickerModal({
   }, [sourceRejections, setSelected]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [previewWarningsOpen, setPreviewWarningsOpen] = useState(false);
   const reviewButton = useRef<HTMLButtonElement>(null);
   const [selectedPreviewPath, setSelectedPreviewPath] = useState<string | null>(null);
   const xlsxHoverPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1286,7 +1288,7 @@ export function ImportFilesystemPickerModal({
         }
       }}
       closeDisabled={(loading && !onCancelLoading) || searchDialogOpen}
-      escapeDisabled={searchPopupOpen || reviewOpen || helpOpen}
+      escapeDisabled={searchPopupOpen || reviewOpen || helpOpen || previewWarningsOpen}
       title={mode === "folder" ? folderPurpose === "search" ? "Add search location" : "Choose a folder" : "Load cell files"}
       step={mode === "files" ? 1 : undefined}
       titleInfo={mode === "folder"
@@ -1580,8 +1582,8 @@ export function ImportFilesystemPickerModal({
                   const sourceRejection = importSourceRejection(sourceEntry(entry), sourceRejections);
                   const headerError = importHeaderError(hint, mprReadModeForPath(entry.path, readModes));
                   const recoverableMpr = !registeredFile && !hint?.permissive_error && canTryPermissiveMpr(sourceEntry(entry), Boolean(sourceRejection || hint?.compatible === false));
-                  const disabledReason = sourceRejection ? `Cannot import: ${sourceRejection.error}. Click to view the error.` : registeredFile
-                    ? `${importedSourceLabel(hint?.cells)} Click to preview; this file cannot be imported again.`
+                  const disabledReason = registeredFile ? `${importedSourceLabel(hint?.cells)} Click to preview.`
+                    : sourceRejection ? `Cannot import: ${sourceRejection.error}. Click to view the error.`
                     : headerError
                       ? `${headerError} Click to view the error.`
                       : hint?.error && hint.compatible !== false
@@ -1590,7 +1592,7 @@ export function ImportFilesystemPickerModal({
                   const rowInstructions = isFolder
                     ? `Double-click or press Enter to open ${entry.name}. Press Space or Ctrl-click to include its files.`
                     : registeredFile
-                      ? `Already registered. Click or press Enter to preview ${entry.name}; it cannot be imported again.`
+                      ? `${importedSourceLabel(hint?.cells)} Click or press Enter to preview ${entry.name}.`
                       : sourceRejection || headerError
                         ? `Cannot import ${entry.name}. Click or press Enter to view the error.`
                       : scanPending
@@ -1652,7 +1654,8 @@ export function ImportFilesystemPickerModal({
                     />
                     <Group gap="xs" wrap="nowrap" style={{ position: "sticky", left: "calc(var(--mantine-spacing-sm) + 48px)", zIndex: 2, width: "var(--import-name-width)", minWidth: 0, boxSizing: "border-box", overflow: "hidden", background: rowBackground }}>
                       {isFolder ? <IconFolder size={17} color={rowSelected ? selectedForeground : "var(--mantine-primary-color-6)"} /> : <IconFile size={17} color={rowSelected ? "light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-1))" : "var(--mantine-color-gray-6)"} />}
-                      {!isFolder && (sourceRejection || headerError) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
+                      {registeredFile && <RegisteredFileInfo filename={entry.name} cells={hint?.cells} />}
+                      {!isFolder && !registeredFile && (sourceRejection || headerError) && <Tooltip label={disabledReason ?? "The protocol is not supported by CellXplorer."} withArrow><IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-label={disabledReason ?? "Unsupported file"} style={{ opacity: 0.8, flex: "none" }} /></Tooltip>}
                       <Text size="md" truncate title={registeredFile ? `${entry.name} — ${importedSourceLabel(hint?.cells)}` : entry.name} style={{ flex: 1, minWidth: 0 }}>{entry.name}</Text>
                       {recoverableMpr && <Button size="compact-xs" color="orange" variant="light" style={{ flexShrink: 0 }} aria-label={`Try Permissive reading for ${entry.name}`} onClick={(event) => { event.stopPropagation(); tryPermissive(entry); }}>Try Permissive</Button>}
                     </Group>
@@ -1702,12 +1705,13 @@ export function ImportFilesystemPickerModal({
                       <>
                         {(headerHints.get(selectedPreviewEntry.path)?.registered || (indexedPreviewEntry?.path === selectedPreviewEntry.path && indexedPreviewEntry.registered)) && <ImportedSourceIdentity
                           cells={indexedPreviewEntry?.path === selectedPreviewEntry.path ? indexedPreviewEntry.cells : headerHints.get(selectedPreviewEntry.path)?.cells} onOpen={onClose} />}
-                        {/\.mpr$/i.test(selectedPreviewEntry.path) && !selectedHeaderHint?.permissive_error && <Stack gap={4}>
+                        {/\.mpr$/i.test(selectedPreviewEntry.path) && !selectedHeaderHint?.permissive_error &&
                           <Group justify="space-between" gap="xs"><Text size="sm" fw={700}>MPR reading</Text>
-                            <SegmentedControl size="xs" aria-label="MPR reading mode" value={selectedReadMode} data={[{ value: "safe", label: "Safe" }, { value: "permissive", label: "Permissive" }]} onChange={(value) => changeReadMode(selectedPreviewEntry, value as MprReadMode)} />
-                          </Group>
-                          <Text size="xs" c="dimmed">{selectedReadMode === "safe" ? "Uses verified cycle and capacity interpretations." : "Attempts exploratory curves when interpretation is uncertain; binary integrity checks remain enabled."}</Text>
-                        </Stack>}
+                            <Group gap={4} wrap="nowrap">
+                              <SegmentedControl size="xs" aria-label="MPR reading mode" value={selectedReadMode} data={[{ value: "safe", label: "Safe" }, { value: "permissive", label: "Permissive" }]} onChange={(value) => changeReadMode(selectedPreviewEntry, value as MprReadMode)} />
+                              <MprReadingHelp />
+                            </Group>
+                          </Group>}
                         {selectedSourceRejection || selectedPreviewHeaderError ? (
                           <Alert color="red" title={selectedRecoverableMpr ? "Safe reading could not interpret this recording" : "This file cannot be imported"}>
                             <Stack gap="xs"><Text size="sm">{selectedSourceRejection?.error ?? selectedPreviewHeaderError}</Text>
@@ -1723,6 +1727,7 @@ export function ImportFilesystemPickerModal({
                             quickSourceVersion={selectedPreviewVersion}
                             onQuickPreviewSettled={markQuickPreviewSettled}
                             onSourceRejected={rejectSource}
+                            onWarningsOpenChange={setPreviewWarningsOpen}
                             validateQuickExcel={selected.has(selectedPreviewEntry.path)}
                             sourceInspectionLoading={Boolean(
                               (selectedPreviewFallbackKey && quickPreviewFallbackKey === selectedPreviewFallbackKey

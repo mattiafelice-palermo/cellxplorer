@@ -301,6 +301,7 @@ export function ImportSourcePreview({
   quickSourceVersion,
   onQuickPreviewSettled,
   onSourceRejected,
+  onWarningsOpenChange,
   validateQuickExcel = false,
   sourceInspectionLoading = false,
   inspectionError,
@@ -317,6 +318,7 @@ export function ImportSourcePreview({
   quickSourceVersion?: string;
   onQuickPreviewSettled?: (path: string, sourceVersion: string | undefined, requiresFullInspection: boolean) => void;
   onSourceRejected?: (rejection: ImportSourceRejection) => void;
+  onWarningsOpenChange?: (opened: boolean) => void;
   /** Run full XLSX validation after a quick plot when included or when the quick preview failed. */
   validateQuickExcel?: boolean;
   /** Keep the loading skeleton visible while the picker starts a full fallback inspection. */
@@ -370,6 +372,11 @@ export function ImportSourcePreview({
   const [cycleRange, setCycleRange] = useState<{ start: number; end: number } | null>(null);
   const [voltageCycleRange, setVoltageCycleRange] = useState<{ start: number; end: number } | null>(null);
   const [warningsOpen, setWarningsOpen] = useState(false);
+  useEffect(() => {
+    if (!warningsOpen || !onWarningsOpenChange) return;
+    onWarningsOpenChange(true);
+    return () => onWarningsOpenChange(false);
+  }, [warningsOpen, onWarningsOpenChange]);
   const { ref: plotSurfaceRef, width: plotSurfaceWidth } = useElementSize();
   const previewContentRef = useRef<HTMLDivElement>(null);
   const plotStackRef = useRef<HTMLDivElement>(null);
@@ -945,7 +952,7 @@ export function ImportSourcePreview({
   return (
     <>
       <Stack ref={previewContentRef} gap="xs">
-        <MprReadStatus source={source} />
+        {source?.exploratory && <MprReadStatus source={source} />}
       {parserNotices.map((notice, index) => (
         <Alert key={`${notice.code}-${index}`} color="blue" title="Import note" p="xs">
           {notice.message}

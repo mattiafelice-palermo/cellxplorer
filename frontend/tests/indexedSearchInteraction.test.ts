@@ -37,6 +37,7 @@ function harness(overrides: Record<string, any> = {}, readModes = {}) {
     "../mprReadMode": readModePolicy,
     "../importFilePickerPolicy": pickerPolicy,
     "../importedSourceIdentity": importedIdentityPolicy,
+    "./ImportPickerInfo": { RegisteredFileInfo: "RegisteredFileInfo" },
     "./SavedSearchMenu": { SavedSearchMenu: "SavedSearchMenu" },
     "./IndexedSearchFilters": { IndexedSearchFilters: "IndexedSearchFilters" },
     "./FileSearchSettings": {}, "../importSearchFilters": filtersPolicy, "../importSearch": searchPolicy,
@@ -145,6 +146,7 @@ test("production picker mode changes preserve peer modes and genuine per-mode re
 test("registered source tooltip identifies the renamed Cell and remains unselectable", () => {
   const app = harness({ registered: true, cells: [{id: 7, name: "Renamed Cell"}] });
   const tree = app.render();
-  assert.ok(app.find(tree, node => node.type === "Tooltip" && node.props.label.includes("Already imported as ‘Renamed Cell’")));
+  assert.ok(app.find(tree, node => node.type === "Tooltip" && node.props.label.includes("already in cell ‘Renamed Cell’")));
+  assert.ok(app.find(tree, node => node.type === "RegisteredFileInfo" && node.props.cells[0].name === "Renamed Cell"));
   assert.equal(app.find(tree, node => node.type === "Checkbox").props.disabled, true);
 });

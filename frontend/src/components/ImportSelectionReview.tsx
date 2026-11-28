@@ -68,7 +68,7 @@ export function ImportSelectionReview({ entries, summary, activePath, onClose, o
             <Text size="sm" c="dimmed">{summary}{groups.length > 0 && !entries.some(e => e.kind === "folder")
               ? ' in ' + groups.length + (groups.length === 1 ? ' folder' : ' folders') : ''}</Text>
           </Group>
-          <Button data-autofocus size="compact-sm" variant="default" onClick={onClose}>Done</Button>
+          <Button data-autofocus size="compact-sm" onClick={onClose}>Close</Button>
         </Drawer.Header>
         <Drawer.Body style={{ minHeight: 0, display: "flex", flexDirection: "column", gap: "var(--mantine-spacing-xs)" }}>
           <Group wrap="nowrap" gap="xs">

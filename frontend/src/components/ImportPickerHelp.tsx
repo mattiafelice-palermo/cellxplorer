@@ -13,7 +13,7 @@ export function ImportPickerHelp({ opened, onChange }: { opened: boolean; onChan
     <Popover.Dropdown style={{ maxWidth: "85vw", maxHeight: "70vh", overflowY: "auto" }}>
       <Stack gap="xs">
         <Group justify="space-between"><Text fw={700} size="sm">Choosing files</Text>
-          <Button size="compact-xs" variant="default" data-autofocus onClick={() => onChange(false)}>Done</Button></Group>
+          <Button size="compact-xs" data-autofocus onClick={() => onChange(false)}>Close</Button></Group>
         <Text size="sm">Click a file to preview it. Tick its checkbox to include it. Double-click a folder to open it, or tick its checkbox to include the files it contains.</Text>
         <Text size="sm">You can collect files from several folders. Choose <b>Review selection</b> under the file list to see everything you picked or remove a file.</Text>
         <Text size="sm">Files already in your library can still be previewed. Files with an unsupported format cannot be selected.</Text>

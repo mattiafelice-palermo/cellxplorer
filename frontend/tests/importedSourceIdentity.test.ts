@@ -4,7 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { importedSourceLabel, renamedImportedCells, subscribeImportedCellNames } from "../src/importedSourceIdentity.ts";
 test("multiple owners and detached registrations are explicit", () => {
   assert.match(importedSourceLabel([{id:1,name:"New name"},{id:2,name:"Other"}]), /New name.*Other/);
-  assert.match(importedSourceLabel(), /no current cell association/);
+  assert.match(importedSourceLabel(), /unattached to a cell/);
 });
 test("existing library query changes refresh imported names without source reads", () => {
   const client = new QueryClient();
