@@ -59,7 +59,7 @@ RESULT_SCHEMA_VERSIONS = {
     # entries produced before that worker parity fix.
     # Consecutive time uses the Cell timeline, including skipped-cycle gaps.
     # Display sampling topology and completeness; voltage/current extrema.
-    "time_capacity": 14,  # Continued native clocks use acquisition order and one Cell timeline.
+    "time_capacity": 15,  # Uncounted measurements retain their acquisition position.
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

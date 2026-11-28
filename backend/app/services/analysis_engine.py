@@ -1874,7 +1874,8 @@ def _time_capacity_sort_columns(frame: pd.DataFrame) -> list[str]:
         return ["_stitch_order"]
     # A display-only partial cycle has stitched label zero even at the end of
     # a recording. Its instrument rows must keep their acquisition order.
-    if any(name in frame for name in (*time_capacity_derived.NATIVE_TIME_COLUMNS, "maccor_mode")):
+    if (any(name in frame for name in (*time_capacity_derived.NATIVE_TIME_COLUMNS, "maccor_mode"))
+            or ("display_only_cycle" in frame and frame["display_only_cycle"].any())):
         return [column for column in ("segment", "record_index") if column in frame.columns]
     return ["cycle", "segment", "record_index"] if "record_index" in frame.columns else ["cycle", "segment"]
 

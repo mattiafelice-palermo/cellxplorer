@@ -1114,6 +1114,25 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertTrue(trace["display_only_cycle"])
         self.assertGreater(len(trace["time_s"]), 0)
 
+    def test_trailing_uncounted_measurements_keep_their_acquisition_position(self):
+        raw = synth_raw(3, 2.0, 0.0)
+        raw["cycle_complete"] = raw["cycle"] != 3
+        raw["voltage_v"] = 3 + raw["record_index"] / 100
+        cell = self._add_cached_cell("Incomplete final cycle", "c4" * 32, raw)
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        spec["computation"]["time_capacity"] = {
+            "view": "voltage_current", "x_axis": "time", "time_reference": "test_start",
+            "display_mode": "consecutive", "time_unit": "s",
+        }
+        for precision, compact in (("full", False), ("standard", True)):
+            with self.subTest(precision=precision):
+                trace = engine.compute_time_capacity(
+                    self.db, spec, None, precision=precision, compact=compact
+                )["cell_traces"][0]
+                self.assertEqual(trace["cycle"], [1] * 4 + [2] * 4 + [0] * 4)
+                np.testing.assert_allclose(trace["voltage_v"], raw.voltage_v)
+                self.assertTrue(np.all(np.diff(trace["display_x"]) >= 0))
+
     def test_full_time_capacity_export_request_keeps_all_points_and_precision(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         spec["computation"]["time_capacity"] = {

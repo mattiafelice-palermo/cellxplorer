@@ -122,3 +122,9 @@ cycles or sampling. Each subsequent source starts at the preceding endpoint. The
 preserves forward intervals inside a source and breaks at native acquisition resets.
 File boundaries with unknown downtime share an elapsed endpoint. The per-cycle step-clock
 index alone cannot give the duration of these acquisitions or their unmatched tails.
+
+A verified recording can also have an uncounted tail or a short uncounted source
+between two counted runs. Stitched cycle zero is shared by all such rows. Use
+source position and record index to check the identity of the last plotted
+sample. A plausible endpoint time or a correct total row count can conceal
+an earlier sample occupying the last position.
