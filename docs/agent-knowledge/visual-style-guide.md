@@ -488,8 +488,10 @@ Only one global result order is active; unknown values stay last in either
 direction. Bound the chip area with an independently scrolling
 `cx-vertical-scroll` container so many chips cannot consume the results viewport.
 Avoid `ScrollArea.Autosize` for wrapping chip rows: its content sizing can create
-horizontal overflow. The indexed picker omits an empty Selected sources panel;
-a nonempty selection retains its staging panel.
+horizontal overflow. In the file picker, keep the selection count and review
+button inside the file-list pane. The indexed picker omits the strip for an
+empty selection. Review opens a sheet grouped by source folder. Keep full
+filenames readable there, and put browsing instructions in the title help popup.
 
 Field discovery uses the explicit vocabulary in `filterDiscovery.ts`, not section
 names or generic comparison verbs. Hide unrelated controls and open matching

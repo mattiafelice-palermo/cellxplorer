@@ -27,6 +27,7 @@ export function ImportModalShell({
   step,
   totalSteps = 3,
   titleInfo,
+  titleAction,
   notice,
   progress,
   actions,
@@ -42,6 +43,7 @@ export function ImportModalShell({
   totalSteps?: number;
   /** Standing explanation, as an info affordance rather than a paragraph. */
   titleInfo?: string;
+  titleAction?: ReactNode;
   /** Warnings and conflicts. Rendered in a reserved footer slot. */
   notice?: ReactNode;
   /** Progress reporting. Rendered in a reserved footer slot. */
@@ -88,6 +90,7 @@ export function ImportModalShell({
               />
             </Tooltip>
           )}
+          {titleAction}
         </Group>
       }
       size={IMPORT_MODAL_WIDTH}

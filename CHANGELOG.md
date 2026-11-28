@@ -13,6 +13,10 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.37 - 2026-11-28
+
+- Review selected files by folder from the bottom of the file list. File picker instructions are available from the help button.
+
 ## 0.29.0-alpha.36 - 2026-11-28
 
 - The file picker now screens and opens cycling files in deeply nested Windows folders and network shares, including continued-cell imports.

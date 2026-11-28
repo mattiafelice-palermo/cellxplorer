@@ -79,6 +79,8 @@ import {
   put,
 } from "../api";
 import { ImportModalPrimaryActions, ImportModalShell } from "./ImportModalShell";
+import { ImportSelectionReview } from "./ImportSelectionReview";
+import { ImportPickerHelp } from "./ImportPickerHelp";
 import { IndexedSourceSearch } from "./IndexedSourceSearch";
 import { mergeIndexedSelection, type IndexedFile } from "../importSearch";
 import {
@@ -307,7 +309,9 @@ export function ImportFilesystemPickerModal({
   useEffect(() => {
     setSelected((current) => pruneRejectedImportSelection(current, sourceRejections));
   }, [sourceRejections, setSelected]);
-  const [selectedSearch, setSelectedSearch] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const reviewButton = useRef<HTMLButtonElement>(null);
   const [selectedPreviewPath, setSelectedPreviewPath] = useState<string | null>(null);
   const xlsxHoverPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const xlsxPreviewPrefetchBusy = useRef(false);
@@ -663,7 +667,8 @@ export function ImportFilesystemPickerModal({
       setSelectedPreviewPath(null);
     }
     setFocusedEntryPath(null);
-    setSelectedSearch("");
+    setReviewOpen(false);
+    setHelpOpen(false);
     setPreviewCollapsed(false);
     setKnownFolderImportability(new Map());
   }, [initialScope, mode, opened, selectionKey]);
@@ -783,7 +788,7 @@ export function ImportFilesystemPickerModal({
   }, [browseQuery.data, browseQuery.isError, browseQuery.isFetching, browseQuery.isPlaceholderData, pendingPathEditTarget, selected]);
 
   useEffect(() => {
-    if (!opened) return;
+    if (!opened || reviewOpen || helpOpen) return;
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
       const target = event.target;
       const focusedInTextInput =
@@ -797,7 +802,7 @@ export function ImportFilesystemPickerModal({
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [opened]);
+  }, [opened, reviewOpen, helpOpen]);
 
   const navigate = (path: string | null) => {
     historyInitialRequestRef.current = null;
@@ -997,9 +1002,6 @@ export function ImportFilesystemPickerModal({
 
   const selectedEntries = [...selected.values()].filter((entry) => !importSourceRejection(sourceEntry(entry), sourceRejections)
     && (entry.kind !== "file" || (!importHeaderError(headerHints.get(entry.path), mprReadModeForPath(entry.path, readModes)) && !headerHints.get(entry.path)?.registered)));
-  const visibleSelectedEntries = selectedEntries.filter((entry) =>
-    `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(selectedSearch.trim().toLocaleLowerCase()),
-  );
   useEffect(() => {
     if (!selectedPreviewPath || selected.has(selectedPreviewPath)) return;
     if (indexedPreviewEntry?.path === selectedPreviewPath) return;
@@ -1264,59 +1266,14 @@ export function ImportFilesystemPickerModal({
     );
   };
 
-  const selectedSourcesPanel = (
-    <Paper withBorder p="xs" style={{ flex: selectedEntries.length > 3 ? "0 0 clamp(112px, 13vh, 140px)" : "0 0 auto", minHeight: selectedEntries.length > 3 ? 112 : undefined, display: "flex", flexDirection: "column", minWidth: 0 }}>
-      <Group justify="space-between" mb={4}>
-        <Group gap="xs">
-          <Text size="sm" fw={700}>Selected sources</Text>
-          <Text size="xs" c="dimmed">{selectedEntries.length}</Text>
-        </Group>
-        <Button
-          size="compact-sm"
-          variant="subtle"
-          color="gray"
-          disabled={selectedEntries.length === 0}
-          onClick={() => { setSelected(new Map()); setSelectedPreviewPath(null); }}
-        >
-          Clear all
-        </Button>
-      </Group>
-      {(selectedEntries.length > 3 || selectedSearch) && <TextInput
-        size="xs"
-        placeholder="Search selected sources"
-        aria-label="Search selected sources"
-        leftSection={<IconSearch size={14} />}
-        value={selectedSearch}
-        onChange={(event) => setSelectedSearch(event.currentTarget.value)}
-        mb={4}
-      />}
-      <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbarSize={10} offsetScrollbars="y" type="auto" styles={{ viewport: { paddingRight: 10 } }}>
-        {selectedEntries.length === 0 ? (
-          null
-        ) : visibleSelectedEntries.length === 0 ? (
-          <Text size="sm" c="dimmed">No selected sources match this search.</Text>
-        ) : (
-          <Box style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 390px), 1fr))", gap: "4px 12px", paddingRight: 6 }}>
-            {visibleSelectedEntries.map((entry) => (
-              <Group
-                key={entry.path}
-                gap="xs"
-                wrap="nowrap"
-                pr="xs"
-                bg={entry.path === selectedPreviewPath ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
-                style={{ minWidth: 0, cursor: entry.kind === "file" ? "pointer" : undefined, borderRadius: 4 }}
-                onClick={() => { if (entry.kind === "file") setSelectedPreviewPath(entry.path); }}
-              >
-                {entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}
-                <Text size="sm" truncate title={entry.path} style={{ flex: 1, minWidth: 0 }}>{entry.path}</Text>
-                <ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={(event) => { event.stopPropagation(); setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; }); }}><IconX size={12} /></ActionIcon>
-              </Group>
-            ))}
-          </Box>
-        )}
-      </ScrollArea>
-    </Paper>
-  );
+  const selectionSummary = [
+    fileCount || !folderCount ? `${fileCount} file${fileCount === 1 ? "" : "s"}` : "",
+    folderCount ? `${folderCount} folder${folderCount === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(", ");
+  const closeReview = () => {
+    setReviewOpen(false);
+    requestAnimationFrame(() => reviewButton.current?.focus());
+  };
 
   return (
     <ImportModalShell
@@ -1329,21 +1286,18 @@ export function ImportFilesystemPickerModal({
         }
       }}
       closeDisabled={(loading && !onCancelLoading) || searchDialogOpen}
-      escapeDisabled={searchPopupOpen}
+      escapeDisabled={searchPopupOpen || reviewOpen || helpOpen}
       title={mode === "folder" ? folderPurpose === "search" ? "Add search location" : "Choose a folder" : "Load cell files"}
       step={mode === "files" ? 1 : undefined}
       titleInfo={mode === "folder"
         ? folderPurpose === "search" ? "Index this folder and its subfolders for fast file search. This does not import any files." : "Choose the folder to monitor. The watcher checks source files directly in this folder."
-        : "Select Neware (.nda, .ndax, structured .xlsx), BioLogic GCPL, CP, OCV or MB (.mpr), or Maccor record exports (.txt, .csv, structured .xlsx) and binary channel files (.001–.999). Click a folder row to open it or use its checkbox to select the folder."}
+        : undefined}
+      titleAction={mode === "files" && <ImportPickerHelp opened={helpOpen} onChange={setHelpOpen} />}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       fill={mode === "files"}
       actions={
         <>
-          <Text size="sm" c="dimmed">
-            {mode === "folder"
-              ? (browseData?.current_path ?? (pathInput || "Choose a folder"))
-              : `${folderCount} folder${folderCount === 1 ? "" : "s"}${fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}`}
-          </Text>
+          {mode === "folder" && <Text size="sm" c="dimmed">{browseData?.current_path ?? (pathInput || "Choose a folder")}</Text>}
           <ImportModalPrimaryActions>
             <Button
               variant="default"
@@ -1391,7 +1345,7 @@ export function ImportFilesystemPickerModal({
       }
     >
       <Stack gap="sm" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0 } : undefined}>
-        <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0 } : undefined}>
+        <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap" style={mode === "files" ? { flex: "1 1 0", minHeight: 0, minWidth: 0, isolation: "isolate" } : undefined}>
           {!indexedScope && <>
           <Paper
             p="xs"
@@ -1577,11 +1531,6 @@ export function ImportFilesystemPickerModal({
                 Couldn’t refresh this folder. Showing the last successful listing; use Refresh to try again.
               </Alert>
             )}
-            {mode === "files" && (
-              <Text size="xs" c="dimmed">
-                Click a file to preview or a folder to focus it. Grey registered files remain previewable but cannot be imported again. Press Space or Ctrl-click to include; Shift-click selects a file range. Double-click includes a file or opens a folder. Ctrl+A selects all shown.
-              </Text>
-            )}
             </>}
             <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: mode === "files" ? 1 : undefined, minHeight: mode === "files" ? 0 : undefined, minWidth: 0 }}>
             <Stack gap="sm" style={{ flex: "1 1 0", minWidth: 0, minHeight: mode === "files" ? 0 : undefined }}>
@@ -1717,8 +1666,14 @@ export function ImportFilesystemPickerModal({
                   <Box h={trailingSpacerHeight} aria-hidden="true" />
                 </>}
               </Stack></Box></ScrollArea>)}
+              {mode === "files" && (!indexedScope || selectedEntries.length > 0) && (
+                <Group gap="sm" px="sm" py="xs" wrap="nowrap" style={{ flexShrink: 0, borderTop: "1px solid var(--mantine-color-default-border)" }}>
+                  <Text size="sm" c="dimmed" role="status">{selectionSummary} selected</Text>
+                  <Button ref={reviewButton} size="compact-sm" variant="default" aria-haspopup="dialog"
+                    disabled={!selectedEntries.length} onClick={() => setReviewOpen(true)}>Review selection</Button>
+                </Group>
+              )}
             </Paper>
-            {mode === "files" && (!indexedScope || selectedEntries.length > 0) && selectedSourcesPanel}
             </Stack>
             {mode === "files" && !previewCollapsed && !(indexedScope && searchDialogOpen) && <Box role="separator" aria-orientation="vertical" aria-label="Resize source preview" tabIndex={0} onPointerDown={beginPreviewResize} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setPreviewWidth((width) => Math.max(280, Math.min(640, (width ?? 350) + (event.key === "ArrowLeft" ? 16 : -16)))); } }} style={{ width: 8, flexShrink: 0, cursor: "col-resize", alignSelf: "stretch", borderLeft: "2px solid var(--mantine-color-default-border)" }} />}
             {mode === "files" && !(indexedScope && searchDialogOpen) && (
@@ -1808,6 +1763,16 @@ export function ImportFilesystemPickerModal({
           </Stack>
         </Group>
       </Stack>
+      {reviewOpen && <ImportSelectionReview entries={selectedEntries} summary={selectionSummary}
+        activePath={selectedPreviewPath} onClose={closeReview}
+        onClear={() => { setSelected(new Map()); setSelectedPreviewPath(null); }}
+        onRemove={path => setSelected(current => { const next = new Map(current); next.delete(path); return next; })}
+        onPreview={path => {
+          setSelectedPreviewPath(path);
+          setPreviewCollapsed(false);
+          setSearchPanelTab("preview");
+          closeReview();
+        }} />}
     </ImportModalShell>
   );
 }
