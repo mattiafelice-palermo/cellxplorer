@@ -2448,6 +2448,8 @@ export interface ContinuationPreviewSegment {
 }
 
 export interface ContinuationPreviewResult {
+  /** Every cycle point is present in the unrestricted capacity bundle. */
+  cycle_points_complete?: boolean;
   quantity: string;
   label: string;
   x_label?: string;

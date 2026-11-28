@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -38,3 +39,27 @@ def display_source_path(value: str | Path) -> str:
 def resolved_source_io_path(value: str | Path, *, strict: bool = False) -> Path:
     # Resolving a mapped drive may produce a longer UNC name.
     return source_io_path(source_io_path(Path(value).expanduser()).resolve(strict=strict))
+
+
+@lru_cache(maxsize=256)
+def _resolved_preview_parent(parent: Path) -> Path:
+    return resolved_source_io_path(parent)
+
+
+def preview_source_io_path(value: str | Path) -> Path:
+    """Reuse a resolved name only while the selected path and target still identify the same file."""
+    path = source_io_path(Path(value).expanduser())
+    if path.is_absolute() and ".." not in path.parts:
+        try:
+            if not path.is_symlink():
+                resolved = source_io_path(_resolved_preview_parent(path.parent) / path.name)
+                if path == resolved:
+                    return path
+                identity = path.stat()
+                if identity.st_ino:
+                    if os.path.samestat(identity, resolved.stat()):
+                        return resolved
+                    _resolved_preview_parent.cache_clear()
+        except OSError:
+            _resolved_preview_parent.cache_clear()
+    return resolved_source_io_path(path)

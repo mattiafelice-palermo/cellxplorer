@@ -391,7 +391,18 @@ to a display-only stitched interpretation that reads raw caches and infers conti
 charge/discharge cycles; the explicit Source chain interpretation keeps the authoritative per-source
 cycle mapping. Both interpretations return bounded display data without creating a second scientific
 cache, and the selected voltage/capacity quantity is a request/display choice rather than a change
-to scientific cache meaning. Voltage preview uses raw elapsed-time rows and remains available when
+to scientific cache meaning. The combined Cycles tab requests charge, discharge and CE together.
+An unrestricted bundle marked `cycle_points_complete` contains every point and supports local
+range edits. A sampled overview requires an exact request for a narrower window. Stitched
+navigation shares one eligible merged frame (up to 64 MiB) and its lazy summary (up to 8 MiB)
+across ranges and axes. The ordered raw Parquet identities and pairing direction determine reuse.
+Reads touch Parquet modification times, so publication checks the physical file identity again
+and retains its post-read stamps. Receipt-backed network previews reuse resolved parent names.
+An alternate spelling is checked against the selected file's filesystem identity. On Windows
+the regular-file size and modification-time check uses the shared header fingerprint reader
+to avoid opening a network handle just to validate an existing receipt.
+
+Voltage preview uses raw elapsed-time rows and remains available when
 cycle summaries are unavailable; raw-data inspection is gated by raw-row availability, not by the
 canonical cycle-analysis capability flag. Registration
 commits Cells first and returns a separate background cache-job handoff; missing scientific caches

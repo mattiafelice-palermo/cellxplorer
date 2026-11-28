@@ -26,7 +26,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from "@mantine/core";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconChevronLeft, IconChevronRight, IconPlus, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -246,7 +246,7 @@ export function ContinuedImportEditor({
   const [previewQuantity, setPreviewQuantity] = useState<ContinuationPreviewQuantity>(() =>
     drafts.length > 0 && drafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV")
       ? "voltage"
-      : "discharge_capacity_mah",
+      : "capacity_bundle",
   );
   const [previewCapacityView, setPreviewCapacityView] = useState<"discharge" | "both" | "charge">("both");
   const [previewVoltageXAxis, setPreviewVoltageXAxis] = useState<"time" | "capacity">("time");
@@ -301,87 +301,36 @@ export function ContinuedImportEditor({
   useEffect(() => {
     if (allOcvSources) setPreviewQuantity("voltage");
   }, [allOcvSources]);
+  const queryClient = useQueryClient();
+  const previewKey = [
+    ...continuationPreviewQueryKey(order, orderedDrafts, inspectionQuery.dataUpdatedAt, previewQuantity, effectivePreviewInterpretation),
+    detectDischargeFirst,
+    previewQuantity === "voltage" ? previewVoltageXAxis : null,
+  ];
+  const overview = queryClient.getQueryData<ContinuationPreviewResult>([...previewKey, null, null]);
+  const requestRange = previewQuantity === "voltage" ? previewVoltageCycleRange
+    : overview?.cycle_points_complete ? null : previewCapacityCycleRange;
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
-    queryKey: [
-      detectDischargeFirst,
-      ...continuationPreviewQueryKey(
-        order,
-        orderedDrafts,
-        inspectionQuery.dataUpdatedAt,
-        previewQuantity,
-        effectivePreviewInterpretation,
-      ),
-      previewVoltageXAxis,
-      previewQuantity === "voltage" ? previewVoltageCycleRange?.start ?? null : null,
-      previewQuantity === "voltage" ? previewVoltageCycleRange?.end ?? null : null,
-      previewQuantity === "voltage" ? null : previewCapacityCycleRange?.start ?? null,
-      previewQuantity === "voltage" ? null : previewCapacityCycleRange?.end ?? null,
-    ],
+    queryKey: [...previewKey, requestRange?.start ?? null, requestRange?.end ?? null],
     queryFn: ({ signal }) => previewContinuationSources({
       ...continuationPreviewRequest(orderedDrafts, order, previewQuantity, effectivePreviewInterpretation),
       discharge_first: detectDischargeFirst,
       voltage_x_axis: previewVoltageXAxis,
-      ...(previewQuantity === "voltage" && previewVoltageCycleRange
-        ? { cycle_start: previewVoltageCycleRange.start, cycle_end: previewVoltageCycleRange.end }
-        : previewQuantity !== "voltage" && previewCapacityCycleRange
-          ? { cycle_start: previewCapacityCycleRange.start, cycle_end: previewCapacityCycleRange.end }
-        : {}),
+      ...(requestRange ? { cycle_start: requestRange.start, cycle_end: requestRange.end } : {}),
     }, { signal }),
-    enabled: opened
-      && previewMode === "combined"
-      && Boolean(result?.inspection_complete)
-      && !sourceInspectionFailed
-      && !orderNeedsAutomaticCorrection
-      && orderedDrafts.length >= 1,
+    enabled: opened && previewMode === "combined" && Boolean(result?.inspection_complete)
+      && !sourceInspectionFailed && !orderNeedsAutomaticCorrection && orderedDrafts.length >= 1,
     staleTime: Infinity,
     placeholderData: (previous) => previous,
   });
-  const chargePreviewQuery = useQuery<ContinuationPreviewResult>({
-    queryKey: [
-      detectDischargeFirst,
-      ...continuationPreviewQueryKey(
-        order,
-        orderedDrafts,
-        inspectionQuery.dataUpdatedAt,
-        "charge_capacity_mah",
-        effectivePreviewInterpretation,
-      ),
-      previewCapacityCycleRange?.start ?? null,
-      previewCapacityCycleRange?.end ?? null,
-    ],
-    queryFn: ({ signal }) => previewContinuationSources(
-      {
-        ...continuationPreviewRequest(orderedDrafts, order, "charge_capacity_mah", effectivePreviewInterpretation),
-        discharge_first: detectDischargeFirst,
-        ...(previewCapacityCycleRange
-          ? { cycle_start: previewCapacityCycleRange.start, cycle_end: previewCapacityCycleRange.end }
-          : {}),
-      },
-      { signal },
-    ),
-    enabled: opened
-      && previewMode === "combined"
-      && previewQuantity !== "voltage"
-      && previewCapacityView !== "discharge"
-      && Boolean(result?.inspection_complete)
-      && !sourceInspectionFailed
-      && !orderNeedsAutomaticCorrection
-      && orderedDrafts.length >= 1,
-    staleTime: Infinity,
-    placeholderData: (previous) => previous,
-  });
-  const activeCombinedQuery = previewQuantity === "voltage"
-    ? combinedPreviewQuery
-    : previewCapacityView === "charge" ? chargePreviewQuery : combinedPreviewQuery;
   const displayCombinedPreview = useMemo(
-    () => activeCombinedQuery.data
+    () => combinedPreviewQuery.data
       ? previewQuantity === "voltage" && previewVoltageXAxis === "time"
-        ? scaleContinuationPreviewTimeAxis(activeCombinedQuery.data)
-        : activeCombinedQuery.data
+        ? scaleContinuationPreviewTimeAxis(combinedPreviewQuery.data)
+        : combinedPreviewQuery.data
       : undefined,
-    [activeCombinedQuery.data, previewQuantity, previewVoltageXAxis],
+    [combinedPreviewQuery.data, previewQuantity, previewVoltageXAxis],
   );
-  const displayChargePreview = chargePreviewQuery.data;
   const firstMassSource = orderedDrafts.find(draft => draft.recorded_masses?.some(mass => mass.kind === "characteristic"))
     ?? orderedDrafts.find(draft => (draft.active_mass_mg ?? 0) > 0);
   const sourceMassMg = firstMassSource?.active_mass_mg;
@@ -393,9 +342,7 @@ export function ContinuedImportEditor({
   const previewCycleExtent = Math.max(
     0,
     displayCombinedPreview?.cycle_count ?? 0,
-    displayChargePreview?.cycle_count ?? 0,
     ...(displayCombinedPreview?.segments.map((segment) => segment.global_cycle_end ?? 0) ?? []),
-    ...(displayChargePreview?.segments.map((segment) => segment.global_cycle_end ?? 0) ?? []),
   );
   const combinedCycleCount = previewCycleExtent || inspectedCycleExtent;
   const multipleSources = order.length > 1;
@@ -407,13 +354,8 @@ export function ContinuedImportEditor({
     if (previewQuantity === "voltage") setPreviewVoltageCycleRange(range);
     else setPreviewCapacityCycleRange(range);
   };
-  const combinedPreviewLoading = activeCombinedQuery.isPending
-    || (activeCombinedQuery.isFetching && !activeCombinedQuery.data)
-    || activeCombinedQuery.isPlaceholderData
-    || (previewQuantity !== "voltage" && previewCapacityView !== "discharge"
-      && (chargePreviewQuery.isPending || (chargePreviewQuery.isFetching && !chargePreviewQuery.data) || chargePreviewQuery.isPlaceholderData));
-  const combinedPreviewError = activeCombinedQuery.isError
-    || (previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isError);
+  const combinedPreviewLoading = combinedPreviewQuery.isPending || combinedPreviewQuery.isPlaceholderData;
+  const combinedPreviewError = combinedPreviewQuery.isError;
   useEffect(() => {
     setPreviewVoltageCycleRange(defaultContinuationVoltageRange(order.length, combinedCycleCount));
     setPreviewCapacityCycleRange(null);
@@ -430,43 +372,27 @@ export function ContinuedImportEditor({
     }
   }, [allOcvSources]);
   const combinedCapacitySeries = useMemo<CellPreviewCycleSeries[]>(() => {
-    if (previewQuantity === "voltage") return [];
-    const dischargePreview = previewCapacityView === "charge"
-      ? undefined
-      : displayCombinedPreview?.quantity === "discharge_capacity_mah" ? displayCombinedPreview : undefined;
-    const chargePreview = displayChargePreview?.quantity === "charge_capacity_mah"
-      ? displayChargePreview
-      : previewCapacityView === "charge" && displayCombinedPreview?.quantity === "charge_capacity_mah"
-        ? displayCombinedPreview
-        : undefined;
-    const keys = new Set([
-      ...(dischargePreview?.segments.map((segment) => segment.source_key) ?? []),
-      ...(chargePreview?.segments.map((segment) => segment.source_key) ?? []),
-    ]);
-    const inRange = (cycle: number | null) => cycle !== null
-      && (!previewCycleRange || (cycle >= previewCycleRange.start && cycle <= previewCycleRange.end));
-    return [...keys].map((key) => {
-      const discharge = dischargePreview?.segments.find((segment) => segment.source_key === key);
-      const charge = chargePreview?.segments.find((segment) => segment.source_key === key);
-      const efficiency = [discharge, charge].find((segment) =>
-        segment?.coulombic_efficiency_x?.length && segment.coulombic_efficiency_pct?.length,
-      );
-      const dischargeX = discharge?.x ?? [];
-      const chargeX = charge?.x ?? [];
-      const efficiencyX = efficiency?.coulombic_efficiency_x ?? [];
-      const efficiencyPct = efficiency?.coulombic_efficiency_pct ?? [];
+    if (previewQuantity === "voltage" || displayCombinedPreview?.quantity !== "capacity_bundle") return [];
+    const inRange = (cycle: number) => !previewCycleRange
+      || (cycle >= previewCycleRange.start && cycle <= previewCycleRange.end);
+    return displayCombinedPreview.segments.map((segment) => {
+      const key = segment.source_key;
+      const dischargeX = segment.discharge_capacity_x ?? [];
+      const chargeX = segment.charge_capacity_x ?? [];
+      const efficiencyX = segment.coulombic_efficiency_x ?? [];
+      const efficiencyPct = segment.coulombic_efficiency_pct ?? [];
       const massG = cellMassMg && cellMassMg > 0 ? cellMassMg / 1000 : null;
       const sourceColor = colors[key] ?? "#12b886";
       return {
         x: [],
         sourceKey: key,
-        name: discharge?.filename ?? charge?.filename ?? key,
+        name: segment.filename,
         dischargeX: dischargeX.filter(inRange),
-        dischargeCapacityMah: discharge?.y.filter((_, index) => inRange(dischargeX[index])) ?? [],
+        dischargeCapacityMah: segment.discharge_capacity_y?.filter((_, index) => inRange(dischargeX[index])) ?? [],
         chargeX: chargeX.filter(inRange),
-        chargeCapacityMah: charge?.y.filter((_, index) => inRange(chargeX[index])) ?? [],
+        chargeCapacityMah: segment.charge_capacity_y?.filter((_, index) => inRange(chargeX[index])) ?? [],
         efficiencyX: efficiencyX.filter(inRange),
-        efficiencyPct: efficiencyPct.filter((_, index) => inRange(efficiencyX[index] ?? null)),
+        efficiencyPct: efficiencyPct.filter((_, index) => inRange(efficiencyX[index])),
         massG,
         chargeColor: sourceColor,
         dischargeColor: sourceColor,
@@ -475,9 +401,7 @@ export function ContinuedImportEditor({
     });
   }, [
     previewQuantity,
-    previewCapacityView,
     displayCombinedPreview,
-    displayChargePreview,
     previewCycleRange?.start,
     previewCycleRange?.end,
     cellMassMg,
@@ -488,7 +412,7 @@ export function ContinuedImportEditor({
     () => paddedEfficiencyRange(combinedCapacitySeries.flatMap((series) => series.efficiencyPct ?? [])),
     [combinedCapacitySeries],
   );
-  const combinedPlotPreview = displayCombinedPreview ?? displayChargePreview;
+  const combinedPlotPreview = displayCombinedPreview;
   const sourceLines = useMemo(() => {
     const voltage = previewQuantity === "voltage";
     const segments = new Map(combinedPlotPreview?.segments.map((segment) => [segment.source_key, segment]));
@@ -524,19 +448,24 @@ export function ContinuedImportEditor({
       hovertemplate: `%{meta}<br>${trace.hovertemplate}`,
     })) : traces
   ), [sourceLines, multipleSources]);
+  const previewRevision = JSON.stringify([
+    order, effectivePreviewInterpretation, detectDischargeFirst, previewQuantity,
+    previewQuantity === "voltage" ? previewVoltageXAxis : previewNormalizeByMass && normalizableByMass,
+    selectedRange,
+  ]);
   const combinedPlotLayout = useMemo(() => {
     return previewQuantity === "voltage"
       ? cellPreviewVoltageLayout(
           previewColors,
           combinedPlotPreview?.x_label
             ?? (previewVoltageXAxis === "time" ? "Time (minutes)" : "Capacity (mAh)"),
-          `continued-preview-voltage-${previewVoltageXAxis}`,
+          previewRevision,
         )
       : cellPreviewCapacityLayout(
           previewColors,
           `Capacity (${previewNormalizeByMass && normalizableByMass ? "mAh/g" : "mAh"})`,
           combinedEfficiencyRange,
-          `continued-preview-cycles-${previewNormalizeByMass && normalizableByMass ? "mAh-per-g" : "mAh"}`,
+          previewRevision,
         );
   }, [
     combinedPlotPreview,
@@ -546,6 +475,7 @@ export function ContinuedImportEditor({
     previewNormalizeByMass,
     normalizableByMass,
     combinedEfficiencyRange,
+    previewRevision,
   ]);
   const combinedPlotReady = Boolean(
     result?.inspection_complete
@@ -554,14 +484,12 @@ export function ContinuedImportEditor({
     && !orderNeedsAutomaticCorrection
     && !combinedPreviewLoading
     && !combinedPreviewError
-    && !activeCombinedQuery.isPlaceholderData
-    && !(previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isPlaceholderData)
+    && !combinedPreviewQuery.isPlaceholderData
     && combinedPlotData.length > 0
     && combinedPlotPreview,
   );
   const combinedPlotElement: ReactNode = combinedPlotPreview && combinedPlotData.length > 0 ? (
     <ContinuedImportPlot
-      key={JSON.stringify([order, effectivePreviewInterpretation, detectDischargeFirst, previewQuantity, previewVoltageXAxis, selectedRange])}
       data={combinedPlotData}
       layout={combinedPlotLayout}
       spans={spans}
@@ -574,8 +502,7 @@ export function ContinuedImportEditor({
       legend={!multipleSources && previewQuantity === "voltage" && combinedPlotData.some((trace) => trace.name.startsWith("Current"))
         ? [{ name: "Voltage", color: "#12b886" }, { name: "Current", color: "#2E86AB" }]
         : []}
-      updating={activeCombinedQuery.isFetching && Boolean(activeCombinedQuery.data)
-        || (previewQuantity !== "voltage" && previewCapacityView !== "discharge" && chargePreviewQuery.isFetching && Boolean(chargePreviewQuery.data))}
+      updating={combinedPreviewQuery.isFetching && Boolean(combinedPreviewQuery.data)}
     />
   ) : null;
   const combinedCycleNavigator = (
@@ -671,10 +598,8 @@ export function ContinuedImportEditor({
     previewCycleRange?.end,
     previewSurfaceMode,
     combinedPlotReady,
-    activeCombinedQuery.data,
-    activeCombinedQuery.isPlaceholderData,
-    chargePreviewQuery.data,
-    chargePreviewQuery.isPlaceholderData,
+    combinedPreviewQuery.data,
+    combinedPreviewQuery.isPlaceholderData,
     combinedPlotData,
     cellDraft.active_mass_mg_override,
     colors,
@@ -755,7 +680,7 @@ export function ContinuedImportEditor({
       setPreviewMode("combined");
       setPreviewQuantity(drafts.length > 0 && drafts.every((draft) => draft.technique?.trim().toLocaleUpperCase() === "OCV")
         ? "voltage"
-        : "discharge_capacity_mah");
+        : "capacity_bundle");
       setPreviewInterpretation("stitched");
     }
   }, [drafts, opened]);
@@ -799,9 +724,9 @@ export function ContinuedImportEditor({
     && orderedDrafts.length > 1
     && result.suggested_order_basis === "selection_order",
   );
-  const combinedPreviewFailureSources = activeCombinedQuery.isError
+  const combinedPreviewFailureSources = combinedPreviewQuery.isError
     ? continuationPreviewFailureSources(
-      activeCombinedQuery.error instanceof ApiError ? activeCombinedQuery.error.detail : null,
+      combinedPreviewQuery.error instanceof ApiError ? combinedPreviewQuery.error.detail : null,
     )
     : [];
   const warningFindings = visibleFindings?.filter(
@@ -832,8 +757,8 @@ export function ContinuedImportEditor({
     }] : []),
     ...(combinedPreviewError ? [{
       id: "combined-preview-error",
-      title: activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated",
-      message: activeCombinedQuery.error instanceof Error ? activeCombinedQuery.error.message : "The combined preview is unavailable.",
+      title: combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated",
+      message: combinedPreviewQuery.error instanceof Error ? combinedPreviewQuery.error.message : "The combined preview is unavailable.",
     }] : []),
     ...combinedPreviewFailureSources.map((source, index) => ({
       id: `combined-preview-source-${source.filename}-${index}`,
@@ -1052,7 +977,7 @@ export function ContinuedImportEditor({
                       value={previewQuantity === "voltage" ? "voltage" : "cycles"}
                       onChange={(value) => {
                         if (value === "voltage") setPreviewQuantity("voltage");
-                        else if (value === "cycles") setPreviewQuantity("discharge_capacity_mah");
+                        else if (value === "cycles") setPreviewQuantity("capacity_bundle");
                       }}
                       variant="default"
                       keepMounted={false}
@@ -1088,7 +1013,7 @@ export function ContinuedImportEditor({
                   ) : combinedPreviewError ? (
                     <Alert
                       color="gray"
-                      title={activeCombinedQuery.error instanceof ApiError && activeCombinedQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
+                      title={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
                     >
                       <Group justify="space-between" align="start" gap="xs" wrap="nowrap">
                         <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
@@ -1096,13 +1021,12 @@ export function ContinuedImportEditor({
                             Open the Errors summary below to review the details.
                           </Text>
                         </Stack>
-                        {!(activeCombinedQuery.error instanceof ApiError && (activeCombinedQuery.error.status === 409 || activeCombinedQuery.error.status === 422)) && (
+                        {!(combinedPreviewQuery.error instanceof ApiError && (combinedPreviewQuery.error.status === 409 || combinedPreviewQuery.error.status === 422)) && (
                           <Button
                             size="compact-sm"
                             variant="default"
                             onClick={() => {
-                              void activeCombinedQuery.refetch();
-                              if (previewQuantity !== "voltage" && previewCapacityView !== "discharge") void chargePreviewQuery.refetch();
+                              void combinedPreviewQuery.refetch();
                             }}
                           >
                             Retry

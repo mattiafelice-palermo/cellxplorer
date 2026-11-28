@@ -2379,6 +2379,84 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(filtered_response["cycle_count"], 5)
         self.assertEqual([segment["coulombic_efficiency_x"] for segment in filtered_response["segments"]], [[], [3, 4]])
 
+    def test_preview_resolves_sibling_paths_once_and_checks_the_live_target(self):
+        from app.services import source_paths
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            first, second = root / "first.mpr", root / "second.mpr"
+            first.touch()
+            second.touch()
+            with patch.object(source_paths, "resolved_source_io_path", wraps=source_paths.resolved_source_io_path) as resolve:
+                self.assertEqual(source_paths.preview_source_io_path(first), first)
+                self.assertEqual(source_paths.preview_source_io_path(second), second)
+                self.assertEqual(resolve.call_count, 1)
+            other = root / "other"
+            other.mkdir()
+            (other / second.name).write_bytes(b"different recording")
+            with patch.object(source_paths, "_resolved_preview_parent", return_value=other):
+                self.assertEqual(source_paths.preview_source_io_path(second), second)
+
+    def test_continued_preview_shares_validated_headers_only_for_the_same_identity_and_mode(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "continued.mpr"
+            path.write_bytes(b"preview header reader fixture")
+            original = parsing.capture_source_fingerprint(path)
+            header = {"raw": {"mpr_read_mode": "permissive"}}
+            with patch.object(parsing, "read_header_metadata", return_value={}) as read, patch.object(
+                parsing, "metadata_for_read_mode", side_effect=lambda _p, meta, mode: header if mode == "permissive" else meta,
+            ) as interpret, patch.object(parsing, "ensure_supported_source_metadata") as validate:
+                self.assertEqual(files._continuation_header(path, original, "permissive"), header)
+                self.assertEqual(files._continuation_header(path, original, "permissive"), header)
+                self.assertEqual(files._continuation_header(path, original, "safe"), {})
+                path.write_bytes(b"updated preview header")
+                updated = parsing.capture_source_fingerprint(path)
+                self.assertEqual(files._continuation_header(path, updated, "permissive"), header)
+                self.assertEqual((read.call_count, interpret.call_count, validate.call_count), (3, 3, 4))
+
+    def test_stitched_ranges_reuse_exact_rows_and_only_complete_bundles_filter_locally(self):
+        from app.services import continuation_preview
+
+        sources = [dict(source_key=name, filename=name, hash=name, parser_version="parser") for name in ("aa", "bb")]
+        frame = pd.DataFrame({
+            "record_index": range(12), "cycle": [n for n in range(1, 7) for _ in range(2)],
+            "step": [1, 2] * 6, "status": ["CC Chg", "CC DChg"] * 6,
+            "voltage_v": [3.8, 3.2] * 6, "current_ma": [1., -1.] * 6,
+            "charge_capacity_mah": [1., 0.] * 6, "discharge_capacity_mah": [0., 0.9] * 6,
+        })
+        with TemporaryDirectory() as tmp, patch.object(cache, "CACHE_DIR", Path(tmp)), patch.object(
+            continuation_preview, "prepare_stitched_raw", wraps=continuation_preview.prepare_stitched_raw,
+        ) as prepare:
+            paths = [cache.raw_path(s["hash"], "parser") for s in sources]
+            for path in paths:
+                path.parent.mkdir(parents=True)
+                frame.to_parquet(path)
+            build = files._build_stitched_continuation_preview
+            overview = build(sources, quantity="capacity_bundle")
+            self.assertTrue(overview["cycle_points_complete"])
+            voltage = build(sources, quantity="voltage", cycle_start=8, cycle_end=9)
+            self.assertEqual([s["y"] for s in voltage["segments"]], [[], [3.8, 3.2] * 2])
+            with patch.object(files, "_CONTINUATION_PREVIEW_MAX_POINTS", 4):
+                sampled = build(sources, quantity="capacity_bundle")
+                self.assertFalse(sampled.get("cycle_points_complete", False))
+                window = build(sources, quantity="capacity_bundle", cycle_start=8, cycle_end=9)
+                self.assertEqual(window["segments"][1]["charge_capacity_x"], [8, 9])
+            self.assertEqual(prepare.call_count, 1)
+            build(sources[::-1], quantity="voltage")
+            build(sources[::-1], quantity="voltage", discharge_first=True)
+            self.assertEqual(prepare.call_count, 3)
+            build(sources, quantity="voltage")
+            replacement = paths[1].with_suffix(".replacement")
+            frame.assign(voltage_v=2.5).to_parquet(replacement)
+            replacement.replace(paths[1])
+            rebuilt = build(sources, quantity="voltage", cycle_start=8, cycle_end=9)
+            self.assertEqual(rebuilt["segments"][1]["y"], [2.5] * 4)
+            self.assertEqual(prepare.call_count, 5)
+            paths[1].unlink()
+            with self.assertRaises(HTTPException) as missing:
+                build(sources, quantity="voltage")
+            self.assertEqual(missing.exception.status_code, 409)
+
     def test_continuation_preview_stitched_interpretation_infers_contiguous_file_fragments(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

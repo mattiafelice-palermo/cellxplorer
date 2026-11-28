@@ -13,6 +13,12 @@ summarizes their accumulated changes since published Alpha.16.
 For 0.29.0, Alpha.4–13 are unpublished development checkpoints. Alpha.14
 summarizes their accumulated changes since published Alpha.3.
 
+## 0.29.0-alpha.43 - 2026-11-28
+
+### Bug fixes
+
+- Speed up continued-cell previews on network drives and update cycle ranges locally when all measured cycle points are available.
+
 ## 0.29.0-alpha.42 - 2026-11-28
 
 ### Bug fixes

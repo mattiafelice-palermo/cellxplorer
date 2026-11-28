@@ -10,7 +10,11 @@ is written back to a scientific cache or used by the analysis pipeline.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import Future
+from dataclasses import dataclass, field
+import threading
 
+import numpy as np
 import pandas as pd
 
 from .time_capacity_derived import (
@@ -159,6 +163,129 @@ def has_unresolved_biologic_cycles(frame: pd.DataFrame) -> bool:
     from .biologic_quantities import UNRESOLVED_CYCLE_SOURCE
 
     return "measurement_type" in frame and frame["measurement_type"].eq(UNRESOLVED_CYCLE_SOURCE).any()
+
+
+class MissingPreviewRows(Exception):
+    def __init__(self, positions: list[int]):
+        super().__init__("The prepared raw cache is missing.")
+        self.positions = positions
+
+
+@dataclass
+class StitchedPreview:
+    raw: pd.DataFrame
+    local_cycles: list[tuple[int | None, int | None, int]]
+    unresolved: list[bool]
+    inference_error: str | None
+    segment_rows: list[slice | np.ndarray]
+    _cycles: pd.DataFrame | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def cycle_summary(self) -> pd.DataFrame:
+        from . import analysis_cycle_pairing, calc
+
+        # A boundary-spanning cycle has one capacity, owned by its first recorded row.
+        with self._lock:
+            if self._cycles is not None:
+                return self._cycles
+            cycles = (analysis_cycle_pairing.summary(self.raw) if self.raw.attrs.get("current_detected")
+                      else calc.per_cycle(self.raw))
+            if not cycles.empty:
+                owner = self.raw[["cycle", "segment"]].drop_duplicates("cycle").set_index("cycle").segment
+                cycles = cycles.assign(segment=cycles.cycle.map(owner))
+            if cycles.memory_usage(deep=True).sum() <= 8 * 1024**2:
+                self._cycles = cycles
+            return cycles
+
+
+# Hold at most one small import chain per process. Raw Parquet is replaced atomically;
+# a read also touches its mtime for LRU, so record the final stamp after preparation.
+_MAX_RETAINED_RAW_BYTES = 64 * 1024**2
+_preview_lock = threading.Lock()
+_last_preview: tuple[tuple, StitchedPreview] | None = None
+_preparing: dict[tuple, Future] = {}
+
+
+def _raw_stamps(refs):
+    from . import cache
+
+    stamps = []
+    for ref in refs:
+        path = cache.raw_path(ref.file_hash, ref.parser_version)
+        try:
+            stat = path.stat()
+        except OSError:
+            return ()
+        stamps.append((str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns))
+    return tuple(stamps)
+
+
+def _read_stitched_preview(refs, discharge_first):
+    from . import cache, stitch
+
+    frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
+    missing = [i for i, frame in enumerate(frames) if frame is None]
+    if missing:
+        raise MissingPreviewRows(missing)
+    inference_error = None
+    try:
+        raw = prepare_stitched_raw(frames, discharge_first=discharge_first)
+    except ValueError as exc:
+        inference_error = str(exc)
+        raw = prepare_segmented_raw(frames)
+    local_cycles = []
+    segment_rows = []
+    groups = raw.groupby("segment", sort=False).indices if "segment" in raw else {}
+    for index, frame in enumerate(frames):
+        labels, _ = stitch.observed_local_cycles(frame.get("cycle", pd.Series(dtype="float64")))
+        local_cycles.append((labels[0], labels[-1], len(labels)) if labels else (None, None, 0))
+        positions = groups.get(index)
+        if positions is None:
+            segment_rows.append(slice(0, 0))
+        elif positions[-1] - positions[0] + 1 == len(positions):
+            segment_rows.append(slice(positions[0], positions[-1] + 1))
+        else:
+            # Paired BioLogic executions can interleave physical source rows.
+            segment_rows.append(positions)
+    return StitchedPreview(raw, local_cycles, [has_unresolved_biologic_cycles(f) for f in frames],
+                           inference_error, segment_rows)
+
+
+def load_stitched_preview(refs, *, discharge_first=False) -> StitchedPreview:
+    from . import cache
+
+    global _last_preview
+    if len(refs) < 2 or cache.pending_hashes().intersection(ref.file_hash for ref in refs):
+        return _read_stitched_preview(refs, discharge_first)
+    stamps = _raw_stamps(refs)
+    if not stamps:
+        return _read_stitched_preview(refs, discharge_first)
+    key = (stamps, discharge_first)
+    physical = (tuple(stamp[:3] for stamp in stamps), discharge_first)
+    with _preview_lock:
+        if _last_preview is not None and _last_preview[0] == key:
+            return _last_preview[1]
+        pending = _preparing.get(physical)
+        if pending is None:
+            future = _preparing[physical] = Future()
+    if pending is not None:
+        return pending.result()
+    try:
+        result = _read_stitched_preview(refs, discharge_first)
+        index_bytes = sum(rows.nbytes for rows in result.segment_rows if isinstance(rows, np.ndarray))
+        if result.raw.memory_usage(deep=True).sum() + index_bytes <= _MAX_RETAINED_RAW_BYTES:
+            after = _raw_stamps(refs)
+            if tuple(stamp[:3] for stamp in after) == physical[0]:
+                with _preview_lock:
+                    _last_preview = ((after, discharge_first), result)
+        future.set_result(result)
+        return result
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        with _preview_lock:
+            _preparing.pop(physical, None)
 
 
 def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame], *, discharge_first=False) -> pd.DataFrame:

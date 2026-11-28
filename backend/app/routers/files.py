@@ -18,7 +18,8 @@ from typing import Callable, Literal
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 from ..services import import_inspection
 from ..services import import_file_hints
-from ..services.source_paths import display_source_path, resolved_source_io_path, source_io_path
+from ..services import header_io
+from ..services.source_paths import display_source_path, preview_source_io_path, resolved_source_io_path, source_io_path
 from ..services.source_extensions import MACCOR_CHANNEL_FORMAT, extension_key, source_suffix
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -197,6 +198,37 @@ def resolve_import_source_path(staged_name: str, source_path: str | None = None)
     if source_path:
         return resolved_source_io_path(source_path)
     return resolve_import_staged_path(staged_name)
+
+
+def _continuation_read_path(draft) -> Path:
+    if draft.source_path and draft.inspection:
+        return preview_source_io_path(draft.source_path)
+    return resolve_import_source_path(draft.staged_name, draft.source_path)
+
+
+def _continuation_stat(path: Path) -> header_io.Fingerprint | os.stat_result:
+    try:
+        return header_io.path_fingerprint(path)
+    except header_io.UnsafeSourceError:
+        # Reparse points still follow the ordinary source-file contract.
+        return path.stat()
+
+
+def _continuation_header(path: Path, fingerprint: parsing.SourceFingerprint | None, read_mode: str) -> dict:
+    """The inspection cache already contains the validated, reader-specific header."""
+    meta = None
+    if fingerprint is not None:
+        meta = import_inspection.cached_header_metadata(
+            fingerprint.hash, fingerprint.size, fingerprint.mtime_ns,
+            **({"read_mode": read_mode} if read_mode != "safe" else {}),
+        )
+    fresh = meta is None
+    if fresh:
+        meta = parsing.metadata_for_read_mode(path, parsing.read_header_metadata(path), read_mode)
+    parsing.ensure_supported_source_metadata(path, meta)
+    if fresh and fingerprint is not None:
+        import_inspection.remember_header_metadata(fingerprint.hash, fingerprint.size, fingerprint.mtime_ns, meta)
+    return meta
 
 
 def _inspect_import_path(
@@ -3047,7 +3079,7 @@ def _continuation_staged_source(
         return source
 
     try:
-        source_path = resolve_import_source_path(draft.staged_name, draft.source_path)
+        source_path = _continuation_read_path(draft)
     except ValueError as exc:
         source["inspection_status"] = "error"
         source["inspection_error"] = str(exc)
@@ -3063,7 +3095,7 @@ def _continuation_staged_source(
     inspection_values = _inspection_identity_values(draft.inspection)
     if inspection_values:
         try:
-            source_stat = source_path.stat()
+            source_stat = _continuation_stat(source_path)
         except OSError as exc:
             integrity = {
                 "missing": not source_path.exists(),
@@ -3106,30 +3138,14 @@ def _continuation_staged_source(
         source["unreadable"] = True
         return source
 
-    try:
-        source_stat = source_path.stat()
-    except OSError:
-        source_stat = None
-    hint = _inspection_identity_values(draft.inspection)
-    hint_is_valid = (
-        hint.get("hash") == file_hash
-        and source_stat is not None
-        and hint.get("size") == source_stat.st_size
-        and _mtime_fingerprint_matches(hint.get("mtime_ns"), source_stat.st_mtime_ns)
-    )
-    meta = (
-        import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns, **({"read_mode": draft.read_mode} if draft.read_mode != "safe" else {}))
-        if hint_is_valid and source_stat is not None
-        else None
-    )
-    if meta is None:
-        meta = parsing.read_header_metadata(source_path)
+    # A changed or unavailable receipt has already returned above.
+    fingerprint = (parsing.SourceFingerprint(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
+                   if inspection_values else None)
     # Keep the established content identity on terminal semantic failures too;
     # the preview binds rejection notifications to this hash before pruning.
     source["hash"] = file_hash
     try:
-        meta = parsing.metadata_for_read_mode(source_path, meta, draft.read_mode)
-        parsing.ensure_supported_source_metadata(source_path, meta)
+        meta = _continuation_header(source_path, fingerprint, draft.read_mode)
     except ValueError as exc:
         source["inspection_status"] = "error"
         source["inspection_error"] = str(exc)
@@ -3436,7 +3452,7 @@ def _preview_source_fingerprint(
     values = _inspection_identity_values(inspection)
     expected_hash = str(values.get("hash") or "").strip().lower() or None
     try:
-        source_stat = source_path.stat()
+        source_stat = _continuation_stat(source_path)
     except OSError as exc:
         raise HTTPException(404, "Source file is unavailable") from exc
 
@@ -4005,6 +4021,7 @@ def _build_continuation_preview(
 
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
+    complete_bundle = quantity == "capacity_bundle" and cycle_start is None and cycle_end is None
     requested_start = max(1, int(cycle_start or 1))
     requested_end = max(requested_start, int(cycle_end or requested_start))
     if quantity != "voltage" and "cycle" in cycles.columns and not cycles.empty:
@@ -4171,6 +4188,7 @@ def _build_continuation_preview(
             capacity_preview_fields = {}
         else:
             segment_frame = cycles[cycles["segment"] == segment_index]
+            complete_bundle = complete_bundle and len(segment_frame) <= segment_limit
             if (cycle_start is not None or cycle_end is not None) and "cycle" in segment_frame.columns:
                 segment_frame = segment_frame[
                     pd.to_numeric(segment_frame["cycle"], errors="coerce").between(requested_start, requested_end)
@@ -4246,6 +4264,7 @@ def _build_continuation_preview(
             else f"Cycle number ({interpretation})"
         ),
         "interpretation": interpretation,
+        **({"cycle_points_complete": True} if complete_bundle else {}),
         **({"cycle_note": cycle_note} if cycle_note else {}),
         "segments": response_segments,
     }
@@ -4271,39 +4290,21 @@ def _build_stitched_continuation_preview(
     ]
     from ..services import analysis_cycle_pairing
 
-    raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
-    missing_sources = [
-        {
-            "source_key": source["source_key"],
-            "filename": source["filename"],
-            "kind": "raw_cache_incomplete",
-            "reason": "The prepared raw cache is missing or incomplete for the stitched preview.",
-        }
-        for source, frame in zip(ordered_sources, raw_frames)
-        if frame is None
-    ]
-    if missing_sources:
+    try:
+        prepared = continuation_preview.load_stitched_preview(refs, discharge_first=discharge_first)
+    except continuation_preview.MissingPreviewRows as exc:
         raise _continuation_preview_unavailable(
             code="continuation_cache_incomplete",
             message="The stitched preview is not ready; inspect continuity again before previewing.",
-            sources=missing_sources,
+            sources=[{
+                "source_key": ordered_sources[i]["source_key"],
+                "filename": ordered_sources[i]["filename"],
+                "kind": "raw_cache_incomplete",
+                "reason": "The prepared raw cache is missing or incomplete for the stitched preview.",
+            } for i in exc.positions],
             status_code=409,
-        )
-
-    try:
-        prepared_frames = [frame for frame in raw_frames if frame is not None]
-        voltage_cycle_identity_available = True
-        if quantity == "voltage":
-            try:
-                merged = continuation_preview.prepare_stitched_raw(prepared_frames, discharge_first=discharge_first)
-            except ValueError:
-                # Preserve voltage preview for sources whose rows do not carry
-                # enough status information for preview-only cycle inference.
-                merged = continuation_preview.prepare_segmented_raw(prepared_frames)
-                voltage_cycle_identity_available = False
-        else:
-            merged = continuation_preview.prepare_stitched_raw(prepared_frames, discharge_first=discharge_first)
-    except ValueError as exc:
+        ) from exc
+    if prepared.inference_error is not None and quantity != "voltage":
         raise _continuation_preview_unavailable(
             code="continuation_cycle_inference_unavailable",
             message="The stitched preview cannot infer contiguous cycles from these sources.",
@@ -4312,54 +4313,31 @@ def _build_stitched_continuation_preview(
                     "source_key": source["source_key"],
                     "filename": source["filename"],
                     "kind": "cycle_inference_unavailable",
-                    "reason": str(exc),
+                    "reason": prepared.inference_error,
                 }
                 for source in ordered_sources
             ],
             status_code=422,
-        ) from exc
+        )
 
-    # infer_contiguous_cycle_ids deliberately assigns one cycle id across a
-    # file join, so the per-cycle aggregation must run once over the whole
-    # merged chain rather than once per segment: aggregating a slice would
-    # split a boundary-spanning cycle and let calc.per_cycle's fillna(0.0)
-    # report a false zero for whichever segment holds none of the selected
-    # phase (see Spec 047 review R11/R12). A boundary-spanning cycle is
-    # therefore attributed to exactly one segment -- the segment holding
-    # that cycle's first merged row -- so it contributes one point, with the
-    # value it would have if the chain were a single file.
+    merged = prepared.raw
+    voltage_cycle_identity_available = prepared.inference_error is None
     detected = merged.attrs.get("current_detected", False)
-    merged_cycles = pd.DataFrame()
-    if quantity != "voltage":
-        merged_cycles = analysis_cycle_pairing.summary(merged) if detected else calc.per_cycle(merged)
+    merged_cycles = pd.DataFrame() if quantity == "voltage" else prepared.cycle_summary()
     if quantity == "voltage" and voltage_cycle_identity_available and "cycle" in merged.columns:
         full_cycle_ids = pd.to_numeric(merged["cycle"], errors="coerce").dropna()
         cycle_count: int | None = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
-    elif quantity == "voltage" and any(continuation_preview.has_unresolved_biologic_cycles(f) for f in prepared_frames):
+    elif quantity == "voltage" and any(prepared.unresolved):
         cycle_count = None
     elif quantity != "voltage" and "cycle" in merged_cycles.columns and not merged_cycles.empty:
         full_cycle_ids = pd.to_numeric(merged_cycles["cycle"], errors="coerce").dropna()
         cycle_count = int(full_cycle_ids.max()) if not full_cycle_ids.empty else 0
     else:
-        cycle_count = sum(
-            len(stitch.observed_local_cycles(
-                raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
-            )[0])
-            for raw_frame in raw_frames
-        )
+        cycle_count = sum(count for _, _, count in prepared.local_cycles)
     if quantity == "voltage":
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
         selected_quantity, label = _capacity_quantity_and_label(merged_cycles, quantity)
-        if not merged_cycles.empty:
-            cycle_owner = (
-                merged[["cycle", "segment"]]
-                .drop_duplicates(subset="cycle", keep="first")
-                .set_index("cycle")["segment"]
-            )
-            merged_cycles = merged_cycles.assign(
-                segment=merged_cycles["cycle"].map(cycle_owner)
-            )
     requested_start = max(1, int(cycle_start or 1))
     requested_end = max(requested_start, int(cycle_end or requested_start))
     if (cycle_start is not None or cycle_end is not None) and quantity != "voltage" and "cycle" in merged_cycles.columns:
@@ -4368,9 +4346,10 @@ def _build_stitched_continuation_preview(
         ]
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     response_segments = []
+    complete_bundle = quantity == "capacity_bundle" and cycle_start is None and cycle_end is None
 
-    for segment_index, (source, raw_frame) in enumerate(zip(ordered_sources, raw_frames)):
-        full_segment_frame = merged[merged["segment"] == segment_index]
+    for segment_index, source in enumerate(ordered_sources):
+        full_segment_frame = merged.iloc[prepared.segment_rows[segment_index]]
         segment_frame = full_segment_frame
         if (cycle_start is not None or cycle_end is not None) and selected_quantity == "voltage" and voltage_cycle_identity_available and "cycle" in segment_frame.columns:
             labels = pd.to_numeric(segment_frame["cycle"], errors="coerce")
@@ -4378,18 +4357,16 @@ def _build_stitched_continuation_preview(
             if detected and requested_start == 1 and requested_end >= (cycle_count or 0):
                 in_range |= labels.eq(0)
             segment_frame = segment_frame[in_range]
-        local_labels, _ = stitch.observed_local_cycles(
-            raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
-        )
+        local_start, local_end, local_count = prepared.local_cycles[segment_index]
         global_cycles = (
             pd.to_numeric(full_segment_frame["cycle"], errors="coerce").dropna()
             if "cycle" in full_segment_frame.columns
             else pd.Series(dtype="float64")
         )
-        if continuation_preview.has_unresolved_biologic_cycles(raw_frame):
+        if prepared.unresolved[segment_index]:
             if not detected:
                 global_cycles = global_cycles.iloc[:0]
-            local_labels = []
+            local_start, local_end, local_count = None, None, 0
         if detected or merged.attrs.get("cross_source_gcpl_cycle_ids"):
             global_cycles = global_cycles[global_cycles.gt(0)]
         if selected_quantity == "voltage":
@@ -4406,6 +4383,7 @@ def _build_stitched_continuation_preview(
             else:
                 segment_cycles = merged_cycles[merged_cycles["segment"] == segment_index]
             if quantity == "capacity_bundle":
+                complete_bundle = complete_bundle and len(segment_cycles) <= segment_limit
                 discharge_preview = capacity_preview_from_cycles(
                     segment_cycles,
                     max_points=segment_limit,
@@ -4456,9 +4434,9 @@ def _build_stitched_continuation_preview(
                 **({"display_break_before": segment_preview["display_break_before"]} if "display_break_before" in segment_preview else {}),
                 "global_cycle_start": int(global_cycles.min()) if not global_cycles.empty else None,
                 "global_cycle_end": int(global_cycles.max()) if not global_cycles.empty else None,
-                "source_cycle_start": local_labels[0] if local_labels else None,
-                "source_cycle_end": local_labels[-1] if local_labels else None,
-                "source_cycle_count": len(local_labels),
+                "source_cycle_start": local_start,
+                "source_cycle_end": local_end,
+                "source_cycle_count": local_count,
                 "display_x_start": display_x_start,
                 "display_x_end": display_x_end,
                 "coulombic_efficiency_x": efficiency_preview["x"],
@@ -4475,6 +4453,7 @@ def _build_stitched_continuation_preview(
             else "Cycle number (stitched)"
         ),
         "interpretation": "stitched",
+        **({"cycle_points_complete": True} if complete_bundle else {}),
         **({"cycle_note": analysis_cycle_pairing.detection_note(merged, charge_first=not discharge_first),
             "detected_order": "discharge_charge" if discharge_first else "charge_discharge"} if detected else {}),
         "segments": response_segments,
@@ -5040,7 +5019,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
     for source_key in req.proposed_order:
         draft = source_by_key[source_key]
         try:
-            source_path = resolve_import_source_path(draft.staged_name, draft.source_path)
+            source_path = _continuation_read_path(draft)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if not source_path.exists() or not source_path.is_file():
@@ -5065,17 +5044,8 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             continue
 
         fingerprint = _preview_source_fingerprint(source_path, draft.inspection)
-        meta = import_inspection.cached_header_metadata(
-            fingerprint.hash,
-            fingerprint.size,
-            fingerprint.mtime_ns,
-            **({"read_mode": draft.read_mode} if draft.read_mode != "safe" else {}),
-        )
-        if not isinstance(meta, dict):
-            meta = parsing.read_header_metadata(source_path)
         try:
-            meta = parsing.metadata_for_read_mode(source_path, meta, draft.read_mode)
-            parsing.ensure_supported_source_metadata(source_path, meta)
+            meta = _continuation_header(source_path, fingerprint, draft.read_mode)
         except ValueError as exc:
             unavailable.append(
                 {
@@ -5099,7 +5069,13 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             continue
 
         try:
-            parser_version = parsing.parser_identity(source_path, read_mode=draft.read_mode) if draft.read_mode != "safe" else parsing.parser_identity(source_path)
+            # The verified MPR header already contains the technique and electrode roles.
+            if source_suffix(source_path) == ".mpr" and meta.get("raw"):
+                parser_version = parsing.current_parser_identity_for_extension(
+                    "mpr", read_mode=draft.read_mode, header_meta=meta,
+                )
+            else:
+                parser_version = parsing.parser_identity(source_path, read_mode=draft.read_mode) if draft.read_mode != "safe" else parsing.parser_identity(source_path)
         except (OSError, ValueError) as exc:
             unavailable.append(
                 {
